@@ -23,6 +23,10 @@ side_tables! {
         => crate::mail_pack::erase_compliance_actor_in_txn;
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named;
+    /// Where one mbox or Takeout import into a mail source stands (FIX 12559): the file, its
+    /// size and change time, the archive entry and byte offset. Key: id16(source) + blake3 (32)
+    /// of the path.
+    MAIL_PACK_MBOX_IMPORT: VaultMeta b"mail_pack:mbox_import:v1:" Named;
     /// One provider message of one mail source: its rows, revisions, stage and presence at the
     /// provider (FIX 12559). Key: id16(source) + blake3 (32) of the provider id.
     MAIL_PACK_OCCURRENCE: VaultMeta b"mail_pack:occurrence:v1:" Named;

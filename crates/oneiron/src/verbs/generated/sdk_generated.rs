@@ -6763,6 +6763,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
             ),
             (
+                "vault.mail.sources.import_mbox",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailMboxImportRequest,
+                >(),
+            ),
+            (
                 "vault.mail.sources.sync",
                 crate::code_run::vault_read::request_schema::<
                     crate::mail_pack::MailSourceSyncRequest,
@@ -19209,6 +19215,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.sources.import_mbox" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.sources.sync" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -23588,6 +23601,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.sources.sync_status" => {
             let _input: crate::mail_pack::MailSourceRef = decode(value.clone())?;
         }
+        "vault.mail.sources.import_mbox" => {
+            let _input: crate::mail_pack::MailMboxImportRequest = decode(value.clone())?;
+        }
         "vault.mail.sources.sync" => {
             let _input: crate::mail_pack::MailSourceSyncRequest = decode(value.clone())?;
         }
@@ -26177,6 +26193,9 @@ pub fn invoke(
         "vault.mail.compliance.log" => encode(vault_mail_compliance_log(memory, decode(value)?)?),
         "vault.mail.sources.sync_status" => {
             encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
+        }
+        "vault.mail.sources.import_mbox" => {
+            encode(vault_mail_sources_import_mbox(memory, decode(value)?)?)
         }
         "vault.mail.sources.sync" => encode(vault_mail_sources_sync(memory, decode(value)?)?),
         "vault.mail.inbox" => encode(vault_mail_inbox(memory, decode(value)?)?),
@@ -36717,6 +36736,12 @@ pub fn vault_mail_sources_sync_status(
     input: crate::mail_pack::MailSourceRef,
 ) -> MemoryResult<crate::mail_pack::MailSyncStatusView> {
     memory.mail_sources_sync_status(&input)
+}
+pub fn vault_mail_sources_import_mbox(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailMboxImportRequest,
+) -> MemoryResult<crate::mail_pack::MailMboxImportReport> {
+    memory.mail_sources_import_mbox(&input)
 }
 pub fn vault_mail_sources_sync(
     memory: &Memory<'_>,

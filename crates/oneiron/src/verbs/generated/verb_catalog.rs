@@ -1233,6 +1233,7 @@ pub enum AgentVerb {
     VaultMailComplianceSet,
     VaultMailComplianceLog,
     VaultMailSourcesSyncStatus,
+    VaultMailSourcesImportMbox,
     VaultMailSourcesSync,
     VaultMailInbox,
     VaultMailThreadsRead,
@@ -2508,6 +2509,7 @@ impl AgentVerb {
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
         Self::VaultMailSourcesSyncStatus,
+        Self::VaultMailSourcesImportMbox,
         Self::VaultMailSourcesSync,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
@@ -3820,6 +3822,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
+            Self::VaultMailSourcesImportMbox => "vault.mail.sources.import_mbox",
             Self::VaultMailSourcesSync => "vault.mail.sources.sync",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
@@ -5075,6 +5078,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
@@ -6379,6 +6383,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
@@ -7775,6 +7780,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
@@ -8538,6 +8544,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
@@ -9851,6 +9858,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesImportMbox => &["spec"],
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
@@ -11127,6 +11135,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesImportMbox => &["spec"],
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
@@ -14777,6 +14786,9 @@ impl AgentVerb {
             }
             Self::VaultMailSourcesSyncStatus => {
                 "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
+            }
+            Self::VaultMailSourcesImportMbox => {
+                "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."
             }
             Self::VaultMailSourcesSync => {
                 "The vault's owner runs one bounded import step of a mail or calendar source on this device: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."

@@ -5798,6 +5798,9 @@ class Oneiron:
         def sync_status(self, spec):
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync_status(json.dumps(spec))))
+        def import_mbox(self, spec):
+            """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_import_mbox(json.dumps(spec))))
         def sync(self, spec):
             """The vault's owner runs one bounded import step of a mail or calendar source on this device: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
