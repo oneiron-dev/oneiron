@@ -1,9 +1,7 @@
-//! The AGENT_DEF `models` list and `compaction_model` codec (FIX 4472): the
-//! strict decode, the pinned-key encode and the list rules every encode and
-//! decode holds.
+//! Core half of `store::agent_definition_codec::models`: its store-layer items live in `oneiron_store::agent_definition_codec::models` and are
+//! re-exported here; the items below stay in the engine.
 
-use oneiron_model::llm::ModelId;
-use rmpv::Value;
+pub(crate) use oneiron_store::agent_definition_codec::models::*;
 
 use super::decode::text_value;
 use super::keys::{KEY_MODEL_REF, KEY_MODEL_WHEN};
@@ -12,14 +10,8 @@ use crate::store::agent_definition::AgentDefinition;
 use crate::store::agent_manifest::validate_text_field;
 use crate::store::agent_model::AgentModel;
 use crate::store::agent_record::{AGENT_DESC_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES};
-
-const MODEL_REF_TEXT: &str = "model entry model_ref must be a provider/name@revision model id";
-const WHEN_TEXT: &str = "model entry when must be a non-empty UTF-8 string";
-const COMPACTION_MODEL_TEXT: &str = "compaction_model must be a provider/name@revision model id";
-
-fn invalid(reason: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidAgentDefBody(reason))
-}
+use oneiron_model::llm::ModelId;
+use rmpv::Value;
 
 /// The `models` value: each entry the [`crate::store::agent_record::AGENT_MODEL_KEYS`] in pinned
 /// order, in the owner's list order.
