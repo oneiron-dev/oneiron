@@ -21,7 +21,9 @@ use super::provenance::BlobVersionProvenance;
 /// The class the authenticated writer and the version's own provenance imply.
 fn version_process_class(actor: &WriteActor, provenance: &BlobVersionProvenance) -> MadeByClass {
     match provenance {
-        BlobVersionProvenance::AgentRun { .. } => MadeByClass::Concluded,
+        BlobVersionProvenance::AgentRun { .. } | BlobVersionProvenance::SealJob { .. } => {
+            MadeByClass::Concluded
+        }
         _ if actor.actor_class() == EdgeActorClass::Human => MadeByClass::Stated,
         _ => MadeByClass::Concluded,
     }

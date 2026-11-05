@@ -76,6 +76,7 @@ pub use rate::{EsignRateCheck, EsignRateReceipt};
 
 pub mod render;
 mod seal;
+pub(in crate::blob_artifact) use seal::SealJobWrite;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
 mod seal_run;
 pub use seal_run::EsignSealRun;
@@ -94,6 +95,6 @@ mod public_read;
 pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
-pub(crate) use artifact_actor::actor as artifact_machine;
+pub(crate) use artifact_actor::{actor as artifact_machine, seal_actor as seal_machine};
 
 pub mod template;

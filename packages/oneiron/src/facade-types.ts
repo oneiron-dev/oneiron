@@ -4273,7 +4273,7 @@ export type SensitivityName = "public" | "private" | "internal" | "sensitive" | 
 /** `oneiron::gate::policy_manifest_doors::types::SensitivityBand` */
 export type SensitivityBand = number | SensitivityName
 /** `oneiron::gate::policy_manifest_doors::types::SourceTrustRow` */
-export type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; receipted?: boolean; warned?: boolean }
+export type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; auto_checker?: string | null; receipted?: boolean; warned?: boolean }
 /** `oneiron::gate::policy_manifest_doors::types::SourceTrust` */
 export type SourceTrust = SourceTrustRow | SourceTrustRow[] | boolean | SensitivityBand
 /** `oneiron::gate::policy_manifest_doors::types::PolicySignature` */
