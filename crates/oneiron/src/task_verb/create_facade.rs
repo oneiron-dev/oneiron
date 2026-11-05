@@ -681,12 +681,15 @@ impl Memory<'_> {
         spec: &Value,
         now: u64,
     ) -> MemoryResult<AttemptId> {
+        // FIX 11687: freeze who queued this realization, as a dispatch
+        // does; a positive withdrawal ends it before admission runs it.
+        let requester = crate::agent_dispatch::QueuedRequester::of_memory(self);
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault(),
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
-                payload: encode_task_realization_input(spec)?,
+                payload: encode_task_realization_input(spec, requester.as_ref())?,
                 dedupe_key: Some(task_route_dedupe_key(task_ref)),
                 run_id: None,
                 now,

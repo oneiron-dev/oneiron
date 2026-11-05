@@ -2813,7 +2813,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/payload_erase/requester.rs",
-     "purpose": "A hard-erased requester's standing, out of the agent dispatch payloads that keep it (FIX 11689)",
+     "purpose": "A hard-erased requester's standing, out of the agent dispatch and TASK realization payloads that keep it…",
      "surface": {
       "crate-vis": 2
      }
@@ -28135,6 +28135,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/admission/requester.rs",
+     "purpose": "Terminal end of a queued TASK realization its requester withdrew (FIX 11687): the Dreamer lane's mirror of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
@@ -31123,7 +31133,7 @@
      "path": "src/dreamer_wake/owed.rs",
      "purpose": "The wake's owed paid calls (FIX 11450): a paid model call a crash left unsettled",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -63475,6 +63485,7 @@
      "notable": [
       "ManifestSource",
       "OwnerSecretRegistration",
+      "PrivateCopySecret",
       "RequestedBinding",
       "SecretRegistered"
      ],
@@ -63482,8 +63493,8 @@
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
-      "struct": 4
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -63727,7 +63738,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/storage_seal.rs",
-     "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
+     "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 4, with required…",
      "surface": {
       "crate-vis": 23
      }
@@ -80980,7 +80991,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -81855,7 +81866,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -90964,7 +90975,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 190,
+     "files": 191,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92016,7 +92027,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6421,
+   "source_files": 6422,
    "test_files": 895
   },
   "oneiron-android": {
