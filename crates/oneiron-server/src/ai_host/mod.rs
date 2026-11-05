@@ -151,6 +151,8 @@ pub struct AiHandle {
     /// Dreamer's passes ask their typed questions through it, and the
     /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
+    /// The runtime recorded by the actual host Coach worker installation.
+    coach_host_wake: Arc<OnceLock<tokio::runtime::Handle>>,
     /// The same cheap compactor code mode serves, exposed to typed host
     /// triggers once that route is bound. No route means MODEL_UNAVAILABLE.
     host_compaction: Arc<
