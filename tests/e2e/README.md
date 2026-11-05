@@ -343,7 +343,9 @@ Persisted artifacts are redacted first. Credential-bearing private stdout remain
 CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
 stdin or credentials. SDK top-level failures also write their error envelope to stderr for
 redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values.
-Process logs are bounded rings; incomplete lines are not persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
+Bun receives a redacted error message rather than raw exception properties, so its JUnit
+cannot inspect a failing CLI's private stdout. Process logs are bounded rings; incomplete
+lines are not persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
 operation carrying a generated secret-test value. Never log credentials, raw
 SDK process output, pairing links, or recognisable secret sentinels. Use
 `artifacts.json(name, value)` rather than direct log files. HTTP automatic logs
