@@ -74,6 +74,7 @@ impl EntityStoreMaintenance for Store {
     }
     fn port_entity_document_pointer_put(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
         body: &[u8],
@@ -86,7 +87,7 @@ impl EntityStoreMaintenance for Store {
         }
         // A pointer body is no epoch: what an epoch summary's words carried
         // stays on its record (Sol round 23).
-        super::keep_worlds_of_unmade_epoch_in_txn(self, txn, id, entity_type, body)?;
+        super::keep_worlds_of_unmade_epoch_in_txn(write, txn, id, entity_type, body)?;
         let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         payload.extend_from_slice(body);
         self.entities.put(txn, id.as_bytes(), &payload)

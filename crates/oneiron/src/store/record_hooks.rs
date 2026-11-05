@@ -258,6 +258,10 @@ pub trait StoreRecordHooks: Send + Sync {
         store: &Store,
         wtxn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<()>;
 
     /// The engine's `workspace_roster::reject_audience_edit_unlink`.
@@ -305,8 +309,16 @@ pub trait StoreRecordHooks: Send + Sync {
 
     /// The engine's `workspace_roster::erase_room_side_rows`, an entity
     /// side-row eraser of `deletion::derived_rows`.
-    fn erase_room_side_rows(&self, store: &Store, txn: &mut RwTxn<'_>, id: &EntityId)
-    -> Result<()>;
+    fn erase_room_side_rows(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
+    ) -> Result<()>;
 
     /// The engine's `voice_identity::erase_recognition_for_subject_in_txn`,
     /// an entity side-row eraser of `deletion::derived_rows`.
