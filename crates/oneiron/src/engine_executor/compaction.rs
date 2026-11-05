@@ -994,6 +994,21 @@ pub(super) fn text_ids(text: &str) -> Vec<String> {
     found.iter().map(EntityId::to_hex).collect()
 }
 
+/// The read affordance a fold stub lists for one stored result's read path:
+/// the path as a first chunk (`…/chunk/0`), the form `sandbox.fs.read_file`
+/// reads, unless it already names a chunk.
+pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<String> {
+    let path = if read.contains("/chunk/") {
+        read.to_owned()
+    } else {
+        format!("{read}/chunk/0")
+    };
+    Ok(serde_json::to_string(&serde_json::json!({
+        "sandbox.fs.read_file": path,
+        "max_chunk_bytes": super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES,
+    }))?)
+}
+
 /// Every stored result's read path `text` names.
 pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<String>) {
     let mut rest = text;
