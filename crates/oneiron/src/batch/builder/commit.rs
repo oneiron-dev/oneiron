@@ -511,7 +511,9 @@ fn apply_admitted(
         crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;
     }
     rekeys.finish(&vault.store, wtxn)?;
+    let rederive_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
+    let changes_claims = rederive_scope.finish().proactivity_changed || changes_claims;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     // The approval's commit carries its consolidation debt (FIX 9598).
     if !approved_vad_ids.is_empty() {
