@@ -41,6 +41,10 @@ pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 /// conflict key.
 pub const COMM_PROJECTED_CLAIM: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 
+/// An explicitly born touch's source event (`comm::born_touch`). Parts: original
+/// claim id, the actual stored row, and its immutable base birth.
+pub const COMM_BORN_TOUCH_EVENT: &[u8] = b"oneiron.comm.born_touch_event.v1\0";
+
 /// The MACHINE assignee of one connector class (`outbound::connector_actor_id`).
 /// Parts: normalized connector class.
 pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";

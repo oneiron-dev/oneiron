@@ -15,6 +15,7 @@
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
 
+mod born_touch;
 mod claims;
 mod consent;
 mod descriptor;
@@ -68,6 +69,7 @@ pub(crate) use self::generic_put_routing::{
     RoutedBatchPuts, route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
     take_projector_only_batch_puts_preserving_births_in_txn,
 };
+pub(crate) use self::born_touch::DeferredBornTouches;
 pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
@@ -435,6 +437,7 @@ impl ProjectorIndexDelta {
 struct ProjectedCommEvent<'a> {
     rule: ProjectorRule,
     source_event_id: EntityId,
+    original_head: Option<EntityId>,
     party_ref: EntityId,
     channel_class: Option<&'a str>,
     thread_ref: Option<&'a str>,

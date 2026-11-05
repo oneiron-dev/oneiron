@@ -294,6 +294,7 @@ pub(crate) fn record_comm_actor_send_receipt_in_txn(
         thread_ref: None,
         occurred_at,
         projected: false,
+        original_head: None,
     };
     put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
 }
@@ -370,6 +371,7 @@ pub(crate) fn record_comm_thread_event_in_txn(
         thread_ref: Some(thread),
         occurred_at,
         projected: false,
+        original_head: None,
     };
     put_comm_record_in_txn(vault, txn, EntityId::now(), &record)
 }
@@ -431,6 +433,7 @@ pub(super) fn put_source_event_in_txn(
         thread_ref,
         occurred_at,
         projected: false,
+        original_head: None,
     };
     let id = vault.store.clock.entity_id()?;
     put_comm_record_in_txn(vault, wtxn, id, &record)?;
@@ -483,6 +486,7 @@ fn project_event_in_txn(
         thread_ref,
         occurred_at,
         projected,
+        original_head,
     } = record
     else {
         return Err(CommError::InvalidRecord);
@@ -491,7 +495,10 @@ fn project_event_in_txn(
     // replica's pass finds that projection's restriction (F06).
     let pending_stop = kind == CommEventKind::InboundStop
         && holds_pending_stop_in_txn(&vault.store, &*wtxn, &event_id)?;
-    if projected && !pending_stop {
+    // Re-applying an explicitly born Put can make its original head active
+    // again. Reconcile that existing head even when its source already ran;
+    // ordinary consumed events still take the original early-return path.
+    if projected && !pending_stop && original_head.is_none() {
         // A peer pass already committed this snapshotted event. A join or
         // leave is a durable membership boundary even when its commit
         // mutated no claim (a join while a member claim already stands, a
@@ -529,12 +536,13 @@ fn project_event_in_txn(
     let event = ProjectedCommEvent {
         rule: *rule,
         source_event_id: event_id,
+        original_head,
         party_ref,
         channel_class: recipient_class.as_deref(),
         thread_ref: thread_ref.as_deref(),
         occurred_at,
     };
-    let mut delta = if projected {
+    let mut delta = if projected && original_head.is_none() {
         match peer_stop_projection_in_txn(vault, &*wtxn, &event)? {
             // Still in flight: the event keeps holding and waits.
             None => return Ok(ProjectorIndexDelta::default()),
@@ -553,6 +561,7 @@ fn project_event_in_txn(
             thread_ref,
             occurred_at,
             projected: true,
+            original_head,
         };
         put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
         delta.source_stamped = true;
@@ -574,6 +583,7 @@ fn apply_projector_rule_in_txn(
     let &ProjectedCommEvent {
         rule,
         source_event_id,
+        original_head,
         party_ref,
         channel_class,
         thread_ref: _,
@@ -596,17 +606,22 @@ fn apply_projector_rule_in_txn(
                 channel_class: channel.to_owned(),
                 occurred_at,
             };
-            let (new_id, minted) = put_projected_comm_claim_in_txn(
-                vault,
-                wtxn,
-                source_event_id,
-                &value,
-                occurred_at,
-                admission,
-            )?;
-            if !minted {
-                return Ok(ProjectorIndexDelta::default());
-            }
+            let new_id = if let Some(id) = original_head {
+                let Some(id) = super::born_touch::adopt_born_touch_head_in_txn(
+                    vault, wtxn, id, &value, admission,
+                )? else {
+                    return Ok(ProjectorIndexDelta::default());
+                };
+                id
+            } else {
+                let (id, minted) = put_projected_comm_claim_in_txn(
+                    vault, wtxn, source_event_id, &value, occurred_at, admission,
+                )?;
+                if !minted {
+                    return Ok(ProjectorIndexDelta::default());
+                }
+                id
+            };
             // Provider spellings normalize to one slot, so the slot can hold
             // more than one live head (F06 H415). The newest touch stays live
             // and supersedes every other; this touch wins a tie, and among

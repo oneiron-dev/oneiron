@@ -15,7 +15,7 @@ use oneiron_contracts::error::{Error, RecordError, Result};
 pub const MAX_SEND_REF_BYTES: usize = 256;
 pub const OPT_OUT_CLEAR_REASON: &str = "comm_opt_out_clear";
 
-const COMM_RECORD_KEYS: [&str; 15] = [
+const COMM_RECORD_KEYS: [&str; 16] = [
     "schema_version",
     "record_kind",
     "sequence",
@@ -31,6 +31,7 @@ const COMM_RECORD_KEYS: [&str; 15] = [
     "view_bytes",
     "entry_count",
     "actor_ref",
+    "original_head",
 ];
 
 const RECORD_KIND_EVENT: &str = "event";
@@ -92,6 +93,8 @@ pub enum CommRecord {
         thread_ref: Option<String>,
         occurred_at: u64,
         projected: bool,
+        /// The already-admitted, explicitly born touch itself; never a head factory.
+        original_head: Option<EntityId>,
     },
     Gate {
         party_ref: EntityId,
@@ -130,6 +133,7 @@ pub fn encode_comm_record(record: &CommRecord) -> CommResult<Vec<u8>> {
             thread_ref,
             occurred_at,
             projected,
+            original_head,
         } => {
             values[1] = Value::from(RECORD_KIND_EVENT);
             values[2] = Value::from(*sequence);
@@ -139,6 +143,7 @@ pub fn encode_comm_record(record: &CommRecord) -> CommResult<Vec<u8>> {
             values[6] = thread_ref.as_deref().map_or(Value::Nil, Value::from);
             values[7] = Value::from(*occurred_at);
             values[8] = Value::Boolean(*projected);
+            values[15] = original_head.map_or(Value::Nil, |id| Value::from(id.to_hex()));
         }
         CommRecord::Gate {
             party_ref,
@@ -200,6 +205,11 @@ pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
     let kind = required_string(entries, "record_kind").map_err(|_| CommError::InvalidRecord)?;
     let party_ref =
         required_entity_ref(entries, KEY_PARTY_REF).map_err(|_| CommError::InvalidRecord)?;
+    if kind != RECORD_KIND_EVENT
+        && !matches!(required_value(entries, "original_head"), Ok(Value::Nil))
+    {
+        return Err(CommError::InvalidRecord);
+    }
     match kind {
         RECORD_KIND_EVENT => {
             let event_kind = required_string(entries, "event_kind")
@@ -231,7 +241,15 @@ pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
                     if thread_ref.is_some() && channel_class.is_none() => {}
                 _ => return Err(CommError::InvalidRecord),
             }
+            let original_head = optional_string(entries, "original_head")
+                .map_err(|_| CommError::InvalidRecord)?
+                .map(|id| EntityId::from_hex(&id).map_err(|_| CommError::InvalidRecord))
+                .transpose()?;
+            if original_head.is_some() && event_kind != CommEventKind::TouchAsserted {
+                return Err(CommError::InvalidRecord);
+            }
             Ok(CommRecord::Event {
+                original_head,
                 sequence: required_u64(entries, "sequence")
                     .map_err(|_| CommError::InvalidRecord)?,
                 kind: event_kind,
