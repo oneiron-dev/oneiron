@@ -597,6 +597,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: header.learned_at,
+                row_version: None,
                 data: encode_claim_body(&body)?,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,

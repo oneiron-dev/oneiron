@@ -127,6 +127,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data: super::super::encode_claim_body(&record)?,
                     allow_maintenance: false,
                     allow_reserved_predicate: true,

@@ -160,6 +160,12 @@ pub(crate) async fn run_context_pack(
     } else {
         embed_media_seeds(server, media, query).await?
     };
+    let (mut media_memory, media) = (server.memory.empty_lease(), media);
+    media_memory.materialized(
+        0,
+        (media.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<crate::api::MediaSeed>() as u64),
+    );
 
     let mut builder = server
         .vault
