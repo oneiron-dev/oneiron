@@ -23,7 +23,7 @@ impl Child {
     /// reserve fixed at that spawn for a read or a scoped child. A summary is
     /// the fold the reserve is kept for, so it runs to the whole clock. No
     /// reserve is taken twice and no time is added.
-    fn left_ms(&self, now_ms: u64) -> u64 {
+    pub(super) fn left_ms(&self, now_ms: u64) -> u64 {
         let binding = &self.job.binding;
         let left = binding.child_cutoff_unix_ms.saturating_sub(now_ms);
         let Some(clock) = self.clock else {
