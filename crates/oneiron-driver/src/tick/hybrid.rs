@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::time::Instant;
 
 use super::{
-    ArmedLane, CommitmentDeadline, DeadlineSource, PushTick, SessionHintCarrier, Tick, TickSource,
+    ArmedLane, CommitmentDeadline, DeadlineSource, PushTick, QueuedSessionHint, Tick, TickSource,
     TimerTick, sleep_until_due,
 };
 
@@ -165,6 +165,10 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
         }
     }
 
+    async fn wait_for_buffered_session_hint(&mut self) {
+        self.push.wait_for_buffered_session_hint().await;
+    }
+
     fn take_buffered_session_hint(
         &mut self,
     ) -> Option<(
@@ -176,11 +180,11 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
         self.push.take_buffered_session_hint()
     }
 
-    fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+    fn take_buffered_session_hint_carrier(&mut self) -> Option<QueuedSessionHint> {
         self.push.take_buffered_session_hint_carrier()
     }
 
-    fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
+    fn take_delivered_session_hint_carrier(&mut self) -> Option<QueuedSessionHint> {
         self.push.take_delivered_session_hint_carrier()
     }
 

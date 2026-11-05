@@ -29,6 +29,8 @@ pub(crate) struct SecretCustodyAdmission {
     pub(crate) name: String,
     /// The custody class.
     pub(crate) class: CustodyClass,
+    /// Whether this record permits plaintext in a model context.
+    pub(crate) model_reveal_allowed: bool,
     /// Lifecycle status.
     pub(crate) status: SecretCustodyStatus,
     /// Rotation generation counter (the S6 staleness signal leases stamp).
@@ -212,9 +214,14 @@ pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<Secre
         Some(_) => return Err(invalid_body("declared_paths must be an array")),
         None => return Err(invalid_body("declared_paths")),
     };
+    let model_reveal_allowed = match required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[13]) {
+        Some(ValueRef::Boolean(allowed)) => *allowed,
+        _ => return Err(invalid_body("model_reveal_allowed")),
+    };
     Ok(SecretCustodyAdmission {
         name,
         class,
+        model_reveal_allowed,
         status,
         rotation_generation,
         bindings,
