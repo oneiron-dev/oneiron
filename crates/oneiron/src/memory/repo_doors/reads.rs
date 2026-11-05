@@ -209,8 +209,18 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoSymbolsDefinitionsInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSymbolsDefinitionsOutput>> {
-        let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected, _, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            &txn,
+            binding,
+            input.repo,
+            input.portable_repo.as_ref(),
+            &input.git_ref,
+            NO_PATHS,
+            RepoAccessIntent::Read,
+        )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
         let (mount, _) =
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let artifact = mount.code_artifact_id();
@@ -231,12 +241,12 @@ impl Memory<'_> {
             .into_iter()
             .filter(|definition| bounds.admits_path(RepoAccessIntent::Read, &definition.path))
             .collect();
-        let mut rows = vec![input.repo, artifact];
+        let mut rows = vec![selected, artifact];
         rows.extend(definitions.iter().map(|definition| definition.entity_id));
         Ok(RepoRunAnswer {
             rows,
             output: RepoSymbolsDefinitionsOutput {
-                repo: input.repo,
+                repo: selected,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
                 definitions: definitions

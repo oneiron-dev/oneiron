@@ -36,6 +36,7 @@ use crate::codebase::RepoRef;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::origin::RepoPortableId;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -108,7 +109,7 @@ impl Vault {
         class: EdgeActorClass,
         repo: EntityId,
     ) -> Result<RepoAdmission> {
-        self.admit_repo_in_txn(txn, actor, class, repo, None)
+        self.admit_repo_in_txn(txn, actor, class, repo, None, None)
     }
 
     /// Admits `actor` to the repo handle `repo` as
@@ -132,6 +133,7 @@ impl Vault {
             actor,
             class,
             repo,
+            None,
             Some((target, RepoAccessIntent::Read)),
         )
     }
@@ -156,6 +158,7 @@ impl Vault {
             actor,
             class,
             repo,
+            None,
             Some((target, RepoAccessIntent::Edit)),
         )
     }
@@ -164,15 +167,24 @@ impl Vault {
     /// membership alone; with one, the first Grant (in id order) whose
     /// bounds admit the target wins, and the refusal is the one that got
     /// furthest across the actor's Grants for this handle, a held Grant's
-    /// [`RepoAccessRefusal::MembershipHeld`] among them.
-    fn admit_repo_in_txn(
+    /// [`RepoAccessRefusal::MembershipHeld`] among them. A supplied portable
+    /// selector resolves to the local handle first; absent or unknown uses
+    /// `repo`. The caller's target must name that same selected handle;
+    /// the selector changes no authority and never repairs a mismatched target.
+    pub(crate) fn admit_repo_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
         class: EdgeActorClass,
         repo: EntityId,
+        portable: Option<&RepoPortableId>,
         ask: Option<(&RepoTarget, RepoAccessIntent)>,
     ) -> Result<RepoAdmission> {
+        let resolved = match portable {
+            Some(id) => self.resolve_repo_anchor_by_portable_in_txn(txn, id)?,
+            None => None,
+        };
+        let repo = resolved.unwrap_or(repo);
         let verb = ask.map_or(REPO_READ_VERB, |(_, intent)| intent.verb());
         if principal_standing_in_txn(self, txn, actor, class, verb)?.is_none() {
             return Ok(Err(RepoAccessRefusal::NoMembership));

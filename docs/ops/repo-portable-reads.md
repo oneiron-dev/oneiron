@@ -1,7 +1,8 @@
-# Portable repo selectors for run snapshot reads
+# Portable repo selectors for run reads
 
-The run verbs `self.code.snapshots.get` and `self.code.snapshots.read` accept
-an optional `portable_repo` field beside the required `repo` CODE id.
+The run verbs `self.code.snapshots.get`, `self.code.snapshots.read`, and
+`self.code.symbols.definitions` accept an optional `portable_repo` field
+beside the required `repo` CODE id.
 `portable_repo` is the repo manifest's portable id: exactly 64 lowercase
 hexadecimal digits. It is a selector, not authority.
 
@@ -19,7 +20,13 @@ checks the same selector and hit state, run lease, snapshot pin and read
 lane again before returning bytes. Reads without a portable hit keep the
 existing served-anchor-or-fallback reveal behavior.
 
-These selectors apply to the two run snapshot read verbs only. They do not
-change native Git, snapshot ingestion, symbol, work, or view doors. They
-add no grants and do not change masking, owner approval, or repo admission
-rules. A manifest alone never grants access.
+Symbol definitions use the same selected repo and pinned snapshot. The
+symbol manifest must still match that snapshot's repo ref and commit, and
+each returned definition must pass the Grant's readable-path bounds.
+
+These selectors do not change native Git, snapshot ingestion, symbol
+writes, work, or view doors. Native repo admission checks the same typed
+selector against the existing EntityId Grant bounds; it grants no new
+rights. Served-anchor lookup still has no portable selector. Reads add no
+grants and do not change masking, owner approval, or repo admission rules.
+A manifest alone never grants access.
