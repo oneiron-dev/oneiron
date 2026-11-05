@@ -149,6 +149,7 @@ impl Selection {
                 super::Getter::EmbedMedia,
                 super::Getter::Codebase,
                 super::Getter::EntityRevision,
+                super::Getter::ProvenanceBirth,
             ] {
                 out.captured_rows(&getter.capture(&vault.store, txn)?, |at| {
                     [
@@ -166,6 +167,8 @@ impl Selection {
                         &crate::side_table::ENTITY_REVISION_DOC,
                         &crate::side_table::ENTITY_REVISION_FRONTIER,
                         &crate::side_table::ENTITY_REVISION_IDENTITY,
+                        &crate::side_table::PROVENANCE_ROW_BIRTH,
+                        &crate::side_table::PROVENANCE_BIRTH_BY_TRIGGER,
                     ]
                     .into_iter()
                     .any(|decl| at.in_table(decl))
