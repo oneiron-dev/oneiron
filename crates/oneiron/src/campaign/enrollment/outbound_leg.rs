@@ -378,6 +378,13 @@ impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
     fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
         self.0.reported_cost()
     }
+
+    /// The host brings a paced leg back at its `retry_at`
+    /// (`EnrollmentLegDrive::Paced`, FIX 11660): a full count-bound window
+    /// waits instead of denying.
+    fn waits_for_paced_window(&self) -> bool {
+        true
+    }
 }
 
 /// FIX 6424 part 2a (Engine 10-20 21:0x ruling 1): the approve-once digest
