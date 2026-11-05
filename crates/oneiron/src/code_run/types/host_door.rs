@@ -26,6 +26,9 @@ pub trait SelfDispatcher {
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
+    /// Caller notice from this call's verb hooks, already released by the door.
+    /// It stays beside the output and shares the answer's row provenance.
+    pub hook_notice: Option<serde_json::Value>,
     pub observations: Vec<RunObservation>,
 }
 
@@ -37,6 +40,7 @@ impl AgentVerbAnswer {
         Self {
             output,
             rows,
+            hook_notice: None,
             observations: Vec::new(),
         }
     }
