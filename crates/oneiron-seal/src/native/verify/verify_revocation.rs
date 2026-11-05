@@ -349,6 +349,7 @@ pub(super) fn ocsp_entry_valid<'a>(
             candidates.push(candidate);
         }
     }
+    memory.admit_len::<&[u8]>(basic.tbs_response_data.responses.len())?;
     Ok(ocsp_basic_valid(
         &basic,
         &candidates,
