@@ -93,7 +93,9 @@ pub(crate) use integrity::{
     stage_stale_mark_in_txn, stale_in_txn, withdraw_from_lost_source_in_session_txn,
     withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
-pub(crate) use lmdb_visibility::{deletion_memo_scope, recall_memo_key};
+pub(crate) use lmdb_visibility::{
+    deletion_memo_scope, hard_erased_ids_in_txn, names_no_actor_in_txn, recall_memo_key,
+};
 pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 use oneiron_store::ports::manual_clock;

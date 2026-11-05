@@ -1,5 +1,5 @@
-//! Per-window bytes retained by a staged foreign import: admitted updates
-//! in CONTENT and native held-stamp records in STAMPS.
+//! Per-window native held-stamp records retained in STAMPS. CONTENT uses
+//! its separate carrier, which also retains admitted born-with text.
 
 use crate::window_key::WindowKey;
 use oneiron_base::error::{Error, Result};

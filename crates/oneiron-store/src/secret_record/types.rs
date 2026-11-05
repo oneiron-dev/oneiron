@@ -4,10 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::secret_record::{SECRET_SCOPE_READ, SecretBinding, SecretCustodyFloor, TierBand};
 pub use oneiron_contracts::secret_custody::{CustodyClass, CustodyTier};
-pub use oneiron_store::secret_record::{
-    SECRET_SCOPE_READ, SecretBinding, SecretCustodyFloor, TierBand,
-};
 
 /// Lifecycle status of a custody record. Only `Active` records are usable;
 /// a `Revoked` name frees for re-registration.
