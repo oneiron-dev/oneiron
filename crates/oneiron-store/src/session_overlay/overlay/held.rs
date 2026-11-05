@@ -13,6 +13,7 @@ use super::super::journal::PromotePlan;
 use super::super::keyspace::OverlayState;
 use super::lifecycle::{Lease, SessionOverlay};
 use super::retained::plan_heap;
+use oneiron_contracts::error::Result;
 
 /// The states live snapshots read, one entry per snapshot, and the heap
 /// of each live promotion plan.
@@ -50,6 +51,15 @@ impl Drop for PlanCharge {
 }
 
 impl Lease {
+    /// Keeps this lease's exact snapshot and its retained-memory accounting.
+    pub(in crate::session_overlay) fn retain(&self) -> Result<Self> {
+        let mut lease = self.overlay.acquire_existing_lease(self.generation)?;
+        if let Some(state) = &self.snapshot_state {
+            lease.hold_preview(Arc::clone(state));
+        }
+        Ok(lease)
+    }
+
     /// Holds the overlay's published state as the state this snapshot
     /// lease reads, loaded under the hold so a publish either counts it or
     /// replaced it before the load.
