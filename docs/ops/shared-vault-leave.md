@@ -2,6 +2,9 @@
 
 `SyncConnection::check_shared_leave(vault_id, member)` remains the manual
 check. It asks the configured home with the connection's transport credential.
+Leave requests carry credentials only over HTTPS or HTTP on a numeric loopback
+address. A configured mesh dialer does not exempt this HTTP request, which uses
+reqwest rather than that dialer. Redirects are not followed.
 A failed request, a refused request or an unverified answer is never a leave.
 Only an outcome verified against the environment's trusted home root and the
 expected shared-vault id and member can end the lane.

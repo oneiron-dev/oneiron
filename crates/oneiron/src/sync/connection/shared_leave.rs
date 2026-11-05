@@ -5,6 +5,21 @@ use crate::sync::TransportError;
 use crate::sync::client::{SyncEvent, SyncStatus};
 use crate::sync::shared_leave::SharedLeaveReceipt;
 
+pub(super) fn require_credential_transport(url: &reqwest::Url) -> Result<(), TransportError> {
+    let loopback = url.host_str().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    });
+    if url.scheme() == "https" || (url.scheme() == "http" && loopback) {
+        Ok(())
+    } else {
+        Err(TransportError::InvalidPayload(
+            "leave notice credentials need HTTPS or numeric loopback",
+        ))
+    }
+}
+
 impl SyncConnection {
     /// Runs like [`Self::run_observed`], checking the configured member's leave
     /// notices beside the connection loop. The target names the shared

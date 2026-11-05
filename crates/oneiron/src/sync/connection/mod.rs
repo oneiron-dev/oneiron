@@ -286,6 +286,7 @@ impl SyncConnection {
             .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
         url.set_path(LEFT_NOTICES_PATH);
         url.set_query(None);
+        shared_leave::require_credential_transport(&url)?;
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
