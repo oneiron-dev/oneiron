@@ -288,6 +288,8 @@ pub(crate) struct Wait<'a, 'b> {
     pub(crate) grant: Grant<'a>,
     pub(crate) asks: &'a mut CallAsks<'b>,
     pub(crate) deadline: Instant,
+    /// The caller's wall deadline, not extended by waits for room.
+    pub(crate) fixed_deadline: bool,
     pub(crate) grace: Duration,
 }
 
@@ -537,6 +539,7 @@ impl OrganProcess {
             grant,
             asks,
             deadline,
+            fixed_deadline,
             grace,
         } = wait;
         lock(&self.grants).insert(grant.name.to_owned());
@@ -547,6 +550,7 @@ impl OrganProcess {
                 grant,
                 asks: &mut *asks,
                 deadline,
+                fixed_deadline,
                 grace,
             };
             self.exchange(call, fds, &reply, wait)
@@ -777,6 +781,7 @@ impl OrganProcess {
             grant,
             asks,
             deadline: set,
+            fixed_deadline,
             grace,
         } = wait;
         if !self.is_alive() {
@@ -787,7 +792,11 @@ impl OrganProcess {
         // meanwhile, the reader's for frames and the call's own: waiting for
         // room is not the call's time (FIX 6196).
         let room = asks.room();
-        let clock = Clock::new(set, room.waits()).with_reader(&self.inbox.room);
+        let clock = if fixed_deadline {
+            Clock::fixed(set)
+        } else {
+            Clock::new(set, room.waits()).with_reader(&self.inbox.room)
+        };
         let call = ToOrgan::Call(call);
         let unwanted = || grant.revoked() || !self.is_alive();
         let sent = self

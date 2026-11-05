@@ -40,7 +40,7 @@ mod verify;
 
 pub use custody_keys::CustodySealKeys;
 pub use file_keys::{FileSealKeys, pem_certificates};
-pub use pdf_work::inspect_pdf_pages_via_organ;
+pub use pdf_work::{PdfInspectionError, inspect_pdf_pages_via_organ, inspect_pdf_region_until};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
