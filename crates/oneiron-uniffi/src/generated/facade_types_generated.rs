@@ -48628,6 +48628,8 @@ pub struct NativeOutputRequest {
     pub report: Option<crate::WireJson>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<MadeBy>,
+    #[serde(rename = "read_rows", default, skip_serializing_if = "Option::is_none")]
+    pub read_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::blob_artifact::family::VersionReconciliation`.

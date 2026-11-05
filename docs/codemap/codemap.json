@@ -6634,7 +6634,7 @@
      "path": "src/batch/builder/preflight.rs",
      "purpose": "Claim-gate preflight loop including CommitmentGapDecay arms",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -7328,7 +7328,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -29619,7 +29619,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 4
      }
     },
@@ -33284,7 +33284,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 11,
-      "fn": 8,
+      "fn": 9,
       "re-export": 3
      }
     },
@@ -65064,7 +65064,7 @@
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "struct": 1
      }
@@ -107219,7 +107219,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/seal/fetch.rs",
-     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only, each fetch inside the fetch…",
+     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL/OCSP reply, each fetch inside the…",
      "surface": {
       "crate-vis": 1
      }
@@ -109266,7 +109266,7 @@
      "path": "src/native/pdf/admitted.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -109392,9 +109392,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/profile/material.rs",
-     "purpose": "B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs",
+     "purpose": "B-LT validation material: working CRLs first, then OCSP for uncovered certificates",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/profile/material/ocsp.rs",
+     "purpose": "OCSP fallback for a certificate not covered by a working CRL",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -109470,7 +109480,7 @@
      "path": "src/native/verify/verify_chain_gates.rs",
      "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -109480,7 +109490,7 @@
      "path": "src/native/verify/verify_dss_core.rs",
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -109719,7 +109729,7 @@
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
     },
     "native": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109735,7 +109745,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 12
   },
   "oneiron-server": {
@@ -115896,6 +115906,16 @@
      "notable": [],
      "path": "src/api/owner_routes/handoff_alarm_routes.rs",
      "purpose": "`/v1/owner/authority/handoff-alarms`: the saved fork alarms a held root handoff left (OF-166 = A)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/harness_evaluation_routes.rs",
+     "purpose": "Owner-supplied scores for the native Dreamer tuning harness",
      "surface": {
       "crate-vis": 1
      }
@@ -122563,7 +122583,7 @@
      "path": "src/managed/state_serve/control.rs",
      "purpose": "The ctl dispatcher: every parsed ctl request a managed vault answers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -127880,7 +127900,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 662,
+     "files": 663,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128393,7 +128413,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1543,
+   "source_files": 1544,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -136078,13 +136098,14 @@
       "ShedCause",
       "ShedStatus",
       "TrainingPurgeState",
-      "TrainingPurgeStateWire"
+      "TrainingPurgeStateWire",
+      "VmOutboxCompanionState"
      ],
      "path": "src/lib/ctl.rs",
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 4,
-      "enum": 12,
+      "enum": 13,
       "fn": 6,
       "re-export": 3,
       "struct": 4

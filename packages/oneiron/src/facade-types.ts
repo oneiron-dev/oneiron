@@ -6079,7 +6079,7 @@ export type DeckProposeRejection = { inspection: DeckRejectionInspection; report
 /** `oneiron::blob_artifact::verbs::DeckProposeOutcome` */
 export type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null }
 /** `oneiron::blob_artifact::verbs::NativeOutputRequest` */
-export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null }
+export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null; read_rows?: string[] }
 /** `oneiron::blob_artifact::family::VersionReconciliation` */
 export type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView }
 /** `oneiron::edit_roundtrip::paragraph_review::ParagraphJudgment` */
