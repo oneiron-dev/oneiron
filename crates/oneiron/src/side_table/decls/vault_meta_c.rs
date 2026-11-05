@@ -157,6 +157,9 @@ side_tables! {
     /// (FIX 10434): `draft_source_rows`. Key: id16(source) + id16(actor) + u8(signal) +
     /// id16(task).
     COACH_AGENT_HEALTH_CARD_BY_SOURCE: VaultMeta b"coach:agent_health_card_by_source:v1:" Raw;
+    /// The latest wake waiting for a free live health-review slot (FIX 9224).
+    /// Key: target attempt id16 + big-endian lease generation4.
+    COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -174,6 +177,12 @@ side_tables! {
     /// be64 of the lease generation, be32 of the call.
     COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
+    /// One durable step capture's owner witness (FIX 6734): the owner an erase takes the
+    /// capture for, its role in the step, and the capture's full step key. Written with the
+    /// capture and rebound with its terminal claim; the capture eraser drops every witness
+    /// of a capture it takes, so no own scrub. Key: id16 of the owner, one role byte, then
+    /// the capture's step key.
+    COACH_BLOCKED_SOURCE_OWNER: VaultMeta b"coach:blocked_source_owner:v1:" Raw;
     /// Where the Coach's contribution checks resume: the credit key and target (a loaded skill or
     /// a used edge's two ends) of the last candidate a pass put to its replay host, cleared once a
     /// pass reaches the end of the credit table, or by an erase of an entity it names. Key: ().
