@@ -36,6 +36,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
+use crate::origin::RepoPortableId;
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 use crate::store::code_snapshot::RepoRef;
 
@@ -178,6 +179,7 @@ pub fn serve_bounded_with_authority(
         push_wait: Some(bounds.repository_wait),
         caller: ServeCaller::InProcess,
         read: None,
+        push_selection: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -216,6 +218,7 @@ pub fn serve_with_provenance(
         push_wait: None,
         caller: ServeCaller::InProcess,
         read: None,
+        push_selection: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -242,6 +245,7 @@ pub fn serve_with_authority(
         push_wait: None,
         caller: ServeCaller::InProcess,
         read: None,
+        push_selection: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -263,6 +267,9 @@ pub(super) struct ServeTerms<'a> {
     /// The read recipient the host proved (FIX 7608 2b-ii-B2); `None` on
     /// every in-process and exact path, which serves as before.
     pub(super) read: Option<&'a RepoGitReadContext>,
+    /// The push portable selection beside the read context; `None` serves
+    /// as before.
+    pub(super) push_selection: Option<(RepoPortableId, EntityId)>,
 }
 
 pub(super) fn serve_request(
@@ -283,6 +290,7 @@ pub(super) fn serve_request(
         push_wait,
         caller,
         read,
+        push_selection,
     } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
@@ -304,7 +312,7 @@ pub(super) fn serve_request(
     }
     // Every receive-pack advertisement and RPC meets the push decision
     // before a hook, a child or a body byte exists (G1-PUSH).
-    let push = admit_push(vault, request, repo_name, &repo_dir, caller)?;
+    let push = admit_push(vault, request, repo_name, &repo_dir, caller, push_selection)?;
     // After that same decision, a masked recipient on a marked store is
     // served its masked copy or received into its private ingress; every
     // other exchange is today's (FIX 7608 2b-ii-B2). The canonical store
