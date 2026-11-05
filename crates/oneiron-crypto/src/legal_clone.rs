@@ -3,7 +3,7 @@
 //! The collector holds only the host order's public key. The host owns the
 //! private seed, its separate keystore namespace and its deletion. These APIs
 //! provide neither capture authority nor custody, persistence or deletion proof.
-//! The only source family here is the claim-free gate ledger and its sidecars.
+//! Sources are the gate ledger and its sidecars, or one exact live session.
 //!
 //! Content, encrypted descriptors and the encrypted final summary have separate
 //! bindings. Raw source identities and fingerprints are not serialized in clear
@@ -39,9 +39,11 @@ pub struct CaptureBinding {
     pub source_vault: [u8; 32],
     pub generation: u64,
     pub capture: [u8; 16],
+    /// Digest of the whole actual accepted capture request, not a selected subset.
+    pub request_digest: [u8; 32],
 }
 
-/// The closed, first-family source components. The descriptor keeps the actual
+/// The closed source components. The descriptor keeps the actual
 /// raw key; its digest in a content binding is made from the native family label
 /// and the length-framed key by the source-owning collector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +54,8 @@ pub enum SourceComponent {
     RetentionContext = 3,
     BundleRefs = 4,
     PendingScrub = 5,
+    LiveSessionBody = 6,
+    LiveSessionMetadata = 7,
 }
 
 impl SourceComponent {
@@ -63,9 +67,33 @@ impl SourceComponent {
             3 => Ok(Self::RetentionContext),
             4 => Ok(Self::BundleRefs),
             5 => Ok(Self::PendingScrub),
+            6 => Ok(Self::LiveSessionBody),
+            7 => Ok(Self::LiveSessionMetadata),
             _ => Err(Error::NonCanonical),
         }
     }
+}
+
+/// Exact source identity within one immutable capture. The live-session digest
+/// binds the registry's exact reference string; its instance is minted once for
+/// that session, not derived from a timestamp. Neither field grants authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentSource {
+    GateDecision([u8; 16]),
+    LiveSession {
+        session_ref_digest: [u8; 32],
+        instance: [u8; 16],
+    },
+}
+
+/// Hashes the registry's exact UTF-8 session reference without normalization.
+/// The actual reference and instance remain inside the encrypted descriptor.
+pub fn live_session_ref_digest(session_ref: &str) -> [u8; 32] {
+    let bytes = session_ref.as_bytes();
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron/host-legal-clone/live-session-ref/v1");
+    hasher.update(&(bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
 }
 
 /// One content chunk's exact source and place. `plaintext_fingerprint` covers
@@ -76,7 +104,7 @@ pub struct ContentBinding {
     pub capture: CaptureBinding,
     pub member_ordinal: u64,
     pub component: SourceComponent,
-    pub decision: [u8; 16],
+    pub source: ContentSource,
     pub source_key_digest: [u8; 32],
     pub revision: [u8; 32],
     pub plaintext_fingerprint: [u8; 32],
@@ -109,6 +137,7 @@ impl CaptureBinding {
         out.extend_from_slice(&self.source_vault);
         out.extend_from_slice(&self.generation.to_be_bytes());
         out.extend_from_slice(&self.capture);
+        out.extend_from_slice(&self.request_digest);
         out
     }
 
@@ -127,7 +156,20 @@ impl ContentBinding {
         }
         let mut out = self.capture.aad(Role::Content, self.member_ordinal);
         out.push(self.component as u8);
-        out.extend_from_slice(&self.decision);
+        match self.source {
+            ContentSource::GateDecision(decision) => {
+                out.push(1);
+                out.extend_from_slice(&decision);
+            }
+            ContentSource::LiveSession {
+                session_ref_digest,
+                instance,
+            } => {
+                out.push(2);
+                out.extend_from_slice(&session_ref_digest);
+                out.extend_from_slice(&instance);
+            }
+        }
         out.extend_from_slice(&self.source_key_digest);
         out.extend_from_slice(&self.revision);
         out.extend_from_slice(&self.plaintext_fingerprint);
