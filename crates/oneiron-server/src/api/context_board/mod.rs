@@ -118,6 +118,12 @@ pub(crate) struct ContextBoardRequest {
     #[serde(default)]
     #[schema(example = 400)]
     tasks_budget_tok: Option<usize>,
+    /// Server-internal answering-agent layout actor for ONE live chat turn
+    /// (FIX 12570, chat slice); never on the wire. `None` keeps the
+    /// auth-derived caller actor.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_layout_actor: Option<oneiron::EntityId>,
 }
 
 /// The assembled context for one turn.
@@ -512,18 +518,27 @@ pub(crate) async fn context_board_hydrate(
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
     )
     .await?;
-    // ROOT TASKS layout (FIX 12570, HTTP slice): an explicit per-request
-    // budget wins with its exact value and never consumes pending (no
-    // candidate then); otherwise the staged snapshot projects now (TURN
-    // selects pending when present else live) and the SAME accepted TURN
-    // commit activates the exact candidate. Without TURN this reads live
-    // only and never activates.
+    // ROOT TASKS layout (FIX 12570, HTTP slice + ONE live chat pending
+    // consumer): an explicit per-request budget wins with its exact value
+    // and never consumes pending (no candidate then); otherwise the staged
+    // snapshot projects now (TURN selects pending when present else live)
+    // and the SAME accepted TURN commit activates the exact candidate.
+    // Without TURN and without a chat layout actor this reads live only
+    // and never activates; ONE live chat turn projects its answering
+    // agent's row with native has_turn=true and activates it in the SAME
+    // accepted answer-history commit.
     let (tasks_budget_tok, tasks_layout_candidate) = match req.tasks_budget_tok {
         Some(explicit) => (Some(explicit), None),
         None => {
             let cap_tok =
                 oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok;
-            tasks_layout::hydrate_tasks_selection(&server, &auth, board_turn.is_some(), cap_tok)?
+            tasks_layout::hydrate_tasks_selection(
+                &server,
+                &auth,
+                board_turn.is_some(),
+                cap_tok,
+                req.chat_layout_actor,
+            )?
         }
     };
     let mut parts = board::board_parts(
@@ -575,8 +590,13 @@ pub(crate) async fn context_board_hydrate(
     .map_err(board::board_frame_error)?;
     let board_budget = ContextBoardRenderBudget::of(&board_render, parts.tasks_budget.clone());
     // What a chat turn's context records keep of this render (FIX 6921).
-    let chat_context =
-        chat_emit::capture_chat_context(&auth, memories.as_ref(), &parts.authority, &board_render);
+    let chat_context = chat_emit::capture_chat_context(
+        &auth,
+        memories.as_ref(),
+        &parts.authority,
+        &board_render,
+        tasks_layout_candidate,
+    );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
     // text, which it never changes.
     let chat_sources =
@@ -885,16 +905,19 @@ pub(crate) struct ChatBoard {
 /// pack, its MEMORIES projection and the rendered frame, under `auth`'s own
 /// credential where it reads. `reader`, the answering agent's definition,
 /// shapes the optional recall by its profile; `conversation`, when it
-/// exists, narrows the read to its room's audience. A refusal answers its
-/// status.
+/// exists, narrows the read to its room's audience. `chat_layout_actor`, the
+/// answering agent for ONE live chat turn, selects that agent's ROOT TASKS
+/// row only and never widens content scope; `None` keeps caller behavior.
+/// A refusal answers its status.
 pub(crate) async fn chat_board(
     server: &Arc<SyncServer>,
     auth: CoreAuth,
     conversation: Option<oneiron::EntityId>,
     reader: oneiron::EntityId,
     query: &str,
+    chat_layout_actor: Option<oneiron::EntityId>,
 ) -> Result<ChatBoard, axum::http::StatusCode> {
-    let request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
+    let mut request: ContextBoardRequest = serde_json::from_value(serde_json::json!({
         "retrieval": {
             "conversation_id": conversation.map(|id| id.to_hex()),
             "query": query,
@@ -903,6 +926,7 @@ pub(crate) async fn chat_board(
         },
     }))
     .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    request.chat_layout_actor = chat_layout_actor;
     let (served, Json(context)) =
         context_board_hydrate(auth, State(Arc::clone(server)), Ok(Json(request)))
             .await
