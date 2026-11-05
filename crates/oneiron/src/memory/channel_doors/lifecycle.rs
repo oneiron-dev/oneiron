@@ -158,6 +158,11 @@ pub struct ChannelIdentityLifecycleReceipt {
     /// request names. Absent on `fulfill`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_ref: Option<EntityId>,
+    /// FIX 11660: when a full count-bound budget window paced the request,
+    /// the time its windows open again (engine seconds): bring the same
+    /// request (`request_ref`) back then. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paced_until: Option<u64>,
 }
 
 impl Memory<'_> {
@@ -275,6 +280,7 @@ impl Memory<'_> {
             identity_retiring: result.identity_retiring,
             approval_digest: result.approval_digest,
             request_ref: result.request_ref,
+            paced_until: result.paced_until,
         })
     }
 
@@ -656,5 +662,6 @@ fn recorded_receipt(
         identity_retiring: result.identity_retiring,
         approval_digest: result.approval_digest,
         request_ref: result.request_ref,
+        paced_until: result.paced_until,
     }
 }
