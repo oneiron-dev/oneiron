@@ -1164,6 +1164,22 @@ secret the mask on write found has no binding, so `self.use` refuses it and
 names the owner door that adds one. Every use, and every refused one, leaves a
 Gate record with the handle, generation, effector, operation and send status.
 
+A served host also supplies `native_mail.jmap` against its installed native
+mail server and `broker.models` against a configured broker-backed
+OpenAI-compatible provider. The latter takes
+`arguments: {"provider": "<configured provider name>"}` and returns that
+provider's actual `/v1/models` JSON. It presents the requested handle, not the
+provider's configured secret, under the existing `broker:model` binding.
+The host uses one actual model rung only as the broker's bodyless-request
+binding; it does not filter the listing or claim that model is serving.
+The broker is connected before custody releases the value. Both result and
+failure text are cleared inside the same credential door. The handle's
+record, a run-bound record and an operation grant use their existing doors,
+and the receipt names the generation actually presented. A refused broker
+request or a lost channel does not claim a confirmed presentation. No paid
+inference or media request is made by this operation. The host and broker
+must be rebuilt together; no new configuration setting is required.
+
 On a server, `self.use` also takes `connector.call`: one connector call with
 the secret as the call's credential, in place of the connector's own. Its
 `arguments` are what `connector.call` takes: `name`, `tool`, the tool's

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::Vault;
 use crate::channel_identity_provider::stalwart::StalwartConfig;
 use crate::error::{Error, Result};
+use crate::secret_custody::BrokerModelListingHost;
 
 /// Slack's Web API.
 pub const SLACK_API_BASE: &str = "https://slack.com/api";
@@ -115,6 +116,7 @@ fn endpoint_base(base: &str, provider: &str) -> Result<String> {
 pub struct ServedTransports {
     endpoints: ServedEndpoints,
     native_mail: Option<StalwartConfig>,
+    broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
 }
 
 impl ServedTransports {
@@ -123,6 +125,7 @@ impl ServedTransports {
         Self {
             endpoints,
             native_mail: None,
+            broker_model_listing: None,
         }
     }
 
@@ -132,6 +135,18 @@ impl ServedTransports {
     pub fn with_native_mail(mut self, placement: StalwartConfig) -> Self {
         self.native_mail = Some(placement);
         self
+    }
+
+    /// The host's configured broker-backed model listing. This supplies a
+    /// transport only; each use still presents its own admitted credential.
+    #[must_use]
+    pub fn with_broker_model_listing(mut self, host: Arc<dyn BrokerModelListingHost>) -> Self {
+        self.broker_model_listing = Some(host);
+        self
+    }
+
+    pub(crate) fn broker_model_listing(&self) -> Option<&Arc<dyn BrokerModelListingHost>> {
+        self.broker_model_listing.as_ref()
     }
 
     #[must_use]

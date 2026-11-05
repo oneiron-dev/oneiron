@@ -1,3 +1,6 @@
+//! TASK creation door with admission, hooks, and rate limiting.
+//! Entry [`Memory::tasks_create`]; dispatched from the `verbs` agent-verb surface.
+//! Owned by `task_verb`; validation lives in `create_validation`, specs in `create_spec`.
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
