@@ -26,6 +26,7 @@ impl SyncClient {
             .clear();
         self.root_bootstrapped = false;
         self.leaf_key_sends = Default::default();
+        self.sealed_updates.restart();
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b

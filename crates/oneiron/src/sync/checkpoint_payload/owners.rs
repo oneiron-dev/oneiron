@@ -11,8 +11,9 @@
 //! PeerID is the writer of an operation, never an owner of what it wrote.
 //!
 //! KS7-3b also asks which keys may stand plaintext in a skeleton
-//! ([`key_refusal`]) and how a split value takes its opened actors back
-//! ([`root_fill`]).
+//! ([`key_refusal`]), which of the others it withholds in an atom of their
+//! own ([`withheld_key`], FIX 10279), and how a split value or key takes its
+//! opened actors back ([`root_fill`], [`key_fill`]).
 
 use loro::LoroValue;
 
@@ -100,10 +101,18 @@ pub(crate) fn root_entry(
     match root {
         "entities" => entity.map_or_else(undecodable, |id| entity_row(id, value, owners)),
         "edges" => match parse_edge_key(key) {
-            Some((source, EdgeKind::AuthoredBy, _)) => Placement::unclassified(
-                Some(OwnerRef::entity(&source)),
-                SyncUnclassified::ActorSplit(AUTHORED_BY),
-            ),
+            // An authored_by edge is its source's: the actor it names rides
+            // in its withheld key alone (FIX 10279, `withheld_key`), so the
+            // edge goes with that actor. Its value must be the kind's own
+            // layout, which holds no actor.
+            Some((source, EdgeKind::AuthoredBy, actor))
+                if format_edge_key(&source, EdgeKind::AuthoredBy, &actor) == key
+                    && crate::edge::decode_edge_value_for_kind(EdgeKind::AuthoredBy, value)
+                        .is_ok() =>
+            {
+                Placement::owned(OwnerRef::entity(&source), Vec::new())
+            }
+            Some((_, EdgeKind::AuthoredBy, _)) => undecodable(),
             // Any other edge holds while both its ends do.
             Some((source, _, target)) => {
                 structure(vec![OwnerRef::entity(&source), OwnerRef::entity(&target)])
@@ -237,6 +246,106 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         KeyClass::Digest if DIGEST_KEYS_ARE_PLAIN => None,
         KeyClass::Digest => Some(SyncUnclassified::ActorSplit(DIGEST_KEY)),
         KeyClass::Payload => Some(SyncUnclassified::ActorSplit(PAYLOAD_KEY)),
+    }
+}
+
+/// The field a withheld key's actor fills.
+const KEY_ACTOR: &str = "actor";
+
+/// A window map key the skeleton withholds in an atom of its own: its
+/// rightful holders and, for a key that names an actor, that actor split
+/// out of it.
+pub(super) struct WithheldKey {
+    pub(super) holders: Vec<super::Holder>,
+    pub(super) split: Option<super::ValueSplit>,
+}
+
+/// How the skeleton withholds `key` of the window root map `root`, a key
+/// that may not stand plaintext (FIX 10279, FIX 10278): an authored_by
+/// edge's key is its source's, the actor it names split out, so the key, and
+/// the edge with it, goes with that actor; a whole document pin's key, the
+/// digest of the pin naming no one, is its citer's, held while the message
+/// it quotes is, as the pin is. `None` for every other key: a part's digest
+/// is withheld under its manifests' holders ([`withheld_part_key`]), and any
+/// other keeps its window whole as [`key_refusal`] names.
+pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
+    match root {
+        "edges" => {
+            let (source, kind, actor) = parse_edge_key(key)?;
+            if !matches!(kind, EdgeKind::AuthoredBy)
+                || format_edge_key(&source, kind, &actor) != key
+            {
+                return None;
+            }
+            let stem = key.strip_suffix(actor.to_hex().as_str())?;
+            Some(WithheldKey {
+                holders: vec![super::Holder::new(OwnerRef::entity(&source), Vec::new())],
+                split: Some(super::ValueSplit {
+                    no_one: stem.as_bytes().to_vec(),
+                    actors: vec![(KEY_ACTOR.to_owned(), actor)],
+                }),
+            })
+        }
+        DOCUMENT_PINS_MAP if !is_part_key(key) => {
+            let (message, citation) = crate::room_codec::document_pins::key_ids(key)?;
+            Some(WithheldKey {
+                holders: vec![super::Holder::new(
+                    OwnerRef::entity(&citation),
+                    vec![OwnerRef::entity(&message)],
+                )],
+                split: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Whether the skeleton withholds `key` of `root` as a part's digest (FIX
+/// 10278): a part of a parted window value, filed under its digest. Its key
+/// goes with every holder a manifest names the part for
+/// ([`super::parts::PartHolders`]), as its value does; the digest itself
+/// names no one.
+pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
+    is_part_key(key)
+        && matches!(
+            root,
+            ROOM_TURNS_MAP
+                | ROOM_FACTS_MAP
+                | DOCUMENT_PINS_MAP
+                | MESSAGE_DOCS_MAP
+                | REPO_MANIFESTS_MAP
+        )
+}
+
+/// The key `no_one`, a split of a withheld key of `root`, with each of
+/// `opened` back: `None` when the actor it names did not open. A field the
+/// family does not spell, or a key that is not its family's in its one
+/// spelling, refuses.
+pub(super) fn key_fill(
+    root: &str,
+    no_one: &[u8],
+    opened: &[(&str, EntityId)],
+) -> Result<Option<String>> {
+    match root {
+        "edges" => {
+            let stem = std::str::from_utf8(no_one).map_err(|_| bad_part())?;
+            let actor = match opened {
+                [] => return Ok(None),
+                [(KEY_ACTOR, actor)] => *actor,
+                _ => return Err(bad_part()),
+            };
+            let key = format!("{stem}{}", actor.to_hex());
+            match parse_edge_key(&key) {
+                Some((source, EdgeKind::AuthoredBy, target))
+                    if target == actor
+                        && format_edge_key(&source, EdgeKind::AuthoredBy, &target) == key =>
+                {
+                    Ok(Some(key))
+                }
+                _ => Err(bad_part()),
+            }
+        }
+        _ => Err(bad_part()),
     }
 }
 
