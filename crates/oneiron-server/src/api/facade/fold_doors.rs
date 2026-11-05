@@ -124,7 +124,15 @@ pub(crate) async fn self_fold(
         invocation,
         "self.fold",
         input.live_run,
-        json!([[input.from, input.through], {"note": input.note}]),
+        match input.kind {
+            Some(kind) => json!({
+                "kind": kind,
+                "from": input.from,
+                "through": input.through,
+                "note": input.note,
+            }),
+            None => json!([[input.from, input.through], {"note": input.note}]),
+        },
         pre_hooked_fold,
     )
     .await;

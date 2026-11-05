@@ -219,6 +219,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: 0,
                 body: encoded,
             },
         )?;

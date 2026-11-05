@@ -16,6 +16,7 @@ pub(super) fn revision_puts(
             entity_type,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: true,

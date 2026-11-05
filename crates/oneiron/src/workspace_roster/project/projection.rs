@@ -432,6 +432,7 @@ pub(crate) fn reconcile_project_rooms(
                 end: header.occurred_end,
             },
             learned_at: header.learned_at,
+            row_version: None,
             data: encode(&room)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
