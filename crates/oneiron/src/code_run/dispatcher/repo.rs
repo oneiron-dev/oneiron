@@ -323,6 +323,7 @@ fn refused(effect: SelfEffect, error: &MemoryError) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Failed(SelfFailedResult {
         effect,
         error: error.code.clone(),
+        code: None,
     })
 }
 
