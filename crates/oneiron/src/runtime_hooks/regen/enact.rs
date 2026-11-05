@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{
-    HookAuthor, PackHookBinding, PackInstallDisposition, PreparedPackPut,
+    HookAuthor, PackHookBinding, PackInstallDisposition, PackInstallReceipt, PackSource,
+    PreparedPackPut,
 };
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
@@ -227,11 +228,10 @@ impl Vault {
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
         let put = HookPut::Owner(owner).for_hook(&row)?;
+        on_adopted_body(&row, adopted_hash)?;
         let record = self.hook_regen_record(binding)?;
         let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
-        let source = self
-            .get_pack_source(&row.source)?
-            .ok_or(Error::EntityNotFound)?;
+        let (installed, source) = self.installed_hook_pack(&row)?;
         let (files, _) = files_with_hook_body(&source, &row.hook, prior.body.as_bytes());
         let prepared = put.prepare(self, files)?;
         let disposition = self.with_write_txn_grouped(|txn| {
@@ -240,7 +240,8 @@ impl Vault {
                 .into_iter()
                 .find(|(id, _)| *id == binding)
                 .ok_or(Error::EntityNotFound)?;
-            pack_unmoved(&row, &current)?;
+            pack_unmoved(self, txn, &row, &installed)?;
+            on_adopted_body(&current, adopted_hash)?;
             let record = REGEN.get(&self.store, txn, &binding)?;
             let prior = revert_prior(record.as_ref(), adopted_hash)?.clone();
             let disposition = put.put_in_txn(self, txn, &prepared)?;
@@ -311,9 +312,7 @@ impl Vault {
         let put = put.for_hook(&row)?;
         let record = self.hook_regen_record(binding)?;
         let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-        let source = self
-            .get_pack_source(&row.source)?
-            .ok_or(Error::EntityNotFound)?;
+        let (installed, source) = self.installed_hook_pack(&row)?;
         let (files, replaced) = files_with_hook_body(&source, &row.hook, candidate.as_bytes());
         // The body this adoption replaces, kept for a revert (FIX 4690).
         let replaced = replaced.and_then(|bytes| String::from_utf8(bytes).ok());
@@ -324,7 +323,7 @@ impl Vault {
                 .into_iter()
                 .find(|(id, _)| *id == binding)
                 .ok_or(Error::EntityNotFound)?;
-            pack_unmoved(&row, &current)?;
+            pack_unmoved(self, txn, &row, &installed)?;
             let record = REGEN.get(&self.store, txn, &binding)?;
             let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
             let stamped_diff = matches!(
@@ -340,6 +339,12 @@ impl Vault {
             // The new body binds under a new id; resolve it in this writer,
             // before any other regen decision or pack install can intervene.
             let rebound = self.rebound_in_txn(txn, &current, candidate_hash, binding)?;
+            // The adopted body takes the dial of the body it replaces: a
+            // body the hook ran before returns under its old binding, whose
+            // dial an earlier adoption turned off.
+            if let Some(adopted) = rebound {
+                put.set_enabled_in_txn(self, txn, adopted, current.enabled)?;
+            }
             let previous = replaced
                 .as_ref()
                 .zip(record.as_ref())
@@ -405,17 +410,58 @@ impl Vault {
     }
 }
 
-/// Refuses a put prepared from a pack source other than the one `current`
-/// binds from in the writer. Another put of the pack landed since the
-/// files were prepared, and installing the stale prepared pack would undo
-/// it. The caller asks again, and a new prepare starts from the pack as it
-/// stands.
-fn pack_unmoved(prepared: &PackHookBinding, current: &PackHookBinding) -> Result<()> {
-    if prepared.source == current.source {
+impl Vault {
+    /// The installed receipt of `row`'s pack and its source: a regen's put
+    /// is prepared from the pack as it is installed, never from the source
+    /// `row` was bound from, which another binder's put may have left
+    /// behind.
+    fn installed_hook_pack(
+        &self,
+        row: &PackHookBinding,
+    ) -> Result<(PackInstallReceipt, PackSource)> {
+        let installed = self
+            .installed_pack(&row.pack)?
+            .ok_or(Error::EntityNotFound)?;
+        let source = self
+            .get_pack_source(&EntityId::from_hex(&installed.source_id)?)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok((installed, source))
+    }
+}
+
+/// Refuses a put prepared from an installed pack other than the one
+/// installed in the writer. Another put of the pack landed since the files
+/// were prepared, and installing the stale prepared pack would undo it. The
+/// caller asks again, and a new prepare starts from the pack as it stands.
+fn pack_unmoved(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &PackHookBinding,
+    prepared: &PackInstallReceipt,
+) -> Result<()> {
+    let unmoved = vault
+        .installed_pack_in_txn(txn, &row.pack)?
+        .is_some_and(|current| {
+            current.source_id == prepared.source_id && current.content_hash == prepared.content_hash
+        });
+    if unmoved {
         Ok(())
     } else {
         Err(Error::ConcurrentWrite(
             "the hook's pack changed since this regen was prepared; ask again",
+        ))
+    }
+}
+
+/// Refuses a revert named through a binding whose body is not the adopted
+/// one: only the binding the adoption installed reverts, so the restored
+/// body takes that binding's dial.
+fn on_adopted_body(binding: &PackHookBinding, adopted_hash: &str) -> Result<()> {
+    if binding.body_hash == adopted_hash {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "a revert names the binding of the adopted body".to_owned(),
         ))
     }
 }
