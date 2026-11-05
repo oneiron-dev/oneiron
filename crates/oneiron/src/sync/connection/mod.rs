@@ -43,6 +43,7 @@ mod note_reads;
 mod residence_mode;
 mod server_close;
 mod session;
+mod shared_leave;
 mod steady;
 mod topology;
 
@@ -245,6 +246,18 @@ impl SyncConnection {
         member: &str,
     ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
     {
+        let Some(notice) = self.fetch_shared_leave_notice(vault_id, member).await? else {
+            return Ok(None);
+        };
+        self.confirm_shared_leave_notice(&notice).await.map(Some)
+    }
+
+    async fn fetch_shared_leave_notice(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::VerifiedLeaveNotice>, crate::sync::TransportError>
+    {
         use crate::sync::TransportError;
 
         #[derive(serde::Deserialize)]
@@ -345,9 +358,15 @@ impl SyncConnection {
                 break;
             }
         }
-        let Some(notice) = confirmed else {
-            return Ok(None);
-        };
+        Ok(confirmed)
+    }
+
+    async fn confirm_shared_leave_notice(
+        &self,
+        notice: &crate::sync::shared_leave::VerifiedLeaveNotice,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        use crate::sync::TransportError;
+
         self.stop_for_leave().await;
         // Bind after the wait, with no await before confirmation: cancellation
         // while waiting must not strand this count on an unconfirmed notice.
@@ -369,10 +388,9 @@ impl SyncConnection {
         };
         crate::sync::shared_leave::confirm_verified_shared_leave(
             self.manager.vault(),
-            &notice,
+            notice,
             unqueued,
         )
-        .map(Some)
         .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
