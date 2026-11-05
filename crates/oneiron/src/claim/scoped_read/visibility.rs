@@ -455,6 +455,11 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<Option<bool>> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
+            // A source the room serves is placed as the common loader places
+            // it (FIX 5161).
+            if !self.room_row_placed_in(rtxn, source, row.entity_type, &row.body)? {
+                return Ok(false);
+            }
             let raw = row.encode();
             let floor_only = AskedFilter::Known(None);
             if !self.is_entity_raw_readable_own_in(
@@ -485,16 +490,7 @@ impl<'v> ScopedRead<'v> {
             }
             self.derived_sources_readable_in(rtxn, policy, source, &raw, authority)
         };
-        match self.session_view {
-            Some(view) => crate::compaction::epoch_sources_admitted_in(view, rtxn, id, body, admit),
-            None => crate::compaction::epoch_sources_admitted_in(
-                &self.vault.store,
-                rtxn,
-                id,
-                body,
-                admit,
-            ),
-        }
+        crate::compaction::epoch_sources_admitted_in(&self.store_read(), rtxn, id, body, admit)
     }
 
     /// Facet rule C: an ASSET_TEXT written from source ASSETs is read only
@@ -527,6 +523,9 @@ impl<'v> ScopedRead<'v> {
         }
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
+            if !self.room_row_placed_in(rtxn, source, row.entity_type, &row.body)? {
+                return Ok(false);
+            }
             let raw = row.encode();
             let floor_only = AskedFilter::Known(None);
             self.is_entity_raw_readable_own_in(
@@ -539,10 +538,7 @@ impl<'v> ScopedRead<'v> {
                 &floor_only,
             )
         };
-        let admitted = match self.session_view {
-            Some(view) => asset_text::sources_admitted_in(view, rtxn, id, admit),
-            None => asset_text::sources_admitted_in(&self.vault.store, rtxn, id, admit),
-        }?;
+        let admitted = asset_text::sources_admitted_in(&self.store_read(), rtxn, id, admit)?;
         Ok(admitted.unwrap_or(true))
     }
 
