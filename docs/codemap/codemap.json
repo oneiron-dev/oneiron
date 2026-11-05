@@ -15704,7 +15704,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 9
      }
     },
@@ -19127,7 +19127,7 @@
      "purpose": "Content-addressed semantic changes",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -48791,13 +48791,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 14,
       "fn": 1
      }
     },
@@ -53826,7 +53826,7 @@
      "path": "src/origin/secret_projection.rs",
      "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -60557,13 +60557,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/payload/mod.rs",
      "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 30
      }
     },
     {
@@ -60577,7 +60577,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/payload/restore.rs",
@@ -60623,7 +60623,7 @@
      "path": "src/recovery/checkpoint/payload/sync.rs",
      "purpose": "KS7-3's port (FIX 5688 KS7-3a): each mixed sync carrier row split by the sync families' own codecs…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -64794,7 +64794,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports/checkpoint.rs",
-     "purpose": "Canonical step-capture owner witnesses, carried under each key owner's compartment",
+     "purpose": "Canonical capture owner witnesses, carried under each key owner's compartment",
      "surface": {
       "crate-vis": 3
      }
@@ -64810,13 +64810,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports/source/ownership.rs",
-     "purpose": "One durable step capture's owner witnesses (FIX 6734): the owners an erase takes the capture for, keyed…",
+     "purpose": "One durable capture's owner witnesses (FIX 6734), keyed apart from the capture's bytes so an erase still…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source/receipts.rs",
+     "purpose": "Receipt capture and its final reporter witness share the native filing writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74845,7 +74855,7 @@
      "path": "src/sync/checkpoint_payload/mod.rs",
      "purpose": "The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary…",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -74855,7 +74865,7 @@
      "path": "src/sync/checkpoint_payload/operations.rs",
      "purpose": "A window's Loro rows split for a checkpoint (KS7-3b, FIX 5688), over the vendored root-map checkpoint…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -90581,7 +90591,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90938,9 +90948,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 150,
+   "over_bar": 151,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6366,
+   "source_files": 6367,
    "test_files": 895
   },
   "oneiron-android": {
@@ -99301,6 +99311,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/text/parse.rs",
+     "purpose": "Paragraph text as the generic deck mapping or the native cell reader counts it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -101112,7 +101132,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101247,7 +101267,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 173,
+   "source_files": 174,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -110149,7 +110169,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/next_turn.rs",
-     "purpose": "What a live chat conversation's next turn is known to start with past its committed history (I1 = C…",
+     "purpose": "What a conversation's next chat turn is known to start with past its committed history (I1 = C, ARCH-0067…",
      "surface": {
       "crate-vis": 1
      }
@@ -111003,7 +111023,7 @@
      "path": "src/api/context_board/turn_actions.rs",
      "purpose": "The context board a queued Continue or Retry reads (FIX 6920), as a live chat turn reads its own…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {

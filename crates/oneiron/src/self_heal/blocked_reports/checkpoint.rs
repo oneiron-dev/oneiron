@@ -1,4 +1,4 @@
-//! Canonical step-capture owner witnesses, carried under each key owner's compartment.
+//! Canonical capture owner witnesses, carried under each key owner's compartment.
 
 use heed::{RoTxn, RwTxn};
 
