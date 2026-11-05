@@ -6,11 +6,11 @@ side_tables! {
     /// bytes32.
     /// Owner-installed CalDAV seats, cursors and kill switches. Key: seat name.
     CALENDAR_CONNECTOR_SEAT: VaultMeta b"calendar.connector-seat.v1:" Named;
-    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
+    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_connector_write_accepts_masked];
     /// Owner-installed ICS feed configuration and last public completion. Key: system name.
     CALENDAR_ICS_FEED_CONFIG: VaultMeta b"calendar.ics-feed-config.v1:" Named;
     /// Per-feed poll cursor. Key: bytes32.
-    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored;
+    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_ics_feed_cursor_accepts_masked];
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
@@ -573,6 +573,9 @@ side_tables! {
     /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
     /// bytes16(nonce) + bytes32(recipient pseudonym).
     COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
+    /// Recipient-selected storage-only restriction, independent of legal holds.
+    /// Key: id16(record) + bytes32(pact) + bytes16(request nonce).
+    COOPERATIVE_RESTRICTION: VaultMeta b"cooperative_deletion:restriction:v1:" Named;
     /// One signed ReRoot row of a pact's former peer, kept because it extends the walk from the
     /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
     /// Key: bytes32(pact) + hash32(authority entry).
