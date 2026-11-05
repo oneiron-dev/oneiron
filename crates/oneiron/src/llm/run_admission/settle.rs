@@ -3,7 +3,8 @@
 //! meter refuses goes on the receipt, with the inference receipts the call
 //! reported or its lease observed (FIX 9065).
 use super::super::{
-    BudgetSettlement, InferenceCallObservation, InferenceCallReceipt, LlmUsage, answered_units_wide,
+    BudgetSettlement, InferenceCallObservation, InferenceCallReceipt, LlmUsage,
+    ProviderTokenMeasurement, answered_units_wide,
 };
 use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
@@ -153,6 +154,18 @@ impl RunInner {
         reported.extend(provided);
         let inference_calls =
             settled_inference_calls(reported, permit.lease.inference_observations());
+        if matches!(outcome, CallOutcome::Failed) {
+            let reports = inference_calls
+                .iter()
+                .map(|receipt| ProviderTokenMeasurement {
+                    input: receipt.logical_prompt_tokens,
+                    output: receipt.output_tokens,
+                })
+                .collect();
+            let _ = self
+                .guard
+                .observe_provider_failed_call_reports(&permit.lease, reports);
+        }
         self.record(
             permit.revision,
             RunEvent::Settled {

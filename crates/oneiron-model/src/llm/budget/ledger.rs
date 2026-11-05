@@ -67,6 +67,9 @@ pub(super) struct LeaseRecord {
     /// The final native provider report on this exact started lease, apart
     /// from its metered or unmetered charge. Missing remains unknown.
     pub(super) provider_tokens: Option<ProviderTokenMeasurement>,
+    /// Native per-request reports retained when this lease failed. These
+    /// partial observations do not make the lease's full usage known.
+    pub(super) provider_failed_call_reports: Vec<ProviderTokenMeasurement>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

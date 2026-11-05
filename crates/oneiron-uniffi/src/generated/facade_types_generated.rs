@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1233 facade rows, 4492 generated types.
+// UniFFI census: 1233 facade rows, 4495 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1185.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -30245,6 +30245,15 @@ pub struct RsiExplorationRead {
     pub suspended: bool,
 }
 
+/// `oneiron::verbs::research::provider_tokens::ResearchFailedCallTokenReportWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResearchFailedCallTokenReportWire {
+    #[serde(rename = "input", default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+    #[serde(rename = "output", default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+}
+
 /// `oneiron::verbs::research::provider_tokens::ResearchProviderTokenSnapshotWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResearchProviderTokenSnapshotWire {
@@ -30260,6 +30269,8 @@ pub struct ResearchProviderTokenSnapshotWire {
     pub input: Option<u64>,
     #[serde(rename = "output", default, skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
+    #[serde(rename = "failed_call_reports")]
+    pub failed_call_reports: Vec<ResearchFailedCallTokenReportWire>,
 }
 
 /// `oneiron::verbs::research::provider_tokens::ResearchScopeProviderTokensWire`.

@@ -113,3 +113,24 @@ scope total. A crash before a flush, an unrecorded guard, an unsupported or
 partial provider report, a child scope or an unmetered run can remain unseen.
 Even all-present known rows do not prove completeness. No captured value or
 identifier settles RSI, overrides its reservation, or authorizes a call.
+
+## Native reports retained by failed calls
+
+A failed lease also keeps the native inference receipts its physical requests
+published, including measured partial reports before an error or cancellation.
+The snapshot's `failed_call_reports` carries each receipt's optional prompt and
+output counts separately. It never copies normalized usage, a reservation, or
+spend accumulated by earlier attempts. A reported zero stays zero; an absent
+count stays unknown. Two retained receipts remain two entries even when their
+counts match. Requests that published nothing remain uncovered.
+
+These reports travel through the existing guard capture and scope record to
+`vault.research.budget`. They are data, not a sum or proof of complete failed-call
+usage. The complete observation's input and output still remain unknown for a
+failed lease. An empty report list is not a known zero. No report changes
+admission, abort, charges, receipt events, refunds or RSI settlement.
+
+The real native publisher must run at the physical send. The pending Anthropic
+transport producer in #5613 provides one such source; it is not assumed to be
+merged by this consumer change. A second publisher on a retrying decoder wrapper
+would duplicate those observations and is not added.

@@ -343,6 +343,7 @@ impl BudgetState {
                 binding,
                 dispatched: false,
                 provider_tokens: None,
+                provider_failed_call_reports: Vec::new(),
             },
         );
         lease

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1233 facade rows, 4493 declarations.
+Census: 1233 facade rows, 4496 declarations.
 Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -9740,6 +9740,9 @@ class RsiExplorationRead(TypedDict):
     spent_exposure: int
     reserved_exposure: int
     suspended: bool
+class ResearchFailedCallTokenReportWire(TypedDict):
+    input: NotRequired[int | None]
+    output: NotRequired[int | None]
 class ResearchProviderTokenSnapshotWire(TypedDict):
     generation: str
     observation_id: str
@@ -9747,6 +9750,7 @@ class ResearchProviderTokenSnapshotWire(TypedDict):
     unsettled_calls: int
     input: NotRequired[int | None]
     output: NotRequired[int | None]
+    failed_call_reports: list[ResearchFailedCallTokenReportWire]
 class ResearchScopeProviderTokensWire(TypedDict):
     scope: NotRequired[SpendScopeId | None]
     runs: list[str]
