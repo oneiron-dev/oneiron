@@ -265,20 +265,14 @@ fn finish(
     vault: &Vault,
     root: AttemptId,
     id: EntityId,
-    settle: impl FnOnce(&ResearchReservation) -> Result<RsiSettlement>,
+    settle: impl FnOnce(&mut heed::RwTxn<'_>, &ResearchReservation) -> Result<RsiSettlement>,
 ) -> Result<ResearchReservation> {
-    let txn = vault.store.env.read_txn()?;
-    let row = RESERVATION
-        .get(&vault.store, &txn, &(*root.as_bytes(), id))?
-        .ok_or(invalid("the campaign holds no such reservation"))?;
-    drop(txn);
-    let settlement = settle(&row)?;
     vault.with_write_txn_grouped(|txn| {
         let key = (*root.as_bytes(), id);
         let mut row = RESERVATION
             .get(&vault.store, txn, &key)?
             .ok_or(invalid("the campaign holds no such reservation"))?;
-        row.settlement = Some(settlement);
+        row.settlement = Some(settle(txn, &row)?);
         RESERVATION.put(&vault.store, txn, &key, &row)?;
         Ok(row)
     })
@@ -296,38 +290,68 @@ pub fn settle_research_work(
     id: EntityId,
     actual: u64,
 ) -> Result<ResearchReservation> {
-    finish(vault, root, id, |row| {
-        Ok(match row.line {
-            ResearchReservationLine::Work { .. } => {
-                vault.settle_rsi_budget(id, actual).map_err(rsi_error)?;
-                RsiSettlement::Spent(actual)
-            }
-            ResearchReservationLine::Exploration => {
-                vault
-                    .settle_rsi_exploration(id, actual)
-                    .map_err(rsi_error)?;
-                RsiSettlement::Exposure(actual)
-            }
-        })
+    finish(vault, root, id, |txn, row| {
+        let settlement = match row.line {
+            ResearchReservationLine::Work { .. } => RsiSettlement::Spent(actual),
+            ResearchReservationLine::Exploration => RsiSettlement::Exposure(actual),
+        };
+        vault
+            .finish_rsi_reservation_in_txn(txn, id, settlement.clone())
+            .map_err(rsi_error)?;
+        Ok(settlement)
     })
 }
 
-/// End token work without substituting its reservation for a missing meter.
-/// The unknown receipt keeps the reservation committed, not falsely spent.
-pub(super) fn settle_research_work_unknown(
+/// Settles the actual run named by the writer-validated continuation.
+/// Inherited scope totals do not identify one run's spend.
+pub(super) fn settle_research_run_in_txn(
     vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
     root: AttemptId,
     id: EntityId,
-) -> Result<ResearchReservation> {
-    finish(vault, root, id, |row| {
-        if !matches!(row.line, ResearchReservationLine::Work { .. }) {
-            return Err(invalid(
-                "an unknown token measurement requires a work reservation",
-            ));
-        }
-        vault.settle_rsi_budget_unknown(id).map_err(rsi_error)?;
-        Ok(RsiSettlement::Unknown)
-    })
+    run: AttemptId,
+) -> Result<()> {
+    let key = (*root.as_bytes(), id);
+    let Some(mut row) = RESERVATION.get(&vault.store, txn, &key)? else {
+        return Ok(());
+    };
+    if row.settlement.is_some() {
+        return Ok(());
+    }
+    let scope = crate::agent_dispatch::AgentDispatcher::new(vault)
+        .attempt_spend_scope_in_txn(txn, run)?
+        .filter(|scope| {
+            scope.unit == crate::run_budget::LeaseUnit::tokens()
+                && scope.scope == crate::agent_dispatch::SpendScopeId::for_attempt(&run)
+        });
+    let settlement = vault
+        .settle_research_spend_in_txn(txn, id, root, scope.as_ref())
+        .map_err(rsi_error)?;
+    row.settlement = Some(settlement);
+    RESERVATION.put(&vault.store, txn, &key, &row)
+}
+
+/// Keeps the campaign's receipt aligned with its already-bound RSI total.
+/// Missing or unrelated records are never recreated by a late charge.
+pub(crate) fn revise_research_work_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    id: EntityId,
+    actual: u64,
+) -> Result<()> {
+    let key = (*root.as_bytes(), id);
+    let Some(mut row) = RESERVATION.get(&vault.store, txn, &key)? else {
+        return Ok(());
+    };
+    if matches!(row.line, ResearchReservationLine::Work { .. })
+        && let Some(RsiSettlement::Spent(previous)) = row.settlement
+        && actual > previous
+    {
+        row.settlement = Some(RsiSettlement::Spent(actual));
+        RESERVATION.put(&vault.store, txn, &key, &row)?;
+    }
+    Ok(())
 }
 
 /// Refund a reservation that was never spent. Served exposure and settled
@@ -339,11 +363,13 @@ pub fn refund_research_work(
     root: AttemptId,
     id: EntityId,
 ) -> Result<ResearchReservation> {
-    finish(vault, root, id, |row| {
+    finish(vault, root, id, |txn, row| {
         if row.settlement.is_some() {
             return Err(invalid("a settled reservation is not refunded"));
         }
-        vault.refund_rsi_budget(id).map_err(rsi_error)?;
+        vault
+            .finish_rsi_reservation_in_txn(txn, id, RsiSettlement::Refunded)
+            .map_err(rsi_error)?;
         Ok(RsiSettlement::Refunded)
     })
 }

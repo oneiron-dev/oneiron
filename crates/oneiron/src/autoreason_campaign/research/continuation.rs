@@ -18,7 +18,7 @@ use serde_json::json;
 use super::super::CampaignDatasetRef;
 use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::Measurement;
-use super::budget::{is_budget_refusal, settle_research_work_unknown};
+use super::budget::{is_budget_refusal, settle_research_run_in_txn};
 use super::estimator::{self, ENGINE_ESTIMATOR_VERSION};
 use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
@@ -27,7 +27,7 @@ use super::{
     invalid, nodes_in_txn, promote_measured, promotion_basis, record_fork,
     record_held_out_measurement, record_invalid_experiment, record_search_measurement,
     refund_research_work, research_binding, research_incumbent, research_promotions,
-    research_reservations, reserve_confirmation, reserve_research_work, settle_research_work,
+    research_reservations, reserve_confirmation, reserve_research_work,
 };
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
@@ -36,7 +36,6 @@ use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::context_projection::ContextSpec;
 use crate::research_budget::RsiSpendPurpose;
-use crate::run_budget::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::{AttemptId, AttemptQueue, EntityId, Error, Result, Vault};
@@ -479,20 +478,6 @@ fn expected_gain_for(
             .filter(|gain| gain.is_finite())
             .map_or(0.0, |gain| gain.max(0.0)),
     )
-}
-
-/// The token-denominated spend recorded by a finished run's native scope,
-/// without clipping to its reservation. Other units and absent scopes are
-/// unknown, not interchangeable with a token reservation.
-fn run_spend_units(vault: &Vault, run: AttemptId) -> Result<Option<u64>> {
-    let dispatcher = AgentDispatcher::new(vault);
-    let scope = match dispatcher.spend_scope_for_attempt(run)? {
-        Some(id) => dispatcher.read_spend_scope(&id)?,
-        None => None,
-    };
-    Ok(scope
-        .filter(|scope| scope.unit == LeaseUnit::tokens())
-        .map(|scope| scope.spent_units))
 }
 
 /// The text of a finished agent run's answer: the observation its result

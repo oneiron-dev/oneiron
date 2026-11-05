@@ -65,6 +65,7 @@ mod promotion;
 mod recording;
 mod source_erase;
 
+pub(crate) use budget::revise_research_work_in_txn;
 pub use budget::{
     ResearchBudgetRead, ResearchReservation, ResearchReservationLine, refund_research_work,
     research_budget, research_reservations, reserve_research_exploration, reserve_research_work,
