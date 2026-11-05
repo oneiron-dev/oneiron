@@ -108,6 +108,7 @@ impl Vault {
                         entity_type: ENTITY_TYPE_BLOB_ARTIFACT,
                         occurred: at,
                         learned_at: now,
+                        row_version: 0,
                         body: crate::blob_artifact::encode_blob_artifact_body(
                             &BlobArtifactBody::new(
                                 format!("{WORDING_RUN_PREFIX}{content_ref}"),
