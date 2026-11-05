@@ -1,5 +1,6 @@
 //! One provider entry: how to reach a model server, as data.
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
@@ -239,6 +240,17 @@ const CREDENTIAL_HEADERS: [&str; 5] = [
     "proxy-authorization",
 ];
 
+/// A local Sign in with ChatGPT registration. This is a locator, never a
+/// token or an account-identity assertion. Hosted use needs the existing P4
+/// vendor approval, absent unless the operator actually supplies it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SiwcProvider {
+    pub credential_file: PathBuf,
+    #[serde(default)]
+    pub openai_hosted_plan_approved: bool,
+}
+
 /// `[models.providers.<name>]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,6 +259,7 @@ pub(super) struct ProviderFile {
     base_url: Option<String>,
     key_env: Option<String>,
     key_secret: Option<String>,
+    siwc: Option<SiwcProvider>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
     timeout_secs: Option<u64>,
@@ -283,6 +296,8 @@ pub struct ProviderConfig {
     /// call reads it at the custody door and hands it, with that one request,
     /// to the credential broker `[models.broker]` names, which sends it.
     pub key_secret: Option<String>,
+    /// Local SIWC credentials for Responses only; no key enters this config.
+    pub siwc: Option<SiwcProvider>,
     /// Extra non-credential headers sent on every call.
     pub headers: BTreeMap<String, String>,
     pub timeout_secs: u64,
@@ -360,6 +375,25 @@ impl ProviderFile {
             .filter(|url| !url.is_empty())
             .ok_or_else(|| anyhow::anyhow!("models.providers.{name}.base_url is required"))?;
         validate_base_url(name, kind, &base_url)?;
+        if self.siwc.is_some() {
+            anyhow::ensure!(
+                kind == ProviderKind::OpenaiCompat
+                    && base_url == oneiron::dispatch_byoa::SIWC_RESPONSES_BASE_URL
+                    && self.key_env.is_none()
+                    && self.key_secret.is_none()
+                    && self
+                        .locality
+                        .is_none_or(|value| value == ModelLocality::ThirdParty),
+                "models.providers.{name}.siwc requires the official Responses base URL, no other key source and third_party locality"
+            );
+            anyhow::ensure!(
+                matches!(
+                    self.responses_socket,
+                    None | Some(ResponsesSocketFile::Switch(false))
+                ),
+                "models.providers.{name}.siwc uses Responses HTTP, not responses_socket"
+            );
+        }
         if let Some(key_env) = &self.key_env
             && !is_env_name(key_env)
         {
@@ -443,13 +477,17 @@ impl ProviderFile {
                 );
             }
         }
-        let responses_socket = responses_socket(
-            name,
-            kind,
-            &base_url,
-            self.key_secret.is_some(),
-            self.responses_socket,
-        )?;
+        let responses_socket = if self.siwc.is_some() {
+            None
+        } else {
+            responses_socket(
+                name,
+                kind,
+                &base_url,
+                self.key_secret.is_some(),
+                self.responses_socket,
+            )?
+        };
         let request_compression = request_compression(
             name,
             kind,
@@ -458,7 +496,9 @@ impl ProviderFile {
             self.request_compression,
         )?;
         let payer = self.payer.unwrap_or_else(|| {
-            if self.key_env.is_some() || self.key_secret.is_some() {
+            if self.siwc.is_some() {
+                Payer::CustomerSeat
+            } else if self.key_env.is_some() || self.key_secret.is_some() {
                 Payer::CustomerKey
             } else {
                 Payer::Local
@@ -476,6 +516,7 @@ impl ProviderFile {
             base_url,
             key_env: self.key_env,
             key_secret: self.key_secret,
+            siwc: self.siwc,
             headers: self.headers,
             timeout_secs,
             context_tokens,

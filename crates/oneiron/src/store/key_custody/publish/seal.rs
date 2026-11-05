@@ -12,6 +12,7 @@ use super::super::files::{EntryState, LocalCustody};
 use super::super::head::{CustodyRecipients, seal_head};
 use super::super::log::{CustodyPosition, Journal};
 use super::super::protocol::CustodyBatch;
+use super::super::publication_policy::PolicyStanding;
 use super::Sealed;
 
 impl Store {
@@ -19,11 +20,15 @@ impl Store {
     /// `groups` whose target `behind` says lacks a head there, a head sealed
     /// at it for that group's recipients, all from one census: every entry
     /// a frame up to the position mints is published before its frame, and
-    /// no retirement runs until the heads are sealed.
+    /// no retirement runs until the heads are sealed. Only under the policy
+    /// in force at the position (`standing`, FIX 11783): when another
+    /// policy's frame was journaled since this pass's proof, each behind
+    /// group is left pending, and the next pass seals under the newer one.
     pub(super) fn seal_batch(
         &self,
         custody: LocalCustody<'_>,
         journal: &Journal,
+        standing: &PolicyStanding,
         groups: &[&CustodyRecipients],
         revision: u64,
         behind: impl FnOnce(&CustodyPosition) -> Vec<bool>,
@@ -41,6 +46,15 @@ impl Store {
         });
         if position.seq == 0 && census.is_empty() && carried.is_empty() {
             return Ok(Sealed::Nothing);
+        }
+        if !standing.holds_at(journal, &position)? {
+            let detail = "the publication policy changed during this pass; the next pass seals \
+                          under the newer one";
+            let pending = behind(&position)
+                .into_iter()
+                .map(|due| due.then(|| Err(detail.to_owned())))
+                .collect();
+            return Ok(Sealed::At(position, pending));
         }
         // Every member's head carries every erased credential's fact,
         // outside key eligibility (FIX 10584 item 3).

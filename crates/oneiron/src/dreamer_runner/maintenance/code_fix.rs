@@ -42,6 +42,7 @@ use serde_json::json;
 use self::admission::{read_granted_in_txn, settle_in_txn};
 use self::candidate_run::ReplayCandidate;
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
+use self::publisher_refs::publisher_candidates_with_refs;
 use self::work::{
     enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
     snapshot_job, untried,
@@ -70,6 +71,7 @@ mod candidate_run;
 mod engine;
 mod instruction;
 mod publisher;
+mod publisher_refs;
 mod work;
 pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission};
 pub use self::candidate_run::CandidateRun;
@@ -78,6 +80,7 @@ pub use self::publisher::{
     EngineCallUsage, EngineCandidateRun, EngineNotRun, EnginePairState, PublisherCandidateKind,
     artifact_digest_text, parse_artifact_digest_text,
 };
+pub use self::publisher_refs::{PublisherCandidateInput, PublisherCandidateRef};
 pub(super) use self::work::{wake_blocked_in_txn, wake_in_txn};
 
 /// Key: `work::work_key`.
@@ -323,8 +326,8 @@ impl Vault {
     /// One step of the catch-up that tries publisher candidates pinned after
     /// a failure settled on that failure (OF-380): reads up to 256 work rows
     /// after `after` and queues a top-up run for at most 2 settled ones with
-    /// no run that stands of some id in `pinned` (an engine pair kept not run
-    /// at another shadow protocol stands no longer, nor one kept for want of
+    /// no run that stands of some input occurrence in `pinned` (an engine pair
+    /// kept not run at another shadow protocol stands no longer, nor one kept for want of
     /// a Grant the Coach now holds, FIX 7031). Returns the key the next
     /// step goes on after, or `None` once the last row is read. A deployment
     /// that does not export queues nothing.
@@ -335,12 +338,13 @@ impl Vault {
     pub fn queue_code_fix_top_ups(
         &self,
         after: Option<EntityId>,
-        pinned: &[&str],
+        pinned: &[PublisherCandidate],
         now: u64,
     ) -> Result<Option<EntityId>> {
         if pinned.is_empty() || !self.config.failure_signals.exports() {
             return Ok(None);
         }
+        let pinned = publisher_candidates_with_refs(pinned);
         // Resolved outside the writer: resolving it opens a writer of its own.
         let coach = self.coach_authority()?.entity_ref();
         self.with_write_txn_grouped(|txn| {
@@ -358,11 +362,11 @@ impl Vault {
                     continue;
                 };
                 let granted = read_granted_in_txn(self, &*txn, settled, &work.source, coach)?;
-                let lacks = pinned.iter().any(|id| {
-                    !settled
-                        .candidates
-                        .iter()
-                        .any(|run| !run.coach_own && run.candidate_id == *id && run.tried(granted))
+                let lacks = pinned.iter().any(|(candidate, publisher_ref)| {
+                    !settled.candidates.iter().any(|run| {
+                        run.matches_publisher(&candidate.id, Some(publisher_ref))
+                            && run.tried(granted)
+                    })
                 });
                 if !lacks {
                     continue;
@@ -438,7 +442,7 @@ impl Vault {
                 let granted = read_granted_in_txn(self, &*txn, &settled, &work.source, coach)?;
                 for run in runs {
                     let kept = settled.candidates.iter().position(|kept| {
-                        !kept.coach_own && kept.candidate_id == run.0.candidate_id
+                        kept.matches_publisher(&run.0.candidate_id, run.0.publisher_ref.as_ref())
                     });
                     if kept.is_some_and(|at| {
                         settled
@@ -564,6 +568,7 @@ impl Vault {
                     id: format!("coach.{}", route.as_str()),
                     kind: PublisherCandidateKind::Instruction { instruction },
                     coach_own: true,
+                    publisher_ref: None,
                 }),
             _ => None,
         };
@@ -572,12 +577,10 @@ impl Vault {
         let candidates: Vec<ReplayCandidate> = own
             .into_iter()
             .chain(
-                host.publisher_candidates()
-                    .iter()
-                    .map(|candidate| ReplayCandidate {
-                        id: candidate.id.clone(),
-                        kind: candidate.kind.clone(),
-                        coach_own: false,
+                publisher_candidates_with_refs(host.publisher_candidates())
+                    .into_iter()
+                    .map(|(candidate, publisher_ref)| {
+                        ReplayCandidate::publisher(candidate, publisher_ref)
                     }),
             )
             .collect();
@@ -639,7 +642,7 @@ impl Vault {
         proposal: EntityId,
         route: HealRoute,
         settled: &CodeFixSettled,
-        missing: &[(String, PublisherCandidateKind)],
+        missing: &[ReplayCandidate],
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
     ) -> Result<Vec<SealedRun>> {
@@ -651,14 +654,7 @@ impl Vault {
         if matches!(snapshot.replay.exact, ExactReplay::Erased) {
             return Ok(not_run(missing, CodeFixWithheld::ReplayUnavailable));
         }
-        let candidates: Vec<ReplayCandidate> = missing
-            .iter()
-            .map(|(id, kind)| ReplayCandidate {
-                id: id.clone(),
-                kind: kind.clone(),
-                coach_own: false,
-            })
-            .collect();
+        let candidates = missing.to_vec();
         measure_candidates(self, &candidates);
         let job = snapshot_job(&snapshot, source, route, settled.failure_class, proposal);
         let replay = CoachReplay {
@@ -731,6 +727,7 @@ impl Vault {
             let run = CandidateRun {
                 candidate_id: candidate_id.clone(),
                 coach_own: candidate.coach_own,
+                publisher_ref: candidate.publisher_ref,
                 outcome,
                 export,
                 replay: replay_fidelity,

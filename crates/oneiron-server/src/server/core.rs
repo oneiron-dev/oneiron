@@ -375,7 +375,8 @@ impl SyncServer {
                 runs,
                 Arc::clone(self.wire_telemetry.limit_questions()),
             )
-            .with_reader_seats(self.reader_runner.seats()),
+            .with_reader_seats(self.reader_runner.seats())
+            .with_git_door_base(self.config.git_door_base.clone()),
         );
         // Reader children run on the same provider and pool.
         self.reader_runner.bind_host(Arc::clone(&host));
