@@ -7,7 +7,7 @@
 //! the write-back installer; the engine never holds key-write authority.
 
 use super::store::Version;
-use oneiron_vault_contract::vm_outbox::{VmOutboxKind, vm_outbox_member};
+use oneiron_vault_contract::vm_outbox::{VM_OUTBOX_SET_MARK, VmOutboxKind, vm_outbox_member};
 use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags, RenameFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
@@ -322,7 +322,7 @@ impl Staged {
         transfer_id: u64,
     ) -> std::io::Result<Self> {
         let (dir, leaf) = parent_of(root, member, Some(owner))?;
-        let temporary = format!(".{leaf}.vm-outbox-{transfer_id}.tmp");
+        let temporary = staged_name(&leaf, transfer_id);
         match rustix::fs::unlinkat(&dir, temporary.as_str(), AtFlags::empty()) {
             Ok(()) | Err(Errno::NOENT) => {}
             Err(error) => return Err(error.into()),
@@ -388,6 +388,99 @@ impl Staged {
         self.published = true;
         self.dir.sync_all()?;
         Ok(FileStamp::of(&self.file.metadata()?))
+    }
+
+    /// Syncs the bytes written so far and the directory entry naming them,
+    /// so a set's journal may name this temporary (FIX 7543).
+    pub(super) fn sync(&self) -> std::io::Result<()> {
+        self.file.sync_all()?;
+        self.dir.sync_all()
+    }
+
+    /// Hands the temporary to the set's journal, which names it: dropping
+    /// this no longer removes it, so a set left unfinished is finished from
+    /// it (FIX 7543).
+    pub(super) fn keep_for_journal(&mut self) {
+        self.published = true;
+    }
+}
+
+/// The hidden name a put of `transfer_id` is staged under beside `leaf`.
+fn staged_name(leaf: &str, transfer_id: u64) -> String {
+    format!(".{leaf}.vm-outbox-{transfer_id}.tmp")
+}
+
+/// Publishes again a put a set's journal names (FIX 7543): the staged
+/// temporary of `transfer_id` for `member` under `root`, while it is still
+/// there and holds `length` bytes, given its owner and mode, synced and
+/// renamed over the member, its directory synced; or the member itself,
+/// when the put was published before and the member holds `blake3`. Returns
+/// the published stamp, or `None` when neither is there: the put's bytes
+/// are gone.
+pub(super) fn publish_staged(
+    root: &File,
+    member: &str,
+    transfer_id: u64,
+    length: u64,
+    blake3: &str,
+    owner: Owner,
+    protected: bool,
+) -> std::io::Result<Option<FileStamp>> {
+    let (dir, leaf) = parent_of(root, member, Some(owner))?;
+    let temporary = staged_name(&leaf, transfer_id);
+    match open_file_at(&dir, &temporary) {
+        Ok(file) => {
+            let metadata = file.metadata()?;
+            if !metadata.is_file() || metadata.len() != length {
+                return Ok(None);
+            }
+            owner.own_file(&file, protected)?;
+            file.sync_all()?;
+            rustix::fs::renameat(&dir, temporary.as_str(), &dir, leaf.as_str())?;
+            dir.sync_all()?;
+            Ok(Some(FileStamp::of(&file.metadata()?)))
+        }
+        Err(error) if is_gone(&error) => {
+            let file = match open_file_at(&dir, &leaf) {
+                Ok(file) => file,
+                Err(error) if is_gone(&error) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            let metadata = file.metadata()?;
+            if !metadata.is_file() {
+                return Ok(None);
+            }
+            let held = digest(&file)?;
+            Ok((held.blake3 == blake3).then(|| FileStamp::of(&metadata)))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Marks `root` as holding a set this end is publishing
+/// ([`VM_OUTBOX_SET_MARK`]), the file given `owner`'s owner and mode and
+/// naming `set`, then syncs both, so a crash leaves the mark (FIX 7543).
+pub(super) fn mark_set(root: &File, owner: Owner, set: &str) -> std::io::Result<()> {
+    let flags =
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut file = File::from(rustix::fs::openat(
+        root,
+        VM_OUTBOX_SET_MARK,
+        flags,
+        Mode::from_raw_mode(0o600),
+    )?);
+    owner.own_file(&file, false)?;
+    file.write_all(set.as_bytes())?;
+    file.sync_all()?;
+    root.sync_all()
+}
+
+/// Removes `root`'s set mark, when it is there, and syncs `root`.
+pub(super) fn unmark_set(root: &File) -> std::io::Result<()> {
+    match rustix::fs::unlinkat(root, VM_OUTBOX_SET_MARK, AtFlags::empty()) {
+        Ok(()) => root.sync_all(),
+        Err(Errno::NOENT) => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
