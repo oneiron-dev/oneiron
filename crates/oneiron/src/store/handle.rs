@@ -271,6 +271,9 @@ pub struct StoreCore {
     /// The engine's attempt queue operations, supplied by the open door with
     /// the delete guards.
     pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The engine's core write operations, supplied by the open door with the
+    /// delete guards.
+    pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -315,7 +318,7 @@ pub struct StoreCore {
     /// and host runtime port every handle on this vault shares (V2-R3). A
     /// lock closes the gate and waits for the runtime's release before the
     /// key goes. Never persisted.
-    pub(crate) inference_snapshots: crate::inference_snapshot::SnapshotLifecycle,
+    pub(crate) inference_snapshots: crate::store::snapshot_lifecycle::SnapshotLifecycle,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.

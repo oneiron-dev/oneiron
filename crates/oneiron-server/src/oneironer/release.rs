@@ -376,12 +376,15 @@ pub(crate) enum OneironerFetchError {
 /// `0644` on Unix, an extracted tree keeping its entries' modes. A transfer
 /// that fails keeps its partial for the next run; a file of the wrong size
 /// or digest loses it. A second fetch of the same stack waits on the lock,
-/// then finds the bundle placed.
+/// then finds the bundle placed. Each file's written and pinned bytes are
+/// reported to `on_progress` as they land; byte counts only, never a
+/// verdict on the bytes.
 pub(crate) fn fetch_release(
     release: &OneironerRelease,
     source: &ReleaseSource,
     models_root: &Path,
     selected: Platforms,
+    on_progress: &mut dyn FnMut(&str, u64, u64),
 ) -> Result<OneironerFetchOutcome, OneironerFetchError> {
     let dir = bundle_dir(models_root, release);
     if dir.symlink_metadata().is_ok() {
@@ -407,7 +410,14 @@ pub(crate) fn fetch_release(
         .iter()
         .filter(|file| file.platform.is_none())
         .collect();
-    if let Some(refused) = stage_all(release, source, &staging, &placed, &mut moved)? {
+    if let Some(refused) = stage_all(
+        release,
+        source,
+        &staging,
+        &placed,
+        &mut moved,
+        &mut *on_progress,
+    )? {
         return Ok(refused);
     }
     // The staged manifest names the platform rows, and so which archives
@@ -420,7 +430,14 @@ pub(crate) fn fetch_release(
         platforms::clear(&staging, file, row)?;
     }
     let archives: Vec<&ReleaseFile> = chosen.iter().map(|(_, file, _)| *file).collect();
-    if let Some(refused) = stage_all(release, source, &staging, &archives, &mut moved)? {
+    if let Some(refused) = stage_all(
+        release,
+        source,
+        &staging,
+        &archives,
+        &mut moved,
+        &mut *on_progress,
+    )? {
         return Ok(refused);
     }
     for (_, file, row) in &chosen {
@@ -441,17 +458,19 @@ pub(crate) fn fetch_release(
 }
 
 /// Stages `files` in order: the refusal that stopped one, if any. `moved`
-/// counts the bytes kept from an earlier run and those fetched.
+/// counts the bytes kept from an earlier run and those fetched. Each file's
+/// written and pinned bytes go to `on_progress` as they land.
 fn stage_all(
     release: &OneironerRelease,
     source: &ReleaseSource,
     staging: &Path,
     files: &[&ReleaseFile],
     moved: &mut (u64, u64),
+    on_progress: &mut dyn FnMut(&str, u64, u64),
 ) -> Result<Option<OneironerFetchOutcome>, OneironerFetchError> {
     for file in files {
         let name = file.artifact.file.to_string();
-        match stage(release, source, staging, &file.artifact)? {
+        match stage(release, source, staging, &file.artifact, &mut *on_progress)? {
             Staged::Ready { kept, fetched } => {
                 moved.0 += kept;
                 moved.1 += fetched;
@@ -491,17 +510,19 @@ enum Staged {
 
 /// Makes `<staging>/<file>` the pinned file: kept when an earlier run staged
 /// it and it still checks, else fetched to its partial, checked there and
-/// renamed.
+/// renamed. Either way its written and pinned bytes go to `on_progress`.
 fn stage(
     release: &OneironerRelease,
     source: &ReleaseSource,
     staging: &Path,
     artifact: &PinnedArtifact,
+    on_progress: &mut dyn FnMut(&str, u64, u64),
 ) -> Result<Staged, OneironerFetchError> {
     let file: &str = &artifact.file;
     let staged = staging.join(file);
     if staged.is_file() {
         if check(&staged, artifact).is_ok() {
+            on_progress(file, artifact.bytes, artifact.bytes);
             return Ok(Staged::Ready {
                 kept: artifact.bytes,
                 fetched: 0,
@@ -514,7 +535,15 @@ fn stage(
     let partial = staging.join(format!("{file}.partial"));
     let url = model_manager::hub_url(&source.repo, release.stack_sha16, file);
     let auth = source.authorization();
-    let answer = model_manager::fetch_resumable(&url, &partial, artifact, auth, FETCH_TOOL);
+    let mut report = |written: u64, expected: u64| on_progress(file, written, expected);
+    let answer = model_manager::fetch_resumable_with_progress(
+        &url,
+        &partial,
+        artifact,
+        auth,
+        FETCH_TOOL,
+        &mut report,
+    );
     let (kept, fetched) = match answer.map_err(transfer_error(file))? {
         ResumableFetch::Written { kept, fetched } => (kept, fetched),
         ResumableFetch::NotFound => return Ok(Staged::NotPublished),

@@ -67,7 +67,7 @@ pub(super) fn admit_landing_lfs_pointers(
                     return Err(Error::Code(CodeError::ReceivePackLandingRefused {
                         reason: format!(
                             "lfs object for {} is not stored in this vault",
-                            printable_ref_name(&intent.path)
+                            printable_ref_name(&String::from_utf8_lossy(&intent.path))
                         ),
                     }));
                 }
@@ -166,19 +166,16 @@ fn ref_tree_carries_path(
     handle: &GitWireRepo,
     trees: &mut BTreeMap<String, Vec<GitTreeEntry>>,
     tip: &GitOid,
-    path: &str,
+    path: &[u8],
 ) -> Result<bool> {
     let mut current = tip.clone();
-    let mut components = path.split('/').peekable();
+    let mut components = path.split(|&byte| byte == b'/').peekable();
     while let Some(component) = components.next() {
         if component.is_empty() {
             return Ok(false);
         }
         let entries = read_tree_entries(wire, handle, trees, &current)?;
-        let Some(entry) = entries
-            .iter()
-            .find(|entry| entry.name == component.as_bytes())
-        else {
+        let Some(entry) = entries.iter().find(|entry| entry.name == component) else {
             return Ok(false);
         };
         let mode = entry.mode;
