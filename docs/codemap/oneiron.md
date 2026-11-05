@@ -1404,7 +1404,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/program_step.rs` | src | s | 11 crate-vis | — | A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its… |
 | `src/code_run/dispatcher/read_worlds.rs` | src | s | 1 fn · 11 crate-vis | — | A run's read-world capture as its host serves it (FIX 6130) |
 | `src/code_run/dispatcher/reader_spawn.rs` | src | m | 3 fn · 15 crate-vis | — | Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn… |
-| `src/code_run/dispatcher/repo.rs` | src | m | 1 fn · 1 crate-vis | — | `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's repo rows |
+| `src/code_run/dispatcher/repo.rs` | src | m | 2 fn · 1 crate-vis | — | `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's repo rows |
 | `src/code_run/dispatcher/repo_sources.rs` | src | s | 2 crate-vis | — | The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL "FIX 6867 review policy and provenance")… |
 | `src/code_run/dispatcher/routed_entry.rs` | src | s | 4 fn | — | What a host reads and binds on a run's own route as it enters the run (FIX 2594, FIX 7507): the seat its… |
 | `src/code_run/dispatcher/session_verbs.rs` | src | s | 2 crate-vis | — | The reads a run bound to an off-record session serves through the room's view (WILL L11-01, S01-1) |
@@ -3227,7 +3227,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/bridge.rs` | src | s | 2 crate-vis | — | Core half of `git_wire::bridge`: its store-layer items live in `oneiron_store::git_wire::bridge` and are… |
 | `src/git_wire/bundle_tree.rs` | src | s | 4 crate-vis | — | Core half of `git_wire::bundle_tree`: its store-layer items live in `oneiron_store::git_wire::bundle_tree`… |
 | `src/git_wire/checkout.rs` | src | s | 2 fn · 5 crate-vis | — | Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl |
-| `src/git_wire/checkout_remote.rs` | src | s | 1 fn · 4 crate-vis | — | Lease-bound worktree remotes |
+| `src/git_wire/checkout_remote.rs` | src | s | 2 fn · 4 crate-vis | — | Lease-bound worktree remotes |
 | `src/git_wire/env.rs` | src | s | 1 struct · 5 fn · 2 crate-vis | GitWireProcessEnv | Pinned process baseline: executable resolution, bounds, and the test-only binary override |
 | `src/git_wire/execution_context.rs` | src | s | 16 crate-vis | — | Core half of `git_wire::execution_context`: its store-layer items live in… |
 | `src/git_wire/execution_scope.rs` | src | s | 6 crate-vis | — | Core half of `git_wire::execution_scope`: its store-layer items live in… |
@@ -3237,7 +3237,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/mirror_plan_push.rs` | src | s | 2 struct · 1 enum · 2 fn | GitPlanPushReport, GitPlanRef, GitPlanRefOutcome | The outbound half of an automatic mirror push plan (FIX 6866 part 2): an authenticated read of a frozen… |
 | `src/git_wire/mirror_plan_review.rs` | src | m | 4 struct · 1 enum · 6 fn | GitPeeledRef, GitRefEnd, GitRefTag, GitRetainedPeeledRef, GitRetainedRefTag | What a whole ref an automatic mirror plan pushes names beyond the commits it reaches (FIX 6866 part 2), and… |
 | `src/git_wire/mirror_push.rs` | src | s | 1 fn · 6 crate-vis | — | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
-| `src/git_wire/mod.rs` | src | s | 18 re-export · 8 crate-vis | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
+| `src/git_wire/mod.rs` | src | s | 19 re-export · 8 crate-vis | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `src/git_wire/mutation_commands.rs` | src | s | 5 crate-vis | — | Core half of `git_wire::mutation_commands`: its store-layer items live in… |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 8 fn · 1 re-export · 3 crate-vis | GitWireObjectWrite, GitWirePlan | Core half of `git_wire::plan`: its store-layer items live in `oneiron_store::git_wire::plan` and are… |
 | `src/git_wire/process.rs` | src | s | 6 crate-vis | — | Core half of `git_wire::process`: its store-layer items live in `oneiron_store::git_wire::process` and are… |
@@ -3906,7 +3906,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/recall/selection.rs` | src | m | 18 crate-vis | — | What one recall narrows by, resolved once from its scope (FIX 2905): the worlds, projects, facet and kinds |
 | `src/memory/recall/speculative.rs` | src | s | 1 fn | — | Bind OF-108 to the same credential, selected worlds and policy as recall |
 | `src/memory/recall/stale.rs` | src | s | 1 struct · 1 crate-vis | MemoryStaleStamp | Typed stale-federation metadata returned only for admitted recall items |
-| `src/memory/repo_doors/custody.rs` | src | m | 4 struct · 2 fn · 1 const | RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput, RepoExportOutput | `self.code.checkout.bind` and `self.code.export` (FIX 6867, G1 PR3b): a leased run binds its own checkout… |
+| `src/memory/repo_doors/custody.rs` | src | m | 4 struct · 3 fn · 1 const | RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput, RepoExportOutput | `self.code.checkout.bind` and `self.code.export` (FIX 6867, G1 PR3b): a leased run binds its own checkout… |
 | `src/memory/repo_doors/host.rs` | src | s | 2 fn | — | The run binding of a public `vault.repo.*` call (FIX 6867, G1 PR3b): an external agent's credential-bound… |
 | `src/memory/repo_doors/mod.rs` | src | m | 2 struct · 1 const · 5 re-export · 11 crate-vis | RepoRunAnswer, RepoRunBinding | The run repo doors (FIX 6867, L11 G1 PR2a): a leased agent run's own reads of the repos its owner's Grant… |
 | `src/memory/repo_doors/proposals.rs` | src | m | 1 struct · 1 trait · 2 fn · 3 const · 4 crate-vis | RepoReviewPolicy, RepoRunSources | `self.code.proposal_submit` and `self.code.merge_queue.enqueue` (FIX 6867, G1 PR2b): a leased run's one… |
@@ -5850,7 +5850,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/holders.rs` | src | s | 10 crate-vis | — | The exterior holder debt of erasable keys (FIX 8875): which other machines hold a copy of a key this custody… |
 | `src/store/key_custody/home.rs` | src | m | 6 crate-vis | — | The residence home's side of the residence target (KS-4A2, FIX 5685) |
 | `src/store/key_custody/kept_images.rs` | src | s | 12 crate-vis | — | What keeps a body instance's key past its last row (FIX 6022, 6228): the in-flight leases of this process… |
-| `src/store/key_custody/log.rs` | src | m | 2 struct · 3 fn · 33 crate-vis | CustodyEpoch, CustodyPosition | The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside… |
+| `src/store/key_custody/log.rs` | src | L | 2 struct · 3 fn · 34 crate-vis | CustodyEpoch, CustodyPosition | The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside… |
 | `src/store/key_custody/mod.rs` | src | m | 1 mod · 2 re-export · 38 crate-vis | — | Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault… |
 | `src/store/key_custody/outbox/files.rs` | src | s | 8 crate-vis | — | Core half of `store::key_custody::outbox::files`: its store-layer items live in… |
 | `src/store/key_custody/outbox/mod.rs` | src | s | 3 crate-vis | — | The Hypnos outbox target (FIX 5899): a managed vault's hosted custody holder |
@@ -5859,7 +5859,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/protocol.rs` | src | s | 5 struct · 1 enum · 2 trait · 14 fn · 5 re-export · 7 crate-vis | AckPosition, AckRecord, CustodyBatch, CustodySource, CustodyTarget, Lineage, ResidenceCommit, TargetPublication | Core half of `store::key_custody::protocol`: its store-layer items live in… |
 | `src/store/key_custody/protocol/drain.rs` | src | s | 2 struct · 3 fn · 1 re-export · 1 crate-vis | DrainAck, DrainTicket | Core half of `store::key_custody::protocol::drain`: its store-layer items live in… |
 | `src/store/key_custody/protocol/fetched.rs` | src | s | 3 struct · 1 fn | CustodyHomeCursor, CustodyHomePage, FetchedCustodySource | A lineage's custody as its residence home holds it, read with the kit (FIX 5846): the page the home's kit… |
-| `src/store/key_custody/publication_policy.rs` | src | s | 5 crate-vis | — | The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's… |
+| `src/store/key_custody/publication_policy.rs` | src | m | 7 crate-vis | — | The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's… |
 | `src/store/key_custody/publish.rs` | src | m | 14 crate-vis | — | Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to every… |
 | `src/store/key_custody/publish/backup.rs` | src | s | 3 crate-vis | — | Serializes the automatic backup companion's publication and expiry |
 | `src/store/key_custody/publish/pending.rs` | src | s | 1 crate-vis | — | A publication pass that stays pending before it seals anything (FIX 8825): its policy did not read, so no… |
@@ -6104,9 +6104,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/checkpoint_payload/frame.rs` | src | s | 2 crate-vis | — | A window carrier's own spelling (KS7-3b): what KS7-5 keeps of a split window under the image's outer seal |
 | `src/sync/checkpoint_payload/mod.rs` | src | m | 43 crate-vis | — | The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary… |
 | `src/sync/checkpoint_payload/operations.rs` | src | m | 5 crate-vis | — | A window's Loro rows split for a checkpoint (KS7-3b, FIX 5688), over the vendored root-map checkpoint… |
-| `src/sync/checkpoint_payload/owners.rs` | src | s | 5 crate-vis | — | Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's… |
+| `src/sync/checkpoint_payload/owners.rs` | src | m | 9 crate-vis | — | Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's… |
 | `src/sync/checkpoint_payload/parts.rs` | src | s | 3 crate-vis | — | Which holders each part of a parted window value has (KS7-3a) |
-| `src/sync/checkpoint_payload/restore.rs` | src | s | 1 crate-vis | — | A window's Loro rows put back from a checkpoint (KS7-3b, FIX 5688) |
+| `src/sync/checkpoint_payload/restore.rs` | src | m | 1 crate-vis | — | A window's Loro rows put back from a checkpoint (KS7-3b, FIX 5688) |
 | `src/sync/checkpoint_payload/rows.rs` | src | s | 6 crate-vis | — | The non-Loro sync rows (KS7-3a), each placed with its family's own codec: a thin-residence item's cached… |
 | `src/sync/chunks.rs` | src | m | 4 struct · 2 enum · 16 fn · 4 const · 2 re-export · 3 crate-vis | ChunkPage, ChunkPageCursor, ChunkSyncRequest, ChunkSyncResponse, LfsHold, ManifestPage | Authenticated manifest-scoped have/want exchange |
 | `src/sync/chunks/download.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | ChunkDownload | One bounded in-flight have/want transfer, driven by real socket replies |
