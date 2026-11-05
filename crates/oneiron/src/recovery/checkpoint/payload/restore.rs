@@ -240,6 +240,7 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     opened: OpenedPayload,
+    retired_digests: &BTreeSet<[u8; 32]>,
 ) -> Result<usize> {
     #[cfg(feature = "sync")]
     let carriers = SyncCarriers::new(store);
@@ -248,6 +249,14 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     let mut dropped = 0;
     for (role, rows) in opened.bundles {
         let restored = match role {
+            BundleRole::Content(Getter::ProvenanceBody) => {
+                crate::provenance::body::checkpoint::restore_pruned_in_txn(
+                    store,
+                    txn,
+                    rows,
+                    retired_digests,
+                )?
+            }
             BundleRole::Content(getter) => getter.restore_in_txn(store, txn, rows)?,
             BundleRole::Carrier(carrier) => carriers.restore_in_txn(txn, carrier, rows)?,
             BundleRole::Actors => {

@@ -369,6 +369,7 @@ pub mod revision_ref;
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
+pub(crate) mod shared_leave_receipt;
 mod short_id_alias;
 pub(crate) mod skill_attribution_causes;
 pub(crate) mod skill_attribution_judgments;

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1231 facade rows, 4481 declarations.
-Inputs: 1162 of 1231 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1066 of 1231 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1232 facade rows, 4483 declarations.
+Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -5569,6 +5569,8 @@ class SkillCodeAutoInstallRequest(TypedDict):
 SkillFitChoice = Literal["rule_fit", "owner_asked"]
 class SkillFitSetRequest(TypedDict):
     setting: SkillFitChoice
+class SkillAdvisoryAskRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -15034,6 +15036,10 @@ class DeckEmissionRequest(TypedDict):
     name: str
     run_ref: str
     trigger: NotRequired[MadeByTrigger | None]
+class CreatedInput(TypedDict):
+    source: ArtifactVersionRef
+    content_hash: list[int]
+    provenance_kind: str
 class CreatedSlide(TypedDict):
     part: str
     sld_id: int
@@ -15048,6 +15054,8 @@ class DeckCreationRecord(TypedDict):
     outline_hash: list[int]
     template: ArtifactVersionRef
     template_hash: list[int]
+    asset_inputs: dict[str, CreatedInput]
+    font_inputs: list[CreatedInput]
     run_ref: str
     made_by: NotRequired[EntityId | None]
     slides: list[CreatedSlide]
