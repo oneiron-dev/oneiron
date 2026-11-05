@@ -153,14 +153,17 @@ pub(super) fn document_revision_scope_in_txn(
     )? {
         return Ok(Err(OUTPUT_MISSING));
     }
+    // The lane's exact read comes first: an output it does not read is
+    // missing, whatever else is true of it, so a refusal never tells a
+    // reader the lane denies that the record or its revision exists.
+    match revision_in_txn(txn, lane, entity, revision)? {
+        Some((kind, _)) if kind == entity_type => {}
+        _ => return Ok(Err(OUTPUT_MISSING)),
+    }
     if entity_type == ENTITY_TYPE_NOTE
         && !crate::note::note_vault_readable_in_txn(&vault.store, txn, &entity, &body)?
     {
         return Ok(Err(OUTPUT_UNSCOPED));
-    }
-    match revision_in_txn(txn, lane, entity, revision)? {
-        Some((kind, _)) if kind == entity_type => {}
-        _ => return Ok(Err(OUTPUT_MISSING)),
     }
     record_position_in_txn(vault, txn, entity, entity_type, &body)
 }
