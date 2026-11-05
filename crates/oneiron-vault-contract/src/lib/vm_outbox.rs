@@ -9,14 +9,18 @@
 //! opens each of its turns with its engine's registered backup label, once
 //! there is one ([`VmOutboxFrame::BackupRegistered`], FIX 7046), sends each
 //! set it has, then [`VmOutboxFrame::Pull`]; the host sends each set it has,
-//! then [`VmOutboxFrame::Done`]. A set is one or more
-//! [`VmOutboxFrame::Transfer`]s, the last marked `commit_set`; the receiver
-//! publishes the whole set, or none of it, and answers each transfer with a
-//! [`VmOutboxAck`] once the set is durable or why it is not.
+//! then [`VmOutboxFrame::Done`]. A set is one or more descriptor-only
+//! [`VmOutboxFrame::Offer`]s, the last marked `commit_set`. The receiver
+//! stages the complete offer and answers [`VmOutboxFrame::Go`] before any
+//! put body is sent, or gives the existing ordered acks without bodies when
+//! the set cannot be taken. A go is not an ack: the receiver publishes the
+//! whole set, or none of it, and answers each transfer with a [`VmOutboxAck`]
+//! once the set is durable or why it is not.
 //!
 //! A transfer names a member, a kind's protocol name relative to that kind's
-//! root and never a host path ([`vm_outbox_member`]). A `put` is followed by
-//! its `length` bytes in data chunks: each a big-endian `u32` length (1 to
+//! root and never a host path ([`vm_outbox_member`]). After a go, each `put`
+//! sends its `length` bytes in offer order, in data chunks: each a big-endian
+//! `u32` length (1 to
 //! [`VM_OUTBOX_CHUNK_BYTES`]) then those bytes. A long file takes more
 //! chunks; nothing caps a file, a set, a turn or an outbox. A `remove` has no
 //! data and names the exact version it retires. Each member has one origin
@@ -41,8 +45,12 @@
 //! notice's [`VmOutboxNoticeAction`] and the host's
 //! [`VmOutboxFrame::AsideRemoved`] answer to a removal of its kept-aside copy
 //! (FIX 11985) and [`VmOutboxFrame::AsideKept`] answer to a keep of one
-//! (FIX 12010). This
-//! extension rides contract version 3 with a build floor, and a vault reports
+//! (FIX 12010). Revision 5 adds descriptor-only offers and a go before the
+//! bodies (FIX 11071 / 6685). Native allocation reserves a put in the same
+//! staging file before go where supported; unsupported allocation keeps the
+//! original write path. Later write, publish and record errors still get
+//! their existing final acks. This extension rides contract version 3 with
+//! a build floor, and a vault reports
 //! it on `Ping` (`vm_outbox_revision`).
 
 mod members;
@@ -52,9 +60,9 @@ pub use crate::vm::VM_OUTBOX_PORT;
 
 use serde::{Deserialize, Serialize};
 
-/// The carrier's wire revision, which every frame names and a vault VM
-/// reports on `Ping` (`vm_outbox_revision`) once its carrier is complete.
-pub const VM_OUTBOX_WIRE_REVISION: u32 = 4;
+/// The carrier's wire revision, named by its handshake, descriptors and
+/// acks, and reported on `Ping` (`vm_outbox_revision`) once it is complete.
+pub const VM_OUTBOX_WIRE_REVISION: u32 = 5;
 /// The most bytes one data chunk carries: a buffering choice, not a bound on
 /// any file.
 pub const VM_OUTBOX_CHUNK_BYTES: usize = 64 * 1024;
@@ -412,9 +420,13 @@ pub enum VmOutboxFrame {
         held: String,
         failed: Option<String>,
     },
-    /// One transfer; a put's data chunks follow its line.
-    Transfer(VmOutboxDescriptor),
-    /// The answer to one transfer, after its set.
+    /// One descriptor, without body bytes. All offers of a set precede
+    /// its go or ordered acks; `commit_set` marks the last offer.
+    Offer(VmOutboxDescriptor),
+    /// The complete offered set may stream its put bodies, in offer order.
+    /// This is not an ack: only the final ordered acks report durability.
+    Go,
+    /// The answer to one transfer, after its set or an early deferral.
     Ack(VmOutboxAck),
     /// Guest to host: the guest's sets are sent; the host's turn.
     Pull,

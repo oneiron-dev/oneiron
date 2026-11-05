@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1235 facade rows, 4490 declarations.
+Census: 1235 facade rows, 4491 declarations.
 Inputs: 1166 of 1235 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1070 of 1235 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -20875,6 +20875,13 @@ class ConsolidationEvidenceLocator(TypedDict):
     byte_range: NotRequired[tuple[int, int] | None]
     content_hash: list[int]
     messages: list[ConsolidationMessageEvidence]
+class ConsolidationDeliveryOrigin(TypedDict):
+    source_ref: str
+    delivering_pact: str
+    consent_epoch: int
+    grant_ref: str
+    source_vault: str
+    delivered_row_hash: str
 class ConsolidationEvidenceSource(TypedDict):
     source_ref: str
     source: NotRequired[str | None]
@@ -20894,6 +20901,7 @@ class ConsolidationEvidenceSource(TypedDict):
     source_meet: NotRequired[str | None]
     chain: list[ConsolidationEvidenceHop]
     locators: list[ConsolidationEvidenceLocator]
+    delivery_history: NotRequired[list[ConsolidationDeliveryOrigin] | None]
 class ConsolidationPromotion(TypedDict):
     job_ref: str
     landed: list[str]

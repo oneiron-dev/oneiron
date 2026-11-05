@@ -251,26 +251,17 @@ impl ConnectorElicitationRegistry {
         Some((live_until_ms, entry.call_ref))
     }
 
-    /// Binds the questions `handle` names to the call `call_ref` whose row
-    /// keeps them (FIX 3837); `true` when it bound them. A set whose worker
-    /// already ended leaves the row's questions uncertain.
-    pub(crate) fn bind_call(
-        &self,
-        vault: &oneiron::Vault,
-        handle: &str,
-        call_ref: EntityId,
-    ) -> bool {
-        let bound = match self.lock().get_mut(handle) {
+    /// Binds live questions in memory before their row publishes the handle.
+    /// No vault writer is opened; the host marks a gone set uncertain after
+    /// the row commits.
+    pub(crate) fn bind_call(&self, handle: &str, call_ref: EntityId) -> bool {
+        match self.lock().get_mut(handle) {
             Some(entry) => {
                 entry.call_ref = Some(call_ref);
                 true
             }
             None => false,
-        };
-        if !bound && let Err(error) = vault.mark_connector_input_uncertain(&call_ref, handle) {
-            tracing::warn!(%error, "connector call questions not marked uncertain");
         }
-        bound
     }
 
     /// Whether the question set `handle` names is live here.

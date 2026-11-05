@@ -553,16 +553,20 @@ fn claim_staged_archive(
     // Shape (a): the index of the incarnation that opens each side in the
     // mirror beside it. Only (1, 1) claims; (0, 0) is a pre-swap copy and
     // anything else, including a probe that does not open, is torn and stays.
-    let mirror_index = |path: &Path| -> Option<usize> {
-        let incarnation = unlock_page_seal(path, unlock).ok()?.incarnation();
+    let mirror_index = |path: &Path| -> Option<(usize, VaultPageSeal)> {
+        let seal = unlock_page_seal(path, unlock).ok()?;
         let named = page_seal_incarnations(path).ok()?;
-        named.iter().position(|candidate| *candidate == incarnation)
+        let index = named
+            .iter()
+            .position(|candidate| *candidate == seal.incarnation())?;
+        Some((index, seal))
     };
-    let home = mirror_index(vault_path);
+    let home = mirror_index(vault_path).map(|(index, _)| index);
     let staged = mirror_index(&staged_vault);
-    if (home, staged) != (Some(1), Some(1)) {
-        return left_whole();
-    }
+    let previous_seal = match (home, staged) {
+        (Some(1), Some((1, seal))) => seal,
+        _ => return left_whole(),
+    };
     let Some(parent) = vault_path.parent() else {
         return left_whole();
     };
@@ -619,9 +623,9 @@ fn claim_staged_archive(
     // mid-protocol state ("A crash between any two steps leaves each
     // environment beside a mirror that names its incarnation... its next
     // mirror rewrite names that one alone"): the archive opens under the
-    // previous incarnation and its first open narrows the mirror to that one
-    // alone, until `finish_restore_archive_mirror` writes the exact single
-    // mirror. This assumes the carried wraps, the replacement's, still open
+    // previous incarnation. After the rename the finisher below names that
+    // one alone; if it fails, the archive's first open still narrows it.
+    // This assumes the carried wraps, the replacement's, still open
     // the previous vault: it holds the writer lease from the replacement's
     // build through the swap, so no wrap change can land on it between them;
     // a stale carry would fail the archive's first open.
@@ -669,6 +673,14 @@ fn claim_staged_archive(
             %error,
             archive = %archive.display(),
             "a staged vault was claimed but the directory sync failed"
+        );
+    }
+    if let Err(error) = oneiron::world_keys::finish_restore_archive_mirror(&archive, &previous_seal)
+    {
+        tracing::warn!(
+            %error,
+            archive = %archive.display(),
+            "a staged vault was claimed but its page-seal mirror could not be finished"
         );
     }
     // Only the staging mirror and the staging directory itself go, never a
