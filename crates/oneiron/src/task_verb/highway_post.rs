@@ -311,6 +311,7 @@ fn take_in_txn(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred: raw.occurred,
             learned_at: raw.learned_at,
+            row_version: None,
             data: crate::claim::encode_claim_body(&approved)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
