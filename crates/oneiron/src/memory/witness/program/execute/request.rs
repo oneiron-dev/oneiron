@@ -11,6 +11,7 @@ pub(super) struct ResolvedLanding<'a, 'v> {
     pub(super) saver: Option<crate::off_record::SaverCheck<'a, 'v>>,
     pub(super) admit: Option<Admit<'a>>,
     pub(super) room_speech: Option<(&'a OffRecordSession<'v>, EntityId)>,
+    pub(super) terminal: Option<&'a super::super::super::stream::SessionStreamTerminal>,
 }
 
 /// Resolves the target to its landing; a session target's write route is
@@ -24,6 +25,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
     let mut saver = None;
     let mut admit = None;
     let mut room_speech = None;
+    let mut terminal = None;
     let landing = match target {
         WitnessTarget::Base { route } => Landing::Base {
             route,
@@ -68,7 +70,9 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
             admit: session_admit,
             rostered,
             turn_vector,
+            terminal: stream_terminal,
         } => {
+            terminal = stream_terminal;
             on_record_session = Some(session);
             admit = session_admit;
             let session_route: &'a SessionWriteRoute = match captured_route {
@@ -118,6 +122,7 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
         saver,
         admit,
         room_speech,
+        terminal,
     })
 }
 
