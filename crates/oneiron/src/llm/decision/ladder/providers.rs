@@ -8,7 +8,7 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, DecisionRung,
     HostRuleRef, PairedReading, ProviderPin,
 };
-use crate::llm::run_admission::RunAdmission;
+use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
@@ -76,6 +76,14 @@ impl<'a> DecisionPack<'a> {
     }
 }
 
+/// A provider read's original result beside copies of its native settlements.
+/// Receipt usage stays optional; neither an empty inventory nor a receipt count
+/// establishes token use or a number of logical generations.
+pub struct CapturedDecision {
+    pub result: Result<ProviderDecision>,
+    pub receipts: Vec<RunReceipt>,
+}
+
 /// Providers see only caller-prepared, access-checked evidence references and the state the
 /// host built from them. Their outputs contain no authority fields, receipt, or provenance
 /// label. The identity contract: `pin` names the exact model and revision that answers, and
@@ -117,6 +125,12 @@ pub trait DecisionProvider: Send + Sync {
     /// when the provider itself reports one; else `None` (unknown). A provider
     /// that knows only tokens answers `None`: bytes convert to nothing here.
     fn state_budget_bytes(&self) -> Option<usize> {
+        None
+    }
+    /// A read with its native settlement inventory, when this provider can capture it.
+    /// `None` means unsupported and MUST return before any read or send. A supported
+    /// read retains its original result, including an error after paid work.
+    fn decide_captured(&self, _call: &DecisionCall<'_>) -> Option<CapturedDecision> {
         None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -218,6 +232,10 @@ pub trait DecisionModel: Send + Sync {
     fn state_budget_bytes(&self) -> Option<usize> {
         None
     }
+    /// See [`DecisionProvider::decide_captured`].
+    fn decide_captured(&self, _call: &DecisionCall<'_>) -> Option<CapturedDecision> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -270,6 +288,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn state_budget_bytes(&self) -> Option<usize> {
         self.model.state_budget_bytes()
+    }
+    fn decide_captured(&self, call: &DecisionCall<'_>) -> Option<CapturedDecision> {
+        self.model.decide_captured(call)
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
