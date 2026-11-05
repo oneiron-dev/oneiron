@@ -199,8 +199,9 @@ side_tables! {
     /// Each COACH_DIAGNOSTIC_ISSUE under its recurrence key, written with it (FIX 7343). Key:
     /// the key's 32 bytes, then id16 of the issue.
     COACH_DIAGNOSTIC_ISSUE_BY_KEY: VaultMeta b"coach:diagnostic_issue_by_key:v1:" Raw;
-    /// One accepted owner run-now joined a running feedback sweep and owes a later sweep.
-    /// Scheduling intent only, no content or actor. Key/value: ().
+    /// One owner-requested sweep joined running work and owes a later sweep: manual run-now
+    /// or an intake enabled by the owner's standing policy. Scheduling intent only, no
+    /// content or actor. Key/value: ().
     COACH_FEEDBACK_SWEEP_PENDING: VaultMeta b"coach:feedback_sweep_pending:v1" Named Engine;
     /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
     /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
