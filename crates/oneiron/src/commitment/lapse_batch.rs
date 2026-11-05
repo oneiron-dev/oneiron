@@ -321,6 +321,7 @@ fn supersede_with_successor_in_txn(
                 end: closed_end,
             },
             learned_at: header.learned_at,
+            row_version: None,
             data: crate::claim::encode_claim_body(&body)?,
             allow_maintenance: false,
             allow_reserved_predicate: false,
