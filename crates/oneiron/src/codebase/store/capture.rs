@@ -155,6 +155,7 @@ fn read_file(path: &Path, expected: u64, memory: &mut MemoryLease) -> Result<Vec
             grow_buffer(&mut bytes, more, memory)?;
             bytes[filled] = next[0];
             filled += 1;
+            continue;
         }
         match file.read(&mut bytes[filled..]) {
             Ok(0) => break,
