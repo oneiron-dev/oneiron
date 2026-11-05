@@ -110,11 +110,17 @@ impl Vault {
                     &withheld,
                 )?
             {
-                // A pad reference row leaves as the carrier the world-key
-                // door builds; every other body as the release filter reads
-                // it, after its marked copy is chosen (FIX 8742).
+                // A pad row is key material, never memory text: a reference
+                // leaves as the carrier the world-key door builds and a pad
+                // body that decodes leaves whole, since the memory filter
+                // would break its key. Every other body leaves as the release
+                // filter reads it, after its marked copy is chosen (FIX 8742).
+                let pad = h.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
+                    && raw.get(ENTITY_METADATA_HEADER_LEN..).is_some_and(|body| {
+                        oneiron_store::world_pad_codec::decode_pad_body(body).is_ok()
+                    });
                 let carrier = crate::world_keys::image_pad_row(&self.store, &raw);
-                let filtered = carrier.is_none();
+                let filtered = carrier.is_none() && !pad;
                 let bytes = match carrier {
                     Some(carrier) => carrier,
                     None => self.materialized_row_in_txn(&txn, &id, raw)?,
