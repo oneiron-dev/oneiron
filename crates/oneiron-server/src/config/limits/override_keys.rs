@@ -114,6 +114,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) seal_answer_bytes: Option<u64>,
     pub(in crate::config) seal_memory_asks: Option<u64>,
     pub(in crate::config) seal_crl_bytes: Option<u64>,
+    pub(in crate::config) seal_ocsp_bytes: Option<u64>,
     pub(in crate::config) seal_tsa_bytes: Option<u64>,
     pub(in crate::config) seal_report_json_bytes: Option<u64>,
     pub(in crate::config) seal_prepared_stream_bytes: Option<u64>,
@@ -169,4 +170,6 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) connector_manifest_entries: Option<u64>,
     pub(in crate::config) requested_result_rows: Option<u64>,
     pub(in crate::config) embedding_dimensions: Option<u64>,
+    pub(in crate::config) memory_reason_evidence_rows: Option<u64>,
+    pub(in crate::config) memory_reason_tokens: Option<u64>,
 }
