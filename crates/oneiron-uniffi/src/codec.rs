@@ -37,6 +37,7 @@ use crate::dto::{
 use crate::error::OneironError;
 
 mod claims;
+mod key_value;
 mod proposal_results;
 mod proposals;
 mod wire_json;

@@ -844,12 +844,12 @@ export_facade! {
 "vault.kv.get" => fn vault_kv_get(&self, input: KeyValueAddress) -> Option<KeyValueItem> = |client| {
     let input: oneiron::memory::KeyValueAddress = crate::codec::lower_record("vault.kv.get", input)?;
     let output = client.vault_kv_get(&input)?;
-    crate::codec::lift_record("vault.kv.get", &output)
+    Lift::lift(output)
 };
 "vault.kv.put" => fn vault_kv_put(&self, input: KeyValuePut) -> KeyValuePutReceipt = |client| {
     let input: oneiron::memory::KeyValuePut = crate::codec::lower_record("vault.kv.put", input)?;
     let output = client.vault_kv_put(&input)?;
-    crate::codec::lift_record("vault.kv.put", &output)
+    Lift::lift(output)
 };
 "vault.kv.delete" => fn vault_kv_delete(&self, input: KeyValueAddress) -> KeyValueDeleteReceipt = |client| {
     let input: oneiron::memory::KeyValueAddress = crate::codec::lower_record("vault.kv.delete", input)?;
@@ -859,7 +859,7 @@ export_facade! {
 "vault.kv.search" => fn vault_kv_search(&self, input: KeyValueSearch) -> Vec<KeyValueItem> = |client| {
     let input: oneiron::memory::KeyValueSearch = crate::codec::lower_record("vault.kv.search", input)?;
     let output = client.vault_kv_search(&input)?;
-    crate::codec::lift_record("vault.kv.search", &output)
+    Lift::lift(output)
 };
 "vault.kv.namespaces" => fn vault_kv_namespaces(&self, input: KeyValueNamespaces) -> Vec<Vec<String>> = |client| {
     let input: oneiron::memory::KeyValueNamespaces = crate::codec::lower_record("vault.kv.namespaces", input)?;
