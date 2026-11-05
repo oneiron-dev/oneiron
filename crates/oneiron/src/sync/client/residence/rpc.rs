@@ -68,6 +68,10 @@ pub(super) struct ResidenceRpc {
     pub(super) timeout: Duration,
     /// The machine the home proved on this socket's upgrade (OF-534 G7).
     pub(super) home: crate::authority::PeerMachine,
+    /// BLAKE3 of the exact endpoint URL this socket dialed: a metadata-only
+    /// route address that keys this install's automatic attempts (FIX 9254).
+    /// Never a home identity, never proof, never persisted with secrets.
+    pub(super) address: [u8; 32],
     /// Opened as this machine alone, with no actor bound (FIX 6458): its
     /// replies come after the sync frames the home opens each socket with.
     unbound: bool,
@@ -85,7 +89,7 @@ impl ResidenceRpc {
         let deadline = tokio::time::Instant::now() + timeout;
         let session = config.note_session.as_ref().ok_or_else(refused)?;
         config.residence_selector.as_ref().ok_or_else(refused)?;
-        let Some((mut socket, home)) = Self::dial(vault, config, deadline).await? else {
+        let Some((mut socket, home, address)) = Self::dial(vault, config, deadline).await? else {
             return Ok(None);
         };
         tokio::time::timeout_at(
@@ -116,6 +120,7 @@ impl ResidenceRpc {
                         next_id: 1,
                         timeout,
                         home,
+                        address,
                         unbound: false,
                     }));
                 }
@@ -142,23 +147,24 @@ impl ResidenceRpc {
         config.transport_credential.as_ref().ok_or_else(refused)?;
         Ok(Self::dial(vault, config, deadline)
             .await?
-            .map(|(socket, home)| Self {
+            .map(|(socket, home, address)| Self {
                 socket,
                 next_id: 1,
                 timeout,
                 home,
+                address,
                 unbound: true,
             }))
     }
 
     /// Dials the residence endpoint and sends the residence hello; the
-    /// socket and the machine the home proved on its upgrade, or `None` on
-    /// a transport outage.
+    /// socket, the machine the home proved on its upgrade, and the dialed
+    /// endpoint's route address, or `None` on a transport outage.
     async fn dial(
         vault: &crate::Vault,
         config: &SyncClientConfig,
         deadline: tokio::time::Instant,
-    ) -> Result<Option<(Socket, crate::authority::PeerMachine)>, TransportError> {
+    ) -> Result<Option<(Socket, crate::authority::PeerMachine, [u8; 32])>, TransportError> {
         // FIX 8862: the endpoint is read once, the carrier is chosen for
         // that endpoint, and both pass the credential check before any
         // header below is added.
@@ -204,7 +210,8 @@ impl ResidenceRpc {
         .map_err(|_| refused())?
         .map_err(|_| refused())?;
         let home = crate::sync::home_proof::home_peer(vault, &response, binding.as_ref());
-        Ok(Some((socket, home)))
+        let address: [u8; 32] = blake3::hash(endpoint.url.as_bytes()).into();
+        Ok(Some((socket, home, address)))
     }
 
     pub(super) async fn request(

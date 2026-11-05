@@ -315,6 +315,83 @@ impl Memory<'_> {
     }
 }
 
+/// Appends a critic's explicit-only dissent and its content inside the caller's
+/// writer, so the review can keep the NOTE handle in that same transaction.
+pub(crate) fn append_dissent_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: WriteActor,
+    target: crate::EntityId,
+    markdown: String,
+) -> crate::error::Result<crate::EntityId> {
+    let writer = actor.entity_ref();
+    let raw = vault
+        .get_raw_in(txn, &writer)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(crate::error::Error::CorruptedIndex("dissent author header"))?;
+    crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
+    match vault.get_entity_type_in_txn(txn, &target)? {
+        Some(ENTITY_TYPE_CLAIM) => {}
+        Some(_) => {
+            return Err(crate::error::Error::InvalidClaimBody(
+                "dissent target is not a CLAIM",
+            ));
+        }
+        None => return Err(crate::error::Error::EntityNotFound),
+    }
+    let kind = NoteKind::parse(crate::note::DISSENT_NOTE_KIND).expect("shipped kind");
+    vault.check_auto_note_birth_in_txn(txn, &kind, actor.actor_class(), &markdown)?;
+    let unlinked = unlinked_prose_in_txn(vault, txn, actor, &markdown)?;
+    let body = encode_note_body(&NoteBody {
+        kind,
+        author_ref: crate::note::NoteActor::Actor(writer),
+        markdown,
+        source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
+    })?;
+    let note_id = vault.store.clock.entity_id()?;
+    let at = vault.store.clock.now_recorded_at();
+    let occurred = TimeRange { start: at, end: at };
+    let mut content = crate::federation::ActorContentTxn::new(vault, txn, actor)?;
+    content.apply_batch(
+        vault
+            .batch_in()
+            .put_authored_note(&note_id, &writer, occurred, at, &body)
+            .edge(
+                &note_id,
+                EdgeKind::AuthoredBy,
+                &writer,
+                registered_edge_weight(EdgeKind::AuthoredBy),
+            )
+            .edge(
+                &note_id,
+                EdgeKind::ClaimOf,
+                &target,
+                registered_edge_weight(EdgeKind::ClaimOf),
+            ),
+    )?;
+    content.finish()?;
+    if let Some(facts) = unlinked.as_ref() {
+        let receipted = vault
+            .store
+            .env
+            .nested_write_txn(txn)
+            .map_err(crate::error::Error::from)
+            .and_then(|mut child| {
+                crate::receipt::record_reference_refusals_in_txn(
+                    vault,
+                    &mut child,
+                    std::slice::from_ref(facts),
+                )?;
+                child.commit().map_err(crate::error::Error::from)
+            });
+        if let Err(error) = receipted {
+            tracing::warn!(%error, "dissent kept; its unlinked receipt was not written");
+        }
+    }
+    Ok(note_id)
+}
+
 /// Appends one private diary NOTE authored by `agent`, inside the caller's
 /// write transaction (OF-530: a declined offer card lands in the agent's own
 /// diary). It runs the typed content program [`Memory::author_note`] runs for
