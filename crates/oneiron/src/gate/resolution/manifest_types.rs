@@ -342,6 +342,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(crate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
+    pub(crate) owner_change_wait_secs: Option<u64>,
     pub(super) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
