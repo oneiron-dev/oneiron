@@ -30,14 +30,16 @@ impl<'a> HeldRows<'a> {
         txn: &heed::RoTxn<'_>,
         baseline: Option<&'a AuthorityContinuation>,
         tail: &mut Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
+        source_rows: &mut BTreeSet<crate::EntityId>,
     ) -> Result<Self> {
-        if let Some(held) = Self::scan_indexed_in_txn(store, txn, baseline, tail)? {
+        if let Some(held) = Self::scan_indexed_in_txn(store, txn, baseline, tail, source_rows)? {
             return Ok(held);
         }
         let mut rest = BTreeSet::new();
         let mut folded = 0;
         for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
             let id = id?;
+            source_rows.insert(id);
             // The store id is the row's content hash, and a stored authority
             // row's body never changes: the baseline already read this one.
             if baseline.is_some_and(|baseline| baseline.ids.contains_key(&id)) {
@@ -76,6 +78,7 @@ impl<'a> HeldRows<'a> {
         txn: &heed::RoTxn<'_>,
         baseline: Option<&'a AuthorityContinuation>,
         tail: &mut Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
+        source_rows: &mut BTreeSet<crate::EntityId>,
     ) -> Result<Option<Self>> {
         let Some(baseline) = baseline else {
             return Ok(None);
@@ -113,6 +116,8 @@ impl<'a> HeldRows<'a> {
             }
             fresh.push((hash, entry));
         }
+        source_rows.extend(baseline.ids.keys().copied());
+        source_rows.extend(ids);
         tail.extend(fresh);
         Ok(Some(Self {
             baseline: Some(baseline),
