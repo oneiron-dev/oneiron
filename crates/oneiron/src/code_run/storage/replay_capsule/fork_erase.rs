@@ -7,9 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::super::contribution::{
-    FORK_RECEIPT_PREFIX, attempt_capsules_in_txn, target_capsule_in_txn,
-};
+use super::super::super::contribution::FORK_RECEIPT_PREFIX;
+use super::super::super::replay_capsule::StepReplayCapsule;
 use super::{FORKS, ForkValue, actor_gone_in_txn};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
@@ -28,24 +27,25 @@ impl ForkProvenance {
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         candidate: &ContributionCandidate,
+        capsules: &[StepReplayCapsule],
+        selected: Option<&StepReplayCapsule>,
     ) -> Result<Option<Self>> {
         let mut subjects = vec![candidate.skill];
         match candidate.target {
             ContributionTarget::LoadedSkill(skill) => subjects.push(skill),
             ContributionTarget::UsedEdge { derived, source } => subjects.extend([derived, source]),
         }
-        match target_capsule_in_txn(vault, txn, candidate)? {
-            Ok(capsule) => {
+        match selected {
+            Some(capsule) => {
                 let Some(actor) = capsule.content.actor() else {
                     return Ok(None);
                 };
                 subjects.push(actor);
             }
-            Err(_) => {
+            None => {
                 // No exposure still belongs to the attempt's captured actors.
                 // Only its latest generation owns this reason; an older
                 // erased generation must not hide a newer live attempt.
-                let capsules = attempt_capsules_in_txn(vault, txn, candidate)?;
                 let latest = capsules
                     .iter()
                     .map(|capsule| capsule.lease_generation)

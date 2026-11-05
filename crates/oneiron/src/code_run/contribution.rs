@@ -289,9 +289,18 @@ pub fn run_contribution_forks(
     scorer: &dyn ContributionForkScorer,
     clock: &RetrievalDeadline,
 ) -> Result<std::result::Result<ContributionForks, ContributionReplayUnavailable>> {
-    let provenance = {
+    let (provenance, capsule) = {
         let txn = vault.store.env.read_txn()?;
-        ForkProvenance::for_candidate_in_txn(vault, &txn, candidate)?
+        let capsules = attempt_capsules_in_txn(vault, &txn, candidate)?;
+        let capsule = target_step(&capsules, candidate.target);
+        let provenance = ForkProvenance::for_candidate_in_txn(
+            vault,
+            &txn,
+            candidate,
+            &capsules,
+            capsule.as_ref().ok(),
+        )?;
+        (provenance, capsule)
     };
     let Some(provenance) = provenance else {
         return Ok(Err(ContributionReplayUnavailable::Unreadable));
@@ -309,7 +318,7 @@ pub fn run_contribution_forks(
     if let Some(reason) = rows.unavailable {
         return Ok(Err(reason));
     }
-    let outcome = match runner.prepare(&rows)? {
+    let outcome = match runner.prepare(&rows, capsule)? {
         Ok(prepared) => runner.run(&prepared, rows)?,
         Err(reason) => Err(reason),
     };
@@ -364,7 +373,11 @@ struct Runner<'a> {
 }
 
 impl Runner<'_> {
-    fn prepare(&self, rows: &ForkRows) -> Outcome<Prepared> {
+    fn prepare(
+        &self,
+        rows: &ForkRows,
+        capsule: std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>,
+    ) -> Outcome<Prepared> {
         use ContributionReplayUnavailable as Unavailable;
         if !matches!(
             self.candidate.anchor,
@@ -373,12 +386,9 @@ impl Runner<'_> {
             return Ok(Err(Unavailable::AnchorNotReplayable));
         }
         let target = self.candidate.target;
-        let capsule = {
-            let txn = self.vault.store.env.read_txn()?;
-            match target_capsule_in_txn(self.vault, &txn, self.candidate)? {
-                Ok(capsule) => capsule,
-                Err(reason) => return Ok(Err(reason)),
-            }
+        let capsule = match capsule {
+            Ok(capsule) => capsule,
+            Err(reason) => return Ok(Err(reason)),
         };
         // An erased capsule's content went with its actor (FIX 6144): none of
         // its rung, exposures or request is read, and the pair is unreadable.
@@ -585,21 +595,8 @@ impl Runner<'_> {
     }
 }
 
-/// The existing target-step selection on the caller's snapshot, shared by
-/// preparation and the capture of its actual erase actor.
-pub(super) fn target_capsule_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    candidate: &ContributionCandidate,
-) -> Result<std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>> {
-    Ok(target_step(
-        attempt_capsules_in_txn(vault, txn, candidate)?,
-        candidate.target,
-    ))
-}
-
 /// The attempt's captures even when none exposed the selected target.
-pub(super) fn attempt_capsules_in_txn(
+fn attempt_capsules_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     candidate: &ContributionCandidate,

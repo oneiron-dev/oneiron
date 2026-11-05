@@ -23,6 +23,9 @@ Provider and scorer work can finish after an erase. Their original subjects
 are checked in the publishing writer. Scoring also requires the exact receipt
 to still exist at the original pair key; it never inserts a missing row. A
 previously erased capsule cannot recreate its old unavailable-reason row.
+Capsule selection (or its unavailable reason) and its actor provenance come
+from one captured snapshot. Preparation uses that selected capsule or reason;
+it does not reopen a snapshot and change which capture the reason describes.
 When no captured step exposed a used edge, the reason still records the actual
 actors of the attempt's latest captured generation. Erasing those actors moves
 the reason too, and their erased capsules fence a later reason write. Older
