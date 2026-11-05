@@ -156,7 +156,7 @@ pub(crate) use host::{
     run_executor_model, run_executor_model_in_txn, witness_agent_run_close_in_txn,
 };
 mod judge_binding;
-pub(crate) use judge_binding::finalize_run_judge_in_txn;
+pub(crate) use judge_binding::{finalize_run_judge_in_txn, pinned_judge_model};
 mod derivation_witness;
 pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
