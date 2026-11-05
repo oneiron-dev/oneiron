@@ -216,12 +216,12 @@ impl Memory<'_> {
                         sequence: receipt.sequence,
                         provenance: receipt.provenance,
                     });
-            let diff = if projected {
+            let compare = if projected {
                 whole_file_code_diff
             } else {
                 semantic_code_diff
             };
-            let changes: Vec<CodeAttributedChange> = diff(&file.path, old, new)?
+            let changes: Vec<CodeAttributedChange> = compare(&file.path, old, new)?
                 .into_iter()
                 .map(|change| CodeAttributedChange {
                     inserted_by: landed
@@ -534,12 +534,12 @@ impl Memory<'_> {
                 };
                 // A projected side is compared as one whole-file unit: a
                 // placeholder or a masked copy is no source to parse.
-                let diff = if projected {
+                let compare = if projected {
                     whole_file_code_diff
                 } else {
                     semantic_code_diff
                 };
-                diff(&path, &text(&old), &text(&new))?
+                compare(&path, &text(&old), &text(&new))?
                     .into_iter()
                     .map(|change| CodeAttributedChange {
                         inserted_by: change
