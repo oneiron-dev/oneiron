@@ -162,6 +162,11 @@ struct Overlay {
     chain: Vec<(ProjectRevisionHash, ProjectRevision)>,
 }
 
+struct ProjectAuthorityRead {
+    fold: Rc<AuthorityFold>,
+    source_rows: Option<BTreeSet<EntityId>>,
+}
+
 /// One snapshot-bound fold over every project row. The authority fold is
 /// built once per reader, and each project's frontier is decided once.
 pub(crate) struct ProjectReader<'a, 't> {
@@ -170,7 +175,8 @@ pub(crate) struct ProjectReader<'a, 't> {
     posture: HostingPrivacyPosture,
     kind: u8,
     root: Option<EntityId>,
-    fold: RefCell<Option<Rc<AuthorityFold>>>,
+    fold: RefCell<Option<ProjectAuthorityRead>>,
+    read_rows: RefCell<Option<BTreeSet<EntityId>>>,
     overlay: Option<Overlay>,
     facts: RefCell<BTreeMap<EntityId, Option<Rc<Facts>>>>,
     components: RefCell<BTreeMap<EntityId, Rc<Vec<EntityId>>>>,
@@ -208,6 +214,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
             kind,
             root: ROOT.get(store, txn, &())?,
             fold: RefCell::new(None),
+            read_rows: RefCell::new(Some(BTreeSet::new())),
             overlay: None,
             facts: RefCell::new(BTreeMap::new()),
             components: RefCell::new(BTreeMap::new()),
@@ -253,15 +260,29 @@ impl<'a, 't> ProjectReader<'a, 't> {
 
     /// The stored row, or the trial's.
     pub(super) fn stored_row(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
-        match &self.overlay {
-            Some(overlay) if overlay.id == id => Ok(Some(overlay.record.clone())),
-            _ => stored(self.store, self.txn, id, self.kind),
+        let record = match &self.overlay {
+            Some(overlay) if overlay.id == id => Some(overlay.record.clone()),
+            _ => stored(self.store, self.txn, id, self.kind)?,
+        };
+        let mut rows = self.read_rows.borrow_mut();
+        if record.is_none() || self.overlay.is_some() {
+            *rows = None;
+        } else if let Some(rows) = rows.as_mut() {
+            rows.insert(id);
         }
+        Ok(record)
     }
 
     /// Every held revision of `id`, with the trial's chain.
     pub(super) fn held_of(&self, id: EntityId) -> Result<HeldRevisions> {
-        let mut held = super::revision::held_in_txn(self.store, self.txn, id, self.kind)?;
+        let (mut held, sources) =
+            super::revision::held_in_txn_with_sources(self.store, self.txn, id, self.kind)?;
+        let mut rows = self.read_rows.borrow_mut();
+        match (rows.as_mut(), sources) {
+            (Some(rows), Some(sources)) => rows.extend(sources),
+            _ => *rows = None,
+        }
+        drop(rows);
         if let Some(overlay) = self.overlay.as_ref().filter(|overlay| overlay.id == id) {
             for (hash, revision) in &overlay.chain {
                 held.insert(*hash, revision.clone(), RevisionOrigin::AwaitingParent);
@@ -399,6 +420,19 @@ impl<'a, 't> ProjectReader<'a, 't> {
         self.facts.borrow().keys().copied().collect()
     }
 
+    /// Every entity row behind this reader's decisions, when all are named.
+    /// A trial's overlay and missing stored inputs have no row to cite.
+    pub(super) fn source_rows(&self) -> Option<BTreeSet<EntityId>> {
+        if self.overlay.is_some() {
+            return None;
+        }
+        let mut rows = self.read_rows.borrow().clone()?;
+        if let Some(authority) = self.fold.borrow().as_ref() {
+            rows.extend(authority.source_rows.as_ref()?.iter().copied());
+        }
+        Some(rows)
+    }
+
     /// Every project of each component this reader closed, parents first: a
     /// component closes only after every component it reads.
     pub(super) fn parents_first(&self) -> Vec<EntityId> {
@@ -510,15 +544,19 @@ impl<'a, 't> ProjectReader<'a, 't> {
     }
 
     fn fold(&self) -> Result<Rc<AuthorityFold>> {
-        if let Some(fold) = self.fold.borrow().as_ref() {
-            return Ok(fold.clone());
+        if let Some(authority) = self.fold.borrow().as_ref() {
+            return Ok(authority.fold.clone());
         }
-        let fold = Rc::new(crate::authority::authority_fold_readonly_for_store_in_txn(
+        let view = crate::authority::authority_view_readonly_for_store_in_txn(
             self.store,
             self.posture,
             self.txn,
-        )?);
-        *self.fold.borrow_mut() = Some(fold.clone());
+        )?;
+        let fold = Rc::new((*view).clone());
+        *self.fold.borrow_mut() = Some(ProjectAuthorityRead {
+            fold: fold.clone(),
+            source_rows: view.source_rows().cloned(),
+        });
         Ok(fold)
     }
 

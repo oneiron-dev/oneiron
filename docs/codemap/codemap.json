@@ -29454,8 +29454,8 @@
      "path": "src/dreamer_runner/maintenance/code_fix/publisher_refs.rs",
      "purpose": "Local references to occurrences in the host's actual publisher inputs",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
+      "fn": 2,
       "struct": 1
      }
     },
