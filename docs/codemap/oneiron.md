@@ -2083,7 +2083,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/tests.rs` | test | m | — | — | — |
 | `src/deletion/timeline.rs` | src | m | 3 struct · 6 enum · 4 fn · 8 crate-vis | HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb +1 | — |
 | `src/deletion/tombstone.rs` | src | m | 2 struct · 2 enum · 7 fn · 2 const · 26 crate-vis | DecodedTombstoneValue, DeleteReason, TombstoneReason, TombstoneValueV2 | — |
-| `src/deletion/tombstone_scope.rs` | src | s | 6 crate-vis | — | The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector… |
+| `src/deletion/tombstone_scope.rs` | src | s | 7 crate-vis | — | The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector… |
 | `src/deletion/topology_delete_intent.rs` | src | L | 10 crate-vis | — | Durable, request-bound interlock between tombstone publication and purge |
 | `src/deletion/withdrawn.rs` | src | s | 3 crate-vis | — | A withdrawn record's Shell generation (FIX 931) |
 | `src/delivery_window/claims.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | DeliveryWindowPolicyClaim | Policy claim parsing and per-claim restriction gating |
@@ -3390,10 +3390,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/alignment.rs` | src | s | 1 fn · 1 crate-vis | — | Exclusive full-file speaker alignment and label-preserving turn assembly |
 | `src/ingest/meeting_audio/artifact.rs` | src | s | 2 struct · 10 fn · 1 crate-vis | AuthorizedMeetingImport, ProducedMeetingTranscript | Immutable producer artifact and one approval for the complete import batch |
 | `src/ingest/meeting_audio/cleanup.rs` | src | s | 1 fn · 3 crate-vis | — | Conservative fix-don't-invent cleanup with no lexical or speaker edits |
-| `src/ingest/meeting_audio/command.rs` | src | m | 3 struct · 3 fn · 1 const · 1 re-export | CommandAudioConfig, CommandMeetingAudioHost, NativeAudioCapabilities | Optional process adapter for an explicitly configured native meeting-audio host |
+| `src/ingest/meeting_audio/command.rs` | src | m | 3 struct · 4 fn · 1 const · 1 re-export | CommandAudioConfig, CommandMeetingAudioHost, NativeAudioCapabilities | Optional process adapter for an explicitly configured native meeting-audio host |
 | `src/ingest/meeting_audio/command/process.rs` | src | s | 6 crate-vis | — | One native-host process, run while it makes progress (FIX 3765): every line it writes before its reply is… |
 | `src/ingest/meeting_audio/command/tests.rs` | test | s | — | — | Framing/refusal tests only |
-| `src/ingest/meeting_audio/command/unit.rs` | src | s | 1 struct · 3 crate-vis | MeetingAudioSeats | Each physical model call of a native stage admitted on its own permit (FIX 3765): the bridge names a unit… |
+| `src/ingest/meeting_audio/command/unit.rs` | src | s | 1 struct · 4 crate-vis | MeetingAudioSeats | Each physical model call of a native stage admitted on its own permit (FIX 3765): the bridge names a unit… |
 | `src/ingest/meeting_audio/error.rs` | src | s | 1 enum · 1 type | AudioError | Typed producer refusals; these pre-ingest errors do not alter the vault ABI |
 | `src/ingest/meeting_audio/evaluation.rs` | src | s | 5 struct · 5 fn | CohortFile, CohortManifest, E1Arm, E1SelectionReceipt, WerCountsSerde | Strict E1 selection-receipt and evaluation-cohort schemas |
 | `src/ingest/meeting_audio/metrics.rs` | src | m | 4 struct · 8 fn | E3Assignment, E3Score, WerAlignment, WerCounts | Offline WER and labelled-cohort E3 scoring |
@@ -5512,7 +5512,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/organs.rs` | src | m | 5 struct · 8 fn · 4 crate-vis | PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree | Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an… |
 | `src/skill_hub/pack_catalog/owner_activation.rs` | src | s | 1 fn | — | The owner's activation of a held hub Candidate (OF-213, OF-575): a pack held for its OSV advisories, or a… |
 | `src/skill_hub/pack_catalog/permission_card.rs` | src | s | 1 crate-vis | — | A pack's permission card: the powers its source requests, and the widening an update over an installed… |
-| `src/skill_hub/pack_catalog/predicate_rewrites.rs` | src | s | 1 struct · 1 enum · 1 crate-vis | PackMigrationMap, PackPredicateRewrite | Predicate rewrite classifications carried by pack-source migration maps |
+| `src/skill_hub/pack_catalog/predicate_rewrites.rs` | src | s | 1 re-export · 1 crate-vis | — | Predicate rewrite classifications carried by pack-source migration maps |
 | `src/skill_hub/pack_catalog/qualify.rs` | src | m | 7 struct · 3 fn · 1 re-export · 2 crate-vis | ConnectorPackQualification, PackConnectorReceipt, PackHookQualification, PackHookReplay, ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier | Connector packs use the engine's real wire probes, never a publisher's grade |
 | `src/skill_hub/pack_catalog/qualify/builtin_probe.rs` | src | s | 1 struct | BuiltinProbeQualifier | A built-in connector pack's isolated probe (FIX 710) |
 | `src/skill_hub/pack_catalog/removal.rs` | src | s | 1 fn | — | The owner's removal door (OF-519) |
@@ -5898,7 +5898,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | L | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
 | `src/store/materialization_event.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 re-export | LiveQueryTee, MaterializedDiffSummary, RevisionEvent | Core half of `store::materialization_event`: its store-layer items live in… |
-| `src/store/mod.rs` | src | m | 67 mod · 87 re-export · 158 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 68 mod · 87 re-export · 158 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 2 struct · 1 re-export · 2 crate-vis | DescriptionPolicy, ModelDescription | Core half of `store::model_description_rows`: its store-layer items live in… |
 | `src/store/model_score_diff.rs` | src | s | 1 re-export · 1 crate-vis | — | Core half of `store::model_score_diff`: its store-layer items live in `oneiron_store::model_score_diff` and… |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | Core half of `store::model_step_response_carriage`: its store-layer items live in… |
@@ -5927,6 +5927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/own_rate_rows.rs` | src | s | 5 crate-vis | — | Advisory own-rate counters and erasure in a caller-owned transaction |
 | `src/store/owned_body.rs` | src | s | 1 re-export · 11 crate-vis | — | Stored body descriptors, digest holders, and the released-file queue |
 | `src/store/pack_hook_proposal.rs` | src | s | 2 struct · 5 enum · 4 crate-vis | HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, HookWidening, PackHookProposal, PackHookProposalStatus | The pack hook selector types and the agent hook proposal rows (ARCH-0080 §3, §10): when a hook fires, how it… |
+| `src/store/pack_predicate_rewrites.rs` | src | s | 1 struct · 1 enum | PackMigrationMap, PackPredicateRewrite | Predicate rewrite classifications carried by pack-source migration maps |
 | `src/store/pending_comm_stop.rs` | src | s | 7 crate-vis | — | Pending inbound STOP markers and transactional put/delete maintenance |
 | `src/store/pending_custody_revoke.rs` | src | s | 3 crate-vis | — | The custody revokes this install still owes the owner's other machines (CALLS CUSTODY_REVOKE_PENDING_CARRY)… |
 | `src/store/pending_embedding.rs` | src | s | 11 crate-vis | — | Pending-embedding marker rows gating vector writes: encode/decode, mark/clear, and token checks |
