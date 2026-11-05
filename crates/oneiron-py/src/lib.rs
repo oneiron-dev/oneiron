@@ -331,6 +331,21 @@ impl NativeClient {
         Ok(self.rebound(inner))
     }
 
+    /// Returns a NEW handle whose every read runs under the credential a
+    /// delegated reader presented (FIX 647): the paired credential `pair`
+    /// returned, verified once against this vault as the server's door
+    /// verifies a served request's. Reads refuse when the slip's holder is
+    /// not this handle's actor; rebindings keep the same proof, so every
+    /// read still checks it against the bound actor. A handle without one
+    /// reads as before. Refuses when connected: a connected handle reads
+    /// under the credential it connected with.
+    fn with_read_credential(&self, py: Python<'_>, credential: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| self.inner.with_read_credential(&credential))
+            .map_err(raise)?;
+        Ok(self.rebound(inner))
+    }
+
     /// The lasting call receipt the last verb's reply stated, as
     /// `call:<32hex>`, whether it answered or refused. `None` for an embedded
     /// handle, before any call, after a call that reached no server, and for
@@ -2404,6 +2419,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_fit_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.fit.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.fit.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skills_permissions_approve(
         &self,
         py: Python<'_>,
@@ -3500,6 +3522,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sync_retained_work_wait_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.retained_work.wait.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.retained_work.wait.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_burst_ingress(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.federation.burst.ingress")?;
         let output = py
@@ -4195,6 +4231,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.records.erase_sweep")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.records.erase_sweep", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_outbound_calls_request_erase(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.outbound_calls.request.erase")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.outbound_calls.request.erase", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

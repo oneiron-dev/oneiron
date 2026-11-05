@@ -17,6 +17,7 @@ use crate::serialize::context_entity::ContextEntity;
 use crate::serialize::pack_accounting::TokenAllocation;
 use crate::serialize::pack_format::FieldProfile;
 use crate::serialize::pack_format::PackFormat;
+use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 
 use super::group_labels::group_key;
 use super::json_format::{json_rows, section_object};
@@ -85,6 +86,14 @@ pub(crate) struct SerializedPackTelemetry {
 }
 
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
+    serialize_pack_with_tokenizer(pack, config, DEFAULT_CONTEXT_PACK_TOKENIZER)
+}
+
+pub fn serialize_pack_with_tokenizer(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    tokenizer: PackTokenizer,
+) -> Vec<u8> {
     let sanitized;
     let pack = if matches!(
         config.format,
@@ -95,13 +104,14 @@ pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     } else {
         pack
     };
-    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
-    serialize_prepared_pack(pack, config, prepared)
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json, tokenizer);
+    serialize_prepared_pack(pack, config, prepared, tokenizer)
 }
 
 pub(crate) fn serialize_pack_with_telemetry(
     pack: &ContextPack,
     config: &SerializeConfig,
+    tokenizer: PackTokenizer,
 ) -> (Vec<u8>, SerializedPackTelemetry) {
     let sanitized;
     let pack = if matches!(
@@ -113,9 +123,9 @@ pub(crate) fn serialize_pack_with_telemetry(
     } else {
         pack
     };
-    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json, tokenizer);
     let telemetry = serialize_prepared_pack_telemetry(&prepared);
-    let bytes = serialize_prepared_pack(pack, config, prepared);
+    let bytes = serialize_prepared_pack(pack, config, prepared, tokenizer);
     (bytes, telemetry)
 }
 
@@ -125,7 +135,15 @@ pub fn project_pack_for_json_response(
     mut pack: ContextPack,
     config: &SerializeConfig,
 ) -> ContextPack {
-    let prepared = prepare_pack(&pack, config, true);
+    project_pack_for_json_response_with_tokenizer(pack, config, DEFAULT_CONTEXT_PACK_TOKENIZER)
+}
+
+pub fn project_pack_for_json_response_with_tokenizer(
+    mut pack: ContextPack,
+    config: &SerializeConfig,
+    tokenizer: PackTokenizer,
+) -> ContextPack {
+    let prepared = prepare_pack(&pack, config, true, tokenizer);
     let stats = prepared.stats.clone();
     pack.l2_base = prepared.l2_base.clone();
     let mut projected_results = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
@@ -193,6 +211,7 @@ pub(super) fn serialize_prepared_pack(
     pack: &ContextPack,
     config: &SerializeConfig,
     mut prepared: PreparedPack,
+    tokenizer: PackTokenizer,
 ) -> Vec<u8> {
     let empty =
         prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
@@ -219,9 +238,7 @@ pub(super) fn serialize_prepared_pack(
             PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini
         )
         && config.budget > 0
-        && crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER
-            .count(std::str::from_utf8(&bytes).expect("serialized UTF-8"))
-            > config.budget
+        && tokenizer.count(std::str::from_utf8(&bytes).expect("serialized UTF-8")) > config.budget
     {
         return if config.format == PackFormat::Json {
             b"{}".to_vec()
