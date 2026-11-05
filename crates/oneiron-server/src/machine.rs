@@ -253,6 +253,41 @@ impl oneiron::code_sandbox::ProposalSpoolFloor for DiskFloor {
     }
 }
 
+/// Encoded vault values claim on the same line as uploads and spools.
+impl oneiron::store::storage_disk::StorageDiskFloor for DiskFloor {
+    fn hold(
+        &self,
+        bytes: u64,
+    ) -> std::io::Result<Box<dyn oneiron::store::storage_disk::StorageDiskHold>> {
+        let claim = DiskFloor::claim(self);
+        self.admit(&claim, bytes).map_err(|refused| match refused {
+            oneiron::code_sandbox::SpoolFloorRefusal::AtFloor(floor) => std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                format!(
+                    "vault payload needs {} bytes free, {} available (reserve {})",
+                    floor.needed, floor.available, floor.reserve,
+                ),
+            ),
+            oneiron::code_sandbox::SpoolFloorRefusal::Unmeasured(error) => error,
+        })?;
+        Ok(Box::new(StorageHold {
+            floor: self.clone(),
+            claim,
+        }))
+    }
+}
+
+struct StorageHold {
+    floor: DiskFloor,
+    claim: Arc<DiskClaim>,
+}
+
+impl oneiron::store::storage_disk::StorageDiskHold for StorageHold {
+    fn landed(&self) {
+        self.floor.landed(&self.claim);
+    }
+}
+
 /// One proposal spool file's claim on the shared disk floor (FIX 7650).
 struct SpoolClaim {
     floor: DiskFloor,

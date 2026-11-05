@@ -220,6 +220,9 @@ pub struct Vault {
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
         std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
+    /// Pending encoded store values on the host's actual vault-disk floor.
+    pub(crate) storage_disk_floor:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::store::storage_disk::StorageDiskFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
