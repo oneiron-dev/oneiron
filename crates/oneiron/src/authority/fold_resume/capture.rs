@@ -336,6 +336,7 @@ pub(in crate::authority) fn admits_past(
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::OriginCut(_)
+        | AuthorityOp::DeviceSuccession(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
