@@ -97,6 +97,42 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::skill_attribution::note_direct_derivation_in_txn(store, wtxn, derived, source)
     }
 
+    fn erase_stream_seeds_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::memory::erase_stream_seeds_in_txn(store, wtxn, id)
+    }
+
+    fn erase_reply_assertions_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::memory::erase_reply_assertions_in_txn(store, wtxn, id)
+    }
+
+    fn erase_turn_wake_label_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::memory::erase_turn_wake_label_in_txn(store, wtxn, id)
+    }
+
+    fn release_asset_blob_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::memory::release_asset_blob_in_txn(store, wtxn, id)
+    }
+
     fn reject_audience_edit_unlink(
         &self,
         store: &Store,
