@@ -320,7 +320,7 @@ pub(super) fn scope_sources_in_txn(
 }
 
 /// A NOTE set's sources (FIX 5757), read in the planner's writer: each a live
-/// NOTE its requester reads there, sorted and once each, so the same set
+/// NOTE its requester's declared lane reads there, sorted and once each, so the same set
 /// plans the same sources whatever order it was named in. A set has no
 /// conversation to resolve, so its NOTEs are its members.
 pub(super) fn note_sources_in_txn(
@@ -328,6 +328,7 @@ pub(super) fn note_sources_in_txn(
     txn: &RoTxn<'_>,
     requester: WriteActor,
     declared: &[EntityId],
+    lane: &crate::claim::FrozenReadLane,
 ) -> Result<ScopeSources> {
     let notes: Vec<EntityId> = declared
         .iter()
@@ -339,6 +340,11 @@ pub(super) fn note_sources_in_txn(
         return Err(invalid("summary source set is empty"));
     }
     let read = requester_read_in(vault, txn, requester)?;
+    let read = if lane.is_principal() {
+        read
+    } else {
+        vault.scoped_read(lane.narrow_in_txn(vault, txn, read.actor_key().clone())?)
+    };
     let rows = read.get_entities_parts_in_txn(txn, &notes)?;
     for (note, row) in notes.iter().zip(rows) {
         if !note_source_admitted(vault, txn, note, row.is_some())? {
@@ -393,8 +399,8 @@ impl Vault {
 
 /// The requester's own read, built in `txn`: the vault owner's key for the
 /// owner, any other actor's under its access grants, without a room turn or
-/// a credential. The public door read each source on the caller's own lane
-/// before the declaration queued; this holds at every later plan.
+/// a credential. A NOTE declaration's frozen lane narrows this base key in
+/// the planner's snapshot; a principal declaration uses it unchanged.
 fn requester_read_in<'v>(
     vault: &'v Vault,
     txn: &RoTxn<'_>,

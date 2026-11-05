@@ -313,6 +313,7 @@ pub(super) fn plan_in_txn(
             txn,
             request.requester,
             admitted.as_deref().unwrap_or_default(),
+            &requester_lane::declared_lane(input)?,
         )?,
     };
     // A sitting that retained no turns has no summary: its attempt completes

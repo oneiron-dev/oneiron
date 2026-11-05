@@ -7,7 +7,8 @@
 //! longer live. A lane that read as its requester's own adds nothing to the
 //! declaration, which stays the one every other door declares. A narrowed
 //! lane must read every source its summary plans, judged in the plan's own
-//! snapshot (FIX 11829): a requester summarizes only what it reads.
+//! snapshot (FIX 11829): a requester summarizes only what it reads. NOTE
+//! planning also rebuilds this lane in the plan's own snapshot (FIX 6322).
 
 use rmpv::Value;
 
@@ -150,7 +151,7 @@ fn lane_value(frozen: &FrozenReadLane) -> Result<Value> {
 }
 
 /// The lane a declaration froze; its requester's own when it froze none.
-fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
+pub(super) fn declared_lane(input: &Value) -> Result<FrozenReadLane> {
     let Value::Map(fields) = input else {
         return Err(invalid("summary request must be a map"));
     };
