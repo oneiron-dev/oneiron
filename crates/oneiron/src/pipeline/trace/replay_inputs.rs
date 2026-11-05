@@ -107,6 +107,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             .congruence_query(builder.query_affect)
             .map(|vad| [vad.valence, vad.arousal, vad.dominance]),
     });
+    let mut session_usage_memory = builder
+        .media_search
+        .memory()
+        .map(crate::host_memory::MachineMemory::empty_lease);
     let mut access_factor_memory = builder
         .media_search
         .memory()
@@ -137,6 +141,16 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 "session_usage": builder.community_session_usage.map(|usage| {
                     let mut entries: Vec<_> = usage.iter().map(|(id, count)| (id.to_hex(), count)).collect();
                     entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                    if let Some(memory) = session_usage_memory.as_mut() {
+                        memory.materialized(
+                            0,
+                            entries.iter().fold(
+                                (entries.capacity() as u64)
+                                    .saturating_mul(std::mem::size_of::<(String, &u32)>() as u64),
+                                |bytes, (id, _)| bytes.saturating_add(id.capacity() as u64),
+                            ),
+                        );
+                    }
                     entries
                 }),
             },
