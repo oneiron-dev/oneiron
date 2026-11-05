@@ -36,10 +36,7 @@ pub(crate) use self::dispatch::execute_outbound_call;
 #[cfg(test)]
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
-pub(crate) use self::late_recipient::{
-    forget_intent_party_in_txn, late_recipient_intents_in, link_late_recipients_in_txn,
-    record_unresolved_party_in_txn,
-};
+pub(crate) use self::late_recipient::{link_late_recipients_in_txn, record_unresolved_party_in_txn};
 pub(crate) use self::payload::{
     LedgerPayloadContext, erase_outbound_intent_actor_in_txn, payload_recipient_in_txn,
     stored_admission_in_txn,
