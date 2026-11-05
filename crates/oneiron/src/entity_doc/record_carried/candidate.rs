@@ -18,12 +18,19 @@ use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::HexId;
 use crate::sync::SelectedRecordDocument;
 
+/// A preparation that wrote neither the pointer nor its document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordDocumentStand {
+    Conflict,
+    Refused(&'static str),
+}
+
 pub(crate) enum RecordDocumentPreparation<'selected, 'carrier> {
     Candidate(RecordDocumentCandidate<'selected, 'carrier>),
     /// The selected import returned or another import is current now.
     TransportEnded,
     /// The local native head stands; no pointer or document was written.
-    Stands(DocumentMerge),
+    Stands(RecordDocumentStand),
 }
 
 /// Both record views, read and joined in one actual applying writer.
@@ -57,9 +64,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         let source = selected.head();
         let entity = source.entity()?;
         if crate::ports::removed_in_txn(store, txn, &entity)? {
-            return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
-                "erased here",
-            )));
+            return Ok(RecordDocumentPreparation::Stands(
+                RecordDocumentStand::Refused("erased here"),
+            ));
         }
         let incoming = source.document(selected.raw(), selected.snapshot())?;
         let prior_raw = store.port_entity_raw(txn, &entity)?.map(|raw| raw.to_vec());
@@ -128,7 +135,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 }
                 let native = source.native();
                 if head.incarnation != native.incarnation || head.field != *source.field() {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Conflict,
+                    ));
                 }
                 // Updates may carry a birth projection too. Read the birth
                 // from the fully replayed document, not its snapshot's cache.
@@ -148,7 +157,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 let held = local_native(&head, &document);
                 let switched = native.replaces(&held);
                 if head.document != native.document && !switched {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Conflict,
+                    ));
                 }
                 // Preserve the ordinary owned-row identity check. Only
                 // the actual Switch may change its pointer spelling.
@@ -156,17 +167,19 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                     != selected.raw().get(..ENTITY_METADATA_HEADER_LEN)
                     || !same_pointer_body(raw, selected.raw(), switched, &native.document)?
                 {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
-                        "record core differs from its native head",
-                    )));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Refused("record core differs from its native head"),
+                    ));
                 }
                 if document.birth().at != incoming.birth().at {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
-                        "record document birth differs",
-                    )));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Refused("record document birth differs"),
+                    ));
                 }
                 if switched && !shares_switch_base(native, &document, &incoming) {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Conflict));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Conflict,
+                    ));
                 }
                 // Preserve the actual local retained operations before join
                 // or purge. A version vector and the current logical body
@@ -178,9 +191,11 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                     .import(selected.snapshot())
                     .is_ok_and(|status| status.pending.is_none())
                 {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
-                        "snapshot does not join this vault's document",
-                    )));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Refused(
+                            "snapshot does not join this vault's document",
+                        ),
+                    ));
                 }
                 let document = EntityDoc::from_loro(document.doc)?;
                 super::retained::require_retained_extension(&incoming, &document)?;
@@ -197,9 +212,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 if document.birth().entity != head.entity
                     || document.birth().at != incoming.birth().at
                 {
-                    return Ok(RecordDocumentPreparation::Stands(DocumentMerge::Refused(
-                        "record document birth differs",
-                    )));
+                    return Ok(RecordDocumentPreparation::Stands(
+                        RecordDocumentStand::Refused("record document birth differs"),
+                    ));
                 }
                 let mut deferred_purge = None;
                 let document = if !switched && native.purges(&held) {
