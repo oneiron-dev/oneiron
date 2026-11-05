@@ -181,6 +181,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "deflate",
     "gzip",
     "json",
+    "http2",
     "rustls-tls-native-roots",
 ] }
 dom_smoothie = "0.18"
