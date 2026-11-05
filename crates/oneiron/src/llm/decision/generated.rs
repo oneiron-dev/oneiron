@@ -14,7 +14,7 @@ use super::ladder::{
 use super::types::invalid;
 use super::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionPack,
-    DecisionQuestion, DecisionRung, ProviderPin, Reversibility, TypedDecision,
+    DecisionQuestion, DecisionRung, ProviderPin, Reversibility, StopCause, TypedDecision,
 };
 use crate::llm::run_admission::RunAdmission;
 use crate::llm::{
@@ -269,7 +269,11 @@ impl DecisionLadder<'_> {
             };
             // A read the work time cannot start never goes out.
             if !deadline.decision_may_start() {
-                first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
+                first.extend(
+                    chunk
+                        .iter()
+                        .map(|_| Some(Read::NotStarted(StopCause::Deadline))),
+                );
                 continue;
             }
             let answers = match read(rung, &pack, &call, spent, labels).await? {
