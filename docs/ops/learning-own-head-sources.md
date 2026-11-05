@@ -7,6 +7,9 @@ The same snapshot also supplies any actor entities consulted by the machine
 history checks, the history-index ids actually enumerated, and the native
 history carriers used by the targeted reads. Source ids are sorted and
 unique; candidate order and richest-head tie handling are unchanged.
+Ordinary readers keep the complete history-index presence walk nonretaining.
+A sourced reader observes that same walk directly into its source vector,
+without a second scan or a temporary vector of control ids.
 
 These are entity references, not grants, immutable byte witnesses or a
 snapshot of authority, pin, consent or withdrawal metadata. The ordinary
