@@ -515,26 +515,8 @@ impl Vault {
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
         let outcome = if let Some(proposal) = row.edit_proposal()? {
-            // A held answer whose units changed under it lands what is
-            // untouched and withdraws the rest (ARCH-0075 §4).
-            match self.split_typed_answers(
-                artifact_id,
-                &proposal,
-                row.retained_by,
-                row.made_by.as_ref(),
-                true,
-            )? {
-                Some(split) => self.keep_split(
-                    artifact_id,
-                    &proposal,
-                    split,
-                    row.made_by.as_ref(),
-                    consent,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.settle_select_edit_proposal_made_by(
+            if proposal.sheet_answers.is_some() {
+                self.settle_select_edit_proposal_made_by(
                     artifact_id,
                     &proposal,
                     row.made_by.as_ref(),
@@ -542,7 +524,37 @@ impl Vault {
                     actor,
                     occurred,
                     learned_at,
-                )?,
+                )?
+            } else {
+                // A held answer whose units changed under it lands what is
+                // untouched and withdraws the rest (ARCH-0075 §4).
+                match self.split_typed_answers(
+                    artifact_id,
+                    &proposal,
+                    row.retained_by,
+                    row.made_by.as_ref(),
+                    true,
+                )? {
+                    Some(split) => self.keep_split(
+                        artifact_id,
+                        &proposal,
+                        split,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                    )?,
+                    None => self.settle_select_edit_proposal_made_by(
+                        artifact_id,
+                        &proposal,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                    )?,
+                }
             }
         } else {
             self.keep_native_output(artifact_id, &row, consent, actor, occurred, learned_at)?
