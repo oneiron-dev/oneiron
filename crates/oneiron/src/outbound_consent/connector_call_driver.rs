@@ -342,7 +342,8 @@ impl Vault {
                 // Terminal for a code consent wait too (FIX 4518): the ref is
                 // resolved once and the row plus the live outcome commit in
                 // one writer, so the wait settles with the actual questions.
-                // The host binds after the commit, or abandons on its error.
+                // Bind the live handle before the commit can publish its reply.
+                // Durable resume persistence follows the commit, never precedes it.
                 let resolved = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
                 let handle = input.handle.clone();
                 let outcome = ConnectorCallOutcome::AwaitingInput {
@@ -350,9 +351,10 @@ impl Vault {
                     intent,
                     input,
                 };
+                host.bind_awaiting_call(&handle, resolved);
                 match put_row(&resolved, &row, Some(&outcome)) {
                     Ok(()) => {
-                        host.bind_awaiting_call(&handle, resolved);
+                        host.awaiting_call_committed(&handle, resolved);
                         outcome
                     }
                     Err(error) => {

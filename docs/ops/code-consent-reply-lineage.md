@@ -73,8 +73,10 @@ settlement, receipt and parked-run reply in one native transaction. This include
 a tool reply, a refusal, unresolved delivery that will not be retried, and a
 connector question. The live reply is cleared before that transaction. Existing
 side-row masking, erased-actor handling and first-settlement rules still apply.
-Connector questions bind their host handle after the commit and abandon it if
-that commit fails.
+Connector questions bind their live host handle in memory before that commit
+can publish the reply. Durable resume persistence follows the commit. If the
+commit fails, the host abandons the live handle and drops its pending resume
+state. No registry mutex is held across the row or resume writer.
 
 The outbound intent ledger remains receipt-only. Recovery without retained live
 reply bytes still reports `result_not_retained`. Expiry commits an existing held
