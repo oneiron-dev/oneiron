@@ -277,6 +277,7 @@ impl PreparedOutboundDispatch {
                 .then_some(request.intent_ref.as_str()),
             approval_send_ref: super::govern::frozen_approval_send_ref(request),
             linear_approval_send_ref: super::govern::frozen_linear_approval_send_ref(request),
+            linear_mirror: super::govern::frozen_linear_mirror(request),
             has_opted_in: request.gate.has_opted_in,
             has_permission: request.gate.has_permission,
             requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),

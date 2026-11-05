@@ -1,9 +1,12 @@
 //! Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes.
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::calendar::invite::CalendarInvitePayload;
+use crate::linear_sync::{
+    LinearEffectKind, LinearEffectRequest, LinearIssueRef, MirroredTaskFields,
+};
 use crate::outbound::intent::OutboundIntent;
 /// The bytes one outbound effect freezes: the intent, plus the CA-05 send
 /// hygiene headers derived from that same frozen metadata.
@@ -57,6 +60,9 @@ pub(super) struct FrozenOutboundPayload<'a> {
     /// Mirror requests retain their own target and approval path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) linear_approval_send_ref: Option<&'a str>,
+    /// The native mirror request, not a TASK snapshot or a hash lookup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) linear_mirror: Option<FrozenLinearMirror>,
     pub(super) has_opted_in: bool,
     pub(super) has_permission: bool,
     // Preserve the caller's dial too: a manifest can map both values to the
@@ -75,6 +81,44 @@ pub(super) struct FrozenOutboundPayload<'a> {
     /// host supplied none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) send_autonomy: Option<FrozenSendAutonomy<'a>>,
+}
+
+/// All original mirror facts required by the native TASK writer authorizer.
+/// These bytes describe a request; they grant neither principal permission.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FrozenLinearMirror {
+    pub(super) operation_id: [u8; 32],
+    pub(super) task_ref: String,
+    pub(super) scheduler_actor: String,
+    pub(super) issue: Option<LinearIssueRef>,
+    pub(super) kind: FrozenLinearEffectKind,
+    pub(super) fields: MirroredTaskFields,
+    pub(super) send_ref: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum FrozenLinearEffectKind {
+    Create,
+    Update,
+}
+
+impl FrozenLinearMirror {
+    pub(super) fn of(request: &LinearEffectRequest, send_ref: &str) -> Self {
+        Self {
+            operation_id: request.operation_id,
+            task_ref: request.task_ref.to_hex(),
+            scheduler_actor: request.scheduler_actor.to_hex(),
+            issue: request.issue.clone(),
+            kind: match request.kind {
+                LinearEffectKind::Create => FrozenLinearEffectKind::Create,
+                LinearEffectKind::Update => FrozenLinearEffectKind::Update,
+            },
+            fields: request.fields.clone(),
+            send_ref: send_ref.to_owned(),
+        }
+    }
 }
 
 /// The frozen form of [`crate::channel_identity_autonomy::SendAutonomyContext`].

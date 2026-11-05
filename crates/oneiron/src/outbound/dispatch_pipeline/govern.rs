@@ -239,3 +239,16 @@ pub(super) fn frozen_linear_approval_send_ref(request: &OutboundDispatchRequest)
     (normalize_key(&request.intent.channel) == LINEAR_CONNECTOR && request.linear_mirror.is_none())
         .then(|| stable_send_ref(request))
 }
+
+/// Keeps the actual native mirror facts beside their original logical send,
+/// separate from the non-mirror approval marker.
+pub(super) fn frozen_linear_mirror(
+    request: &OutboundDispatchRequest,
+) -> Option<super::frozen_payload::FrozenLinearMirror> {
+    if normalize_key(&request.intent.channel) != LINEAR_CONNECTOR {
+        return None;
+    }
+    request.linear_mirror.as_ref().map(|mirror| {
+        super::frozen_payload::FrozenLinearMirror::of(mirror, stable_send_ref(request))
+    })
+}
