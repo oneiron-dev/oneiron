@@ -154,6 +154,10 @@ pub struct NativeOutputRequest {
     /// The envelope Keep gives the version; absent gives the writer's own.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// Additional rows the caller declares it read. Waiting-proposal readers
+    /// must admit each row. This is not authority or a complete read log.
+    #[serde(default)]
+    pub read_rows: Vec<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -1131,12 +1135,17 @@ impl Memory<'_> {
             report: input.report.clone(),
             made_by: input.made_by.clone(),
         };
-        Ok(self.vault().propose_native_output(
+        let read_rows = input
+            .read_rows
+            .iter()
+            .map(|reference| entity(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(self.vault().propose_native_output_with_reads(
             &entity(&input.artifact_ref)?,
             &output,
             self.made_by_reader(output.made_by.as_ref())?,
-            self.artifact_actor(),
-            self.vault().now_recorded_at(),
+            (self.artifact_actor(), self.vault().now_recorded_at()),
+            &read_rows,
         )?)
     }
 
