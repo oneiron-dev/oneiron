@@ -269,9 +269,11 @@ fn run_one(
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         // FIX 12569: no trainer recipe is wired on this host, so the night
-        // holds with its reason and serving stays as it is.
+        // holds with its reason and serving stays as it is. This host serves
+        // no vault drafter target yet (the serving binding, FIX 14976, names
+        // it), so the night exports no corpus (FIX 14973).
         COACH_DRAFTER_RETRAIN_FACET => {
-            let outcome = vault.run_coach_drafter_retrain(admitted, now)?;
+            let outcome = vault.run_coach_drafter_retrain(admitted, None, now)?;
             tracing::debug!(?outcome, "the Coach's nightly drafter retrain");
             Ok(())
         }
