@@ -17,7 +17,8 @@
 //! - stages the retirement of every key of each version's sealed artifact
 //!   and of both sides of its corpus (FIX 14973), so no restored image and
 //!   no late receipt opens them again; the corpus sweep removes the sealed
-//!   files after.
+//!   files after;
+//! - drops every evaluation that names one of them (FIX 14975).
 //!
 //! Only content-free evidence stays: the erase event names the versions and
 //! the jobs it fenced, never the source.
@@ -26,6 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 
+use super::evaluation::erase_evaluations_in_txn;
 use super::{
     BINDINGS, BindingMove, DrafterActor, DrafterBinding, DrafterDependencies, DrafterEventKind,
     DrafterServing, DrafterVersion, DrafterVersionState, EVENTS, POLICY, VERSIONS,
@@ -153,6 +155,9 @@ pub(crate) fn erase_drafters_for_source_in_txn(
         delete_raw(store, wtxn, BINDINGS.decl().prefix, key)?;
     }
     let reach = reached(&versions, id);
+    // FIX 14975: an evaluation naming a reached version goes, its per-case
+    // digests with it, and so does one that does not decode.
+    erase_evaluations_in_txn(store, wtxn, &reach)?;
     if reach.is_empty() {
         return Ok(());
     }

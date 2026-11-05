@@ -271,8 +271,11 @@ fn run_one(
         // FIX 12569: no trainer recipe is wired on this host, so the night
         // holds with its reason and serving stays as it is. It exports its
         // corpus (FIX 14973) for the drafter target this process serves
-        // (FIX 14976), when it launches one.
+        // (FIX 14976), when it launches one. FIX 14975: a version a trainer
+        // returned is evaluated first, its held-out side read before the
+        // night's corpus sweep; it is activated and observed on its own task.
         COACH_DRAFTER_RETRAIN_FACET => {
+            crate::models::start_drafter_evaluations(vault);
             let target = crate::models::drafter_retrain_target();
             let outcome = vault.run_coach_drafter_retrain(admitted, target.as_ref(), now)?;
             tracing::debug!(?outcome, "the Coach's nightly drafter retrain");

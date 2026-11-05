@@ -267,6 +267,48 @@ impl Vault {
         Ok(root.join(format!("{}-{}", hex(load_set), hex(&incarnation))))
     }
 
+    /// A fresh plaintext directory's path under `drafter-evaluation/`, which
+    /// is made this user's alone; the directory itself is not made. An
+    /// evaluator's workers load from it (FIX 14975); a serving pass never
+    /// removes it.
+    ///
+    /// # Errors
+    /// The random source or the parent directory failed.
+    pub fn new_drafter_evaluation_dir(&self) -> Result<PathBuf> {
+        let root = self.store.drafter_evaluation_dir();
+        private_root(&root)?;
+        let mut incarnation = [0u8; INCARNATION_BYTES];
+        crate::key_material::os_fill(&mut incarnation)?;
+        Ok(root.join(hex(&incarnation)))
+    }
+
+    /// Removes every directory and file under `drafter-evaluation/`; returns
+    /// how many went. An evaluation runs it when it starts and when it ends,
+    /// and a vault lock before the key drops. One that does not go is left
+    /// for the next, with a warning.
+    pub fn remove_drafter_evaluation_plaintext(&self) -> usize {
+        let Ok(entries) = fs::read_dir(self.store.drafter_evaluation_dir()) else {
+            return 0;
+        };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let gone = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+            match gone {
+                Ok(()) => removed += 1,
+                Err(error) => tracing::warn!(
+                    %error,
+                    "a drafter evaluation directory did not go; the next evaluation retries"
+                ),
+            }
+        }
+        removed
+    }
+
     /// Opens the sealed files `files` of `sealing`'s artifact and writes their
     /// plaintext into the new directory `dir`, made this user's alone, each
     /// file checked as it is opened. On any failure `dir` is removed.
