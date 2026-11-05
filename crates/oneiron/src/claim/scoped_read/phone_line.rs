@@ -21,10 +21,12 @@ impl ScopedRead<'_> {
         self.phone_line_scope_in(&txn)
     }
 
-    /// Reads the actual receiving agent's admitted live definition. The
-    /// credential, current line consent, row and native dispatchability are
-    /// checked in one snapshot before instructions or models leave this lane.
-    pub fn phone_line_agent_definition(&self) -> Result<crate::agent_def::AgentDefinition> {
+    /// The actual receiving agent's admitted definition and a reader held to
+    /// its world scope. Credential, line consent, row and dispatchability share
+    /// one snapshot before the definition supplies instructions or models.
+    pub fn phone_line_agent_read(
+        &self,
+    ) -> Result<(ScopedReadActorKey, crate::agent_def::AgentDefinition)> {
         if self.actor_key.phone_lines.is_empty() {
             return Err(crate::phone_line::invalid());
         }
@@ -43,7 +45,16 @@ impl ScopedRead<'_> {
         }
         let definition = crate::agent_def::decode_agent_definition(&body)?;
         crate::agent_dispatch::AgentDispatcher::ensure_dispatchable_definition(id, &definition)?;
-        Ok(definition)
+        let key = match &definition.scope {
+            crate::agent_def::AgentScope::All => self.actor_key.clone(),
+            crate::agent_def::AgentScope::Base => self.actor_key.clone().within_worlds(
+                crate::claim::world_access::WorldAuthoritySet::new(true, [])?,
+            ),
+            crate::agent_def::AgentScope::World(world) => self.actor_key.clone().within_worlds(
+                crate::claim::world_access::WorldAuthoritySet::new(true, [*world])?,
+            ),
+        };
+        Ok((key, definition))
     }
 
     /// The actual anonymous phone audience under this reader's current
