@@ -21,12 +21,15 @@ includes it in the request. Native capture compares it with its own vault id.
 The request supplies only the order's hybrid public key; private seed and host
 keystore handles never enter the tenant engine.
 
-The first source family is the claim-free gate-decision ledger. It preserves
-the exact stored row, original opened policy MessagePack when present, and the
+The first source family is the gate-decision ledger. Whole-family mode is
+claim-free only. Exact decision-key selection can also open claim-bound rows
+under their actual native custody generations. Capture preserves the exact
+stored row, original opened policy or claim MessagePack when present, and the
 three owned retention-context, bundle-reference and pending-scrub sidecars.
-It does not follow contextual entity references or copy derived indexes. A
-claim-bearing row is outside this family. Unknown or malformed stored
-formats remain errors, not silent gaps or permission to copy another family.
+It does not follow contextual entity references or copy derived indexes.
+Unknown or malformed stored formats remain errors, not silent gaps or
+permission to copy another family. Ordinary claim keys stay in native custody;
+only the opened source bytes are re-encrypted to the independent host key.
 
 The collector takes the native custody guard before its source writer snapshot.
 It keeps both until the same host acknowledges the exact request and ciphertext
@@ -68,7 +71,7 @@ all. There is no omitted scope or new source-record/capture-size cap.
 The new version-1 framing includes that scope before the recipient key and in
 the exact request digest. This format has not shipped; there is no old reader
 or compatibility branch. Selection is applied before policy decryption or
-component emission. A selected missing or claim-bearing decision prevents the
+component emission. A selected missing or unreadable decision prevents the
 completion summary and acknowledgement. The emitted decision count must equal
 the selected unique key count in the same source snapshot. The host must check
 that count and each descriptor's decision membership before publication. It

@@ -1,4 +1,4 @@
-//! Exact source components for a claim-free gate-ledger clone. This reader
+//! Exact source components for a gate-ledger clone. This reader
 //! writes no live-vault state and follows no contextual entity references.
 
 use heed::RoTxn;
@@ -35,13 +35,14 @@ impl GateCloneComponent {
 }
 
 impl Store {
-    /// Streams only the claim-free partition, including its policy-sealed
-    /// rows and bundle associations, in the caller's unchanged snapshot.
+    /// Streams selected native rows and owned sidecars in the unchanged snapshot.
+    /// Claim keys are opened only for an explicit decision-key selection.
     /// Caller holds `gate_custody_read_guard` BEFORE opening that snapshot.
     /// Each component is borrowed only for its visit; no ledger is collected.
-    pub(crate) fn for_each_claim_free_gate_clone_component_in_txn(
+    pub(crate) fn for_each_gate_clone_component_in_txn(
         &self,
         txn: &RoTxn<'_>,
+        include_claims: bool,
         mut selected: impl FnMut(GateDecisionId) -> bool,
         mut check: impl FnMut() -> Result<()>,
         mut visit: impl FnMut(GateDecisionId, GateCloneComponent, &[u8], &[u8]) -> Result<()>,
@@ -54,17 +55,19 @@ impl Store {
                 continue;
             }
             let raw = Zeroizing::new(raw);
-            // Claim envelopes carry a different, explicitly named partition.
-            // Unknown/malformed envelope kinds are errors, never silent gaps.
+            // Whole-family capture stays claim-free. Only explicit decision
+            // keys may open a claim partition; malformed envelopes still fail.
             if orcb::is_orcb(&raw) && !orcb::is_policy_sealed(&raw) {
                 if orcb::raw_claim_generation(&raw).is_none() {
                     return Err(orcb::corrupt());
                 }
-                continue;
+                if !include_claims {
+                    continue;
+                }
             }
-            let (record, opened) = if orcb::is_policy_sealed(&raw) {
+            let (record, opened) = if orcb::is_orcb(&raw) {
                 let custody = self.core.key_custody.local().ok_or_else(orcb::corrupt)?;
-                let (record, plain) = orcb::decode_policy_source(custody, decision, &raw)?;
+                let (record, plain) = orcb::decode_hot_source(custody, decision, &raw)?;
                 (record, Some(plain))
             } else {
                 (decode_gate_decision(&raw)?, None)
@@ -72,7 +75,7 @@ impl Store {
             if record.decision_id != decision {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
-            if record.claim_id.is_some() {
+            if record.claim_id.is_some() && !include_claims {
                 continue;
             }
             let key = decision.as_bytes();

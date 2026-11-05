@@ -62,7 +62,7 @@ impl CaptureScope {
     }
 }
 
-/// One explicit, non-prospective claim-free ledger capture. Recipient bytes
+/// One explicit, non-prospective gate-ledger capture. Recipient bytes
 /// are a HOST-created per-order PUBLIC hybrid key, never a private seed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CaptureRequest {
