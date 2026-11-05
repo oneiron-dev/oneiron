@@ -164,8 +164,12 @@ pub(super) fn open_wrap(
         (VaultKeyWrapKind::Escrow { .. }, UnlockSecret::Hybrid(secret)) => OpenKey::Hybrid(secret),
         _ => return Err(refused("the secret does not fit the wrap")),
     };
-    let envelope =
-        Envelope::parse(&stored.envelope).map_err(|_| refused("a vault key wrap is malformed"))?;
+    let envelope = Envelope::parse(&stored.envelope).map_err(|error| match error {
+        oneiron_crypto::Error::OutOfMemory => {
+            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+        }
+        _ => refused("a vault key wrap is malformed"),
+    })?;
     let payload = envelope
         .open(open_key, &policy)
         .map_err(|_| refused("the vault key wrap does not open with this secret"))?;

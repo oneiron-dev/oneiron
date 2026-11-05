@@ -526,9 +526,23 @@ impl SealedPublicationGrant {
         let recipient_key_digest: [u8; 32] = cursor.array().ok_or_else(malformed)?;
         let id = generation.to_bytes();
         let bundle =
-            Envelope::parse(cursor.counted().ok_or_else(malformed)?).map_err(|_| malformed())?;
+            Envelope::parse(cursor.counted().ok_or_else(malformed)?).map_err(
+                |error| match error {
+                    oneiron_crypto::Error::OutOfMemory => {
+                        std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                    }
+                    _ => malformed(),
+                },
+            )?;
         let pads =
-            Envelope::parse(cursor.counted().ok_or_else(malformed)?).map_err(|_| malformed())?;
+            Envelope::parse(cursor.counted().ok_or_else(malformed)?).map_err(
+                |error| match error {
+                    oneiron_crypto::Error::OutOfMemory => {
+                        std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                    }
+                    _ => malformed(),
+                },
+            )?;
         let signature: [u8; 64] = cursor.array().ok_or_else(malformed)?;
         if cursor.at != bytes.len() {
             return Err(malformed());

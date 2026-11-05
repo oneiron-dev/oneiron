@@ -122,7 +122,7 @@ impl Vault {
             WrapRecipient::Machine(secret.machine),
             &secret.secret,
             &pad,
-        )
+        )?
         .ok_or_else(|| refused("this machine holds no opening wrap of the world key"))
     }
 }

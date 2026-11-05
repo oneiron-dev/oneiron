@@ -284,10 +284,10 @@ impl Vault {
             }
             let pad = pad_in_txn(&self.store, &txn, &key.id)?
                 .or_else(|| pads.and_then(|pads| pads.pad(&key.id)));
-            if let Some(world_key) =
-                pad.and_then(|pad| open_counted(&fold, key, me, &secret.secret, &pad))
-            {
-                keys.push(world_key);
+            if let Some(pad) = pad {
+                if let Some(world_key) = open_counted(&fold, key, me, &secret.secret, &pad)? {
+                    keys.push(world_key);
+                }
             }
         }
         Ok(keys)
@@ -318,10 +318,10 @@ impl Vault {
                     Some(pad) => Some(pad),
                     None => pad_in_txn(&self.store, &txn, &key.id)?,
                 };
-                if let Some(world_key) =
-                    pad.and_then(|pad| open_counted(&fold, key, root, &secret, &pad))
-                {
-                    keys.push(world_key);
+                if let Some(pad) = pad {
+                    if let Some(world_key) = open_counted(&fold, key, root, &secret, &pad)? {
+                        keys.push(world_key);
+                    }
                 }
             }
             keys

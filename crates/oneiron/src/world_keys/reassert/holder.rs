@@ -136,32 +136,38 @@ impl HolderRead {
         let Some(pad) = pad_in_txn(store, txn, &id)? else {
             return Ok(HeldKey::MissingPad);
         };
-        let opened = self
-            .own
-            .iter()
-            .map(|(_, record)| record)
-            .filter(|record| {
-                record.key == id && held.is_none_or(|held| held.commitment == record.commitment)
-            })
-            .find_map(|record| {
-                let (_, bytes) = record.wraps.iter().find(|(to, _)| *to == me)?;
-                let envelope = oneiron_crypto::Envelope::parse(bytes).ok()?;
-                let binding = WorldKeyBinding {
-                    vault_id: self.vault_id,
-                    key: id,
-                    owner: record.owner,
-                    policy: record.policy,
-                    commitment: record.commitment,
-                };
-                open_world_key(&binding, me, &secret.secret, &envelope, &pad)
-                    .ok()
-                    .map(|key| (key, record.owner))
-            })
-            .or_else(|| {
-                let held = held?;
-                open_counted(&self.fold, held, me, &secret.secret, &pad)
-                    .map(|key| (key, held.owner))
-            });
+        let mut opened = None;
+        for record in self.own.iter().map(|(_, record)| record).filter(|record| {
+            record.key == id && held.is_none_or(|held| held.commitment == record.commitment)
+        }) {
+            let Some((_, bytes)) = record.wraps.iter().find(|(to, _)| *to == me) else {
+                continue;
+            };
+            let envelope = match oneiron_crypto::Envelope::parse(bytes) {
+                Ok(envelope) => envelope,
+                Err(oneiron_crypto::Error::OutOfMemory) => {
+                    return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+                }
+                Err(_) => continue,
+            };
+            let binding = WorldKeyBinding {
+                vault_id: self.vault_id,
+                key: id,
+                owner: record.owner,
+                policy: record.policy,
+                commitment: record.commitment,
+            };
+            if let Ok(key) = open_world_key(&binding, me, &secret.secret, &envelope, &pad) {
+                opened = Some((key, record.owner));
+                break;
+            }
+        }
+        if opened.is_none() {
+            if let Some(held) = held {
+                opened = open_counted(&self.fold, held, me, &secret.secret, &pad)?
+                    .map(|key| (key, held.owner));
+            }
+        }
         let Some((key, owner)) = opened else {
             return Ok(HeldKey::NoOpening);
         };
