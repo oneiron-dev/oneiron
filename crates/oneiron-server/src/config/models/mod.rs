@@ -59,7 +59,7 @@ pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
 pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
-    ResponseFormatWire, ResponsesSocket,
+    ResponseFormatWire, ResponsesSocket, SiwcProvider,
 };
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
