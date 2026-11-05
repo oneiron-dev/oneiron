@@ -332,9 +332,18 @@ results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
 Bun 1.3.4's JUnit is sent to `/dev/stdout` (a pipe), parsed in memory, and checked
-against registered IDs. Raw JUnit is not written to disk. Persisted artifacts
-are redacted first. Process logs are bounded rings; incomplete lines are not
-persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
+against registered IDs. The owned file process artifact retains redacted stdout/stderr,
+including the JUnit, up to the process reader's existing bounds. `fileDiagnostics` in the
+aggregate records JUnit presence, case/match/unknown/duplicate counts, file exit/signal,
+and registration errors. A harness error remains a FAIL but does not replace an existing
+per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
+recorded separately as `cleanupError`, preserving an earlier reason.
+
+Persisted artifacts are redacted first. Credential-bearing private stdout remains withheld;
+CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
+stdin or credentials. SDK top-level failures also write their error envelope to stderr for
+redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values.
+Process logs are bounded rings; incomplete lines are not persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
 operation carrying a generated secret-test value. Never log credentials, raw
 SDK process output, pairing links, or recognisable secret sentinels. Use
 `artifacts.json(name, value)` rather than direct log files. HTTP automatic logs
