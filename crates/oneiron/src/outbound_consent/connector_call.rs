@@ -70,7 +70,8 @@ pub(super) use super::connector_call_driver::{Step, refused};
 pub use super::connector_call_types::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallInvocation,
     ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState, ConnectorQuestion,
-    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
+    ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema, PendingConnectorCallRef,
+    UntrustedToolResult,
 };
 
 /// The most bytes of one connector discovery or qualification reply a host

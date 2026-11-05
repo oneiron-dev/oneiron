@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4581 declarations.
+// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4582 declarations.
 // Replies: 1113 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -3367,8 +3367,9 @@ declare namespace Sdk {
   type LiveVoiceAckRequest = { session_ref: string; generation: number; event_sequence: number; kind: LiveVoiceAckKind };
   type LiveVoiceUsageRequest = { session_ref: string; generation: number };
   type LiveVoiceUsage = { session_ref: string; utterance_id: string; generation: number; run: string; terminal: boolean; metering_enabled: boolean; settlements: RunRungSettlement[] };
+  type ConnectorSource = "catalog" | "builtin";
   type MutationIntent = "preview" | "explicit_mutation";
-  type ConnectorCallRequest = { name: string; tool: string; arguments?: unknown; mutation?: MutationIntent };
+  type ConnectorCallRequest = { name: string; source?: ConnectorSource | null; tool: string; arguments?: unknown; mutation?: MutationIntent };
   type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
@@ -3537,7 +3538,7 @@ declare namespace Sdk {
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
   type ConnectorNameRequest = { name: string };
   type ConnectorView = { key_ref: string; entry: ConnectorEntry; status: string; secret_ref?: string | null; key_generation: number; registered_at: number; status_changed_at?: number | null; budgeted_as_sends: boolean };
-  type ConnectorSchemaRequest = { name: string; tool: string };
+  type ConnectorSchemaRequest = { name: string; source?: ConnectorSource | null; tool: string };
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type ConnectorCallStatusRequest = { call_ref: string };
   type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ConnectorCallReply };
@@ -4716,7 +4717,7 @@ declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight
 declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.TaskCancelReceipt | StoredResult>;
 declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.ActAnswer<Sdk.ConnectorCallReply> | StoredResult> } } & {
   answer(input: Sdk.ConnectorAnswerRequest): Promise<Sdk.ConnectorCallReply | StoredResult>;
-  /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
+  /** Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data. */
   call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ActAnswer<Sdk.ConnectorCallReply> | StoredResult>;
   /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
   call_status(input: Sdk.ConnectorCallStatusRequest): Promise<Sdk.ConnectorCallStatus | StoredResult>;
@@ -4726,7 +4727,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
     /** Schedules one send through a granted outbound connector, gated and held for delivery. */
     schedule(input: Sdk.OutboundScheduleRequest): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
   };
-  /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
+  /** One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest. */
   schema(input: Sdk.ConnectorSchemaRequest): Promise<Sdk.ConnectorSchemaReply | StoredResult>;
   /** One catalogued connector by name, removed ones included. */
   status(input: Sdk.ConnectorNameRequest): Promise<Sdk.ConnectorView | null | StoredResult>;

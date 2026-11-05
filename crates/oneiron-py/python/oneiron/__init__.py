@@ -6545,10 +6545,10 @@ class Oneiron:
             """One catalogued connector by name, removed ones included."""
             return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
         def call(self, spec):
-            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            """Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."""
             return json.loads(_translate(lambda: self._client.connector_call(json.dumps(spec))))
         def schema(self, spec):
-            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            """One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."""
             return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         def call_status(self, spec):
             """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
