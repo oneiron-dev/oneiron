@@ -162,5 +162,11 @@ edited comment's full content hash is recomputed. An empty replacement drops its
 markers with its tombstone, the same full-deletion law as the note path. Existing
 create/reply/delete behavior, the shared builder, and the exact-marks helper are
 byte-unchanged. No contract schema bump, no new error, format, default, cap, or
-Loro change. No Word-runtime comparison is claimed; shared-Loro story
-import/edit/export and story structure ops remain unbuilt.
+Loro change. No Word-runtime comparison is claimed.
+
+The shared-Loro story paragraph change (2026-11-05, FIX 594) adds the engine-side
+story slice (`crates/oneiron/src/office_body/docx/stories.rs`, schema 2): scoped
+story paragraph import, three story ops, typed read, fork review entries and
+export of every changed paragraph as its full `SetStoryRuns`, reusing the native
+story verbs above with no native change. It works once this chain integrates;
+story structure/table ops and story ask pinning remain unbuilt.
