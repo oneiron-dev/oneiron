@@ -120,7 +120,7 @@ pub use hydration::{
 pub use layout::{
     BOARD_FILTER_STATUSES_MAX, BOARD_FOLD_KEEP_MAX, BOARD_FOLD_NOTE_MAX_BYTES,
     BOARD_LAYOUT_SECTIONS_MAX, BOARD_SECTION_KEY_MAX_BYTES, BoardActorClass, BoardLayout,
-    BoardLayoutError, BoardWhoFilter, FOLD_ATTENTION_ROWS_MAX, FoldBaseline, FoldCount,
+    BoardLayoutError, BoardWhoFilter, FOLD_ATTENTION_ROWS_MAX, FoldBaseline, FoldCount, FoldCounts,
     FoldSummary, LaidOutBoard, SectionFilter, SectionFold, SectionLayout, apply_board_layout,
     fold_line, is_section_key, unfold_command,
 };
