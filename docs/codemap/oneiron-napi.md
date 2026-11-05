@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/client/generated/agent_verbs.rs` | src | generated | 1228 fn | — | — |
 | `src/facade/convert.rs` | src | m | 20 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
 | `src/facade/custody_seal.rs` | src | s | 1 fn | — | The client's own seal for `vault.secrets.custody.submit` (FIX 11441): the input sealed to the holder on the… |
-| `src/facade/dtos.rs` | src | L | 61 struct · 2 crate-vis | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +53 | All napi(object) DTO structs for the actor-scoped surface |
+| `src/facade/dtos.rs` | src | L | 62 struct · 2 crate-vis | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionAppendOutcome, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy +54 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/dtos/read_scope.rs` | src | s | 3 struct | NapiReadReceipt, NapiReadScope, NapiRecallScope | The recall scope a caller asks for and the read receipt every read returns, as napi objects |
 | `src/facade/dtos/witness_assertions.rs` | src | s | 1 struct · 1 crate-vis | NapiWitnessAssertions | A witnessed reply's typed record assertions (OF-063, FIX 10261), as a napi object, and its one lowering onto… |
 | `src/facade/input_error.rs` | src | s | 2 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
