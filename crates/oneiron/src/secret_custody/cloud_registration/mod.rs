@@ -25,8 +25,12 @@
 //! a logout stops the binding and empties the slot's value at rest, which
 //! is not an erase.
 
+mod erase_revoke;
 mod lifecycle;
 mod store;
+
+pub(crate) use self::erase_revoke::EraseRevokes;
+pub use self::erase_revoke::{CloudRegistrationEraseRevoke, CloudRegistrationEraseRevoker};
 
 use serde::{Deserialize, Serialize};
 
