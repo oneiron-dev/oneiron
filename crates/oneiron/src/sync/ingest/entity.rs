@@ -654,9 +654,10 @@ fn admit(
         return asset_ref::land(ctx, wtxn, id, header, body);
     }
     let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
-    match applied {
-        Ok(None) => {}
-        Ok(Some(stand)) => {
+    let written = match applied {
+        Ok(crate::batch::IngestedPutOutcome::Applied) => id,
+        Ok(crate::batch::IngestedPutOutcome::NativeRecordApplied(applied)) => applied.into_entity(),
+        Ok(crate::batch::IngestedPutOutcome::DocumentStands(stand)) => {
             if let Some(quota_debit) = quota_debit {
                 quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
             }
@@ -673,12 +674,12 @@ fn admit(
             }
             return Err(err);
         }
-    }
+    };
     if delete_protected {
         refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
         return Ok(EntityStep::Protected { id, wrote: true });
     }
-    Ok(EntityStep::Materialized(id))
+    Ok(EntityStep::Materialized(written))
 }
 
 /// Delete wins over a lingering entities-map body.

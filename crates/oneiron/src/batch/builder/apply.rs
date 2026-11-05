@@ -14,6 +14,20 @@ enum ApplyOutcome {
     Applied,
     #[cfg(feature = "sync")]
     DocumentStands(crate::entity_doc::RecordDocumentStand),
+    #[cfg(feature = "sync")]
+    NativeRecordApplied(super::record_document::AppliedRecordDocument),
+}
+
+impl ApplyOutcome {
+    fn is_applied(&self) -> bool {
+        match self {
+            Self::Applied => true,
+            #[cfg(feature = "sync")]
+            Self::NativeRecordApplied(_) => true,
+            #[cfg(feature = "sync")]
+            Self::DocumentStands(_) => false,
+        }
+    }
 }
 
 impl BatchBuilder<'_> {
@@ -79,7 +93,7 @@ impl BatchBuilder<'_> {
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
         record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
-    ) -> Result<Option<crate::entity_doc::RecordDocumentStand>> {
+    ) -> Result<super::record_document::IngestedPutOutcome> {
         self.apply_with_gate_mode(
             wtxn,
             ApplyOpsGateMode::new(false, true),
@@ -89,8 +103,13 @@ impl BatchBuilder<'_> {
             record_document,
         )
         .map(|outcome| match outcome {
-            ApplyOutcome::Applied => None,
-            ApplyOutcome::DocumentStands(stand) => Some(stand),
+            ApplyOutcome::Applied => super::record_document::IngestedPutOutcome::Applied,
+            ApplyOutcome::DocumentStands(stand) => {
+                super::record_document::IngestedPutOutcome::DocumentStands(stand)
+            }
+            ApplyOutcome::NativeRecordApplied(applied) => {
+                super::record_document::IngestedPutOutcome::NativeRecordApplied(applied)
+            }
         })
     }
 
@@ -168,7 +187,7 @@ impl BatchBuilder<'_> {
                 #[cfg(feature = "sync")]
                 record_document,
             )?;
-            if matches!(outcome, ApplyOutcome::Applied) {
+            if outcome.is_applied() {
                 staged.commit()?;
                 if let Some(scope) = scope {
                     super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
@@ -360,6 +379,18 @@ impl BatchBuilder<'_> {
         // marker; the write door marks the rows.
         #[cfg(feature = "sync")]
         vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
+        #[cfg(feature = "sync")]
+        let mut native_outputs = native_outputs;
+        #[cfg(feature = "sync")]
+        let mut content_writes = content_writes;
+        #[cfg(feature = "sync")]
+        let record_input = super::record_document::AppliedRecordDocument::finish(
+            vault,
+            wtxn,
+            native_outputs.take_record_documents(),
+            record_document,
+            &mut content_writes,
+        )?;
         // Construct the local final input only after every original check.
         // Publication stays off until native source admission is complete.
         #[cfg(feature = "sync")]
@@ -373,6 +404,10 @@ impl BatchBuilder<'_> {
         drop(native_input);
         #[cfg(not(feature = "sync"))]
         drop((native_outputs, content_writes));
+        #[cfg(feature = "sync")]
+        if let Some(record_input) = record_input {
+            return Ok(ApplyOutcome::NativeRecordApplied(record_input));
+        }
         Ok(ApplyOutcome::Applied)
     }
 }

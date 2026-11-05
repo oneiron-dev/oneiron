@@ -21,8 +21,9 @@ pub(super) fn stage_put_projections(
     evicted_shell_sources: BTreeSet<EntityId>,
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
-    #[cfg(feature = "sync")]
-    installed_record_document: Option<&crate::entity_doc::InstalledRecordDocument<'_>>,
+    #[cfg(feature = "sync")] installed_record_document: Option<
+        &crate::entity_doc::InstalledRecordDocument<'_>,
+    >,
 ) -> Result<AppliedPut> {
     #[cfg(feature = "sync")]
     let source_origin = match installed_record_document {
@@ -161,6 +162,8 @@ pub(super) fn stage_put_projections(
         crate::store::workflow_definition::measure_workflow_limits(&store.limit_watch, definition);
     }
     Ok(AppliedPut {
+        #[cfg(feature = "sync")]
+        record_document: None,
         #[cfg(feature = "sync")]
         pending_native_skill_put: None,
         portable_agent_source,

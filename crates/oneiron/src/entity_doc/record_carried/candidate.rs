@@ -19,7 +19,10 @@ use crate::side_table::HexId;
 use crate::sync::SelectedRecordDocument;
 
 mod install;
-pub(super) use install::{AdmittedRecordDocument, InstalledRecordDocument, install_record_document_in_txn};
+pub(super) use install::{
+    AdmittedRecordDocument, InstalledRecordDocument, PendingRecordDocument,
+    install_record_document_in_txn,
+};
 
 /// A preparation that wrote neither the pointer nor its document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +69,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         }
         let source = selected.head();
         if source.refinement_origin().is_some() && selected.refinement_source().is_none() {
-            return Ok(RecordDocumentPreparation::Stands(RecordDocumentStand::Conflict));
+            return Ok(RecordDocumentPreparation::Stands(
+                RecordDocumentStand::Conflict,
+            ));
         }
         let entity = source.entity()?;
         if crate::ports::removed_in_txn(store, txn, &entity)? {
@@ -269,7 +274,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             // This scratch selection is still data for the original phases.
             // Only their closed source continuation may publish the result.
             crate::entity_doc::native_skill_state::reconcile_settlement(
-                &document, &local, &incoming_inventory,
+                &document,
+                &local,
+                &incoming_inventory,
             )?;
         }
         let logical = storage::body_with_document(
