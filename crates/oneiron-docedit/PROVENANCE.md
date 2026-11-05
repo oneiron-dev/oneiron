@@ -63,3 +63,9 @@ and `MAX_DOCX_XML_NODES`, `MAX_DOCX_XML_EXPANDED_BYTES`, `ParseBound` and `Parse
 operation's limits. A byte ceiling hit is `DocxError::Capacity` (`ErrorCode::CapacityExceeded`), a memory or
 deadline refusal is `DocxError::Resource` (`ErrorCode::ResourceRefused`), and both carry typed details. The
 writer refuses a package past classic ZIP's widths (65,534 entries, 0xFFFFFFFE bytes) as that format's limit.
+The default comment-anchor boundary change (2026-11-05, FIX 4) touches
+`src/edit/verbs/comments.rs`. A default cross-segment anchor now opens on the
+text node holding its resolved quote's first character, after preceding breaks,
+bookmarks or comment markers, as the chosen-occurrence path already does. Quote
+selection, single-run placement, range ends and tracked-container widening are
+unchanged.
