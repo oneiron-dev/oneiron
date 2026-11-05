@@ -286,6 +286,9 @@ fn read(
         .map_err(LlmError::from)?;
     run.dispatch_paid(permit.lease(), door.connector())
         .map_err(LlmError::from)?;
+    let mut context = run.work_context();
+    context.physical = crate::models::physical_for_paid(door.connector());
+    permit.lease().attach_work_context(context);
     let reader = door.reader();
     let lease: &BudgetLease = permit.lease();
     let answer = reader.read(read, lease);

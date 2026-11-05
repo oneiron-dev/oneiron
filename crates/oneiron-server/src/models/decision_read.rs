@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
+use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, WorkPhysical};
 use oneiron::llm::{
     BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
@@ -450,6 +450,7 @@ impl DecisionReader {
         &self,
         prompts: &[String],
         questions: &[LabelReadout<'_>],
+        physical: Option<WorkPhysical>,
     ) -> LlmResult<LabelReadResponse> {
         let ids = self.ids().await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
@@ -469,22 +470,20 @@ impl DecisionReader {
                 && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
             {
                 let answering = self.answering(&reply).await;
-                spent = Some(usage(&reply, answering.as_ref(), mode.as_ref())?);
+                spent = Some(usage(&reply, answering.as_ref(), mode.as_ref(), physical)?);
                 (reply, mode) = self.complete(json!(prompt), ids.eos, full).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
             // A plain readout reports yes, then no, whichever the prompt lists
             // first; a joint one lists yes first already.
-            if question.labels == LabelSet::Noul
-                && question.paired.is_none()
-                && self.recipe.no_first()
+            if question.labels == LabelSet::Noul && question.paired.is_none() && self.recipe.no_first()
             {
                 readout.reverse();
             }
             readouts.push(readout);
             let answering = self.answering(&reply).await;
-            let usage = usage(&reply, answering.as_ref(), mode.as_ref())?;
+            let usage = usage(&reply, answering.as_ref(), mode.as_ref(), physical)?;
             reads.push(match spent {
                 Some(first) => retried(first, usage),
                 None => usage,
@@ -549,7 +548,7 @@ impl LabelReadModel for DecisionReader {
     fn read(
         &self,
         request: &LabelReadRequest<'_>,
-        _lease: &BudgetLease,
+        lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
         // Before the state renders or the tokenizer and completion are asked.
         if !self.permitted {
@@ -564,9 +563,10 @@ impl LabelReadModel for DecisionReader {
             .map(|question| self.recipe.render(&prompt_of(request.state, question)))
             .collect::<Result<Vec<_>, _>>()
             .map_err(refused)?;
+        let physical = lease.work_context().map(|context| context.physical);
         let read = async {
             let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions).await
+            self.read_pack(&prompts, request.questions, physical).await
         };
         // One bound for the tokenizer and completion waits: the decision's work cutoff.
         match request.work_until {
@@ -721,13 +721,14 @@ fn usage(
     body: &JsonValue,
     answering: Option<&AnsweringIdentity>,
     execution: Option<&CacheDigest>,
+    physical: Option<WorkPhysical>,
 ) -> LlmResult<LlmUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
-    let (cache_read, raw_provider) = label_read(body, answering, execution);
+    let (cache_read, raw_provider) = label_read(body, answering, execution, physical);
     Ok(LlmUsage {
         input: LlmInputUsage {
             total: count("tokens_evaluated")?,
