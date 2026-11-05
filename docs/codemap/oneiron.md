@@ -822,6 +822,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/version_codec.rs` | src | s | 2 crate-vis | — | Strict MessagePack framing for blob version records |
 | `src/blob_artifact/version_rows.rs` | src | s | 1 fn · 4 crate-vis | — | The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those… |
 | `src/blob_artifact/versions.rs` | src | L | 2 struct · 1 enum · 9 fn · 1 const · 1 re-export · 26 crate-vis | BlobArtifactAppendOutcome, BlobArtifactVersion, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
+| `src/blob_artifact/versions/checked.rs` | src | s | 3 crate-vis | — | Checked append decisions shared by direct and Memory transaction doors |
 | `src/blob_artifact/versions/reads.rs` | src | m | 1 struct · 9 fn · 7 crate-vis | BlobBytes | The version chain's reads: the head, the version tree, one version's metadata and its bytes |
 | `src/bm25/codec.rs` | src | s | 1 crate-vis | — | — |
 | `src/bm25/config.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
@@ -1939,9 +1940,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/graph.rs` | src | m | 22 crate-vis | — | Strict transactional graph reads and shared guards |
 | `src/conversation_dag/membership.rs` | src | s | 5 crate-vis | — | Replicated TURN session membership: body carrier and local index reconstruction |
 | `src/conversation_dag/migration.rs` | src | m | 1 fn · 2 crate-vis | — | Idempotent lazy and maintenance migration of legacy conversation turns |
-| `src/conversation_dag/mod.rs` | src | s | 1 mod · 4 re-export · 22 crate-vis | — | Conversation DAG topology, local HEAD state and exact scope resolution |
+| `src/conversation_dag/mod.rs` | src | s | 1 mod · 4 re-export · 23 crate-vis | — | Conversation DAG topology, local HEAD state and exact scope resolution |
 | `src/conversation_dag/participation.rs` | src | s | 4 crate-vis | — | A live append's participation (OF-529): the thread it lands in, and the room's participation gate its writer… |
 | `src/conversation_dag/policy.rs` | src | m | 11 crate-vis | — | Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors… |
+| `src/conversation_dag/promotion.rs` | src | s | 1 crate-vis | — | Preserve journaled legacy TURNs when a save joins an already-adopted DAG |
 | `src/conversation_dag/quote.rs` | src | m | 1 struct · 1 enum · 28 crate-vis | QuoteAnchor, RoomQuote | Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's… |
 | `src/conversation_dag/quote/body_pins.rs` | src | s | 3 crate-vis | — | Body-anchored quotes that reach this vault after their MESSAGE's document was born here (FIX 8942) |
 | `src/conversation_dag/quote/reply_target.rs` | src | m | 10 crate-vis | — | What a reply answers (FIX 9771): a TURN, or one MESSAGE inside the TURN that holds it, each at the content… |
@@ -2150,7 +2152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 5 mod · 25 re-export · 31 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 5 mod · 25 re-export · 32 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 19 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/memberships.rs` | src | s | 5 crate-vis | — | Relationship units named by a listed PERSON's admitted membership claims |
 | `src/dreamer_consolidation/neighbourhood/pages.rs` | src | s | 5 crate-vis | — | A child's listing in stable pages (Rule 5, FIX 7580) |
@@ -2169,8 +2171,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/note_topics.rs` | src | m | 7 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
 | `src/dreamer_consolidation/open_conflict.rs` | src | s | 1 crate-vis | — | A judge outage is an open question, persisted through the shared write gate |
 | `src/dreamer_consolidation/parallel.rs` | src | m | 5 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
-| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 14 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | Partition planning: cuts dirty turns into consolidation partitions |
-| `src/dreamer_consolidation/partition/payload.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | PartitionThing | The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut… |
+| `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 6 fn · 1 re-export · 15 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | Partition planning: cuts dirty turns into consolidation partitions |
+| `src/dreamer_consolidation/partition/payload.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | PartitionThing | The consolidation payload codec (FIX 7524): a branch's world and facet, the thing a nightly child is cut… |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
 | `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 5 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/person_about/claim_hooks.rs` | src | s | 3 crate-vis | — | The PEOPLE `about` hooks the CLAIM doors call, each in the door's own transaction before the row changes: a… |
@@ -2513,7 +2515,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/night_step.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | NightStepRequestId | The Dreamer's night step on the owner's say (FIX 6903): a Timer `host.wake` asks for what a Timer wake asks… |
 | `src/dreamer_wake/nightly.rs` | src | s | 6 crate-vis | — | Budgeted interest-queue spending, one thing per entity or topic (OF-498c, see `things`): its world, facet… |
 | `src/dreamer_wake/nightly/exposure.rs` | src | s | 3 crate-vis | — | What each planned TURN's text may be read beside in another conversation (FIX 7524, Engine ruling C): its… |
-| `src/dreamer_wake/nightly/things.rs` | src | s | 5 crate-vis | — | One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly) |
+| `src/dreamer_wake/nightly/things.rs` | src | m | 5 crate-vis | — | One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly) |
 | `src/dreamer_wake/nightly/things/slices.rs` | src | s | 1 crate-vis | — | A nightly thing's children: one per project (FIX 8724) |
 | `src/dreamer_wake/observation.rs` | src | m | 10 re-export · 10 crate-vis | — | The wake observation (DOOR-144): what one wake pass recorded of itself |
 | `src/dreamer_wake/observation/checkpoint.rs` | src | m | 6 crate-vis | — | The wake observation's Checkpoint half: the cut a park's own write records, the check the deadline lane arms… |
@@ -2688,6 +2690,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_settle/organ_wait.rs` | src | s | 2 struct · 7 fn · 1 const | OrganWait, OrganWaitView | An organ call that waits for a node (OF-575, owner ruling MESH): a host that cannot start an organ, with… |
 | `src/edit_settle/pending.rs` | src | L | 8 fn · 1 const · 3 re-export · 11 crate-vis | — | The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person… |
 | `src/edit_settle/pending/admission.rs` | src | s | 1 enum · 1 fn · 2 crate-vis | MadeByReader | Who may name and who may read a waiting proposal's sources |
+| `src/edit_settle/pending/output_retention.rs` | src | s | 4 crate-vis | — | Native-output row preparation and direct-append retention |
 | `src/edit_settle/pending/output_settle.rs` | src | s | 1 crate-vis | — | The ledger record a native output's Keep or Discard writes |
 | `src/edit_settle/pending/view.rs` | src | s | 1 struct · 1 enum · 1 crate-vis | PendingProposalKind, PendingProposalView | A waiting proposal as a review surface lists it |
 | `src/edit_settle/receipts.rs` | src | s | 5 crate-vis | — | Receipt projection for the family |
@@ -3573,7 +3576,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/manifest/encoder_export.rs` | src | s | 4 struct · 15 fn · 1 crate-vis | CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork | Offline interchange with the model project |
 | `src/llm/manifest/teacher_probe.rs` | src | s | 1 struct · 4 fn · 1 re-export · 2 crate-vis | TeacherProbeApproval | Policy-bound extraction-teacher probe approval for manifest publication |
 | `src/llm/manifest/tests.rs` | test | m | — | — | — |
-| `src/llm/mod.rs` | src | s | 11 mod · 27 re-export · 12 crate-vis | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 11 mod · 28 re-export · 12 crate-vis | — | Engine-facing LLM invocation seam |
 | `src/llm/model_stream.rs` | src | m | 12 struct · 1 enum · 5 fn | ModelStreamAbort, ModelStreamDetach, ModelStreamDetached, ModelStreamEvents, ModelStreamEventsRequest, ModelStreamOpen, ModelStreamOpened, ModelStreamSink +5 | Owner-submitted shared model streams over the engine's one-producer `LlmEventBus`: many subscribers attach… |
 | `src/llm/model_trials.rs` | src | m | 9 fn · 2 re-export · 6 crate-vis | — | Per-question held-out trials nominated by external benchmark scores |
 | `src/llm/model_trials/evidence.rs` | src | m | 6 crate-vis | — | Freeze the question's own labels, check backend reads and bind the sufficiency card |
@@ -3914,7 +3917,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/structural/puts/guarded/content_write.rs` | src | s | 2 crate-vis | — | A structural put's one content write: owner and marker checks, then body, birth, edges, text |
 | `src/memory/structural/puts/guarded/inputs.rs` | src | s | 5 crate-vis | — | A structural put's resolved inputs: edges, an ASSET_TEXT's sources and birth, text fields |
 | `src/memory/structural/raw_prose.rs` | src | s | 1 crate-vis | — | Prose admission for a bound raw write's NOTE and keyed-value bodies (OF-063, FIX 3734): the one link read… |
-| `src/memory/structural/types.rs` | src | s | 8 struct · 1 re-export | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField | Read-facing views and per-verb inputs for structural puts |
+| `src/memory/structural/types.rs` | src | s | 8 struct · 1 enum · 1 re-export | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput +1 | Read-facing views and per-verb inputs for structural puts |
 | `src/memory/subscriptions.rs` | src | s | 1 struct · 1 trait · 2 fn | MemorySubscriptionOwner, ScopedView | Transport-neutral subscription verbs |
 | `src/memory/support.rs` | src | s | 2 struct · 3 fn · 1 type · 1 re-export · 11 crate-vis | HostWriteOrigin, Memory | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
 | `src/memory/support/actors.rs` | src | s | 1 fn · 6 crate-vis | — | Actor verification: store-truth bindings, the folded owner binding and deletion authority |
@@ -4137,7 +4140,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/room/message_result.rs` | src | s | 1 crate-vis | — | The result a room's off-record MESSAGE carries, found for someone in the room outside any run (FIX 3620)… |
 | `src/off_record/lifecycle/room_births.rs` | src | s | 6 crate-vis | — | What a room write stages beside its row (FIX 4280, 4281; Engine 10-22): the row's birth and, for a NOTE, its… |
 | `src/off_record/lifecycle/save_grant.rs` | src | m | 5 fn · 9 crate-vis | — | Who may bring a room's talk into this vault (ARCH-0052 #d5-save-grant, owner ruling 2026-10-16): a holder of… |
-| `src/off_record/lifecycle/saving.rs` | src | s | 3 crate-vis | — | Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn… |
+| `src/off_record/lifecycle/saving.rs` | src | m | 5 crate-vis | — | Saving a stretch's whole talk (ARCH-0052 D5): which turns one save keeps, and what a saved copy of a turn… |
 | `src/off_record/lifecycle/session.rs` | src | L | 2 struct · 12 fn · 39 crate-vis | OffRecordSession, OffRecordSessionVault | Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close |
 | `src/off_record/lifecycle/session/type_feedback.rs` | src | s | 1 crate-vis | — | The stretch instance a session-bound run's late type feedback lands on (FIX 10389, CALLS "session feedback… |
 | `src/off_record/lifecycle/session/vector_search.rs` | src | s | 1 crate-vis | — | In-room vector retrieval over the composed union (FIX 10759): the session sibling of `Vault::search_vector`… |
@@ -4638,7 +4641,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/dependent_walk/tests.rs` | test | m | — | — | Done-means for the batched dependent walk (rule 5: no erase refuses for its count of dependents): every door… |
 | `src/ports/document_fields.rs` | src | s | 3 crate-vis | — | Field vocabulary shared by document writes and value-based recovery |
 | `src/ports/document_rows.rs` | src | s | 11 crate-vis | — | The document-row port: the ARCH-0023b entity-document families of one document slot |
-| `src/ports/integrity.rs` | src | m | 28 crate-vis | — | Source-prefix dependency index and deletion invalidation in the caller's transaction |
+| `src/ports/integrity.rs` | src | m | 29 crate-vis | — | Source-prefix dependency index and deletion invalidation in the caller's transaction |
 | `src/ports/lmdb_aux.rs` | src | m | 6 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
 | `src/ports/lmdb_claim.rs` | src | m | 5 crate-vis | — | Claim adapter preserves the history door; current-state queries exclude stale claims |
 | `src/ports/lmdb_document_rows.rs` | src | s | — | — | LMDB/session adapter of the document-row port, over the declared `sync_state` families |
@@ -5096,6 +5099,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/purpose.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | SummaryPurpose | Open, owner-approved summary-purpose descriptors, not a closed enum |
 | `src/scope_summary/request.rs` | src | m | 2 struct · 1 enum · 2 fn · 18 crate-vis | ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget | Scope-only declarations, exact-source fences and atomic Dreamer landings |
 | `src/scope_summary/request/editor_sources.rs` | src | s | 2 crate-vis | — | The rows an edited summary's words were written from (FIX 10092) |
+| `src/scope_summary/request/remake.rs` | src | s | 1 crate-vis | — | Fresh source-only rebuilds after an off-record save cuts deleted content |
 | `src/scope_summary/request/requester_lane.rs` | src | s | 1 fn · 2 crate-vis | — | FIX 2194 (OF-506): a queued summary keeps the read lane its requester declared it under |
 | `src/scope_summary/scrub.rs` | src | s | 1 crate-vis | — | A withdrawn scope-summary copy's words leave this device (FIX 931, FIX 11804) |
 | `src/scope_summary/session.rs` | src | s | 8 crate-vis | — | A sitting's summary (FIX 7509, ARCH-0026 Dreamer row 4): queued by the sitting's close, written from the… |
