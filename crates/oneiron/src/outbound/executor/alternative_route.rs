@@ -232,6 +232,13 @@ fn send_live_alternative<S: OutboundExecutionSink>(
     request: &OutboundDispatchRequest,
     alternative: &OutboundAmbientAlternative,
 ) -> Result<RoutedAttempt, ConnectorTaskExecutorError> {
+    if let Some(deadline) = alternative_wait_past_deadline(vault, task, alternative)? {
+        // The provider's wait outlasts the caller's deadline: the
+        // alternative is not sent again, and the TASK stops as the
+        // interrupt's own wait would (FIX 8818).
+        stop_alternative_at_deadline(vault, attempt, task, request, alternative, deadline)?;
+        return Ok(RoutedAttempt::Settled);
+    }
     let child_request = ambient_alternative_dispatch_request(request, alternative);
     let dispatched = vault
         .dispatch_outbound_intent_with_verified_actor(
@@ -381,6 +388,71 @@ fn send_live_alternative<S: OutboundExecutionSink>(
             Ok(RoutedAttempt::Settled)
         }
     }
+}
+
+/// The TASK's deadline, when the provider wait its alternative's row keeps
+/// ends after it.
+fn alternative_wait_past_deadline(
+    vault: &Vault,
+    task: &ConnectorSendTask,
+    alternative: &OutboundAmbientAlternative,
+) -> Result<Option<u64>, ConnectorTaskExecutorError> {
+    let Some(deadline) = task.deadline_at else {
+        return Ok(None);
+    };
+    let (attempt_id, _) = alternative_identity(task, alternative)?;
+    let record = {
+        let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+        crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)
+            .map_err(OutboundDispatchError::from)?
+    };
+    let Some(record) = record else {
+        return Ok(None);
+    };
+    let wait = crate::outbound_intent_ledger::intent_settlement(vault, &record.id)
+        .map_err(OutboundDispatchError::from)?
+        .provider_wait;
+    Ok(wait
+        .and_then(|wait| wait.not_before)
+        .filter(|edge| *edge > deadline)
+        .map(|_| deadline))
+}
+
+/// Ends the TASK at its deadline before its alternative goes again: the
+/// interrupt's receipt names the alternative and the deadline, and the TASK
+/// fails as not delivered.
+fn stop_alternative_at_deadline(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &ConnectorSendTask,
+    request: &OutboundDispatchRequest,
+    alternative: &OutboundAmbientAlternative,
+    deadline: u64,
+) -> Result<(), ConnectorTaskExecutorError> {
+    let now = vault.now_recorded_at();
+    let failed = OutboundDispatchOutcome::Failed.as_str();
+    let mut receipt = interrupt_receipt(request, task, alternative, failed, None, now);
+    receipt
+        .fields
+        .insert("dispatch_outcome".to_owned(), failed.to_owned());
+    receipt.fields.insert(
+        PROVIDER_WAIT_DEADLINE_FIELD.to_owned(),
+        deadline.to_string(),
+    );
+    crate::outbound::retry_audit::persist_terminal_send_receipt_and_fail(
+        vault,
+        crate::outbound::retry_audit::TerminalSendSettlement {
+            attempt,
+            task_ref: task.task_ref,
+            receipt,
+            receipt_outcome: SendReceiptOutcome::Failed,
+            transport_dispatched: false,
+            task_outcome: ConnectorSendTaskOutcome::Failed,
+            reason: PROVIDER_WAIT_DEADLINE_REASON,
+            now,
+        },
+    )?;
+    Ok(())
 }
 
 /// Stops the alternative's admitted call with `stop`, in a writer of its own.
