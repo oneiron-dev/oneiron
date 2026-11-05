@@ -42,6 +42,7 @@ impl Store {
     pub(crate) fn for_each_claim_free_gate_clone_component_in_txn(
         &self,
         txn: &RoTxn<'_>,
+        mut selected: impl FnMut(GateDecisionId) -> bool,
         mut check: impl FnMut() -> Result<()>,
         mut visit: impl FnMut(GateDecisionId, GateCloneComponent, &[u8], &[u8]) -> Result<()>,
     ) -> Result<u64> {
@@ -49,6 +50,9 @@ impl Store {
         for row in LEDGER.iter_from(self, txn, &[])? {
             check()?;
             let (decision, raw) = row?;
+            if !selected(decision) {
+                continue;
+            }
             let raw = Zeroizing::new(raw);
             // Claim envelopes carry a different, explicitly named partition.
             // Unknown/malformed envelope kinds are errors, never silent gaps.

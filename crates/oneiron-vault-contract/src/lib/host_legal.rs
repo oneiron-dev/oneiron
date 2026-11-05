@@ -8,6 +8,60 @@ use crate::MAX_CTL_LINE;
 const MAGIC: [u8; 6] = *b"ONLC\x01\x01";
 const ACK: u8 = 0xa1;
 
+/// Exact native source family chosen by the already admitted HOST order.
+/// Whole-family capture is explicit; an empty selected list captures nothing.
+#[derive(Clone, PartialEq, Eq)]
+pub enum CaptureScope {
+    AllClaimFreeGateDecisions,
+    GateDecisions(Vec<[u8; 16]>),
+}
+
+impl CaptureScope {
+    pub fn includes(&self, decision: &[u8; 16]) -> bool {
+        match self {
+            Self::AllClaimFreeGateDecisions => true,
+            Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
+        }
+    }
+
+    fn write_to(&self, out: &mut impl Write) -> io::Result<()> {
+        match self {
+            Self::AllClaimFreeGateDecisions => out.write_all(&[1]),
+            Self::GateDecisions(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture decision order"));
+                }
+                out.write_all(&[2])?;
+                out.write_all(&(ids.len() as u64).to_be_bytes())?;
+                for id in ids {
+                    out.write_all(id)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn read_from(input: &mut impl Read) -> io::Result<Self> {
+        match read_array::<1>(input)?[0] {
+            1 => Ok(Self::AllClaimFreeGateDecisions),
+            2 => {
+                let count = u64::from_be_bytes(read_array(input)?);
+                let mut ids = Vec::new();
+                for _ in 0..count {
+                    let id = read_array(input)?;
+                    if ids.last().is_some_and(|previous| previous >= &id) {
+                        return Err(invalid("legal capture decision order"));
+                    }
+                    ids.try_reserve(1).map_err(io::Error::other)?;
+                    ids.push(id);
+                }
+                Ok(Self::GateDecisions(ids))
+            }
+            _ => Err(invalid("legal capture scope")),
+        }
+    }
+}
+
 /// One explicit, non-prospective claim-free ledger capture. Recipient bytes
 /// are a HOST-created per-order PUBLIC hybrid key, never a private seed.
 #[derive(Clone, PartialEq, Eq)]
@@ -17,6 +71,7 @@ pub struct CaptureRequest {
     pub source_vault: [u8; 32],
     pub generation: u64,
     pub ends_at: u64,
+    pub scope: CaptureScope,
     pub recipient: Vec<u8>,
 }
 
@@ -31,6 +86,7 @@ impl CaptureRequest {
         out.write_all(&self.source_vault)?;
         out.write_all(&self.generation.to_be_bytes())?;
         out.write_all(&self.ends_at.to_be_bytes())?;
+        self.scope.write_to(out)?;
         out.write_all(&(self.recipient.len() as u32).to_be_bytes())?;
         out.write_all(&self.recipient)
     }
@@ -44,6 +100,7 @@ impl CaptureRequest {
         let source_vault = read_array(input)?;
         let generation = u64::from_be_bytes(read_array(input)?);
         let ends_at = u64::from_be_bytes(read_array(input)?);
+        let scope = CaptureScope::read_from(input)?;
         let len = u32::from_be_bytes(read_array(input)?) as usize;
         if len > MAX_CTL_LINE {
             return Err(invalid("legal capture public key framing"));
@@ -56,6 +113,7 @@ impl CaptureRequest {
             source_vault,
             generation,
             ends_at,
+            scope,
             recipient,
         })
     }
