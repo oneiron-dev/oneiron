@@ -4920,13 +4920,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/pad_reopen.rs` | src | m | 2 struct · 1 enum · 1 fn | PadReopenFault, PadReopenReport, PadReopenStage | Opening a restored vault's Locked worlds again (PAD-2, FIX 10470; CALLS C-L04-MANAGED-RESTORE-LOCKED-WORLDS… |
 | `src/recovery/checkpoint/payload/actors.rs` | src | s | 4 crate-vis | — | Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each… |
 | `src/recovery/checkpoint/payload/capture.rs` | src | s | 3 crate-vis | — | KS7-5 capture: the snapshot's rows placed in its own read transaction ([`project_image`]), then, once that… |
-| `src/recovery/checkpoint/payload/mod.rs` | src | m | 26 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
+| `src/recovery/checkpoint/payload/mod.rs` | src | L | 30 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
 | `src/recovery/checkpoint/payload/preflight.rs` | src | m | 10 crate-vis | — | The payload registry's preflight (KS7-6, Engine 10-30 11:12): the gaps in the registry ([`super::rows`])… |
-| `src/recovery/checkpoint/payload/restore.rs` | src | s | 6 crate-vis | — | KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody… |
+| `src/recovery/checkpoint/payload/restore.rs` | src | m | 6 crate-vis | — | KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody… |
 | `src/recovery/checkpoint/payload/rows.rs` | src | m | 13 crate-vis | — | The payload registry (KS7-2b): one class for every declared side-table family, by its declaration's… |
 | `src/recovery/checkpoint/payload/seal.rs` | src | m | 10 crate-vis | — | Sealing the payload's bundles (KS7-2b): one bundle per compartment and role, split into pieces of at most… |
 | `src/recovery/checkpoint/payload/structure.rs` | src | s | 6 crate-vis | — | The id links a structure row keeps (FIX 6376) |
-| `src/recovery/checkpoint/payload/sync.rs` | src | m | 4 crate-vis | — | KS7-3's port (FIX 5688 KS7-3a): each mixed sync carrier row split by the sync families' own codecs… |
+| `src/recovery/checkpoint/payload/sync.rs` | src | m | 5 crate-vis | — | KS7-3's port (FIX 5688 KS7-3a): each mixed sync carrier row split by the sync families' own codecs… |
 | `src/recovery/checkpoint/rebuild.rs` | src | m | 8 crate-vis | — | Rebuild mechanical projections and reset leased attempt ownership |
 | `src/recovery/checkpoint/response_rows.rs` | src | m | 13 crate-vis | — | The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM… |
 | `src/recovery/checkpoint/response_rows/removals.rs` | src | s | 4 crate-vis | — | What an erase since a checkpoint's cut took from rows, taken again from the rows a restore lands (FIX 10461… |
@@ -5273,9 +5273,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/audit/doors.rs` | src | s | 6 struct · 8 fn | SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt, SealRunRequest | Typed owner doors for the seal's existing receipts and check lifecycle |
 | `src/self_heal/audit/scope.rs` | src | s | 2 crate-vis | — | The scope a seal's audit rate is read at (FIX 2957, OF-542): the project its attempt ran in, frozen at seal… |
 | `src/self_heal/blocked_reports.rs` | src | m | 1 fn · 16 crate-vis | — | Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418) |
-| `src/self_heal/blocked_reports/checkpoint.rs` | src | s | 3 crate-vis | — | Canonical step-capture owner witnesses, carried under each key owner's compartment |
+| `src/self_heal/blocked_reports/checkpoint.rs` | src | s | 3 crate-vis | — | Canonical capture owner witnesses, carried under each key owner's compartment |
 | `src/self_heal/blocked_reports/source.rs` | src | m | 21 crate-vis | — | A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX… |
-| `src/self_heal/blocked_reports/source/ownership.rs` | src | s | 7 crate-vis | — | One durable step capture's owner witnesses (FIX 6734): the owners an erase takes the capture for, keyed… |
+| `src/self_heal/blocked_reports/source/ownership.rs` | src | m | 11 crate-vis | — | One durable capture's owner witnesses (FIX 6734), keyed apart from the capture's bytes so an erase still… |
+| `src/self_heal/blocked_reports/source/receipts.rs` | src | s | 1 crate-vis | — | Receipt capture and its final reporter witness share the native filing writer |
 | `src/self_heal/blocked_reports/source/response.rs` | src | s | 4 crate-vis | — | A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and… |
 | `src/self_heal/canonical_tests.rs` | test | s | — | — | Regressions for the released diagnostic wire grammar |
 | `src/self_heal/centroid_evidence.rs` | src | m | 2 struct · 5 fn · 1 const · 3 crate-vis | CentroidCorpus, CentroidReplay | Immutable, content-addressed centroid inputs beside vault-local telemetry |
@@ -6101,8 +6102,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/carrier_parts.rs` | src | s | 13 crate-vis | — | Linked parts for a window carrier too large for one map value (Rule 5) |
 | `src/sync/checkpoint_payload/documents.rs` | src | m | 3 crate-vis | — | The native entity-document carriers grouped with their document (FIX 10932): a pending text edit (`qd:e:`)… |
 | `src/sync/checkpoint_payload/frame.rs` | src | s | 2 crate-vis | — | A window carrier's own spelling (KS7-3b): what KS7-5 keeps of a split window under the image's outer seal |
-| `src/sync/checkpoint_payload/mod.rs` | src | m | 42 crate-vis | — | The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary… |
-| `src/sync/checkpoint_payload/operations.rs` | src | m | 4 crate-vis | — | A window's Loro rows split for a checkpoint (KS7-3b, FIX 5688), over the vendored root-map checkpoint… |
+| `src/sync/checkpoint_payload/mod.rs` | src | m | 43 crate-vis | — | The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary… |
+| `src/sync/checkpoint_payload/operations.rs` | src | m | 5 crate-vis | — | A window's Loro rows split for a checkpoint (KS7-3b, FIX 5688), over the vendored root-map checkpoint… |
 | `src/sync/checkpoint_payload/owners.rs` | src | s | 5 crate-vis | — | Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's… |
 | `src/sync/checkpoint_payload/parts.rs` | src | s | 3 crate-vis | — | Which holders each part of a parted window value has (KS7-3a) |
 | `src/sync/checkpoint_payload/restore.rs` | src | s | 1 crate-vis | — | A window's Loro rows put back from a checkpoint (KS7-3b, FIX 5688) |
