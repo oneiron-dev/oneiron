@@ -413,6 +413,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&state),
             Arc::clone(&sync_server),
             shutdown.clone(),
+            managed.vm_outbox_companion_admitted,
         );
         // Its carrier as it stands, and the recipients it delivers later.
         super::carrier_watch::spawn(
