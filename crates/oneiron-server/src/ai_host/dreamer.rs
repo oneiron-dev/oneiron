@@ -639,16 +639,6 @@ impl ObservedFactory {
                 },
             );
         }
-        let mut route_windows = BTreeMap::new();
-        for (_, route) in &routes {
-            let window = route.ladder.input_window(&self.windows).unwrap_or(0);
-            route_windows
-                .entry(route.model.clone())
-                .and_modify(|held: &mut u64| *held = (*held).min(window))
-                .or_insert(window);
-        }
-        let mut windows = self.windows.clone();
-        windows.extend(route_windows);
         self.weaver = roles.get(DREAMER_NARRATIVE_ROLE).cloned();
         self.weaver_ladder = runs
             .get(&DREAMER_NARRATIVE_ROLE)
@@ -696,7 +686,7 @@ impl ObservedFactory {
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
-        factory = factory.with_model_windows(windows);
+        factory = factory.with_model_windows(self.windows.clone());
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
@@ -1270,11 +1260,11 @@ impl ResidentLend<'_> {
                     cancel: ctx.device_cancel.clone().unwrap_or_default(),
                     ..Default::default()
                 });
-            let window_tokens = ladder.input_window(self.windows);
             let backend = SourcedRunBackend::new(ladder, run);
             let egress = self
                 .egress
                 .then(|| extraction_egress(BTreeSet::from([model.clone()])));
+            let window_tokens = self.windows.get(&model).copied();
             // Its durable step is metered on a line of its own too, so step
             // admission charges the resident, not the pass. A separate meter
             // from the backend's: one meter on both layers would charge twice.
@@ -1322,10 +1312,6 @@ impl ResidentLend<'_> {
         // remaining deadline overlaid: the same meter and identity, the same
         // sourced view, only the deadline added. Without this the call sends
         // with deadline=None, against the body's promise.
-        let window_tokens = match self.weaver_ladder {
-            Some(ladder) => ladder.input_window(self.windows),
-            None => self.windows.get(&self.weaver.model).copied(),
-        };
         let lent;
         let (backend, sourced): (&dyn LlmBackend, Option<&dyn SourcedBackend>) =
             match (self.weaver_ladder, self.weaver_run) {
@@ -1353,7 +1339,7 @@ impl ResidentLend<'_> {
                 },
                 role: Some(DREAMER_NARRATIVE_ROLE),
                 instruction: self.instruction,
-                window_tokens,
+                window_tokens: self.windows.get(&self.weaver.model).copied(),
                 sourced,
             },
         )
