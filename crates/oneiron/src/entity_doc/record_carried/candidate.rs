@@ -41,6 +41,7 @@ pub(crate) struct RecordDocumentCandidate<'selected, 'carrier> {
     before: Option<VersionVector>,
     left_document: Option<String>,
     deferred_purge: Option<DocumentMerge>,
+    native_sources: super::native_sources::NativeSourceReview,
 }
 
 impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
@@ -245,6 +246,19 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             &document,
         )?;
         crate::skill::decode_skill_record(&logical)?;
+        let native_sources = super::native_sources::review_in_txn(
+            vault,
+            txn,
+            source,
+            selected.raw(),
+            selected.snapshot(),
+            prior_raw
+                .as_deref()
+                .zip(prior_head.as_deref())
+                .zip(local_snapshot.as_deref())
+                .map(|((raw, head), snapshot)| (raw, head, snapshot)),
+            (&head, &document),
+        )?;
         Ok(RecordDocumentPreparation::Candidate(Self {
             selected,
             prior_raw,
@@ -258,6 +272,7 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             before,
             left_document,
             deferred_purge,
+            native_sources,
         }))
     }
 
@@ -326,6 +341,10 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
 
     pub(crate) fn local_head_bytes(&self) -> Option<&[u8]> {
         self.prior_head.as_deref()
+    }
+
+    pub(super) fn native_sources(&self) -> &super::native_sources::NativeSourceReview {
+        &self.native_sources
     }
 
     /// A copy for retained-schema/source/secret admission. The caller gets

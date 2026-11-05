@@ -5,6 +5,7 @@
 //! record admission before installing either view in its parent writer.
 
 mod candidate;
+mod native_sources;
 mod refinement;
 mod retained;
 pub(crate) use candidate::{RecordDocumentCandidate, RecordDocumentPreparation};
