@@ -114,6 +114,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) seal_answer_bytes: Option<u64>,
     pub(in crate::config) seal_memory_asks: Option<u64>,
     pub(in crate::config) seal_crl_bytes: Option<u64>,
+    pub(in crate::config) seal_ocsp_bytes: Option<u64>,
     pub(in crate::config) seal_tsa_bytes: Option<u64>,
     pub(in crate::config) seal_report_json_bytes: Option<u64>,
     pub(in crate::config) seal_prepared_stream_bytes: Option<u64>,

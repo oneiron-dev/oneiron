@@ -88,6 +88,7 @@ impl EngineLimit {
         Self::SealAnswerBytes,
         Self::SealMemoryAsks,
         Self::SealCrlBytes,
+        Self::SealOcspBytes,
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
@@ -234,6 +235,7 @@ impl EngineLimit {
             Self::SealAnswerBytes => "limits.seal_answer_bytes",
             Self::SealMemoryAsks => "limits.seal_memory_asks",
             Self::SealCrlBytes => "limits.seal_crl_bytes",
+            Self::SealOcspBytes => "limits.seal_ocsp_bytes",
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
@@ -376,14 +378,14 @@ impl EngineLimit {
             Self::BlockedDetailBytes => 4096,
             Self::SealReferenceBytes => 256,
             Self::TripwireThreshold => 1024,
-            // The batch, principal, image byte and image count ceilings the
-            // e-sign sweeps, principals and signature upload refused past
-            // before Rule 5.
+            // The old sweep and principal refusal ceilings remain ask points.
             Self::EsignSweepDocuments => 100,
             Self::EsignSigningPrincipals => 256,
-            Self::EsignSignatureInputBytes => 2 << 20,
-            Self::EsignSignaturePngBytes => 2 << 20,
-            Self::EsignSignatureDocumentBytes => 64 << 20,
+            // The owner's signature-image byte ask points (ABC 57, 60, 61).
+            Self::EsignSignatureInputBytes => 256 << 20,
+            Self::EsignSignaturePngBytes => 256 << 20,
+            Self::EsignSignatureDocumentBytes => 4 << 30,
+            // The former recipient-image count ceiling is only an ask point.
             Self::EsignSignatureRecipientImages => 16,
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).
@@ -423,6 +425,7 @@ impl EngineLimit {
             // worth of reservations.
             Self::SealMemoryAsks => 256,
             Self::SealCrlBytes => 8 << 20,
+            Self::SealOcspBytes => 1 << 20,
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,
             Self::SealPreparedStreamBytes => 64 << 20,

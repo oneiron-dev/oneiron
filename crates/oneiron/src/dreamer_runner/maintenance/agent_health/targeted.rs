@@ -363,6 +363,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
     ) -> Result<()> {
+        self.redrive_feedback_sweep_in_txn(txn, record);
         if record.kind == MAINTENANCE_QUEUE_KIND || !agent_work(record) {
             return Ok(());
         }

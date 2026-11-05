@@ -61,7 +61,7 @@ impl Vault {
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
-        let prefix = adopted.as_ref().map(AdoptedPrefix::of);
+        let prefix = adopted.as_deref().map(AdoptedPrefix::of);
         if staged {
             let paged: BTreeSet<AuthorityEntryHash> =
                 decoded.iter().map(|(hash, _, _)| *hash).collect();
