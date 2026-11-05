@@ -271,6 +271,9 @@ class SessionLayer(Registry):
     def bind_call(self, branch, cancel):
         with self.lock:
             branch.cancel = cancel
+            dropping = branch.session.dropping
+        if dropping:
+            cancel()
 
     def end_branch_later(self, branch):
         """Ends `branch` on the scheduler thread, for a call that never

@@ -5,6 +5,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::deletion::HydratedShortIdDeletion;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 
 use crate::ports::EntityStoreRead;
 use crate::store::EngineScan;
@@ -255,6 +256,10 @@ impl Vault {
 
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
+        // The count this search serves, asked after the query checks and
+        // before the read opens. Best effort: the search serves its rows
+        // either way.
+        let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
         let results = {
             let rtxn = self.store.env.read_txn()?;
             // The direct vault path stays the exact-quality path for

@@ -439,7 +439,7 @@ export type RetrievalMeta = {
   claimsReturned: number
   deepPending?: boolean
   temporalHints?: TemporalHint[]
-  /** The request's limit was past the ceiling and was served at it. */
+  /** Whether a retrieval policy lowered the requested result count. */
   limitClamped?: boolean
 }
 
