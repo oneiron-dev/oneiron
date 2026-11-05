@@ -165,84 +165,12 @@ impl AttemptQueue<'_> {
         validate_optional_resume_point(input.resume_point.as_ref())?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("accept_landing", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Landing => {
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "accept_landing",
-                )?;
-                return Ok(LandingOutcome::AlreadyLanding(record));
-            }
-            AttemptState::Leased => {}
-            state => return Err(invalid_transition("accept_landing", state.as_str())),
+        let outcome = self.accept_landing_in_txn(&mut wtxn, input)?;
+        if matches!(outcome, LandingOutcome::Landing(_)) {
+            wtxn.commit()?;
+            self.store.notify_attempt_observers();
         }
-        validate_transition_lease(
-            &record,
-            &input.lease_owner,
-            input.attempt_count,
-            "accept_landing",
-        )?;
-
-        // The ANSWERED request is the source of truth for trigger provenance;
-        // the worker cannot relabel a lease warning as an unrelated cancel
-        // request while answering it. A self-triggered landing has no pending
-        // request and uses the typed trigger supplied by the worker.
-        //
-        // Which request is answered is chosen by identity, never by recency:
-        // with a peer ask and a runtime warning both outstanding, the landing
-        // must name the one it actually answers.
-        let answered = select_pending_request(&record, input.request_sequence, "accept_landing")?;
-        let answered_sequence = answered.map(|request| request.sequence);
-        let trigger = answered
-            .and_then(|request| request.trigger)
-            .unwrap_or(input.trigger);
-        let requested_by = answered
-            .map(|request| request.actor.clone())
-            .unwrap_or(input.lease_owner.clone());
-        record.cancel_state.landing = Some(AttemptLanding {
-            trigger,
-            requested_by,
-            entered_at: input.now,
-            status: input.status.clone(),
-        });
-        if let Some(resume_point) = input.resume_point.clone() {
-            record.cancel_state.resume_point = Some(resume_point);
-        }
-        // Landing satisfies every outstanding ask — they all wanted the worker
-        // to stop, and it is stopping — so no request stays owed an answer.
-        // The receipt still names the ONE request this landing answers, so the
-        // trigger and the requester on it are the real ones.
-        record.cancel_state.pressure.pending = 0;
-        record.state = AttemptState::Landing;
-        record.updated_at = input.now;
-        let recorded_resume_point = record.cancel_state.resume_point.clone();
-        append_cancel_receipt(
-            &self.store.limit_watch,
-            &mut record,
-            AttemptCancelReceiptKind::LandingAccepted,
-            input.lease_owner,
-            CancelReceiptDraft {
-                trigger: Some(trigger),
-                status: input.status,
-                resume_point: recorded_resume_point,
-                request_sequence: answered_sequence,
-                ..CancelReceiptDraft::default()
-            },
-            input.now,
-        )?;
-        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
-        Ok(LandingOutcome::Landing(record))
+        Ok(outcome)
     }
 
     /// Transaction-composable [`Self::accept_landing`].
@@ -410,41 +338,7 @@ impl AttemptQueue<'_> {
         validate_resume_point(&input.resume_point)?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("record_resume_point", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        if record.state != AttemptState::Landing {
-            return Err(invalid_transition(
-                "record_resume_point",
-                record.state.as_str(),
-            ));
-        }
-        validate_transition_lease(
-            &record,
-            &input.lease_owner,
-            input.attempt_count,
-            "record_resume_point",
-        )?;
-
-        record.cancel_state.resume_point = Some(input.resume_point.clone());
-        let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
-        append_cancel_receipt(
-            &self.store.limit_watch,
-            &mut record,
-            AttemptCancelReceiptKind::ResumePointRecorded,
-            input.lease_owner,
-            CancelReceiptDraft {
-                trigger,
-                resume_point: Some(input.resume_point),
-                ..CancelReceiptDraft::default()
-            },
-            input.now,
-        )?;
-        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+        let record = self.record_resume_point_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
         Ok(record)
@@ -582,62 +476,12 @@ impl AttemptQueue<'_> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("spend_landing_reserve", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        if record.state != AttemptState::Landing {
-            return Err(invalid_transition(
-                "spend_landing_reserve",
-                record.state.as_str(),
-            ));
+        let outcome = self.spend_landing_reserve_in_txn(&mut wtxn, input)?;
+        if matches!(outcome, LandingReserveSpendOutcome::Spent { .. }) {
+            wtxn.commit()?;
+            self.store.notify_attempt_observers();
         }
-        validate_transition_lease(
-            &record,
-            &input.lease_owner,
-            input.attempt_count,
-            "spend_landing_reserve",
-        )?;
-
-        let remaining_units = record.cancel_state.reserve.remaining_units();
-        if input.units > remaining_units {
-            return Ok(LandingReserveSpendOutcome::Exhausted {
-                record,
-                requested_units: input.units,
-                remaining_units,
-            });
-        }
-        record.cancel_state.reserve.spent_units = record
-            .cancel_state
-            .reserve
-            .spent_units
-            .checked_add(input.units)
-            .ok_or(Error::ArithmeticOverflow("landing reserve spend"))?;
-        let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
-        append_cancel_receipt(
-            &self.store.limit_watch,
-            &mut record,
-            AttemptCancelReceiptKind::ReserveSpent,
-            input.lease_owner,
-            CancelReceiptDraft {
-                trigger,
-                reserve_units: input.units,
-                ..CancelReceiptDraft::default()
-            },
-            input.now,
-        )?;
-        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
-
-        let remaining_units = record.cancel_state.reserve.remaining_units();
-        Ok(LandingReserveSpendOutcome::Spent {
-            record,
-            remaining_units,
-        })
+        Ok(outcome)
     }
 
     /// Transaction-composable [`Self::spend_landing_reserve`].
