@@ -5,7 +5,7 @@ use serde_json::Value;
 pub(super) fn publisher_identity(value: &Value) -> bool {
     value
         .as_str()
-        .is_some_and(|text| crate::store::ActorBound::new(text).is_ok())
+        .is_some_and(|text| crate::consent::ActorBound::new(text).is_ok())
 }
 
 pub(super) fn voice_ref(value: &Value) -> bool {
