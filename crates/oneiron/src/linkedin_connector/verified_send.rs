@@ -601,7 +601,7 @@ fn sent_message_id(output: &Value) -> Option<String> {
     };
     mcp_payload(output)
         .ok()
-        .as_ref()
+        .as_deref()
         .and_then(named)
         .or_else(|| named(output))
 }
