@@ -730,7 +730,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         now_ms,
         transport,
     )?;
-    result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
+    if result.gate_decision_id.is_none() {
+        result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
+    }
     // FIX 9228: a send-time AlwaysAsk hold keeps its slate outcome/reasons;
     // stamping the admission Allow here would surface gate.allow instead.
     let slate_held = result
