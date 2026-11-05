@@ -679,7 +679,7 @@ side_tables! {
     /// actor's scrub forgets the asker and keeps the row; behind the hard-delete marker, an erase
     /// of the asker or of the AGENT_DEF its plan seats leaves the row's erased form: its ids,
     /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
-    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
+    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v2:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
     /// The erase selector of each asker a hard erase reached: value-free and permanent, one
     /// marker per erased asker, so the intent fence still reaches a stale copy whose asker a

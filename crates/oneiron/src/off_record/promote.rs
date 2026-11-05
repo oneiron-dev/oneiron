@@ -12,7 +12,7 @@ use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{BatchBuilder, BatchOp};
+use crate::batch::BatchOp;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
@@ -403,8 +403,7 @@ impl FloorWrites<'_> {
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
         let replay_ops =
             crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
-        BatchBuilder::promotion_replay(vault, replay_ops, &grant)
-            .apply_recording_gate_decisions(wtxn)?;
+        crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
         // base text now, so it owes the vault's tagger a pass and its embedder
@@ -646,8 +645,7 @@ impl FloorWrites<'_> {
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
         let replay_ops =
             crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
-        BatchBuilder::promotion_replay(vault, replay_ops, &grant)
-            .apply_recording_gate_decisions(wtxn)?;
+        crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
         self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(
             vault,
