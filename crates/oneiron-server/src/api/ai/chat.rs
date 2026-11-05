@@ -91,6 +91,7 @@ pub(crate) use compaction::{
 };
 pub(crate) use hooks::{after_turn, turn_generate_pre};
 pub(crate) use model_call::model_call_keeps_no_record;
+pub(crate) use recall::{turn_opener, turn_tail};
 
 use admission::start_turn;
 use answer::begin_sourced_answer;
