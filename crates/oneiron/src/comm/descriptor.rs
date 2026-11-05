@@ -213,6 +213,7 @@ fn stage_claim_class_descriptor_in_txn(
             entity_type: ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
             occurred,
             learned_at,
+            row_version: None,
             data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
