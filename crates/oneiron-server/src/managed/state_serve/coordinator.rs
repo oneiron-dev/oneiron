@@ -8,11 +8,11 @@ mod teardown;
 use teardown::StartingHandles;
 
 use super::{
-    Arc, BoundServeListener, CONTRACT_VERSION, Host, HostLimits, ManagedArgs, ManagedCtl,
-    ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, SyncServer, UnixTs, WakeLedger,
-    WriteKind, admission, build_managed_app, build_managed_artifact_app, escrow_vault_key,
-    managed_page_seal, open_managed_vault, provision_host_authority, spawn_sigterm_shutdown,
-    spool_vault_key_escrow, watch,
+    Arc, BoundServeListener, CONTRACT_VERSION, Host, ManagedArgs, ManagedCtl, ManagedShutdown,
+    ManagedState, Path, ServeArgs, ServeListener, SyncServer, UnixTs, WakeLedger, WriteKind,
+    admission, build_managed_app, build_managed_artifact_app, escrow_vault_key, managed_page_seal,
+    open_managed_vault, provision_host_authority, spawn_sigterm_shutdown, spool_vault_key_escrow,
+    watch,
 };
 
 /// Boots the engine as a supervised child process.
@@ -75,8 +75,7 @@ async fn serve_with_handles(
     // opened. Refusing here costs nothing and consumes nothing; `bind` below
     // is still the only adoption.
     let shutdown = ManagedShutdown::new();
-    let mut host =
-        super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
+    let mut host = super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
     let host_legal = crate::managed::host_legal::HostLegalListener::take(&mut managed)?;
     // A cold restore's plan, on its own pipe before the credential frame: no
@@ -298,7 +297,7 @@ async fn serve_with_handles(
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Served sends reach this host's provider APIs and mail server (FIX 4435).
-    crate::builtin_host::install_served_transports(&sync_server);
+    crate::builtin_host::install_served_transports(&sync_server, config.models.as_ref());
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain

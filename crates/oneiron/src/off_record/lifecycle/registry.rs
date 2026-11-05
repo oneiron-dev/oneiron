@@ -117,19 +117,28 @@ impl OffRecordSessionEntryState {
     /// Notes `messages` of `turn` (each with when it was said and its body),
     /// now in base, for a copy of a room's talk.
     pub(super) fn keep_messages(&mut self, turn: EntityId, messages: &[(EntityId, u64, &[u8])]) {
+        self.keep_message_digests(
+            turn,
+            messages
+                .iter()
+                .map(|&(message, at, body)| (message, at, *blake3::hash(body).as_bytes())),
+        );
+    }
+
+    /// Keeps the actual committed bytes' digests, captured in the save writer.
+    pub(super) fn keep_message_digests(
+        &mut self,
+        turn: EntityId,
+        messages: impl IntoIterator<Item = (EntityId, u64, [u8; 32])>,
+    ) {
         if self.record.room.is_none() {
             return;
         }
-        // A retry of a message already kept changes nothing: the vault holds
-        // the row as it was first written, so that is the one kept.
-        for &(message, at, body) in messages {
+        // A retry keeps the first committed body, never its offered copy.
+        for (message, at, digest) in messages {
             self.kept_messages
                 .entry(message)
-                .or_insert_with(|| KeptMessage {
-                    turn,
-                    at,
-                    digest: *blake3::hash(body).as_bytes(),
-                });
+                .or_insert(KeptMessage { turn, at, digest });
         }
     }
 

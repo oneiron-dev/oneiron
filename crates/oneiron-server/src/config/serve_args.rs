@@ -253,6 +253,16 @@ pub struct ServeArgs {
     #[arg(long = "broker-extra-roots", requires = "managed_by_hypnos")]
     pub broker_extra_roots: Option<Vec<PathBuf>>,
 
+    /// Managed mode: the explicit host memory allocation in bytes, as the
+    /// operator sized it. Absent is unbounded; no capacity is inferred.
+    #[arg(long = "host-memory-bytes", requires = "managed_by_hypnos")]
+    pub host_memory_bytes: Option<u64>,
+
+    /// Managed mode: the explicit host CPU share in CPU milliseconds per
+    /// second. Absent is unbounded. Advisory, not an OS-enforced quota.
+    #[arg(long = "host-cpu-millis", requires = "managed_by_hypnos")]
+    pub host_cpu_millis: Option<u32>,
+
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
     /// over it. On a plain serve it is read as a config file layered over
