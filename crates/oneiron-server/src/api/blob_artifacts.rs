@@ -1257,6 +1257,7 @@ pub(super) async fn reattach(
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;
     let locator = place_locator(request.place)?;
+    let sight = reader_sight(&auth);
     let reattached = blocking("reattach failed", move || {
         let (occurred, now) = moment(&server);
         server.vault().reattach_annotation_thread(
@@ -1264,6 +1265,7 @@ pub(super) async fn reattach(
             &thread,
             request.version,
             &locator,
+            sight,
             actor,
             occurred,
             now,
