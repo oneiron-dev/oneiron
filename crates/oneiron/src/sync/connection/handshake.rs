@@ -201,14 +201,19 @@ impl SyncConnection {
             // Attempt connection
             let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connecting));
 
-            // A stop while the connect is pending ends it there, rather than
-            // waiting out the dial and the initial sync.
+            // Shutdown or a confirmed leave cancels the pending connect,
+            // including its initial sync and queue replay.
             let connected = tokio::select! {
-                connected = self.connect_and_sync(&mut client, &event_tx) => connected,
+                biased;
+                _ = left_rx.wait_for(|left| *left) => {
+                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                    break;
+                }
                 _ = &mut shutdown_rx => {
                     let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                     break;
                 }
+                connected = self.connect_and_sync(&mut client, &event_tx) => connected,
             };
             drop(connect_batch);
             let mut renegotiate = false;
@@ -294,9 +299,15 @@ impl SyncConnection {
             }
         }
 
+        // Detach before draining: the sink serializes sends with detach, so
+        // this receiver's backlog is finite and no update can arrive later.
+        self.manager.outbound().detach(attachment);
+        while let Ok(update) = local_rx.try_recv() {
+            debounce_buffer.push(update);
+        }
         // Leave-only single try (OF-158): a confirmed leave publishes and
-        // clears its remaining run buffer here too, before `running=false`;
-        // the steady leave arm already cleared its own, so this adds 0 then.
+        // clears its remaining run buffer here too, before `running=false`.
+        // This includes updates received during connect or steady cleanup.
         // Non-leave shutdown stays thaw-waiting, as before.
         if *self.left.borrow() {
             self.queue_on_exit(&mut self.batch_gate(), &mut debounce_buffer)
@@ -306,7 +317,6 @@ impl SyncConnection {
             self.queue_on_shutdown(&mut self.batch_gate(), &mut debounce_buffer)
                 .await;
         }
-        self.manager.outbound().detach(attachment);
         self.running.send_replace(false);
         Ok(())
     }
@@ -319,8 +329,10 @@ impl SyncConnection {
     ) -> Result<crate::sync::carrier::SyncSocket, String> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
+        client.document_retries = Default::default();
         client.asset_bodies = Default::default();
         client.home_peer = crate::authority::PeerMachine::Unknown;
+        client.residence_acks.clear();
         client.reset_window_pads();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key

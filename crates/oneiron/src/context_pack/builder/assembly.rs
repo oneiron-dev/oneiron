@@ -819,6 +819,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn run_serialized_with_stats(
         self,
     ) -> Result<RetrievalWithTelemetry<SerializedContextPack>> {
+        let tokenizer = self.tokenizer;
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
@@ -830,7 +831,7 @@ impl<'a> ContextPackBuilder<'a> {
             max_item_tokens: self.max_item_tokens,
         };
         let run = self.run_unfinalized()?;
-        let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
+        let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config, tokenizer);
         let mut replay_config = run.replay_config;
         if let Some(value) = replay_config.as_mut() {
             value["terminal_kind"] = "serialized".into();
