@@ -4,9 +4,13 @@
 //! credential it presented, when that can be presented again) is polled by
 //! the served host: one MCP `tasks/get` per due row, under the row's own
 //! frozen endpoint and binding, never its `tools/call` again. A completed
-//! task is the send's Done; a failed, cancelled or vanished one stops it; a
-//! running one is polled again after the provider's hint, never sooner than
-//! the host's pass, backing off while it runs. The poll table keeps only
+//! task is the send's Done; a failed, cancelled or vanished one stops it
+//! with its delivery uncertain (the provider has not shown it never took
+//! effect), its reserved budget kept; a running one is polled again after
+//! the provider's hint, never sooner than the host's pass, backing off while
+//! it runs. A task waiting on input (`input_required`) is polled as running:
+//! this host answers no task input, so such a task ends when its provider
+//! drops it. The poll table keeps only
 //! the next poll time, the count and the last status: the session and the
 //! credential choice stay in the handle, which an erase forgets.
 
@@ -65,6 +69,16 @@ pub enum RemoteTaskCredential {
     /// What the connector route presents of its own (its secret, resolved
     /// again at each poll, or nothing when it names none).
     Route,
+}
+
+/// How a polled task ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteTaskEnd {
+    /// The provider says it completed: the send was delivered.
+    Completed,
+    /// It failed, was cancelled, or the provider no longer knows it: the
+    /// provider has not shown whether the send took effect.
+    Unconfirmed,
 }
 
 /// One pollable row's place.
@@ -232,17 +246,57 @@ impl Vault {
         Ok(())
     }
 
-    /// Settles row `intent` by what a poll read of its task (FIX 11023):
-    /// [`Vault::settle_remote_outbound_task`], then its poll row goes.
+    /// Whether row `intent` is still a Deferred send whose kept handle names
+    /// the task `task_id` and keeps how to poll it: read again just before a
+    /// poll leaves, so an erase or a settlement since the pass began sends
+    /// nothing.
     ///
     /// # Errors
-    /// As [`Vault::settle_remote_outbound_task`]; storage faults.
+    /// Storage and row-codec faults.
+    pub fn remote_task_still_due(
+        &self,
+        intent: &[u8; 32],
+        task_id: &str,
+    ) -> IntentLedgerResult<bool> {
+        let txn = self
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let deferred = super::store::get_ledger_record(self, &txn, intent)?
+            .is_some_and(|record| record.state == IntentState::Deferred);
+        Ok(deferred
+            && intent_settlement_in_txn(self, &txn, intent)?
+                .remote_task
+                .is_some_and(|handle| handle.id == task_id && handle.poll.is_some()))
+    }
+
+    /// Settles row `intent` by how a poll found its task ended (FIX 11023):
+    /// a completed task is the send's Done
+    /// ([`Vault::settle_remote_outbound_task`]); any other end stops the send
+    /// with its delivery uncertain and its reserved budget kept. Its poll row
+    /// goes.
+    ///
+    /// # Errors
+    /// A row that is not Deferred; storage faults.
     pub fn settle_polled_remote_task(
         &self,
         intent: &[u8; 32],
-        observation: RemoteTaskObservation,
+        end: RemoteTaskEnd,
     ) -> IntentLedgerResult<IntentState> {
-        let state = self.settle_remote_outbound_task(intent, observation)?;
+        let state = match end {
+            RemoteTaskEnd::Completed => {
+                self.settle_remote_outbound_task(intent, RemoteTaskObservation::Completed)?
+            }
+            RemoteTaskEnd::Unconfirmed => {
+                super::store::abandon_unconfirmed_remote_task(
+                    self,
+                    *intent,
+                    self.now_recorded_at(),
+                )?
+                .state
+            }
+        };
         self.with_write_txn_grouped(|txn| POLLS.delete(&self.store, txn, intent).map(|_| ()))?;
         Ok(state)
     }

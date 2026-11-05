@@ -2,14 +2,18 @@
 //! one `tasks/get` per Deferred row its pass finds due, in the session the
 //! task was created in, under the row's own frozen endpoint and binding,
 //! with the credential its send presented, through the same door. It never
-//! sends the row's `tools/call` again. `completed` settles the send Done;
-//! `failed` and `cancelled`, and a task the connector no longer knows
-//! (`-32602`), stop it; `working` and `input_required` poll again later.
-//! Only the status word is kept: the reply's other text never leaves this
-//! pass, so nothing it echoes of the credential is stored.
+//! sends the row's `tools/call` again, and it reads the row again just
+//! before each `tasks/get`, so a row erased or settled since the pass began
+//! sends nothing. A reply counts only when it names the task asked about.
+//! `completed` settles the send Done; `failed` and `cancelled`, and a task
+//! the connector no longer knows (`-32602`), stop it with its delivery
+//! uncertain; `working` and `input_required` poll again later (this host
+//! answers no task input). The session ends only after the ledger holds the
+//! settlement. Only the status word is kept: the reply's other text never
+//! leaves this pass, so nothing it echoes of the credential is stored.
 
 use oneiron::outbound_consent::{OutboundBindingAuthority, OutboundBindingValidation};
-use oneiron::outbound_intent_ledger::{DueRemoteTask, RemoteTaskCredential, RemoteTaskObservation};
+use oneiron::outbound_intent_ledger::{DueRemoteTask, RemoteTaskCredential, RemoteTaskEnd};
 
 use super::*;
 
@@ -28,8 +32,11 @@ enum Polled {
         status: &'static str,
         poll_after_ms: Option<u64>,
     },
-    /// Done, one way or the other.
-    Settled(RemoteTaskObservation),
+    /// Done, one way or the other: its session ends once the ledger holds
+    /// it.
+    Ended(RemoteTaskEnd, LiveSession),
+    /// The row is no longer a Deferred send of this task: nothing was sent.
+    Gone,
 }
 
 fn now_ms() -> u64 {
@@ -67,9 +74,14 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
                 status,
                 poll_after_ms,
             }) => vault.remote_task_polled(&task.intent, poll_after_ms, status, now_ms()),
-            Ok(Polled::Settled(observation)) => vault
-                .settle_polled_remote_task(&task.intent, observation)
-                .map(|_| ()),
+            Ok(Polled::Ended(end, live)) => {
+                vault.settle_polled_remote_task(&task.intent, end).map(|_| {
+                    // The ledger holds the end: the task's session ends.
+                    live.end();
+                })
+            }
+            // The next pass drops its poll row.
+            Ok(Polled::Gone) => Ok(()),
             Err(reason) => {
                 tracing::info!(%intent, reason, "remote task not polled; it waits for the next pass");
                 vault.remote_task_polled(&task.intent, None, reason, now_ms())
@@ -136,6 +148,14 @@ impl ServedConnectorCallHost {
             session,
             auth,
         };
+        // An erase or a settlement since the pass read the row sends nothing.
+        let still_due = self
+            .vault
+            .remote_task_still_due(&task.intent, &task.task_id)
+            .map_err(|_| "row_unread")?;
+        if !still_due {
+            return Ok(Polled::Gone);
+        }
         let request = json!({
             "jsonrpc": "2.0",
             "id": POLL_ID,
@@ -154,35 +174,53 @@ impl ServedConnectorCallHost {
         else {
             return Err("poll_unanswered");
         };
-        let polled = polled_of(&message)?;
-        if matches!(polled, Polled::Settled(_)) {
-            // The task is done: its session ends here.
-            live.end();
-        }
-        Ok(polled)
+        Ok(match read_of(&message, &task.task_id)? {
+            Read::Running {
+                status,
+                poll_after_ms,
+            } => Polled::Running {
+                status,
+                poll_after_ms,
+            },
+            Read::Ended(end) => Polled::Ended(end, live),
+        })
     }
 }
 
-/// What a `tasks/get` answer says of its task.
-fn polled_of(message: &Value) -> Result<Polled, &'static str> {
+/// What one `tasks/get` answer says of its task.
+enum Read {
+    Running {
+        status: &'static str,
+        poll_after_ms: Option<u64>,
+    },
+    Ended(RemoteTaskEnd),
+}
+
+/// What a `tasks/get` answer to the poll of `task_id` says of that task.
+/// A result that names another task, or none, is no answer.
+fn read_of(message: &Value, task_id: &str) -> Result<Read, &'static str> {
     if let Some(error) = message.get("error") {
         return if error.get("code").and_then(Value::as_i64) == Some(INVALID_PARAMS) {
-            // The connector no longer knows the task: it will not deliver.
-            Ok(Polled::Settled(RemoteTaskObservation::Failed))
+            // The connector no longer knows the task: it has not shown
+            // whether the send took effect.
+            Ok(Read::Ended(RemoteTaskEnd::Unconfirmed))
         } else {
             Err("poll_refused")
         };
     }
     let result = message.get("result").ok_or("poll_reply_unreadable")?;
+    if result.get("taskId").and_then(Value::as_str) != Some(task_id) {
+        return Err("poll_reply_other_task");
+    }
     let poll_after_ms = result.get("pollInterval").and_then(Value::as_u64);
     match result.get("status").and_then(Value::as_str) {
-        Some("completed") => Ok(Polled::Settled(RemoteTaskObservation::Completed)),
-        Some("failed" | "cancelled") => Ok(Polled::Settled(RemoteTaskObservation::Failed)),
-        Some("working") => Ok(Polled::Running {
+        Some("completed") => Ok(Read::Ended(RemoteTaskEnd::Completed)),
+        Some("failed" | "cancelled") => Ok(Read::Ended(RemoteTaskEnd::Unconfirmed)),
+        Some("working") => Ok(Read::Running {
             status: "working",
             poll_after_ms,
         }),
-        Some("input_required") => Ok(Polled::Running {
+        Some("input_required") => Ok(Read::Running {
             status: "input_required",
             poll_after_ms,
         }),
