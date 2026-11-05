@@ -72,6 +72,8 @@ mod livequery;
 pub mod logging;
 mod machine;
 pub mod managed;
+#[cfg(target_os = "macos")]
+mod mac_worker_bootstrap;
 mod managed_owner_check;
 pub mod mcp;
 mod model_artifacts;

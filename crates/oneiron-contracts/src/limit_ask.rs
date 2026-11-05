@@ -322,6 +322,9 @@ pub enum EngineLimit {
     /// Bytes of one CRL a seal fetches. Past it the row asks and the CRL is read
     /// whole.
     SealCrlBytes,
+    /// Bytes of one OCSP reply a seal fetches. Past it the row asks and the
+    /// reply is read whole.
+    SealOcspBytes,
     /// Bytes of one timestamp reply a seal fetches. Past it the row asks and the
     /// reply is read whole.
     SealTsaBytes,
