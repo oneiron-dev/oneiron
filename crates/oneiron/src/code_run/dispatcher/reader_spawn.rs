@@ -8,10 +8,12 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::scoped_child::{
-    READER_SOURCE_NAME, SCOPED_CHILD_PORT_NOT_LENT, scoped_child_call_allowed, scoped_child_input,
+    READER_SOURCE_NAME, SCOPED_CHILD_PARENT_LEASE_LOST, SCOPED_CHILD_PORT_NOT_LENT,
+    scoped_child_call_allowed, scoped_child_input,
 };
 use crate::code_run::storage::{
     NewReaderJob, ReportOutcome, SpawnAdmission, WaitSetOutcome, runs_program_steps,
@@ -21,11 +23,11 @@ use crate::code_run::types::{
     SelfEffect, SelfFailedResult,
 };
 use crate::code_run::{
-    DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
-    ReaderSpawnReceipt, ResultOccurrence, ScopedChildPorts, ScopedChildSpec, SelfReaderReportCall,
-    SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
-    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_cutoff, reader_wait_id,
-    valid_reader_key, vault_ref,
+    DelegatedSource, READER_TASK_SETTLED, ReaderActor, ReaderJobState, ReaderReportReceipt,
+    ReaderRoute, ReaderSpawnReceipt, ResultOccurrence, ScopedCallControl, ScopedChildPorts,
+    ScopedChildSpec, SelfReaderReportCall, SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy,
+    TaskWaitSet, TaskWaitSetCall, reader_attempt_id, reader_run_id, reader_task_id,
+    reader_wait_cutoff, reader_wait_id, valid_reader_key, vault_ref,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
@@ -39,13 +41,15 @@ pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 const TASK_WAIT_SET_PROMPT: &str = "task_wait_set:";
 
 /// What binds a dispatcher to one reader child's job: its task, the
-/// generation its runner claimed it at, the source it reads, and what its
-/// parent lent it when it is a scoped child (FIX 7507).
+/// generation its runner claimed it at, the source it reads, what its
+/// parent lent it when it is a scoped child (FIX 7507), and the live cutoff
+/// its runner bound for that child's port calls and reads (FIX 8233).
 pub(crate) struct ReaderChildBinding {
     pub(crate) task: EntityId,
     pub(crate) generation: u32,
     pub(crate) source: DelegatedSource,
     pub(crate) scoped: Option<ScopedChildSpec>,
+    pub(crate) control: Option<ScopedCallControl>,
 }
 
 /// Whether run `owner`'s occurrence at `path` is the `wanted` hex.
@@ -130,6 +134,7 @@ impl HostSelfDispatcher<'_> {
             generation,
             source: job.binding.source,
             scoped,
+            control: None,
         });
         self.bound_run = Some(job.run);
         Ok(self)
@@ -151,6 +156,29 @@ impl HostSelfDispatcher<'_> {
             ));
         }
         self.scoped_ports = Some(ports);
+        Ok(self)
+    }
+
+    /// Binds the bound scoped child's live cutoff (FIX 8233): `control`,
+    /// which its runner derived from the job's frozen cutoff and its
+    /// parent's live clock, and keeps a copy of. Each port call and read of
+    /// the child checks it as well as the job's row.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when this dispatcher is bound to no scoped
+    /// child.
+    pub fn with_scoped_call_control(mut self, control: ScopedCallControl) -> Result<Self> {
+        let Some(child) = self
+            .reader_child
+            .as_mut()
+            .filter(|child| child.scoped.is_some())
+        else {
+            return Err(Error::InvalidConfig(
+                "a scoped call control needs a scoped child".to_owned(),
+            ));
+        };
+        child.control = Some(control);
         Ok(self)
     }
 
@@ -180,23 +208,41 @@ impl HostSelfDispatcher<'_> {
     /// generation it was claimed at: a child its cutoff settled, or one
     /// claimed again since, reads nothing more. A scoped child (FIX 7507)
     /// reads and calls its ports only before its cutoff, not just until its
-    /// run's next await, and, when it borrowed its parent attempt's lease,
-    /// only while that lease holds (`scoped_parent_lease_holds`).
+    /// run's next await, its live cutoff included (FIX 8233), and, when it
+    /// borrowed its parent attempt's lease, only while that lease holds
+    /// (`scoped_parent_lease_holds`).
     pub(crate) fn reader_job_live(&self) -> Result<bool> {
+        Ok(self.reader_job_standing()?.is_ok())
+    }
+
+    /// [`Self::reader_job_live`], with the refusal of the check that failed
+    /// (FIX 8233): `reader_task_settled` for a job settled, claimed again or
+    /// past its cutoff, its live cutoff ([`ScopedCallControl`]) included,
+    /// and `scoped_child_parent_lease_lost` for a borrowed lease that no
+    /// longer holds.
+    pub(crate) fn reader_job_standing(&self) -> Result<std::result::Result<(), &'static str>> {
         let Some(child) = &self.reader_child else {
-            return Ok(false);
+            return Ok(Err(READER_TASK_SETTLED));
         };
         let Some(job) = self.storage.reader_job(child.task)?.filter(|job| {
             job.state == ReaderJobState::Active && job.generation == child.generation
         }) else {
-            return Ok(false);
+            return Ok(Err(READER_TASK_SETTLED));
         };
         if job.scoped_spec().is_some()
-            && crate::unix_millis_now() >= job.binding.child_cutoff_unix_ms
+            && (child
+                .control
+                .as_ref()
+                .is_some_and(|control| control.expired(Instant::now()))
+                || crate::unix_millis_now() >= job.binding.child_cutoff_unix_ms)
         {
-            return Ok(false);
+            return Ok(Err(READER_TASK_SETTLED));
         }
-        self.storage.scoped_parent_lease_holds(&job)
+        Ok(if self.storage.scoped_parent_lease_holds(&job)? {
+            Ok(())
+        } else {
+            Err(SCOPED_CHILD_PARENT_LEASE_LOST)
+        })
     }
 
     /// A bound reader child's refusal of `effect`, when it is one it may
