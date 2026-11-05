@@ -3425,3 +3425,65 @@ one, or one that names another run, request or model fails the run
 (`connector_failed`). `Returned` is where a question run stops for now: no
 evaluator scores it and no loader serves its head, so it holds with
 `training.no_evaluator`, and a question head never binds a role.
+
+## 16. The vault's own drafter (`coach.drafter_retrain`)
+
+Each vault retrains its own small draft model at night on its own
+conversations, rooms with other people included. The drafter never leaves the
+vault. Retraining is on by default and the owner can switch it off. Today the
+engine holds the records, the doors, the erase path and the nightly job. It
+does not train yet.
+
+What exists now:
+
+- **Records.** `DrafterVersion` is one attempted or trained head and its run:
+  its target, its parent (stock or the last kept version), its recipe, the
+  pinned policy revision and cutoff, its dependency set, its job, its state,
+  its generation and a reference to its sealed artifact. `DrafterBinding` is
+  one target's pointer: stock or a retained version, with a generation and
+  the head it replaced. A target with no binding serves stock. `DrafterEvent`
+  is the content-free history: retrain, qualify, activate, rollback, revert,
+  erase and policy events. `DrafterPolicy` holds the switch, the excluded
+  worlds and the recipe as data. The engine supplies no learning rate, epoch
+  count or other training number.
+- **Doors.** The owner calls `vault.drafters.list`, `vault.drafters.status`,
+  `vault.drafters.policy.set` (at the revision the owner read) and
+  `vault.drafters.revert` (a version and the binding generation the owner
+  read). An agent calls `vault.drafters.list_as` and `vault.drafters.revert_as`
+  under its own live Grant that lists `drafter_read` or `drafter_revert`. A
+  revert needs a qualified version whose artifact key is still live, the
+  policy on, no excluded world in the version's ancestry, the same target
+  pins and an unchanged binding generation. An erased version is never
+  reverted to.
+- **Policy.** Off stops new nightly work and returns every binding to stock.
+  The versions stay retained. A newly excluded world returns to stock every
+  binding whose version trained on that world. While the world stays
+  excluded, such a version is not reverted to.
+- **Erase.** An erase of a record, a world or an actor reaches every version
+  whose training ancestry names it, at both delete doors and at an actor's
+  erase, in the erase's own transaction. Each reached version becomes
+  `erased`, its generation bumps (this fences its pending job), every binding
+  that served it returns to stock, and the retirement of its artifact keys is
+  staged. The custody finisher retires those keys at housekeeping. A late
+  trainer completion rechecks the version's generation when it publishes, and
+  is refused.
+- **Sealed artifacts.** Each version's load set is sealed under an erasable
+  key of its own (purpose `DrafterArtifact`). The version record names the key
+  by its random ref, never by its bytes. `Vault::begin_drafter_artifact` mints
+  the key while the version is training. `DrafterSealing::seal_chunk` seals
+  each piece of a file. `Vault::publish_drafter_artifact` publishes the
+  reference after it checks the version again. Retained versions are never
+  evicted.
+- **Nightly job.** `coach.drafter_retrain` is on the Coach's nightly host
+  roster, with one pending job per vault. Each night pins the policy revision
+  and the cutoff and records one retrain event. With the policy off, the
+  night is `skipped` (`policy_off`). With the policy on, the night is `held`
+  (`no_trainer_recipe`), because no trainer recipe is wired on any host. A
+  night never reports a successful empty retrain, and every target keeps
+  serving stock.
+
+What does not exist yet: the corpus export from the vault's conversations,
+the trainer script and its recipe for the house serving family, the held-out
+evaluator with its token-identity check, automatic activation and rollback,
+the vault-scoped serving worker that loads a version, and the drafter section
+of the morning report.

@@ -346,7 +346,8 @@ side_tables! {
     /// key material. Pinned by the first publication with what it protects. Key: ().
     KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
     /// One erasable custody key's ref-keyed metadata (FIX 8875): its purpose, its parent (the
-    /// actor a home handoff key seals for, or a grant) and its incarnation; never the key.
+    /// actor a home handoff key seals for, a grant, or a drafter version, FIX 12569) and its
+    /// incarnation; never the key.
     /// Key: bytes32 (the key's random ref).
     KEY_CUSTODY_ERASABLE_REF: VaultMeta b"key_custody:erasable_ref:v1:" Named Engine
         => crate::store::home_handoff_custody::scrub_actor_in_txn;

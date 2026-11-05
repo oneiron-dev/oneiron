@@ -744,6 +744,9 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
         @property
+        def drafters(self) -> "Oneiron._VaultDraftersVerbs":
+            return Oneiron._VaultDraftersVerbs(self._client)
+        @property
         def roots(self) -> "Oneiron._VaultRootsVerbs":
             return Oneiron._VaultRootsVerbs(self._client)
         @property
@@ -3211,6 +3214,33 @@ class Oneiron:
         def pick(self, spec):
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
             return json.loads(_translate(lambda: self._client.vault_evals_labels_pick(json.dumps(spec))))
+    class _VaultDraftersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_list(json.dumps(spec))))
+        def list_as(self, spec):
+            """An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_list_as(json.dumps(spec))))
+        def status(self, spec):
+            """The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_status(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultDraftersPolicyVerbs":
+            return Oneiron._VaultDraftersPolicyVerbs(self._client)
+        def revert(self, spec):
+            """The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_revert(json.dumps(spec))))
+        def revert_as(self, spec):
+            """An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_revert_as(json.dumps(spec))))
+    class _VaultDraftersPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_policy_set(json.dumps(spec))))
     class _VaultRootsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

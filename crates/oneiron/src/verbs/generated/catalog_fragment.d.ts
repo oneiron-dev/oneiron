@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1283 code-mode rows (1243 host rows, 40 run rows), 4544 declarations.
-// Replies: 1097 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1289 code-mode rows (1249 host rows, 40 run rows), 4565 declarations.
+// Replies: 1101 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 115; unread shapes: none.
+// Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1853,6 +1853,27 @@ declare namespace Sdk {
   type ReservoirSourcePeople = "others" | "unknown";
   type ReservoirSourceRow = { source: EntityId; people: ReservoirSourcePeople; pairs: number; consented: boolean };
   type ReservoirSourcePreview = { carried: number; excluded: Record<string, number>; sources: ReservoirSourceRow[] };
+  type DrafterTarget = { model: string; tokenizer: string; runtime: string };
+  type DrafterListRequest = { target?: DrafterTarget | null };
+  type DrafterServing = "stock" | { version: EntityId };
+  type DrafterVersionState = "prepared" | "training" | "returned" | "qualified" | "rejected" | "erased";
+  type DrafterVersionView = { id: EntityId; target: DrafterTarget; parent: DrafterServing; recipe: string; state: DrafterVersionState; generation: number; created_at: number; updated_at: number; sources: number; retained: boolean; serving: boolean; revertible: boolean };
+  type DrafterStatusRequest = { events_after?: EntityId | null };
+  type DrafterRecipe = { id: string; revision: SourcePin; settings: unknown };
+  type DrafterActor = { owner: EntityId } | { agent: EntityId } | "coach" | "erase" | "erased";
+  type DrafterPolicy = { enabled: boolean; excluded_worlds: EntityId[]; recipe?: DrafterRecipe | null; revision: number; set_by?: DrafterActor | null; set_at?: number | null };
+  type DrafterBinding = { target: DrafterTarget; serving: DrafterServing; generation: number; previous: DrafterServing; changed_by?: EntityId | null; changed_at: number };
+  type DrafterSkipReason = "policy_off";
+  type DrafterHoldReason = "no_trainer_recipe";
+  type DrafterRetrainOutcome = { skipped: { reason: DrafterSkipReason } } | { held: { reason: DrafterHoldReason } };
+  type DrafterRollbackReason = "slowdown" | "output_mismatch" | "worker_error";
+  type DrafterEventKind = { retrain: { attempt: AttemptId; policy_revision: number; cutoff: number; outcome: DrafterRetrainOutcome } } | { qualify: { version: EntityId; passed: boolean; evaluation?: EntityId | null } } | { activate: { version: EntityId } } | { rollback: { version: EntityId; reason: DrafterRollbackReason } } | { revert: { version: EntityId } } | { erase: { versions: EntityId[]; jobs: AttemptId[] } } | { policy: { revision: number } };
+  type DrafterBindingChange = { target: DrafterTarget; from: DrafterServing; to: DrafterServing; generation: number };
+  type DrafterEvent = { id: EntityId; at: number; by: DrafterActor; kind: DrafterEventKind; change?: DrafterBindingChange | null };
+  type DrafterStatus = { policy: DrafterPolicy; bindings: DrafterBinding[]; events: DrafterEvent[] };
+  type DrafterPolicySetRequest = { expected_revision: number; enabled: boolean; excluded_worlds?: EntityId[]; recipe?: DrafterRecipe | null };
+  type DrafterRevertRequest = { version: EntityId; expected_binding_generation: number };
+  type DrafterRevertReceipt = { binding: DrafterBinding; event?: DrafterEvent | null };
   type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
@@ -6063,6 +6084,22 @@ declare const vault: Sdk.VaultHost & {
       /** The owner approves once, approves standing, or denies the exact frozen reveal ask. */
       answer(input: Sdk.RevealAnswerRequest): Promise<Sdk.RevealAnsweredView | StoredResult>;
     };
+  };
+  drafters: {
+    /** The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible. */
+    list(input: Sdk.DrafterListRequest): Promise<Sdk.DrafterVersionView[] | StoredResult>;
+    /** An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read. */
+    list_as(input: Sdk.DrafterListRequest): Promise<Sdk.DrafterVersionView[] | StoredResult>;
+    policy: {
+      /** The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock. */
+      set(input: Sdk.DrafterPolicySetRequest): Promise<Sdk.DrafterPolicy | StoredResult>;
+    };
+    /** The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back. */
+    revert(input: Sdk.DrafterRevertRequest): Promise<Sdk.DrafterRevertReceipt | StoredResult>;
+    /** An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert. */
+    revert_as(input: Sdk.DrafterRevertRequest): Promise<Sdk.DrafterRevertReceipt | StoredResult>;
+    /** The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor. */
+    status(input: Sdk.DrafterStatusRequest): Promise<Sdk.DrafterStatus | StoredResult>;
   };
   edges: {
     put(input: Sdk.MemoryEdgeInput): Promise<Sdk.MemoryEdgeOutput | StoredResult>;
