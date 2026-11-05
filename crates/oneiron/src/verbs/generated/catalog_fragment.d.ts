@@ -6527,7 +6527,7 @@ declare const vault: Sdk.VaultHost & {
         /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */
         set(input: Sdk.MailSourceSettingsRequest): Promise<Sdk.MailSourceView | StoredResult>;
       };
-      /** The vault's owner runs one bounded import step of a Google mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies. */
+      /** The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies. */
       sync(input: Sdk.MailSourceSyncRequest): Promise<Sdk.MailSyncReport | StoredResult>;
       /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
       sync_status(input: Sdk.MailSourceRef): Promise<Sdk.MailSyncStatusView | StoredResult>;

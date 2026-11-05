@@ -3731,7 +3731,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.mail.compliance.set": { description: "Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.mail.compliance.log": { description: "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.mail.sources.sync_status": { description: "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.mail.sources.sync": { description: "The vault's owner runs one bounded import step of a Google mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.mail.sources.sync": { description: "The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.mail.inbox": { description: "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.mail.threads.read": { description: "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.mail.compliance.search": { description: "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -6594,7 +6594,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           audience_events: (input: Facade.MailSourceRef, options?: O): FacadeReturns<"vault.mail.sources.audience_events">[K] => invoke("vault.mail.sources.audience_events", input, options, newInvocation()),
           /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
           sync_status: (input: Facade.MailSourceRef, options?: O): FacadeReturns<"vault.mail.sources.sync_status">[K] => invoke("vault.mail.sources.sync_status", input, options, newInvocation()),
-          /** The vault's owner runs one bounded import step of a Google mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies. */
+          /** The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies. */
           sync: (input: Facade.MailSourceSyncRequest, options?: O): FacadeReturns<"vault.mail.sources.sync">[K] => invoke("vault.mail.sources.sync", input, options, newInvocation()),
         },
         threads: {

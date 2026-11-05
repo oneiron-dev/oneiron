@@ -1,0 +1,677 @@
+//! The Microsoft 365 wire of the mail importer (FIX 12559 row 3;
+//! MAIL-PROVIDERS = A): Microsoft Graph mail over `reqwest::blocking`, for a
+//! Microsoft 365 mailbox source.
+//!
+//! Each provider call reads the source's own credential at its door
+//! ([`Vault::with_mail_source_token_at_door`]), effector
+//! `connector:microsoft365`. HTTPS to Graph only, no redirects; a link Graph
+//! answers with is followed only on Graph's own origin. Before a source's
+//! first read the wire checks that the credential's user is the mailbox the
+//! source names. Message ids are Graph's immutable ids, so a move keeps a
+//! message's id.
+//!
+//! Graph tracks changes per mail folder, so the source's change anchor is a
+//! delta link per folder it copies: every folder but Deleted Items, Junk
+//! Email, Drafts, Outbox and Conversation History (and their subfolders), as
+//! the folders stood when the anchor was taken. The anchor is taken with a
+//! delta round filtered to mail received from now on, so it costs one call
+//! per folder and lists nothing; deletes and moves of older mail still come
+//! through it, as Graph reports removals whatever the filter. A message a
+//! folder reports removed is looked up: gone, or in Deleted Items or Junk
+//! Email, it is deleted at the provider; anywhere else it only moved. A
+//! folder made after the anchor joins when the anchor is next taken.
+//!
+//! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+
+use reqwest::header::AUTHORIZATION;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::rest::{
+    self, RestAnswer, array, bearer_header, header_value, html_text, refused, text_of, tidy_text,
+};
+use super::source::MailProvider;
+use super::wire::{
+    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
+    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+};
+use crate::error::{Error, Result};
+use crate::{EntityId, Vault};
+
+/// The custody effector a Microsoft 365 mail credential is bound to.
+pub const MICROSOFT365_CONNECTOR_EFFECTOR: &str = "connector:microsoft365";
+
+const GRAPH_ORIGIN: &str = "https://graph.microsoft.com/";
+const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
+const GRAPH_PAGE_SIZE: u32 = 100;
+const PREFER_IMMUTABLE_IDS: &str = "IdType=\"ImmutableId\"";
+const PREFER_TEXT_BODY: &str = "IdType=\"ImmutableId\", outlook.body-content-type=\"text\"";
+/// The well-known folders the wire names.
+const WELL_KNOWN_FOLDERS: [&str; 8] = [
+    "inbox",
+    "sentitems",
+    "archive",
+    "deleteditems",
+    "junkemail",
+    "drafts",
+    "outbox",
+    "conversationhistory",
+];
+/// The well-known folders whose mail is not copied: deleted mail and junk,
+/// and what is not mail yet.
+const SKIPPED_FOLDERS: [&str; 5] = [
+    "deleteditems",
+    "junkemail",
+    "drafts",
+    "outbox",
+    "conversationhistory",
+];
+/// The folders a message moved into counts as deleted from.
+const TRASH_FOLDERS: [&str; 2] = ["deleteditems", "junkemail"];
+/// The most folders one source's anchor tracks.
+const MAX_FOLDERS: usize = 1_000;
+/// The most folder reads one change-feed page makes while folders are quiet.
+const MAX_FOLDER_READS_PER_PAGE: usize = 100;
+/// The longest Graph id read.
+const MAX_GRAPH_ID_BYTES: usize = 512;
+/// What a header stage selects.
+const MESSAGE_FIELDS: &str = "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,parentFolderId,isDraft,categories,internetMessageHeaders";
+
+/// A source's change anchor: one delta link per folder it copies.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct GraphAnchor {
+    folders: BTreeMap<String, String>,
+}
+
+/// Where a change-feed read stands between its pages.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct GraphHistoryCursor {
+    /// The folder being read, by its place in the anchor.
+    folder: usize,
+    /// The next link within that folder's round, when it has one.
+    link: Option<String>,
+    /// The delta links of the folders read to the end so far.
+    reached: BTreeMap<String, String>,
+}
+
+/// Host-side Microsoft Graph mail wire over `reqwest::blocking`, for the
+/// Microsoft 365 mailbox sources of one vault.
+pub struct HttpGraphMailWire<'v> {
+    vault: &'v Vault,
+    client: reqwest::blocking::Client,
+    /// The sources whose credential this wire has seen read their mailbox.
+    verified: RefCell<BTreeSet<EntityId>>,
+    /// Each source's well-known folder names, by folder id.
+    folders: RefCell<BTreeMap<EntityId, BTreeMap<String, &'static str>>>,
+}
+
+impl<'v> HttpGraphMailWire<'v> {
+    /// Builds the wire: HTTPS only, no redirects, a 60 s timeout.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the TLS client cannot be built.
+    pub fn new(vault: &'v Vault) -> Result<Self> {
+        Ok(Self {
+            vault,
+            client: rest::https_client()?,
+            verified: RefCell::new(BTreeSet::new()),
+            folders: RefCell::new(BTreeMap::new()),
+        })
+    }
+
+    /// One GET on Graph with the source's credential, read at its door.
+    fn get(
+        &self,
+        source: &MailSyncSource,
+        url: &str,
+        query: &[(&str, String)],
+        prefer: &str,
+    ) -> Result<RestAnswer> {
+        if source.provider != MailProvider::Microsoft365 {
+            return Err(refused("graph_mail_wire_reads_microsoft365_mailboxes_only"));
+        }
+        if !url.starts_with(GRAPH_ORIGIN) {
+            return Err(refused("graph_mail_link_not_on_graph"));
+        }
+        let mut answer: Option<RestAnswer> = None;
+        let _receipt = self.vault.with_mail_source_token_at_door(
+            source,
+            MICROSOFT365_CONNECTOR_EFFECTOR,
+            &mut |token: &[u8]| {
+                let auth = bearer_header(token)?;
+                let request = self
+                    .client
+                    .get(url)
+                    .query(query)
+                    .header(AUTHORIZATION, auth)
+                    .header("Prefer", prefer);
+                answer = Some(rest::send(request)?);
+                Ok(())
+            },
+        )?;
+        answer.ok_or_else(|| refused("graph_mail_credential_door_refused"))
+    }
+
+    /// [`Self::get`]'s JSON; `None` for Graph's "not found".
+    fn found(
+        &self,
+        source: &MailSyncSource,
+        url: &str,
+        query: &[(&str, String)],
+        prefer: &str,
+    ) -> Result<Option<Value>> {
+        self.get(source, url, query, prefer)?
+            .found_or_gone("graph_mail")
+    }
+
+    /// Checks once per source that its credential's user is the mailbox it
+    /// names (its `mail` or `userPrincipalName`).
+    fn verify(&self, source: &MailSyncSource) -> Result<()> {
+        if self.verified.borrow().contains(&source.source_ref) {
+            return Ok(());
+        }
+        let select = [("$select", "mail,userPrincipalName".to_owned())];
+        let me = self
+            .found(source, GRAPH_ME_URL, &select, PREFER_IMMUTABLE_IDS)?
+            .ok_or_else(|| refused("graph_mail_user_not_found"))?;
+        let wanted = source.address.trim();
+        let reads = ["mail", "userPrincipalName"].iter().any(|field| {
+            me.get(*field)
+                .and_then(Value::as_str)
+                .is_some_and(|address| address.trim().eq_ignore_ascii_case(wanted))
+        });
+        if !reads {
+            return Err(refused("graph_mail_credential_reads_another_mailbox"));
+        }
+        self.verified.borrow_mut().insert(source.source_ref);
+        Ok(())
+    }
+
+    /// The source's well-known folder names by folder id, read once.
+    fn well_known(&self, source: &MailSyncSource) -> Result<BTreeMap<String, &'static str>> {
+        if let Some(known) = self.folders.borrow().get(&source.source_ref) {
+            return Ok(known.clone());
+        }
+        let select = [("$select", "id".to_owned())];
+        let mut known = BTreeMap::new();
+        for name in WELL_KNOWN_FOLDERS {
+            let url = format!("{GRAPH_ME_URL}/mailFolders/{name}");
+            if let Some(folder) = self.found(source, &url, &select, PREFER_IMMUTABLE_IDS)?
+                && let Some(id) = text_of(folder.get("id"))
+            {
+                known.insert(id, name);
+            }
+        }
+        self.folders
+            .borrow_mut()
+            .insert(source.source_ref, known.clone());
+        Ok(known)
+    }
+
+    /// The ids of the folders the source copies: every mail folder but the
+    /// skipped ones and their subfolders.
+    fn copied_folders(
+        &self,
+        source: &MailSyncSource,
+        known: &BTreeMap<String, &'static str>,
+    ) -> Result<Vec<String>> {
+        let mut folders = Vec::new();
+        let mut pending = vec![format!("{GRAPH_ME_URL}/mailFolders")];
+        while let Some(first) = pending.pop() {
+            let mut query = vec![
+                ("$select", "id,childFolderCount".to_owned()),
+                ("$top", GRAPH_PAGE_SIZE.to_string()),
+            ];
+            let mut link = Some(first);
+            while let Some(url) = link.take() {
+                let page = self
+                    .found(source, &url, &query, PREFER_IMMUTABLE_IDS)?
+                    .ok_or_else(|| refused("graph_mail_folders_not_found"))?;
+                // A next link carries its own query.
+                query.clear();
+                for folder in array(&page, "value") {
+                    let Some(id) = text_of(folder.get("id")) else {
+                        continue;
+                    };
+                    if skipped(known, &id) {
+                        continue;
+                    }
+                    if folder
+                        .get("childFolderCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        > 0
+                    {
+                        pending.push(format!(
+                            "{GRAPH_ME_URL}/mailFolders/{}/childFolders",
+                            path_segment(&id)
+                        ));
+                    }
+                    folders.push(id);
+                    if folders.len() > MAX_FOLDERS {
+                        return Err(refused("graph_mail_more_folders_than_tracked"));
+                    }
+                }
+                link = text_of(page.get("@odata.nextLink"));
+            }
+        }
+        Ok(folders)
+    }
+
+    /// What a message a folder reported removed became: gone, or moved
+    /// into Deleted Items or Junk Email, it is deleted at the provider;
+    /// anywhere else it only moved.
+    fn removal(
+        &self,
+        source: &MailSyncSource,
+        known: &BTreeMap<String, &'static str>,
+        provider_id: String,
+    ) -> Result<MailHistoryChange> {
+        let select = [("$select", "id,parentFolderId,categories".to_owned())];
+        let Some(message) = self.found(
+            source,
+            &message_url(&provider_id)?,
+            &select,
+            PREFER_IMMUTABLE_IDS,
+        )?
+        else {
+            return Ok(MailHistoryChange::Deleted { provider_id });
+        };
+        let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
+        let name = known.get(&folder).copied();
+        Ok(MailHistoryChange::Labels {
+            labels: folder_labels(&message, name, &folder),
+            trash_or_spam: name.is_some_and(|name| TRASH_FOLDERS.contains(&name)),
+            provider_id,
+        })
+    }
+}
+
+impl MailProviderWire for HttpGraphMailWire<'_> {
+    fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
+        self.verify(source)?;
+        let known = self.well_known(source)?;
+        let since = graph_time(crate::unix_seconds_now())?;
+        let mut anchor = GraphAnchor::default();
+        for folder in self.copied_folders(source, &known)? {
+            let mut link = format!(
+                "{GRAPH_ME_URL}/mailFolders/{}/messages/delta",
+                path_segment(&folder)
+            );
+            let mut query = vec![
+                ("$select", "id".to_owned()),
+                ("$filter", format!("receivedDateTime ge {since}")),
+            ];
+            loop {
+                let Some(page) = self.found(source, &link, &query, PREFER_IMMUTABLE_IDS)? else {
+                    // The folder went while the anchor was taken.
+                    break;
+                };
+                query.clear();
+                if let Some(delta) = text_of(page.get("@odata.deltaLink")) {
+                    anchor.folders.insert(folder.clone(), delta);
+                    break;
+                }
+                match text_of(page.get("@odata.nextLink")) {
+                    Some(next) => link = next,
+                    None => break,
+                }
+            }
+        }
+        encode(&anchor)
+    }
+
+    fn list_page(
+        &self,
+        source: &MailSyncSource,
+        query: &MailListQuery,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        self.verify(source)?;
+        let known = self.well_known(source)?;
+        let (url, params) = match page {
+            Some(next) => (next.to_owned(), Vec::new()),
+            None => {
+                let mut params = vec![
+                    ("$select", "id,conversationId,parentFolderId,isDraft".to_owned()),
+                    ("$orderby", "receivedDateTime desc".to_owned()),
+                    ("$top", GRAPH_PAGE_SIZE.to_string()),
+                ];
+                if let Some(newer_than) = query.newer_than {
+                    params.push((
+                        "$filter",
+                        format!("receivedDateTime ge {}", graph_time(newer_than)?),
+                    ));
+                }
+                (format!("{GRAPH_ME_URL}/messages"), params)
+            }
+        };
+        let listed = self
+            .found(source, &url, &params, PREFER_IMMUTABLE_IDS)?
+            .ok_or_else(|| refused("graph_mail_listing_not_found"))?;
+        let mut messages = Vec::new();
+        for message in array(&listed, "value") {
+            let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
+            let draft = message
+                .get("isDraft")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if draft || skipped(&known, &folder) {
+                continue;
+            }
+            messages.push(MailMessageRef {
+                provider_id: graph_id(message.get("id"))?,
+                thread_id: text_of(message.get("conversationId")),
+            });
+        }
+        Ok(MailIdPage {
+            messages,
+            next_page: text_of(listed.get("@odata.nextLink")),
+        })
+    }
+
+    fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
+        self.verify(source)?;
+        let known = self.well_known(source)?;
+        let select = [("$select", MESSAGE_FIELDS.to_owned())];
+        match self.found(
+            source,
+            &message_url(provider_id)?,
+            &select,
+            PREFER_IMMUTABLE_IDS,
+        )? {
+            Some(message) => headers_of(&message, &known).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
+        self.verify(source)?;
+        let known = self.well_known(source)?;
+        let url = message_url(provider_id)?;
+        let select = [("$select", format!("{MESSAGE_FIELDS},body,hasAttachments"))];
+        let Some(message) = self.found(source, &url, &select, PREFER_TEXT_BODY)? else {
+            return Ok(None);
+        };
+        let headers = headers_of(&message, &known)?;
+        let content = message
+            .pointer("/body/content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let html = message
+            .pointer("/body/contentType")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("html"));
+        let body_text = if html {
+            html_text(content)
+        } else {
+            tidy_text(content)
+        };
+        let mut attachments = Vec::new();
+        let has_attachments = message
+            .get("hasAttachments")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if has_attachments {
+            let select = [("$select", "id,name,contentType,size,isInline".to_owned())];
+            let listed = self.found(
+                source,
+                &format!("{url}/attachments"),
+                &select,
+                PREFER_IMMUTABLE_IDS,
+            )?;
+            for attachment in listed.as_ref().map_or(&[][..], |listed| array(listed, "value")) {
+                let Some(id) = text_of(attachment.get("id")) else {
+                    continue;
+                };
+                attachments.push(MailAttachmentRef {
+                    part_id: id.clone(),
+                    provider_attachment_id: Some(id),
+                    filename: text_of(attachment.get("name")),
+                    media_type: text_of(attachment.get("contentType"))
+                        .unwrap_or_else(|| "application/octet-stream".to_owned()),
+                    size_bytes: attachment.get("size").and_then(Value::as_u64).unwrap_or(0),
+                });
+            }
+        }
+        Ok(Some(MailFull {
+            headers,
+            body_text: Some(body_text).filter(|text| !text.is_empty()),
+            attachments,
+        }))
+    }
+
+    fn history(
+        &self,
+        source: &MailSyncSource,
+        anchor: &str,
+        page: Option<&str>,
+    ) -> Result<MailHistoryRead> {
+        self.verify(source)?;
+        let known = self.well_known(source)?;
+        let stood: GraphAnchor =
+            serde_json::from_str(anchor).map_err(|_| refused("graph_mail_anchor_unreadable"))?;
+        let folders: Vec<(&String, &String)> = stood.folders.iter().collect();
+        let mut cursor: GraphHistoryCursor = match page {
+            Some(page) => serde_json::from_str(page)
+                .map_err(|_| refused("graph_mail_history_page_unreadable"))?,
+            None => GraphHistoryCursor::default(),
+        };
+        let mut changes = Vec::new();
+        let mut reads = 0;
+        while changes.is_empty() && reads < MAX_FOLDER_READS_PER_PAGE {
+            let Some((folder, delta)) = folders.get(cursor.folder).copied() else {
+                break;
+            };
+            reads += 1;
+            let link = cursor.link.clone().unwrap_or_else(|| delta.clone());
+            let listed = match self.get(source, &link, &[], PREFER_IMMUTABLE_IDS)? {
+                RestAnswer::Found(listed) => listed,
+                RestAnswer::Failed { status, code }
+                    if status == 410 || code.as_deref().is_some_and(sync_state_lost) =>
+                {
+                    return Ok(MailHistoryRead::Expired);
+                }
+                RestAnswer::Failed { status: 404, .. } => {
+                    // The folder is gone: it leaves the anchor.
+                    cursor.folder += 1;
+                    cursor.link = None;
+                    continue;
+                }
+                RestAnswer::Failed { status, .. } => {
+                    return Err(Error::InvalidConfig(format!("graph_mail_status_{status}")));
+                }
+            };
+            for entry in array(&listed, "value") {
+                let provider_id = graph_id(entry.get("id"))?;
+                if entry.get("@removed").is_some() {
+                    changes.push(self.removal(source, &known, provider_id)?);
+                } else {
+                    changes.push(MailHistoryChange::Added(MailMessageRef {
+                        provider_id,
+                        thread_id: text_of(entry.get("conversationId")),
+                    }));
+                }
+            }
+            if let Some(next) = text_of(listed.get("@odata.nextLink")) {
+                cursor.link = Some(next);
+            } else {
+                let reached =
+                    text_of(listed.get("@odata.deltaLink")).unwrap_or_else(|| delta.clone());
+                cursor.reached.insert(folder.clone(), reached);
+                cursor.folder += 1;
+                cursor.link = None;
+            }
+        }
+        if cursor.folder >= folders.len() {
+            let reached = GraphAnchor {
+                folders: cursor.reached,
+            };
+            return Ok(MailHistoryRead::Page(MailHistoryPage {
+                changes,
+                next_page: None,
+                anchor: encode(&reached)?,
+            }));
+        }
+        Ok(MailHistoryRead::Page(MailHistoryPage {
+            changes,
+            next_page: Some(encode(&cursor)?),
+            anchor: anchor.to_owned(),
+        }))
+    }
+}
+
+/// A message's headers from its Graph answer.
+fn headers_of(message: &Value, known: &BTreeMap<String, &'static str>) -> Result<MailHeaders> {
+    let provider_id = graph_id(message.get("id"))?;
+    let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
+    let name = known.get(&folder).copied();
+    let internet = message.get("internetMessageHeaders");
+    let header = |field: &str| header_value(internet, field).map(|value| value.trim().to_owned());
+    Ok(MailHeaders {
+        provider_id,
+        thread_id: text_of(message.get("conversationId")),
+        rfc_message_id: text_of(message.get("internetMessageId")),
+        in_reply_to: header("In-Reply-To"),
+        references: header("References")
+            .map(|references| references.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default(),
+        from: message.pointer("/from/emailAddress").map(mailbox_text),
+        to: recipients(message, "toRecipients"),
+        cc: recipients(message, "ccRecipients"),
+        subject: text_of(message.get("subject")),
+        date: message
+            .get("sentDateTime")
+            .and_then(Value::as_str)
+            .and_then(rfc3339_seconds),
+        received_at: message
+            .get("receivedDateTime")
+            .and_then(Value::as_str)
+            .and_then(rfc3339_seconds)
+            .unwrap_or(0),
+        sent_by_mailbox: name == Some("sentitems"),
+        trash_or_spam: name.is_some_and(|name| TRASH_FOLDERS.contains(&name)),
+        draft: name == Some("drafts")
+            || message
+                .get("isDraft")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        labels: folder_labels(message, name, &folder),
+    })
+}
+
+/// A message's labels: its folder (by its well-known name when it has one)
+/// and its categories.
+fn folder_labels(message: &Value, name: Option<&'static str>, folder: &str) -> Vec<String> {
+    let mut labels = vec![name.map_or_else(|| format!("folder:{folder}"), str::to_owned)];
+    labels.extend(
+        array(message, "categories")
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|category| format!("category:{category}")),
+    );
+    labels
+}
+
+/// A Graph `emailAddress` as a header writes it: `Name <address>`, or the
+/// address alone.
+fn mailbox_text(email: &Value) -> String {
+    let address = email
+        .get("address")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let name = email
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if name.is_empty() || name.eq_ignore_ascii_case(address) {
+        address.to_owned()
+    } else if address.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{name} <{address}>")
+    }
+}
+
+fn recipients(message: &Value, key: &str) -> Vec<String> {
+    array(message, key)
+        .iter()
+        .filter_map(|recipient| recipient.get("emailAddress"))
+        .map(mailbox_text)
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+/// Whether the folder `id` is one whose mail is not copied.
+fn skipped(known: &BTreeMap<String, &'static str>, id: &str) -> bool {
+    known
+        .get(id)
+        .is_some_and(|name| SKIPPED_FOLDERS.contains(name))
+}
+
+/// Whether a Graph error code says the delta state is lost.
+fn sync_state_lost(code: &str) -> bool {
+    let code = code.to_ascii_lowercase();
+    code.contains("syncstate") || code == "resyncrequired"
+}
+
+/// Unix seconds as the UTC time Graph filters take.
+fn graph_time(seconds: u64) -> Result<String> {
+    let date = i64::try_from(seconds)
+        .ok()
+        .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
+        .ok_or_else(|| refused("graph_mail_time_out_of_range"))?;
+    Ok(date.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+fn rfc3339_seconds(value: &str) -> Option<u64> {
+    chrono::DateTime::parse_from_rfc3339(value.trim())
+        .ok()
+        .and_then(|date| u64::try_from(date.timestamp()).ok())
+}
+
+/// A message's Graph URL, its id escaped as one path segment.
+fn message_url(provider_id: &str) -> Result<String> {
+    require_graph_id(provider_id)?;
+    Ok(format!("{GRAPH_ME_URL}/messages/{}", path_segment(provider_id)))
+}
+
+/// A Graph id: printable ASCII, no spaces, bounded.
+fn graph_id(value: Option<&Value>) -> Result<String> {
+    let id = value.and_then(Value::as_str).unwrap_or_default();
+    require_graph_id(id)?;
+    Ok(id.to_owned())
+}
+
+fn require_graph_id(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id.len() > MAX_GRAPH_ID_BYTES
+        || !id.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err(refused("graph_mail_id_not_plain"));
+    }
+    Ok(())
+}
+
+/// `text` percent-escaped as one URL path segment.
+fn path_segment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+fn encode(value: &impl Serialize) -> Result<String> {
+    serde_json::to_string(value).map_err(|_| refused("graph_mail_state_unencodable"))
+}
