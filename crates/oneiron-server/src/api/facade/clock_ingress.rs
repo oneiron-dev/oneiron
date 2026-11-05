@@ -56,7 +56,7 @@ const ACTIONS_PREFIX: &str = "/v1/core/actions/";
 const MCP_PATHS: [&str; 2] = ["/mcp", "/mcp/tool-first"];
 
 /// The header an MCP call's slip rides in, ahead of `Authorization`.
-const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
 /// The owner routes that share a facade verb, by full path (FIX 11523):
 /// H1-H4, the four owner doors whose `hooked_row` runs the same row as the
