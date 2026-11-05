@@ -219,14 +219,12 @@ impl Step<'_> {
     }
 
     /// A message out of the provider's trash or spam: a kept copy is live
-    /// again, and one that never landed lands now, under the copy setting.
+    /// again.
     fn restore(&mut self, provider_id: &str) -> MemoryResult<()> {
+        // One that never landed comes as its own Added, under the copy
+        // setting: a label change alone fetches nothing.
         if self.known(provider_id)? {
             restore_from_provider_trash(self.vault, self.source, provider_id, self.at)?;
-            return Ok(());
-        }
-        if self.row.copy != MailCopySetting::SearchOnly {
-            self.land_headers(provider_id)?;
         }
         Ok(())
     }
@@ -354,6 +352,12 @@ impl Step<'_> {
     /// changed setting (search only included) or an expired anchor starts
     /// it over with a fresh cutoff.
     fn backfill(&mut self, pages: u32) -> MemoryResult<()> {
+        // A change-feed round mid-way may not yet have begun a folder the
+        // copy would reach (a Microsoft 365 folder's first round): what the
+        // copy lands there could be deleted before that round sees it.
+        if self.state()?.history_page.is_some() {
+            return Ok(());
+        }
         let copy = self.row.copy;
         if self.state()?.backfill_copy != Some(copy) {
             let cutoff = self.newer_than;
@@ -488,7 +492,10 @@ impl Vault {
         let mut step = Step {
             vault: self,
             source: source_ref,
-            wire_source: MailSyncSource::of(source_ref, &row),
+            wire_source: MailSyncSource {
+                newer_than,
+                ..MailSyncSource::of(source_ref, &row)
+            },
             row,
             wire,
             landing: Landing::new(self, owner, source_ref, at)?,
@@ -499,6 +506,8 @@ impl Vault {
                 ..MailSyncReport::default()
             },
         };
+        // An erased message's attachment artifacts owed their delete go first.
+        super::attachments::collect_after_delete(self);
         let outcome = (|| -> MemoryResult<()> {
             if step.state()?.anchor.is_none() {
                 let anchor = step.wire.current_anchor(&step.wire_source)?;

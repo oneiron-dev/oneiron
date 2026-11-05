@@ -54,6 +54,7 @@ pub(crate) use calendar_source::{
 pub(in crate::calendar) use admission::{
     ConnectorAdmissionSource, admit_connector_event, connector_event_ref,
     delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
+    sweep_connector_uids,
 };
 pub mod feed_door;
 mod fetch;
