@@ -4,7 +4,7 @@
 //! Those passes ran before any credential key existed, so a fault reading,
 //! listing or copying one never stops them (CALLS `KS-6 credential pass
 //! faults`): it is warned by the credential's id and the error's kind, never
-//! a byte, and that credential's keys stay where they are for the pass. A
+//! a byte, and the custody keys stay where they are for the pass. A
 //! head then carries none of them, so they stay in this machine's custody,
 //! where every credential's stayed before, and the next head sealed reads
 //! them again. A fork leaves one it cannot copy behind: the copy's row then
@@ -57,7 +57,7 @@ pub(super) fn forgone(subject: &CustodySubject, error: Error, what: &'static str
     tracing::warn!(
         credential = %credential,
         kind = ?error.kind(),
-        "a credential's custody keys stay where they are for this pass: {what}"
+        "the custody keys stay where they are for this pass: {what}"
     );
     Ok(())
 }
