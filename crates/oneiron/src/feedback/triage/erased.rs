@@ -19,8 +19,12 @@ pub(super) fn evidence_erased_in_txn(
     txn: &heed::RoTxn<'_>,
     handoff: &FeedbackTriageHandoff,
 ) -> Result<bool> {
-    Ok(handoff.erased_at.is_some()
-        || vault.local_hard_delete_marker_exists_in_txn(txn, &handoff.evidence)?)
+    match &handoff.source {
+        super::FeedbackTriageHandoffSource::Erased { .. } => Ok(true),
+        super::FeedbackTriageHandoffSource::Retained { evidence, .. } => {
+            vault.local_hard_delete_marker_exists_in_txn(txn, evidence)
+        }
+    }
 }
 
 /// Settles `handoff`, stored under `key`, erased at `now` when the owner
@@ -34,21 +38,20 @@ pub(super) fn settle_erased_in_txn(
     handoff: &mut FeedbackTriageHandoff,
     now: u64,
 ) -> Result<bool> {
-    if !vault.local_hard_delete_marker_exists_in_txn(txn, &handoff.evidence)? {
+    if handoff.erased_at().is_some() {
+        return Ok(true);
+    }
+    if !evidence_erased_in_txn(vault, txn, handoff)? {
         return Ok(false);
     }
-    handoff.erased_at = Some(now);
-    handoff.work = None;
+    handoff.erase_source(now);
     HANDOFFS.put(&vault.store, txn, key, handoff)?;
     Ok(true)
 }
 
-/// Settles each acknowledged handoff whose evidence is `id`, in the erase
-/// transaction that purges it (FIX 10921): `erased_at` set to vault seconds
-/// now, the part graph dropped, the row with its result kept. Only the
-/// permanent hard-delete marker proves the erase, so the soft door is a
-/// no-op; unacknowledged rows keep the sweep's settlement, and a row
-/// settled already keeps its stamp.
+/// Settles every handoff of erased evidence, acknowledged or not, in place.
+/// The original key and result stay; revision, evidence and work leave together.
+/// Soft deletes and a present, parsed non-ASSET remain no-ops.
 pub(crate) fn erase_handoff_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -70,7 +73,10 @@ pub(crate) fn erase_handoff_in_txn(
         let Ok((key, handoff)) = row else {
             continue;
         };
-        if handoff.evidence == *id && handoff.result.is_some() && handoff.erased_at.is_none() {
+        if handoff
+            .retained()
+            .is_ok_and(|(_, evidence)| evidence == *id)
+        {
             settled.push((key, handoff));
         }
     }
@@ -79,8 +85,7 @@ pub(crate) fn erase_handoff_in_txn(
     }
     let now = store.clock.now_recorded_at();
     for (key, mut handoff) in settled {
-        handoff.erased_at = Some(now);
-        handoff.work = None;
+        handoff.erase_source(now);
         HANDOFFS.put(store, txn, &key, &handoff)?;
     }
     Ok(())
@@ -89,7 +94,7 @@ pub(crate) fn erase_handoff_in_txn(
 /// Refuses a result for `handoff` once its evidence was erased, so the write
 /// that would file findings citing the erased ASSET rolls back; the next
 /// sweep settles the revision erased.
-pub(super) fn refuse_erased_in_txn(
+pub(crate) fn refuse_erased_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     handoff: &FeedbackTriageHandoff,
@@ -102,4 +107,22 @@ pub(super) fn refuse_erased_in_txn(
         ));
     }
     Ok(())
+}
+
+/// Declared scrub: hard erase and authenticated checkpoint restore share it.
+pub(crate) fn erase_handoff_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    erase_handoff_in_txn(&vault.store, txn, id)
+}
+
+/// The post-marker continuation of the same accepted hard erase. Its exact
+/// target, not the presence of some other marker, selects the handoffs.
+pub(crate) fn erase_handoff_as_in_txn(
+    erase: &mut crate::deletion::ActorErasureWriter<'_, '_>,
+) -> Result<()> {
+    let (vault, txn, id) = erase.parts();
+    erase_handoff_actor_in_txn(vault, txn, &id)
 }

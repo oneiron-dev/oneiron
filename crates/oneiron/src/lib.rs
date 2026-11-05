@@ -131,6 +131,7 @@ pub use oneiron_base::tokenizer;
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
+pub mod clipboard;
 pub mod companion;
 pub mod corpus;
 pub use oneiron_base::extraction_eval;

@@ -124,8 +124,13 @@ impl TinyExtractor {
             .budget
             .admit_for_request(&request)
             .inspect_err(|denied| {
-                self.vault
-                    .budget_denied_hooks(denied, &self.budget, request.model.as_str(), None);
+                self.vault.budget_denied_hooks(
+                    denied,
+                    &self.budget,
+                    request.model.as_str(),
+                    None,
+                    None,
+                );
             })
             .map_err(LlmError::from)?;
         let mut lease = OpenLease {
