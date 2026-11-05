@@ -49,7 +49,7 @@ impl ExposureSlot {
     ) -> Option<(&'r str, std::ops::Range<usize>)> {
         let span = self.stored?;
         let message = request.messages.get(usize::try_from(self.message).ok()?)?;
-        let ContentPart::Text { text } = message.content.get(usize::try_from(self.part).ok()?)?
+        let ContentPart::Text { text, .. } = message.content.get(usize::try_from(self.part).ok()?)?
         else {
             return None;
         };

@@ -54,7 +54,7 @@ impl ConsolidationExecutor<'_> {
             .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
         let text = |role, text: String| LlmMessage {
             role,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text { text, signature: None }],
         };
         let mut messages = vec![text(LlmMessageRole::System, prompt.system)];
         for example in prompt.examples {

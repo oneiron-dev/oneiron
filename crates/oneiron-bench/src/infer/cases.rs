@@ -140,6 +140,7 @@ fn case(number: usize, value: JsonValue) -> Result<Case, String> {
                     .ok_or_else(|| at("a message role is not system, user or assistant"))?,
                 content: vec![ContentPart::Text {
                     text: message.content,
+                    signature: None,
                 }],
             })
         })

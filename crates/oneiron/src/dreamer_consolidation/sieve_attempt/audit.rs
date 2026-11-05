@@ -162,12 +162,14 @@ impl ConsolidationExecutor<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: input.policy.audit_window_instruction.clone(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: data.to_string(),
+                        signature: None,
                     }],
                 },
             ],

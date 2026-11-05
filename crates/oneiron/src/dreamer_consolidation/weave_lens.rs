@@ -145,7 +145,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -183,11 +183,11 @@ fn lens_request(
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: instruction }],
+                content: vec![ContentPart::Text { text: instruction, signature: None }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text }],
+                content: vec![ContentPart::Text { text, signature: None }],
             },
         ],
         tools: Vec::new(),
@@ -387,6 +387,7 @@ pub async fn run_weave_lens(
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: weave_lens_repair_text(&stored.report.value, &refused),
+                        signature: None,
                     }],
                 });
                 reason = refused;

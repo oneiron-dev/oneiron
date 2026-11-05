@@ -427,7 +427,7 @@ pub(super) fn request_conversation(request: &LlmRequest) -> Vec<InventedMessage>
                 .content
                 .iter()
                 .map(|part| match part {
-                    ContentPart::Text { text } => text.clone(),
+                    ContentPart::Text { text, .. } => text.clone(),
                     other => serde_json::to_string(other).unwrap_or_default(),
                 })
                 .collect::<Vec<_>>()
@@ -454,6 +454,7 @@ fn with_fix(exact: &ExactReplayRequest, fix: &str) -> ExactReplayRequest {
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: fix.to_owned(),
+                    signature: None,
                 }],
             },
         );
