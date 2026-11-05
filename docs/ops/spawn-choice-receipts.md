@@ -96,3 +96,22 @@ launch-integrity comparison. It is audit metadata, not a read grant, a new
 freshness check, or the plan's complete entity-source set. Planned-intent erase
 removes it with the rest of the plan; other existing receipt retention rules
 are unchanged.
+
+## Reader model defaults
+
+A read or summary child uses the model owner rows for the spawning execution's
+project and its goal, then the vault. The host lends the actual optional project;
+the first reader spawn freezes it alongside the parent's model list. A host with
+no project uses the vault rows, not a guessed root project. Later entries and
+retries keep the stored project and existing seat receipt.
+
+A generic reader has no placed task type or agent definition in this path. It
+does not borrow its parent's type, agent model measurements or direct-call choice
+mode. Its context reads only the owner scopes it actually has. Reader task-type
+placement remains separate work. Scoped-agent jobs keep their existing profile
+and selection path.
+
+Owner pins and seeds use the existing eligible model set and seat birth. The
+inherited list, backend, route, clock, lease and spend checks stay in place.
+Neither the project context nor an owner seed grants access or changes a budget.
+Task, run, attempt and summary memo identities do not include this context.

@@ -162,6 +162,7 @@ impl ReaderSeats {
             // Any eligible model: an agent's run lends its own list
             // (`run_bound`, and a session run's `parent_model_list`).
             listed: Vec::new(),
+            project: None,
             parent_lease: parent.and_then(ReaderParentHost::lease).cloned(),
         }
     }

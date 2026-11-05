@@ -318,7 +318,17 @@ impl Child {
                         listed,
                         worlds: Vec::new(),
                         served: None,
-                        learning: None,
+                        learning: match &job.kind {
+                            ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
+                                Some(oneiron::llm::seat::SeatLearningContext {
+                                    project: job.binding.project,
+                                    agent: None,
+                                    type_ref: None,
+                                    call_model_choice: None,
+                                })
+                            }
+                            ReaderJobKind::ScopedAgent { .. } => None,
+                        },
                     };
                     let provider = self.provider.as_ref();
                     // No read scope is threaded here: the birth inherits (FIX 11768).

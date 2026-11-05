@@ -7,14 +7,16 @@ use crate::llm::ModelId;
 use crate::task_type::TaskTypeRef;
 use crate::{EntityId, Vault};
 
-/// The frozen dispatch inputs for a task seat's owner rows and measured model reads.
+/// The actual task context for owner rows and, when identified, measured model reads.
 /// This is selection context only: it grants no authority, changes no pin
 /// identity and never substitutes a payer or guest-provided project label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatLearningContext {
     pub project: Option<EntityId>,
-    pub agent: EntityId,
-    pub type_ref: TaskTypeRef,
+    /// The actual executor definition, absent for a generic reader.
+    pub agent: Option<EntityId>,
+    /// The actual placed task type, absent for an untyped reader job.
+    pub type_ref: Option<TaskTypeRef>,
     /// The actual direct call's model-choice mode, even when marked unapplied.
     /// Call pins bypass owner rows; call seeds keep owner seeds from applying.
     pub call_model_choice: Option<crate::learning_setting::SettingMode>,
@@ -30,20 +32,15 @@ pub(crate) fn learned_models(
     let Some(context) = context else {
         return BTreeMap::new();
     };
-    let Some(project) = context.project else {
+    let (Some(project), Some(agent), Some(type_ref)) =
+        (context.project, context.agent, context.type_ref.as_ref())
+    else {
         return BTreeMap::new();
     };
     let models: Vec<_> = models.collect();
     let read = (|| {
         let txn = vault.store.env.read_txn()?;
-        seat_model_rates_in_txn(
-            vault,
-            &txn,
-            project,
-            context.agent,
-            &context.type_ref,
-            &models,
-        )
+        seat_model_rates_in_txn(vault, &txn, project, agent, type_ref, &models)
     })();
     match read {
         Ok(rates) => rates,
@@ -66,9 +63,16 @@ pub(super) fn owner_model_choices(
         return Ok(Default::default());
     }
     let txn = vault.store.env.read_txn()?;
-    let type_ref = crate::learning::TypeRef::from(&context.type_ref);
-    let scopes =
-        crate::learning_setting::read_scopes_in_txn(vault, &txn, context.project, Some(&type_ref))?;
+    let type_ref = context
+        .type_ref
+        .as_ref()
+        .map(crate::learning::TypeRef::from);
+    let scopes = crate::learning_setting::read_scopes_in_txn(
+        vault,
+        &txn,
+        context.project,
+        type_ref.as_ref(),
+    )?;
     let mut choices = crate::learning_setting_choice::owner_spawn_model_choices_in_txn(
         &vault.store,
         &txn,
