@@ -10,12 +10,13 @@ use crate::sync::selector::admit_staged_window_update;
 use crate::window_key::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
+use super::content::{StagedWindowPart, decode_staged_import_parts, encode_staged_import_parts};
 use super::export_foreign_receipt::{
     CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT, STAMPS,
     StagedVaultImport, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus,
     content_key, encode_vault_import_receipt, receipt_id, source_bytes, vault_import_stage_receipt,
 };
-use super::payload::{decode_staged_window_parts, encode_staged_window_parts};
+use super::payload::encode_staged_window_parts;
 use crate::error::{RecordError, RegistryError, SyncError};
 
 /// One-shot hook fired inside the staged-content read window, i.e. AFTER a
@@ -181,10 +182,10 @@ fn staged_from_pending(
     let observed = vault_import_staged_content(vault, &receipt.receipt_id)?;
     let matches_receipt = |admitted: &[u8]| {
         receipt.admitted_update_digest == Some(*blake3::hash(admitted).as_bytes())
-            && decode_staged_window_parts(admitted).is_ok_and(|parts| {
+            && decode_staged_import_parts(admitted).is_ok_and(|parts| {
                 parts
                     .iter()
-                    .all(|(_, bytes)| bytes.len() <= MAX_DECODED_PAYLOAD_BYTES)
+                    .all(|part| part.update.len() <= MAX_DECODED_PAYLOAD_BYTES)
             })
     };
     let admitted = match observed {
@@ -298,11 +299,15 @@ pub fn stage_foreign_vault_import(
             let mut records = Vec::new();
             for part in a.parts() {
                 part.hold_staged(vault, part.key())?;
-                parts.push((part.key().clone(), part.bytes().to_vec()));
+                parts.push(StagedWindowPart {
+                    key: part.key().clone(),
+                    update: part.bytes().to_vec(),
+                    born_with: part.born_with().to_vec(),
+                });
                 records.push((part.key().clone(), part.staged_stamps()));
             }
             (
-                encode_staged_window_parts(&parts)?,
+                encode_staged_import_parts(&parts)?,
                 encode_staged_window_parts(&records)?,
             )
         }

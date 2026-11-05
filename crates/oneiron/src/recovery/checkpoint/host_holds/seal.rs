@@ -31,34 +31,7 @@ use crate::{Error, Result};
 
 pub use crate::store::checkpoint_host_recipient::{HostHoldsRecipient, HostHoldsSealing};
 
-/// Why a hosted vault's checkpoint carries no host-order family. Content
-/// free.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HostHoldsUnavailable {
-    /// The host gave no usable recipient.
-    RecipientMissing,
-    /// The family did not read in the snapshot's transaction.
-    ExportFailed,
-    /// The family did not serialize or seal.
-    SealFailed,
-}
-
-/// What a checkpoint carries of its vault's host-order family, for its host.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HostHoldsAvailability {
-    /// No host carries the vault: none is sealed, and none is owed.
-    NotHosted,
-    /// The complete family, sealed to this recipient at this epoch; its
-    /// member's BLAKE3, which a restore's tag names.
-    Sealed {
-        recipient_id: [u8; 32],
-        recipient_epoch: u64,
-        member_blake3: [u8; 32],
-    },
-    /// None is sealed, and why.
-    Unavailable(HostHoldsUnavailable),
-}
+pub use oneiron_crypto::backup::{HostHoldsAvailability, HostHoldsUnavailable};
 
 /// A sealed member as an image carries it: opaque bytes, MessagePack binary.
 #[derive(Clone, PartialEq, Eq)]

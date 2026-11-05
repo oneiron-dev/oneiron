@@ -202,13 +202,13 @@ pub(super) fn capture(
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
             let (DocKey(_, head), bytes) = row?;
-            // A retained parent goes in below, from its own document; the
-            // value of a decided fork no pending fork needs stays out.
+            // Only pending forks' own values go here. Their retained parents
+            // go in below; unneeded retired heads stay out.
             if head == live_head
                 || required.contains(&(note, head))
                 || NOTE_FORK
                     .get(&vault.store, txn, &head)?
-                    .is_some_and(|fork| fork.decided)
+                    .is_none_or(|fork| fork.decided)
             {
                 continue;
             }
