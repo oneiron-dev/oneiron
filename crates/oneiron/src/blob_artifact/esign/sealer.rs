@@ -16,7 +16,19 @@
 use serde::{Deserialize, Serialize};
 
 /// A PAdES baseline profile. The serde names are the seal organ's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SealProfile {
     BaselineB,
@@ -67,11 +79,28 @@ pub struct EsignSealed {
     pub self_verify: EsignVerdict,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The native sealer's profile-degradation codes, carried without prose parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SealDegradeReason {
+    TimestampUnavailable,
+    ValidationMaterialUnavailable,
+    DocumentTimestampUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SealDegrade {
     pub requested: SealProfile,
     pub achieved: SealProfile,
-    pub reason: String,
+    pub reason: SealDegradeReason,
+}
+
+/// One verified item's requested profile, achieved profile and complete shortfall evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SealProfileEvidence {
+    pub requested: SealProfile,
+    pub achieved: SealProfile,
+    pub degraded: Vec<SealDegrade>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
