@@ -184,6 +184,9 @@ impl SkillStateFact {
                 return Err(malformed());
             }
         }
+        if fact.encode()?.as_slice() != bytes {
+            return Err(malformed());
+        }
         Ok(fact)
     }
 
