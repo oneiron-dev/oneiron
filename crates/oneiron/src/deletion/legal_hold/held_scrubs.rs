@@ -29,7 +29,10 @@ impl Vault {
     ) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
         super::super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
         self.store.settle_gate_scrubs_in_txn(txn)?;
-        self.store.settle_owed_staged_erases_in_txn(txn)?;
+        self.store.settle_owed_staged_erases_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            txn,
+        )?;
         self.settle_owed_byoa_exhaust_erases_in_txn(txn)
     }
 }
