@@ -31402,6 +31402,8 @@ pub struct SpaceMove {
 pub enum ModelRole {
     #[serde(rename = "retrieval_embedder")]
     RetrievalEmbedder,
+    #[serde(rename = "media_embedder")]
+    MediaEmbedder,
     #[serde(rename = "reranker")]
     Reranker,
     #[serde(rename = "extraction_encoder")]
@@ -31414,6 +31416,14 @@ pub enum ModelRole {
     LocalReasoner,
     #[serde(rename = "checker")]
     Checker,
+    #[serde(rename = "decision_head")]
+    DecisionHead,
+    #[serde(rename = "decision_band")]
+    DecisionBand,
+    #[serde(rename = "decision_escalation")]
+    DecisionEscalation,
+    #[serde(rename = "policy_safeguard")]
+    PolicySafeguard,
     #[serde(rename = "dreamer_current")]
     DreamerCurrent,
     #[serde(rename = "dreamer_target")]
