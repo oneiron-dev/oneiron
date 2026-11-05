@@ -599,9 +599,12 @@ fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<
 /// births' work.
 fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
     let born = born_in(vault, txn, entity)?.ok_or(invalid(NO_TEXT))?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &born.pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &born.pointer,
+    )?;
     let mut head = Head {
         entity: entity.to_hex(),
         incarnation: lazy_incarnation(entity)?,
@@ -639,9 +642,12 @@ fn carried_head_in_txn(
         None => {
             let (_, pointer, _) =
                 split_fields(header.entity_type, body, entity).ok_or(invalid(NO_TEXT))?;
-            vault
-                .store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            vault.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                entity,
+                &pointer,
+            )?;
             entity.to_hex()
         }
     };

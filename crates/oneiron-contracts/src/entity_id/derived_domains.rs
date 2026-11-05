@@ -193,6 +193,18 @@ pub const HISTORY_TURN: &[u8] = b"oneiron.ingest.history.turn.v1";
 /// content hash.
 pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 
+/// A mail thread's CONVERSATION (`mail_pack`). Parts: mail source id (hex),
+/// the source's own thread key.
+pub const MAIL_CONVERSATION: &[u8] = b"oneiron.mail_pack.conversation.v1";
+
+/// One provider message's TURN (`mail_pack`). Parts: mail source id (hex),
+/// the provider's message id.
+pub const MAIL_TURN: &[u8] = b"oneiron.mail_pack.turn.v1";
+
+/// One revision of a provider message (`mail_pack`). Parts: mail source id
+/// (hex), the provider's message id, the revision's content hash.
+pub const MAIL_MESSAGE: &[u8] = b"oneiron.mail_pack.message.v1";
+
 /// A NOTE imported from a folder of markdown notes (`note::import`). Parts:
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
@@ -303,9 +315,13 @@ pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
 /// FIX 12000). Parts: the reminder's content ref.
 pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
 
+/// The target of an owner's origin cut act (`authority::origin_cut_target`,
+/// FIX 15740). Parts: the repository's 32-byte portable id.
+pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 57] = [
+pub(crate) const ALL: [&[u8]; 60] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -348,6 +364,9 @@ pub(crate) const ALL: [&[u8]; 57] = [
     HISTORY_CONVERSATION,
     HISTORY_TURN,
     HISTORY_MESSAGE,
+    MAIL_CONVERSATION,
+    MAIL_TURN,
+    MAIL_MESSAGE,
     IMPORTED_NOTE,
     PROJECT_REVISION,
     DECISION_QUESTION,
