@@ -598,7 +598,7 @@ fn without_exposure(request: &LlmRequest, slots: &[&ExposureSlot]) -> Option<Llm
             return None;
         }
         previous = Some((message, part, range.start));
-        let ContentPart::Text { text } =
+        let ContentPart::Text { text, .. } =
             control.messages.get_mut(message)?.content.get_mut(part)?
         else {
             return None;

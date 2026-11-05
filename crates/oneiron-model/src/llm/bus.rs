@@ -234,6 +234,7 @@ impl LlmEventBus {
                 part_id,
                 ContentPart::Text {
                     text: String::new(),
+                    signature: None,
                 },
             ),
             LlmStreamEvent::ReasoningStart {
@@ -253,10 +254,19 @@ impl LlmEventBus {
             LlmStreamEvent::TextDelta { part_id, text }
             | LlmStreamEvent::ReasoningDelta { part_id, text } => {
                 if let Some(
-                    ContentPart::Text { text: value } | ContentPart::Reasoning { text: value, .. },
+                    ContentPart::Text { text: value, .. } | ContentPart::Reasoning { text: value, .. },
                 ) = self.parts.get_mut(part_id).and_then(Option::as_mut)
                 {
                     value.push_str(text);
+                }
+            }
+            LlmStreamEvent::TextEnd { part_id, signature } => {
+                if let Some(ContentPart::Text { signature: stored, .. }) =
+                    self.parts.get_mut(part_id).and_then(Option::as_mut)
+                {
+                    if signature.is_some() {
+                        stored.clone_from(signature);
+                    }
                 }
             }
             LlmStreamEvent::ToolCallStart { part_id, .. }

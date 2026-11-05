@@ -619,7 +619,7 @@ fn message_text(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            oneiron::ContentPart::Text { text } => Some(text.as_str()),
+            oneiron::ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

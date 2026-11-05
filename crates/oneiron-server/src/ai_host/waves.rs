@@ -184,6 +184,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: instructions.clone(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
@@ -196,6 +197,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                             "constraints": request.constraints,
                         })
                         .to_string(),
+                        signature: None,
                     }],
                 },
             ];

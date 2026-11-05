@@ -224,7 +224,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -236,6 +236,7 @@ fn text_message(role: LlmMessageRole, text: &str) -> LlmMessage {
         role,
         content: vec![ContentPart::Text {
             text: text.to_owned(),
+            signature: None,
         }],
     }
 }

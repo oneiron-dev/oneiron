@@ -219,6 +219,7 @@ pub(crate) async fn asked(
                 },
                 ContentPart::Text {
                     text: body.question,
+                    signature: None,
                 },
             ],
         }],
@@ -258,7 +259,7 @@ pub(crate) async fn asked(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()

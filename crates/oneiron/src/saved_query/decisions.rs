@@ -216,6 +216,7 @@ async fn membership_why(
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: json!({"verdict": verdict.as_str(), "ask": wording}).to_string(),
+            signature: None,
         }],
     });
     let request_hash = request
@@ -230,7 +231,7 @@ async fn membership_why(
         .content
         .iter()
         .find_map(|part| match part {
-            ContentPart::Text { text } => serde_json::from_str::<Value>(text.trim()).ok(),
+            ContentPart::Text { text, .. } => serde_json::from_str::<Value>(text.trim()).ok(),
             _ => None,
         })
         .and_then(|reply| reply.get("why").and_then(Value::as_str).map(str::to_owned))

@@ -267,7 +267,7 @@ fn generate(
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => text.len(),
+            ContentPart::Text { text, .. } => text.len(),
             _ => 0,
         })
         .sum();
@@ -325,7 +325,7 @@ fn generate(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect())
@@ -445,6 +445,6 @@ fn briefing(origin: &SurfaceConnectorPayload, event_id: &str, text: &str) -> Str
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }
 }

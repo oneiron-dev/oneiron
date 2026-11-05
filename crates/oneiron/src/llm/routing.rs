@@ -212,6 +212,7 @@ fn verdict_messages(instructions: Option<&str>) -> Result<Vec<LlmMessage>> {
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: instructions.to_owned(),
+                    signature: None,
                 }],
             })
         })

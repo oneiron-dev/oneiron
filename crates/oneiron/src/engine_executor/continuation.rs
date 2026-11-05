@@ -397,9 +397,11 @@ pub(super) fn turn_note(
         content: vec![
             ContentPart::Text {
                 text: CONTINUATION_NOTE_FRAME.to_owned(),
+                signature: None,
             },
             ContentPart::Text {
                 text: note.prompt.clone(),
+                signature: None,
             },
         ],
     })
