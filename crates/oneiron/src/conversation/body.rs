@@ -266,7 +266,7 @@ pub(crate) fn create_in_txn(
             txn,
             id,
             &MembershipRow {
-                v: 1,
+                v: membership::MEMBERSHIP_ROW_VERSION,
                 person: *person,
                 action: MembershipAction::Join,
                 at: occurred.start,
@@ -276,6 +276,7 @@ pub(crate) fn create_in_txn(
                 } else {
                     occurred.start
                 }),
+                handoff: None,
             },
         )?;
     }
