@@ -8,12 +8,14 @@ import returns no capture receipt.
 
 The ingest response's `capture_receipt` is the committed `gate:<hex>` reference.
 Manifest get and projected-get responses omit that optional field. Retained
-capture history is available through the existing `vault.receipts` gate family:
+capture history is available through the existing `vault.receipts` gate family,
+both with omitted `kinds` and with explicit `kinds=["gate"]`, including pages:
 
 - `content_kind` is `code_snapshot_capture` and `outcome` is `imported`.
 - `reason_codes` contains `gate.code.capture.imported`.
 - `claim_ref` names the actual snapshot CODE_ARTIFACT. Despite that shared field's
-  name, its typed `claim` reference is CODE_ARTIFACT, not CLAIM.
+  name, its typed `claim` reference is CODE_ARTIFACT, not CLAIM. The unified
+  family's trigger is the generic `entity:<artifact-hex>` binding.
 - `fields.repo` is that artifact's hex id. `fields.snapshot` is the filtered
   snapshot's fork hash, not the Git commit or an unfiltered input-tree hash.
 
