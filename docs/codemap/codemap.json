@@ -15704,7 +15704,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 9
      }
     },
@@ -19127,7 +19127,7 @@
      "purpose": "Content-addressed semantic changes",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -48791,13 +48791,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 14,
       "fn": 1
      }
     },
@@ -53826,7 +53826,7 @@
      "path": "src/origin/secret_projection.rs",
      "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -74869,13 +74869,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/checkpoint_payload/owners.rs",
      "purpose": "Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -74889,7 +74889,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/checkpoint_payload/restore.rs",
@@ -110169,7 +110169,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat/next_turn.rs",
-     "purpose": "What a live chat conversation's next turn is known to start with past its committed history (I1 = C…",
+     "purpose": "What a conversation's next chat turn is known to start with past its committed history (I1 = C, ARCH-0067…",
      "surface": {
       "crate-vis": 1
      }
@@ -111023,7 +111023,7 @@
      "path": "src/api/context_board/turn_actions.rs",
      "purpose": "The context board a queued Continue or Retry reads (FIX 6920), as a live chat turn reads its own…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
