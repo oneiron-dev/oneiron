@@ -58,6 +58,12 @@ maps are not owned by the temporaries. The existing collections, sorts and JSON
 field evaluation stay in place. Each lease survives its returned vector's
 serialization temporary, but does not cover the retained replay JSON.
 
+World-authority replay records its two temporary hex-ID vectors and optional
+owned default-claim hex string on the same line. Only those new backing
+capacities are counted. Source authority sets, source claim IDs and retained
+JSON are separate. The existing field order and authority values are unchanged;
+the enclosing serialization scope keeps the lease past its ID temporaries.
+
 The shared replay identity also holds the actual backing capacities of its
 media-space vector and two copied metadata hash buffers on that line until the
 native attempt releases the identity. Each hash copy is recorded immediately
