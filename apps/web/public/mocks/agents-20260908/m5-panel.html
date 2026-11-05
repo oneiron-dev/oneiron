@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m5 · the panel</title>
+<script>
+(function(){var h=document.documentElement,p='m5',d={voice:'indent'},t=null;
+try{t=localStorage.getItem('oneiron-theme')}catch(e){}h.dataset.theme=t==='light'?'light':'dark';
+for(var k in d){var v=null;try{v=localStorage.getItem('mock-agents:'+p+':'+k)}catch(e){}h.dataset[k]=v||d[k];}})();
+</script>
+<link rel="stylesheet" href="mock.css">
+<style>
+/* the vault behind, faint */
+.pane-body.faint { opacity: 0.55; }
+.vfilters { display: flex; gap: 14px; align-items: baseline; font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.vfilters .on { color: var(--silver-1); }
+.vwrap { flex: 1; min-height: 0; overflow: hidden; }
+table.ledger { width: 100%; border-collapse: collapse; }
+table.ledger th { font-family: var(--mono); font-weight: 400; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--silver-3); text-align: left; padding: 6px 10px 8px; }
+table.ledger td { padding: 6px 10px; height: 34px; vertical-align: middle; }
+table.ledger .claim { font-family: var(--serif); font-size: 14px; line-height: 1.45; }
+table.ledger .conf-1 { color: var(--silver-1); } table.ledger .conf-2 { color: var(--silver-2); } table.ledger .conf-3 { color: var(--silver-3); }
+table.ledger td.mono { font-family: var(--mono); font-size: 12px; color: var(--silver-3); font-feature-settings: "tnum" 1; white-space: nowrap; }
+table.ledger td.num { text-align: right; }
+table.ledger .aname { font-family: var(--mono); font-size: 12px; }
+table.ledger tr.open td:first-child { box-shadow: inset 2px 0 0 var(--silver-3); }
+
+/* the panel: the chat, the Linear shape, risen from the line's corner */
+.gsheet {
+  position: fixed; right: 16px; bottom: 42px; z-index: 30;
+  width: 420px; height: min(660px, 78vh);
+  display: flex; flex-direction: column;
+  background: var(--bg-elevated); border-radius: 8px;
+  box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
+}
+.ginner { flex: 1; min-height: 0; padding: 12px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+.chat-head { display: flex; align-items: baseline; gap: 9px; }
+.chat-head .chat-title { font-family: var(--mono); font-size: 11px; }
+.chat-head .cdoing { font-family: var(--serif); font-size: 13px; color: var(--silver-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-head .chat-room { font-size: 11px; flex: none; }
+.chat-close { flex: none; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 13px; color: var(--silver-4); }
+.chat-close:hover { color: var(--silver-1); }
+.chat-thread { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 4px; }
+.chat-thread > :first-child { margin-top: auto; }
+.gsheet .msg { max-width: 100%; }
+.gsheet .msg .txt { font-size: 13.5px; }
+.gsheet .cwidget { max-width: 100%; padding: 8px 11px 7px; }
+.gsheet .cwidget .cw-title { font-size: 13px; }
+.gsheet .cwidget .cw-why, .gsheet .cwidget .cw-line { font-size: 12.5px; }
+html[data-voice="indent"] .gsheet .msg.mine { margin-left: 18%; }
+/* the rail folds into run cards above the composer */
+.pruns { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.prun { background: var(--bg-well); border-radius: 6px; padding: 7px 11px 6px; display: flex; flex-direction: column; gap: 1px; }
+.prun .rt { display: flex; align-items: baseline; gap: 10px; }
+.prun .rt .title { font-family: var(--serif); font-size: 13px; color: var(--silver-1); flex: 1; min-width: 0; }
+.prun.recede .rt .title { color: var(--silver-3); }
+.prun .rt .act { font-size: 11px; opacity: 0; }
+.prun:hover .rt .act { opacity: 1; }
+.prun .kid { padding-left: 8px; font-size: 10.5px; }
+.chat-line { flex: none; display: flex; gap: 10px; align-items: center; }
+</style>
+</head>
+<body class="app" data-page="m5" data-switches="voice" data-active="vault">
+<div class="app-frame">
+<nav class="rail" aria-label="the app"></nav>
+<main class="pane">
+<div class="pane-body faint" aria-hidden="true">
+  <div class="pane-head">
+    <h1>Vault</h1>
+    <span class="pane-tools"><button type="button" class="act">export</button><button type="button" class="hint-btn">?</button></span>
+  </div>
+  <div class="vfilters"><span class="on">all · 214</span><span>proposed · 2</span><span>accepted</span><span>rejected</span><span style="margin-left:auto">hokuei ▾</span><span>today</span></div>
+  <div class="vwrap">
+    <table class="ledger">
+      <thead><tr><th>claim</th><th class="num">conf</th><th>world</th><th>since</th><th>by</th></tr></thead>
+      <tbody>
+        <tr><td class="claim conf-1">Mika Tanaka prefers LINE for quick questions</td><td class="mono num">0.90</td><td class="mono">hokuei</td><td class="mono">09:15</td><td><span class="aname" data-agent="eiri">Eiri</span></td></tr>
+        <tr><td class="claim conf-1">Hokuei ops received the pilot scope summary</td><td class="mono num">0.95</td><td class="mono">hokuei</td><td class="mono">11:20</td><td><span class="aname" data-agent="eiri">Eiri</span></td></tr>
+        <tr><td class="claim conf-2">Kansai freight terms move to 30-day settlement from October</td><td class="mono num">0.82</td><td class="mono">hokuei</td><td class="mono">12:48</td><td><span class="aname" data-agent="tory">Tory</span></td></tr>
+        <tr><td class="claim conf-2">Hokuei’s fiscal year ends in March</td><td class="mono num">0.93</td><td class="mono">hokuei</td><td class="mono">12:48</td><td><span class="aname" data-agent="tory">Tory</span></td></tr>
+        <tr><td class="claim conf-2">Kenji Morita is Hokuei’s COO, since 2024</td><td class="mono num">0.88</td><td class="mono">hokuei</td><td class="mono">13:58</td><td><span class="aname" data-agent="eiri">Eiri</span></td></tr>
+        <tr><td class="claim conf-2">The pilot starts on the 14th, unless Hokuei moves it</td><td class="mono num">0.70</td><td class="mono">hokuei</td><td class="mono">09:02</td><td><span class="seal seal-human">o</span></td></tr>
+        <tr><td class="claim conf-3">Hokuei may be consolidating suppliers this fiscal year</td><td class="mono num">0.41</td><td class="mono">hokuei</td><td class="mono">08:30</td><td><span class="aname" data-agent="tory">Tory</span></td></tr>
+        <tr><td class="claim conf-3">Mika Tanaka’s team avoids shellfish at the dinner</td><td class="mono num">0.55</td><td class="mono">hokuei</td><td class="mono">03:12</td><td><span class="aname" data-agent="antevon">Antevon</span></td></tr>
+        <tr><td class="claim conf-1">Yurii’s register: short and warm, no exclamation marks</td><td class="mono num">0.91</td><td class="mono">base</td><td class="mono">08-02</td><td><span class="seal seal-human">o</span></td></tr>
+        <tr><td class="claim conf-2">Hokuei ships mostly through Kobe, some through Osaka</td><td class="mono num">0.78</td><td class="mono">hokuei</td><td class="mono">08-29</td><td><span class="aname" data-agent="tory">Tory</span></td></tr>
+        <tr><td class="claim conf-2">The July filings say nothing about Hokuei</td><td class="mono num">0.86</td><td class="mono">hokuei</td><td class="mono">11:05</td><td><span class="aname" data-agent="tory">Tory</span></td></tr>
+        <tr><td class="claim conf-1">Antevon consolidates the vault at 02:40 every night</td><td class="mono num">0.99</td><td class="mono">base</td><td class="mono">07-19</td><td><span class="seal seal-human">o</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</main>
+</div>
+
+<div class="gsheet" role="dialog" aria-label="Eiri · the chat">
+  <div class="ginner">
+    <div class="chat-head">
+      <span class="chat-title aname" data-agent="eiri">Eiri</span>
+      <span class="cdoing">drafting the COO intro</span>
+      <a class="act chat-room" href="m1-rail.html" title="the same conversation, full size">room</a>
+      <button type="button" class="chat-close" title="close · esc">×</button>
+    </div>
+
+    <div class="chat-thread">
+      <div class="msg mine">
+        <div class="body"><p class="txt">Tory found nothing in the filings. Go ahead with the COO intro.</p></div>
+        <span class="at">13:52</span>
+      </div>
+      <div class="msg" data-agent="eiri">
+        <div class="body"><p class="txt">Starting it in Yurii’s register. It will queue, not send.</p></div>
+        <span class="at">13:55</span>
+      </div>
+      <div class="msg" data-agent="eiri">
+        <div class="body">
+          <p class="txt">The reply is ready.</p>
+          <div class="cwidget">
+            <span class="cw-title">Reply to Mika Tanaka: the quote for Tuesday</span>
+            <span class="cw-line">a draft · LINE · waits in your inbox</span>
+            <span class="cw-foot"><a class="act" href="#" title="the draft, in the inbox">open</a></span>
+          </div>
+        </div>
+        <span class="at">14:02</span>
+      </div>
+      <div class="msg" data-agent="eiri">
+        <div class="body">
+          <div class="cwidget gate">
+            <span class="cw-title">Reach the Hokuei COO through Yurii’s account?</span>
+            <span class="cw-why">A new audience for the LinkedIn grant, so I ask before I reach. Every send stays a human click.</span>
+            <span class="cw-foot"><a class="act" href="#">allow once</a><a class="act" href="#">allow + grant</a><a class="act" href="#">deny</a><a class="act" href="#" title="the same ask, in the inbox">in the inbox</a></span>
+          </div>
+        </div>
+        <span class="at">14:06</span>
+      </div>
+    </div>
+
+    <div class="pruns" aria-label="Eiri · work">
+      <div class="prun" data-agent="eiri">
+        <div class="rt"><a class="title" href="m4-run.html" title="open the run · its own thread">The COO intro</a><button type="button" class="act" title="settles at the next breakpoint">stop</button></div>
+        <div class="kid"><span class="kt">· drafting · 12m</span></div>
+        <div class="kid need"><span class="live-dot" aria-hidden="true"></span><span class="kt">reaching the COO · needs you</span></div>
+      </div>
+      <div class="prun recede" data-agent="eiri">
+        <div class="rt"><a class="title" href="#" title="open the run">The scope thread</a><button type="button" class="act">stop</button></div>
+        <div class="kid"><span class="kt">· watching Hokuei ops · 2h 47m</span></div>
+      </div>
+    </div>
+
+    <div class="chat-line">
+      <span class="agent-chip" data-agent="eiri" title="you are talking to Eiri"><span class="aname">eiri</span><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5"/></svg></span>
+      <input class="gask-input" type="text" placeholder="message Eiri · / for commands" aria-label="message">
+    </div>
+  </div>
+</div>
+<script src="mock.js"></script>
+</body>
+</html>
