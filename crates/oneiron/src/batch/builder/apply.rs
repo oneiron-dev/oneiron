@@ -131,6 +131,8 @@ impl BatchBuilder<'_> {
                 Some(&actor),
                 authority_beside,
                 own_device,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
             staged.commit()?;
             if let Some(scope) = scope {
@@ -138,7 +140,15 @@ impl BatchBuilder<'_> {
             }
             Ok(())
         } else {
-            self.apply_staged(wtxn, gate_mode, None, authority_beside, own_device)
+            self.apply_staged(
+                wtxn,
+                gate_mode,
+                None,
+                authority_beside,
+                own_device,
+                #[cfg(feature = "sync")]
+                record_document,
+            )
         }
     }
 
@@ -149,6 +159,7 @@ impl BatchBuilder<'_> {
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
+        #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
     ) -> Result<()> {
         let vault = self.vault;
         // Preserve original-position admission before routing removes a Put.
