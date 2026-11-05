@@ -46,7 +46,12 @@ pub(super) fn bundle_pads_refill(
     let revision = sealed_digest_from_hex(&input.revision).ok_or_else(AppError::invalid_params)?;
     let refill = sealed_bundle_refill(&server.vault, peer, generation, &digest, &revision);
     server.transfers.reconcile_sealed_stages(&server.vault);
-    let refill = refill.map_err(|_| AppError::not_found("sealed bundle", None))?;
+    let refill = refill.map_err(|error| match &error {
+        oneiron::Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory => {
+            AppError::internal_server_error("sealed bundle refill failed")
+        }
+        _ => AppError::not_found("sealed bundle", None),
+    })?;
     let mut answer = json!({ "outcome": refill.outcome() });
     match &refill {
         PadObjectRefill::Refilled(entry) => answer["entry"] = bundle_entry(entry),
