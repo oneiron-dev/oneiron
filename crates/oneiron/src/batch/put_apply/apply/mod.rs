@@ -41,11 +41,11 @@ mod rewrite;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'_>,
 ) -> Result<AppliedPut> {
-    apply_put_beside(store, wtxn, request, None, None)
+    apply_put_beside(write, wtxn, request, None, None)
 }
 
 /// [`apply_put`] for a put whose batch carries other authority rows
@@ -54,12 +54,13 @@ pub(in crate::batch) fn apply_put(
 /// the witness check with `own_device`, the lane the ingest door gave it
 /// when one of the owner's own machines sent it (FIX 9600).
 pub(in crate::batch) fn apply_put_beside<'a>(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<AppliedPut> {
+    let store = write.store;
     let data = request.row.data;
     let admission::Admission {
         fixed,
@@ -94,7 +95,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         authority_first_seen_key,
         escalated_skill_body,
     } = rewrite::rewrite_put_body(
-        store,
+        write,
         wtxn,
         data,
         &fixed,
@@ -122,7 +123,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         &mut portable_agent_source,
     )?;
     audit::audit_and_stage_body(
-        store,
+        write,
         wtxn,
         data,
         &fixed,
@@ -136,7 +137,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         },
     )?;
     projections::stage_put_projections(
-        store,
+        write,
         wtxn,
         data,
         &fixed,
