@@ -21,12 +21,50 @@ pub(super) struct Pin {
     pub(super) text: String,
 }
 
+pub(super) struct PinCohort {
+    // Pins and their text drop before their memory charge.
+    rows: Vec<Pin>,
+    memory: oneiron::host_memory::MemoryLease,
+}
+
+impl PinCohort {
+    pub(super) fn with_capacity(
+        memory: &oneiron::host_memory::MachineMemory,
+        capacity: usize,
+    ) -> Self {
+        let mut cohort = Self {
+            rows: Vec::with_capacity(capacity),
+            memory: memory.empty_lease(),
+        };
+        cohort
+            .memory
+            .materialized(0, pin_backing_bytes(cohort.rows.capacity()));
+        cohort
+    }
+
+    pub(super) fn push(&mut self, pin: Pin) {
+        let text = pin.text.capacity() as u64;
+        let previous_capacity = self.rows.capacity();
+        self.rows.push(pin);
+        let backing = pin_backing_bytes(self.rows.capacity() - previous_capacity);
+        self.memory.materialized(0, backing.saturating_add(text));
+    }
+
+    pub(super) fn as_slice(&self) -> &[Pin] {
+        &self.rows
+    }
+}
+
+fn pin_backing_bytes(capacity: usize) -> u64 {
+    (capacity as u64).saturating_mul(std::mem::size_of::<Pin>() as u64)
+}
+
 pub(super) fn rerank_pins(
     backend: &Backend,
     candidates: &[RerankCandidate<'_>],
-) -> oneiron::Result<Vec<Pin>> {
+) -> oneiron::Result<PinCohort> {
     if candidates.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PinCohort::with_capacity(&backend.server.memory, 0));
     }
     let mut revisions = Vec::with_capacity(candidates.len());
     let mut refs = Vec::with_capacity(candidates.len());
@@ -52,7 +90,7 @@ pub(super) fn rerank_pins(
     if rows.len() != candidates.len() {
         return Err(invalid("memory reason rerank pin is not readable"));
     }
-    let mut pins = Vec::with_capacity(candidates.len());
+    let mut pins = PinCohort::with_capacity(&backend.server.memory, candidates.len());
     for ((candidate, revision), row) in candidates.iter().zip(revisions).zip(rows) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
@@ -117,9 +155,9 @@ pub(super) fn rerank_pins(
 pub(super) fn compose_pins(
     backend: &Backend,
     evidence: &[super::super::MemoryReasonEvidence],
-) -> oneiron::Result<Vec<Pin>> {
+) -> oneiron::Result<PinCohort> {
     if evidence.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PinCohort::with_capacity(&backend.server.memory, 0));
     }
     let refs: Vec<_> = evidence
         .iter()
@@ -140,7 +178,7 @@ pub(super) fn compose_pins(
     if rows.len() != evidence.len() {
         return Err(invalid("memory reason compose pin is not readable"));
     }
-    let mut pins = Vec::with_capacity(evidence.len());
+    let mut pins = PinCohort::with_capacity(&backend.server.memory, evidence.len());
     for (expected, row) in evidence.iter().zip(rows) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
