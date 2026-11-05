@@ -194,7 +194,7 @@ impl<'a> MessageSource<'a> {
         if let Some(value) = self.parts.get(&(db, key.to_vec())) {
             return Some(value.clone());
         }
-        let rows = self.databases.get(database_name(db)?)?;
+        let rows = self.databases.get(database_name(db))?;
         let at = rows
             .binary_search_by(|(row, _)| row.as_slice().cmp(key))
             .ok()?;
@@ -205,7 +205,7 @@ impl<'a> MessageSource<'a> {
     /// opened part's over the image's.
     fn scan(&self, db: RowDb, prefix: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
-        if let Some(image) = database_name(db).and_then(|name| self.databases.get(name)) {
+        if let Some(image) = self.databases.get(database_name(db)) {
             let start = image.partition_point(|(key, _)| key.as_slice() < prefix);
             for (key, value) in &image[start..] {
                 if !key.starts_with(prefix) {
@@ -373,13 +373,17 @@ fn owner_parts(
     let held = opened.held_up();
     for part in &opened.rows {
         let at = part.at();
-        if held.contains(at) || !at.path.is_empty() {
+        if held.contains(at) {
             continue;
         }
         match part {
-            RowPart::Exact { value, .. } => {
+            // A whole row; a member fragment is no stored row.
+            RowPart::Exact { value, .. } if at.path.is_empty() => {
                 parts.insert((at.db, at.key.clone()), value.clone());
             }
+            RowPart::Exact { .. } => {}
+            // Its placeholder's path names the actor-keyed slot; the row's
+            // own key and value are in the actor part naming it.
             RowPart::ActorKeyed { .. } => {
                 let actors: Vec<_> = opened
                     .actor_parts
@@ -400,13 +404,13 @@ fn owner_parts(
 }
 
 /// The image database a row's database is.
-fn database_name(db: RowDb) -> Option<&'static str> {
+fn database_name(db: RowDb) -> &'static str {
     match db {
-        RowDb::Entities => Some("entities"),
-        RowDb::EdgesOut => Some("edges_out"),
-        RowDb::EdgesIn => Some("edges_in"),
-        RowDb::VaultMeta => Some("vault_meta"),
-        RowDb::SyncState => Some("sync_state"),
-        RowDb::SyncQueue => Some("sync_queue"),
+        RowDb::Entities => "entities",
+        RowDb::EdgesOut => "edges_out",
+        RowDb::EdgesIn => "edges_in",
+        RowDb::VaultMeta => "vault_meta",
+        RowDb::SyncState => "sync_state",
+        RowDb::SyncQueue => "sync_queue",
     }
 }

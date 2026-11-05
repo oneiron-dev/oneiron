@@ -210,7 +210,10 @@ its image), `commitment_digest` (the BLAKE3 of its signed commitment),
 and its flush, the HOST sends exactly one byte, `ARTIFACT_FILE_MARKER`
 (`0x41`), carrying exactly one SCM_RIGHTS descriptor: the artifact's file,
 opened read-only, which the HOST keeps open until the exact acknowledgement.
-The source reads the request with exact reads, so nothing reads past it, then
+The descriptor shares the HOST's file offset, so from the hand-over to that
+acknowledgement the HOST neither reads nor seeks it; the source reads it from
+the start. The source reads the request with exact reads, so nothing reads
+past it, then
 receives that byte with its descriptor close-on-exec. Another byte, a
 truncated control message, another control message, or any count but one
 descriptor refuses, and every descriptor received is closed.
@@ -223,7 +226,9 @@ Before `Accepted`, the source refuses any of these:
   does not admit;
 - a verified checkpoint id or commitment digest other than the request's;
 - a key custody of another lineage (`custody_lineage_mismatch`, the image's
-  binding is not the live vault's) or a missing key.
+  binding is not the live vault's) or a missing key;
+- a vault key this process does not hold: the capture never unlocks,
+  provisions or writes a key.
 
 It holds the custody read guard from the live custody read to the exact
 acknowledgement. The custody plan is the live vault's, as a restore preflight

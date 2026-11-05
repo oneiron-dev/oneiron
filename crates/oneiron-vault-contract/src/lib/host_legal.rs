@@ -62,10 +62,13 @@ pub enum CaptureScope {
 /// The one byte the HOST sends, alone, right after an
 /// [`CaptureScope::ArtifactMessages`] request frame and its flush, carrying
 /// exactly one SCM_RIGHTS descriptor: the artifact's file, opened read-only,
-/// which the HOST keeps open until the exact acknowledgement. The source
-/// reads the request with exact reads, so nothing reads past the frame, then
-/// receives this byte with its one descriptor; any other byte, a truncated
-/// control message or any other descriptor count refuses.
+/// which the HOST keeps open until the exact acknowledgement. The descriptor
+/// shares the HOST's file offset, so from the hand-over to that
+/// acknowledgement the HOST neither reads nor seeks it; the source reads it
+/// from the start. The source reads the request with exact reads, so nothing
+/// reads past the frame, then receives this byte with its one descriptor;
+/// any other byte, a truncated control message or any other descriptor count
+/// refuses.
 pub const ARTIFACT_FILE_MARKER: u8 = 0x41;
 
 /// The backup artifact an artifact capture reads, as the HOST verified the
@@ -585,11 +588,14 @@ pub struct CaptureSummary {
     /// messages the artifact holds no readable MESSAGE row for. A truthful
     /// coverage gap, never claimed as captured.
     pub missed_messages: Vec<[u8; 16]>,
-    /// Selected messages whose result attachment names a body the message
-    /// no longer holds, or that no row holds: their rows are captured, the
-    /// body is not and is never claimed. A held body is component 11
-    /// (`MessageResultBody`), revision the BLAKE3 of that message's full
-    /// stored entity row. Empty for every other capture.
+    /// In a Messages capture, selected messages whose result attachment
+    /// names a body the message no longer holds, or that no row holds: their
+    /// rows are captured, the body is not and is never claimed. A held body
+    /// is component 11 (`MessageResultBody`), revision the BLAKE3 of that
+    /// message's full stored entity row. In an artifact capture, every
+    /// captured message whose row names a result attachment, since that
+    /// extent streams no body: uncaptured, which says nothing about whether
+    /// the body is gone. Empty for every other capture.
     pub absent_result_bodies: Vec<[u8; 16]>,
     /// Only on a prospective order's last batch of one source process, sent
     /// after every writer of that process stopped: `Some(n)`, the order's

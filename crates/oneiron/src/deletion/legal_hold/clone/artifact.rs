@@ -11,7 +11,7 @@
 //! acknowledgement. What an erase or purge retired since the cut stays shut.
 
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 
@@ -57,13 +57,18 @@ pub(super) fn capture(
     if !metadata.is_file() || metadata.len() != artifact.file_len {
         return Err(refused("legal capture artifact file length"));
     }
+    // The descriptor shares the HOST's file offset, which its own check
+    // may have left anywhere: read from the start.
+    (&file).seek(SeekFrom::Start(0))?;
     let evidence = inspect_backup(BufReader::new(&file))
         .map_err(|_| refused("legal capture artifact file does not inspect"))?;
     if evidence.outer_blake3 != artifact.file_blake3 || evidence.size != artifact.file_len {
         return Err(refused("legal capture artifact file digest"));
     }
     check()?;
-    let key = vault.checkpoint_key()?;
+    // From the key this handle holds: a locked vault refuses, and nothing
+    // is unlocked, provisioned or written.
+    let key = vault.held_checkpoint_key()?;
     // The custody guard BEFORE the live custody read, held to the exact
     // ACK: no retirement finishes while the artifact's compartments open.
     let _custody = vault.store.gate_custody_read_guard()?;
