@@ -2,7 +2,9 @@
 
 use heed::RwTxn;
 
-use super::{CheckpointContent, CheckpointRow, TABLE, body_owner, invalid, key, release_in_txn};
+use super::{
+    CheckpointBinding, CheckpointRow, TABLE, body_owner, fence, invalid, key, release_in_txn,
+};
 use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
 use crate::store::checkpoint_payload::Subtype;
@@ -12,7 +14,7 @@ use crate::{EntityId, Result, Vault};
 fn erase_matching_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
-    matches: impl Fn(&CheckpointContent) -> bool,
+    matches: impl Fn(&CheckpointBinding) -> bool,
 ) -> Result<()> {
     let mut erased: Vec<(EntityId, CheckpointRow)> = Vec::new();
     for row in TABLE.iter_raw_from(store, txn, &[])? {
@@ -23,7 +25,11 @@ fn erase_matching_in_txn(
         let Ok(row) = TABLE.decode_value(&bytes) else {
             continue;
         };
-        if row.content.as_ref().is_some_and(&matches) {
+        if row.binding().as_ref().is_some_and(&matches) {
+            if key != super::key(row.attempt)? {
+                return Err(invalid("workflow checkpoint binding has foreign key"));
+            }
+            fence::require(store, txn, row.attempt, row.generation)?;
             erased.push((key, row));
         }
     }
@@ -48,10 +54,10 @@ pub(crate) fn erase_source_in_txn(
     erase_matching_in_txn(store, txn, |content| depends_on(content, source))
 }
 
-fn depends_on(content: &CheckpointContent, source: &EntityId) -> bool {
-    content.actor == *source
-        || content.room == Some(*source)
-        || content.progress.known_sources.contains(source)
+fn depends_on(binding: &CheckpointBinding, source: &EntityId) -> bool {
+    binding.actor == *source
+        || binding.room == Some(*source)
+        || binding.known_sources.contains(source)
 }
 
 /// The native delete reason is still available here, before either the
@@ -74,10 +80,10 @@ pub(crate) fn settle_payloads_in_txn(
         let Ok(row) = TABLE.decode_value(&bytes) else {
             continue;
         };
-        let Some(content) = &row.content else {
+        let Some(content) = row.binding() else {
             continue;
         };
-        if !depends_on(content, source) {
+        if !depends_on(&content, source) {
             continue;
         }
         if row_key != key(row.attempt)? || content.body_owner != body_owner(row.attempt)? {

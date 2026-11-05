@@ -18,18 +18,12 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
-        let Some(content) = &row.value.content else {
+        let Some(content) = row.value.binding() else {
             out.structure(row.at, row.bytes, Vec::new());
             continue;
         };
         let owner = OwnerRef::entity(&content.actor);
-        for source in content
-            .progress
-            .known_sources
-            .iter()
-            .copied()
-            .chain(content.room)
-        {
+        for source in content.known_sources.iter().copied().chain(content.room) {
             out.depends(owner, &row.at, OwnerRef::entity(&source));
         }
         out.exact(owner, row.at, row.bytes);

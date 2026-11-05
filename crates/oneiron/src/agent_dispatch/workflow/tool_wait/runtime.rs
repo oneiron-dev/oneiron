@@ -4,7 +4,7 @@ use heed::{RoTxn, RwTxn};
 
 use super::{
     CheckpointRow, TABLE, WorkflowToolProgress, WorkflowToolTranscript, check_progress_in_txn,
-    identity_in_txn, invalid, key, prepare, put_in_txn, release_in_txn, transcript_in_txn,
+    fence, identity_in_txn, invalid, key, prepare, put_in_txn, release_in_txn, transcript_in_txn,
 };
 use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::{
@@ -46,6 +46,7 @@ fn checked_content<'a>(
     if row.attempt != actual.id || row.generation != actual.attempt_count {
         return Err(invalid("workflow checkpoint generation is stale"));
     }
+    fence::require(&vault.store, txn, actual.id, actual.attempt_count)?;
     let content = row
         .content
         .as_ref()
@@ -86,7 +87,7 @@ impl AgentDispatcher<'_> {
         let txn = self.vault.store.env.read_txn()?;
         let actual = leased_row(self.vault, &txn, leased)?;
         let Some(row) = TABLE.get(&self.vault.store, &txn, &k)? else {
-            return if expected.is_none() {
+            return if expected.is_none() && !fence::check(&self.vault.store, &txn, &actual)? {
                 Ok(None)
             } else {
                 Err(invalid("workflow checkpoint changed during its read"))
@@ -258,7 +259,11 @@ pub(crate) fn adopt_claim_in_txn(
 ) -> Result<()> {
     let k = key(before.id)?;
     let Some(mut row) = TABLE.get(&vault.store, txn, &k)? else {
-        return Ok(());
+        return if fence::check(&vault.store, txn, before)? {
+            Err(invalid("workflow checkpoint payload is unavailable"))
+        } else {
+            Ok(())
+        };
     };
     checked_content(vault, txn, before, &row)?;
     if claimed.id != before.id
@@ -268,7 +273,8 @@ pub(crate) fn adopt_claim_in_txn(
         return Err(invalid("workflow checkpoint claim has foreign generation"));
     }
     row.generation = claimed.attempt_count;
-    TABLE.put(vault, txn, &k, &row)
+    TABLE.put(vault, txn, &k, &row)?;
+    fence::put(&vault.store, txn, claimed)
 }
 
 /// Called before the native lease-fenced completion, in its same writer.
@@ -279,8 +285,12 @@ pub(crate) fn clear_in_txn(
     leased: &AttemptRecord,
 ) -> Result<()> {
     let k = key(leased.id)?;
-    let Some(row) = TABLE.get(&vault.store, txn, &k)? else {
-        return Ok(());
+    let Some(mut row) = TABLE.get(&vault.store, txn, &k)? else {
+        return if fence::check(&vault.store, txn, leased)? {
+            Err(invalid("workflow checkpoint payload is unavailable"))
+        } else {
+            Ok(())
+        };
     };
     let actual = leased_row(vault, txn, leased)?;
     if row.attempt != actual.id || row.generation != actual.attempt_count {
@@ -288,11 +298,19 @@ pub(crate) fn clear_in_txn(
             "workflow checkpoint completion has foreign generation",
         ));
     }
-    if let Some(content) = &row.content {
-        release_in_txn(&vault.store, txn, content)?;
+    fence::require(&vault.store, txn, actual.id, actual.attempt_count)?;
+    if let Some(content) = row.content.take() {
+        release_in_txn(&vault.store, txn, &content)?;
+        row.retained = Some(content.binding());
     }
-    TABLE.delete(&vault.store, txn, &k)?;
-    Ok(())
+    let retained = row.retained.clone();
+    TABLE.admit(vault, txn, &k, &mut row)?;
+    if row.retained != retained {
+        return Err(invalid(
+            "workflow checkpoint binding changed during admission",
+        ));
+    }
+    TABLE.put(vault, txn, &k, &row)
 }
 
 /// The failure ladder has already selected Retry. A positive checkpoint
@@ -305,7 +323,11 @@ pub(crate) fn requeue_failure_in_txn(
     input: &RetryAttempt,
 ) -> Result<Option<AttemptRecord>> {
     let Some(row) = TABLE.get(&vault.store, txn, &key(source.id)?)? else {
-        return Ok(None);
+        return if fence::check(&vault.store, txn, source)? {
+            Err(invalid("workflow checkpoint payload is unavailable"))
+        } else {
+            Ok(None)
+        };
     };
     let actual = leased_row(vault, txn, source)?;
     if row.attempt != actual.id || row.generation != actual.attempt_count {
@@ -354,7 +376,7 @@ fn failure_count_in_txn(
     actual: &AttemptRecord,
 ) -> Result<Option<usize>> {
     let Some(row) = TABLE.get(&vault.store, txn, &key(actual.id)?)? else {
-        return Ok(None);
+        return Ok(fence::check(&vault.store, txn, actual)?.then_some(actual.history.len()));
     };
     if row.attempt != actual.id || row.generation != actual.attempt_count {
         return Err(invalid("workflow checkpoint failure history is stale"));

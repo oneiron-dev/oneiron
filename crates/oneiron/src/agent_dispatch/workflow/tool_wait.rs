@@ -19,6 +19,7 @@ use super::super::{AgentDispatcher, SpendScopeId, agent_dispatch_run_actor};
 
 pub(crate) mod checkpoint;
 mod erased;
+mod fence;
 mod lifetime;
 mod runtime;
 pub(crate) use erased::settle_erased_in_txn;
@@ -96,6 +97,7 @@ pub(crate) struct CheckpointRow {
     attempt: AttemptId,
     generation: u32,
     content: Option<CheckpointContent>,
+    retained: Option<CheckpointBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,9 +112,39 @@ struct CheckpointContent {
     body: OutputRef,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointBinding {
+    actor: EntityId,
+    room: Option<EntityId>,
+    known_sources: Vec<EntityId>,
+    body_owner: EntityId,
+}
+
+impl CheckpointContent {
+    fn binding(&self) -> CheckpointBinding {
+        CheckpointBinding {
+            actor: self.actor,
+            room: self.room,
+            known_sources: self.progress.known_sources.clone(),
+            body_owner: self.body_owner,
+        }
+    }
+}
+
+impl CheckpointRow {
+    fn binding(&self) -> Option<CheckpointBinding> {
+        self.content
+            .as_ref()
+            .map(CheckpointContent::binding)
+            .or_else(|| self.retained.clone())
+    }
+}
+
 impl ErasedForm for CheckpointRow {
     fn into_erased(mut self) -> Result<Self> {
         self.content = None;
+        self.retained = None;
         Ok(self)
     }
 }
@@ -175,7 +207,7 @@ pub(crate) fn put_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     leased: &AttemptRecord,
-    progress: WorkflowToolProgress,
+    mut progress: WorkflowToolProgress,
     prepared: PreparedTranscript,
 ) -> Result<()> {
     let queue = AttemptQueue::new(vault);
@@ -196,10 +228,21 @@ pub(crate) fn put_in_txn(
     check_progress_in_txn(vault, txn, &actual, actor, &progress)?;
     let k = key(actual.id)?;
     let prior = TABLE.get(&vault.store, txn, &k)?;
+    let fenced = fence::check(&vault.store, txn, &actual)?;
+    if fenced != prior.is_some() {
+        return Err(invalid("workflow checkpoint payload is unavailable"));
+    }
     if prior.as_ref().is_some_and(|row| {
         row.attempt != actual.id || row.generation > actual.attempt_count || row.content.is_none()
     }) {
         return Err(invalid("workflow checkpoint is unavailable"));
+    }
+    if let Some(content) = prior.as_ref().and_then(|row| row.content.as_ref()) {
+        for source in &content.progress.known_sources {
+            if !progress.known_sources.contains(source) {
+                progress.known_sources.push(*source);
+            }
+        }
     }
     for source in progress.known_sources.iter().copied().chain(room) {
         if crate::ports::owner_gone_in_txn(&vault.store, txn, &source)? {
@@ -275,6 +318,7 @@ pub(crate) fn put_in_txn(
         attempt: actual.id,
         generation: actual.attempt_count,
         content: Some(content.clone()),
+        retained: None,
     };
     TABLE.admit(vault, txn, &k, &mut row)?;
     // Structural references skip the known-value sweep, not credential
@@ -284,7 +328,8 @@ pub(crate) fn put_in_txn(
             "workflow checkpoint metadata changed during admission",
         ));
     }
-    TABLE.put(vault, txn, &k, &row)
+    TABLE.put(vault, txn, &k, &row)?;
+    fence::put(&vault.store, txn, &actual)
 }
 
 fn identity_in_txn(

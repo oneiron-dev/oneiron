@@ -664,6 +664,7 @@ families! {
         SYNC_BORN_WITH_CARRIED;
     // side_table/decls/vault_meta_t_z.rs
     Class::Owner(Getter::WorkflowTool) => WORKFLOW_TOOL_CHECKPOINT;
+    Class::Structure => WORKFLOW_TOOL_CHECKPOINT_FENCE;
     Class::Owner(Getter::TypedBody) => TYPED_BODY_DOC TYPED_BODY_FORK TYPED_BODY_FORK_DOC
         TYPED_BODY_HEAD TYPED_BODY_RECEIPT;
     Class::Structure => TEXT_BM25_FIELD_SCHEMA_HASH TEXT_INDEX_SCHEMA_VERSION
