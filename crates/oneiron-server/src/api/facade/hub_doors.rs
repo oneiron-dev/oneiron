@@ -413,3 +413,25 @@ pub(crate) async fn vault_skill_hubs_clawhub_search(
     )
     .await
 }
+
+/// `vault.skill_hubs.clawhub.import`: import an explicit selection through the native owner door.
+pub(crate) async fn vault_skill_hubs_clawhub_import(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_hub::ClawHubImportRequest,
+) -> Listed<oneiron::skill_hub::ClawHubImportReply> {
+    owner_call(
+        server,
+        auth,
+        "vault.skill_hubs.clawhub.import",
+        move |server, owner| {
+            let answer = sdk::skill_hub_clawhub_import_as_owner(server.vault(), owner, &input)?;
+            let mut rows = vec![input.hub];
+            if let oneiron::skill_hub::ClawHubImportReply::Imported { entity, .. } = &answer {
+                rows.push(*entity);
+            }
+            Ok((answer, rows))
+        },
+    )
+    .await
+}
