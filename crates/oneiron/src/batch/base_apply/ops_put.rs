@@ -146,7 +146,12 @@ pub(super) fn apply_put_arm(
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
     let applied = apply_put_beside(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {
@@ -270,8 +275,17 @@ pub(super) fn apply_put_arm(
         && !(allow_maintenance && allow_reserved_predicate)
         && !applied.is_lexical_query_hint_claim
     {
-        let deleted =
-            delete_lexical_query_hint_claims_for_target(store, wtxn, &id, &HashSet::new())?;
+        let deleted = delete_lexical_query_hint_claims_for_target(
+            &crate::secret_custody::CustodyWrite {
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+            },
+            wtxn,
+            &id,
+            &HashSet::new(),
+        )?;
         for (deleted_id, neighbors) in &deleted.deleted {
             state.pending_embedding_tokens_written.remove(deleted_id);
             #[cfg(feature = "sync")]
