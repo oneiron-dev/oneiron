@@ -42,6 +42,7 @@ use utoipa::ToSchema;
 mod deadline;
 mod home_text;
 mod semantic_body;
+mod semantic_probe;
 use deadline::{
     SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
 };
@@ -925,16 +926,23 @@ pub(crate) async fn search_semantic(
         page_limit,
         auth: page_auth.clone(),
     };
-    let question = text.to_owned();
+    let question = semantic_probe::Question::new(text);
     let page = match deadline {
         None => {
-            let embedding = match &space {
-                Some(space) => embed_semantic_text(&server, space.clone(), &question).await?,
-                None => server
-                    .embed_query_off_runtime(question.clone())
+            let probe = match &space {
+                Some(space) => {
+                    let embedding =
+                        embed_semantic_text(&server, space.clone(), question.as_str()).await?;
+                    question.finish(embedding)
+                }
+                None => question
+                    .embed_off_runtime(&server)
                     .await
                     .map_err(embed_query_error)?,
             };
+            let _probe_memory = probe.memory;
+            let embedding = probe.embedding;
+            let question = probe.question;
             let admission = admit_deep_retrieval(&server, depth)?;
             search_page(&server, page(embedding, question), admission.as_ref(), None)?
         }
@@ -951,12 +959,25 @@ pub(crate) async fn search_semantic(
                 count_mode,
                 auth,
                 move |server, deadline| {
-                    let embedding = match space {
+                    let probe = match space {
                         Some(space) => {
-                            runtime.block_on(embed_semantic_text(server, space, &question))?
+                            let embedding = runtime.block_on(embed_semantic_text(
+                                server,
+                                space,
+                                question.as_str(),
+                            ))?;
+                            question.finish(embedding)
                         }
-                        None => server.embed_query(&question).map_err(embed_query_error)?,
+                        None => {
+                            let embedding = server
+                                .embed_query(question.as_str())
+                                .map_err(embed_query_error)?;
+                            question.finish(embedding)
+                        }
                     };
+                    let _probe_memory = probe.memory;
+                    let embedding = probe.embedding;
+                    let question = probe.question;
                     search_page(
                         server,
                         page(embedding, question),

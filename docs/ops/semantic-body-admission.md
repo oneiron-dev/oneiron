@@ -33,10 +33,31 @@ PR5296 and remain unchanged here.
 This is custody of the complete raw input vector plus the adopted original
 decoded text, with no decoded preadmission and no raw-multiplier guard. The
 transport's frame and spool-piece buffers, disk pre-admission, serde scratch,
-path-key and error-payload temporaries, question, provider and probe copies,
-embedding concurrency and runtime behavior remain not owned and unproved. The
+path-key and error-payload temporaries, provider request buffers and any
+engine-internal query/probe copies, embedding concurrency and runtime behavior
+remain not owned and unproved. The
 returned decoded body retains its own raw lease as the holder of the adopted
 text: params is declared first so the query String frees before the guard on
 every drop path, and the handler binds the guard before the owned params so
 reverse-local order holds. This is not a claim of whole-request heap coverage,
 a runtime no-hang result or a speed improvement.
+
+## Trimmed question and probe custody
+
+Beyond the decoded body above, the semantic handler owns its trimmed question
+`String` and the embedded `Vec<f32>` on one process-memory empty lease, adopted
+after each allocates with `materialized(0, actual)`: the string's actual
+capacity, then the vector's actual capacity times `size_of::<f32>()`, the
+physical unit width. This is adoption only, not a preadmission, wait, refusal,
+grow, cap, or default; no dims, byte envelope, or model estimate enters the
+count.
+
+`Question` holds its text before its lease, and `OwnedProbe` holds its
+embedding and question before its lease, so the payloads free before the guard
+on every drop path. The handler binds the probe guard before the owned buffers,
+so reverse-local order holds; under a deadline the whole question moves into
+the static read task, which adopts, guards, and drops its own probe past the
+request cut. Eliminating the untracked question clone is a custody
+simplification, not a speed win. Provider scratch, tokenizer and frame buffers,
+fair queueing, preemption, and whole-heap or runtime behavior remain not owned
+and unproved here.
