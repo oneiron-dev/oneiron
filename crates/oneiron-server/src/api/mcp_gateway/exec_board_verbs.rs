@@ -565,7 +565,6 @@ pub(super) async fn execute_mcp_board_verb(
     served.extend_from_slice(&board.rows);
     let omissions = board.omissions();
     let source = mcp_live_board(actor, &board)?;
-    activate_board_layout(server, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
     let output = {
         let mut registry = server.mcp_registry.lock().await;
@@ -586,6 +585,9 @@ pub(super) async fn execute_mcp_board_verb(
 
     let output = match output {
         oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            // A keyframe of the laid-out board goes back: the actor's layout
+            // batch it shows becomes live (BOARD-LAYOUT).
+            activate_board_layout(server, &board)?;
             let frame = board
                 .changes
                 .ride(Some(frame))
@@ -768,7 +770,6 @@ pub(crate) async fn execute_run_board_verb_in_session(
         world,
         view: live_board_view(&board).map_err(run_board_error)?,
     };
-    activate_board_layout(server, &board).map_err(run_board_error)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(world);
     let output = {
         let mut registry = server.mcp_registry.lock().await;
@@ -784,6 +785,9 @@ pub(crate) async fn execute_run_board_verb_in_session(
     .map_err(|error| run_board_error(mcp_board_verb_error(error)))?;
     let output = match output {
         oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            // The run's next turn sees this keyframe of its laid-out board,
+            // so the layout batch it shows becomes live (BOARD-LAYOUT).
+            activate_board_layout(server, &board).map_err(run_board_error)?;
             let frame = board
                 .changes
                 .ride(Some(frame))
@@ -853,8 +857,10 @@ pub(crate) async fn drop_run_board(
         .remove(&(actor.entity_ref(), connection.0.clone()));
 }
 
-/// The board just rendered shows its actor's layout batch: the render is
-/// the actor's next turn, so the batch becomes live (BOARD-LAYOUT).
+/// A keyframe of the board just went back with its actor's layout batch:
+/// the actor's next turn sees it, so the batch becomes live (BOARD-LAYOUT).
+/// A describe, a subscription or a refused verb shows no keyframe and
+/// leaves the batch pending.
 fn activate_board_layout(
     server: &SyncServer,
     board: &McpBoardState,

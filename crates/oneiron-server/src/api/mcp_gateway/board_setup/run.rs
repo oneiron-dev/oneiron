@@ -347,7 +347,12 @@ pub(super) fn run_board_sections(
         oneiron::context_board::fanout_action_rows(&launches),
     )
     .map_err(mcp_board_frame_error)?
-    .with_fold_summary(tasks_summary);
+    .with_fold_summary(tasks_summary)
+    .with_hook_pinned_ids(
+        pins.iter()
+            .flat_map(|pin| pin.refs.iter().copied())
+            .collect(),
+    );
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) =
         crate::api::context_board::lane_pins_projection(read, pins).map_err(super::mcp_api_error)?

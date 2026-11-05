@@ -70,6 +70,7 @@ pub(crate) async fn execute_mcp_setup(
     .await?;
     let mut rider = None;
     let mut hooks = None;
+    let mut layout_candidate = None;
     let (mut structured, keyframe, health, snapshot, producer_epoch) = if let Some(continuation) =
         dispatch.continuation.as_ref()
     {
@@ -103,14 +104,9 @@ pub(crate) async fn execute_mcp_setup(
         let mut payload =
             crate::mcp::mcp_setup_payload(&header, &board.laid_out, args.board_budget_request())
                 .map_err(mcp_setup_payload_error)?;
-        // The keyframe shows the connector actor's layout batch, so its
-        // render activates it (BOARD-LAYOUT).
-        if let Some(candidate) = &board.layout_candidate {
-            server
-                .vault
-                .activate_board_layout_now(candidate)
-                .map_err(|error| mcp_engine_error("board layout activation failed", error))?;
-        }
+        // The keyframe shows the connector actor's layout batch: once this
+        // page resolves, the batch it shows becomes live (BOARD-LAYOUT).
+        layout_candidate = board.layout_candidate.clone();
         payload.instructions =
             crate::mcp::setup_instructions_for(server.code_execution_host().is_some());
         let keyframe = board
@@ -151,6 +147,12 @@ pub(crate) async fn execute_mcp_setup(
         &snapshot,
     )
     .await?;
+    if let Some(candidate) = &layout_candidate {
+        server
+            .vault
+            .activate_board_layout_now(candidate)
+            .map_err(|error| mcp_engine_error("board layout activation failed", error))?;
+    }
     let grammar_rows = mcp_setup_grammar_rows(&structured);
     mcp_cap_setup_grammar(&mut structured, grammar_rows, &page);
     if let Some(object) = structured.as_object_mut() {
