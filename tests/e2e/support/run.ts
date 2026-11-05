@@ -126,7 +126,7 @@ export class ManagedProcess {
           if (this.lines[kind]) this.ring.push(redactor.text(`${kind}: ${this.lines[kind]}`));
         await options.artifacts?.json(`${options.label}.json`, { pid: child.pid, exitCode: result.exitCode,
           signal: result.signal, logs: options.privateOutput ? [] : this.ring,
-          stdout: options.privateOutput ? "[WITHHELD credential-bearing stdout]" : redactor.text(this.stdout),
+          stdout: options.privateOutput ? "[WITHHELD credential-bearing stdout]" : redactor.text(this.stdout).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]"),
           stderr: redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
       } finally {
         if (ownerFile) await rm(ownerFile,{force:true});
@@ -226,14 +226,15 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
         } catch (error) {
           results.set(id, {id,outcome:error instanceof BlockedDoor ? "BLOCKED" : "FAIL",durationMs:performance.now()-started,
             reason:redactor.text(error instanceof Error ? error.message : String(error))});
-          throw error;
+          // Bun must not inspect raw credential-bearing properties such as CliError.result.
+          throw new Error(results.get(id)!.reason);
         } finally {
           try { await closeOwnedResources() }
           catch (error) {
             const prior = results.get(id);
             const cleanupError = redactor.text(String(error));
             results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError});
-            throw error;
+            throw new Error(cleanupError);
           }
           finally { await flush() }
         }
