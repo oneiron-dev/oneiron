@@ -35,6 +35,7 @@ pub(crate) mod graph_objects;
 pub(crate) mod index;
 pub(crate) mod recipient;
 pub(crate) mod reveal;
+pub(crate) mod selector_release;
 pub(crate) mod types;
 
 pub(crate) use self::git::ExactSourceExportProof;

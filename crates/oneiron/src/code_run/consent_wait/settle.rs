@@ -488,6 +488,14 @@ pub(super) fn settle_with_reply_in_txn(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
     let reply_digest = *blake3::hash(delivered.as_bytes()).as_bytes();
+    let external_reply = row.binding.pending.connector_call().is_some()
+        && matches!(
+            serde_json::from_str::<ConnectorCallReply>(&delivered),
+            Ok(ConnectorCallReply::Delivered {
+                result: Some(_),
+                ..
+            } | ConnectorCallReply::AwaitingInput { .. })
+        );
     // A settle after an erase of the bound run's actor keeps its outcome,
     // receipt and digest, and no copy of the reply (FIX 5718).
     crate::code_run::erase_settled_reply_of_erased_run_in_txn(
@@ -501,7 +509,13 @@ pub(super) fn settle_with_reply_in_txn(
         wait_id,
         word_ref: row.answer.as_ref().map(|answer| answer.word_ref),
         prior_receipt: row.answer.as_ref().map(|answer| answer.decision),
-        facts_digest: settlement_facts_digest(&row, settled, &reasons, &reply_digest),
+        facts_digest: settlement_facts_digest(
+            &row,
+            settled,
+            &reasons,
+            &reply_digest,
+            external_reply,
+        ),
     };
     let receipt = ConsentReceipt::CodeWaitSettled {
         decision_id: receipt_id,
@@ -519,6 +533,7 @@ pub(super) fn settle_with_reply_in_txn(
         outcome: settled,
         reason_codes: reasons,
         reply_digest,
+        external_reply,
         settled_at_ms: now,
     });
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
@@ -549,15 +564,17 @@ fn settled_outcome(
 }
 
 /// BLAKE3 of the immutable facts a settlement receipt closes: the binding,
-/// the answer's act, the admission, the outcome, its reasons and the reply.
+/// the answer's act, the admission, the outcome, its reasons, the reply and
+/// whether that actual reply carried foreign data.
 fn settlement_facts_digest(
     row: &CodeConsentWaitRow,
     settled: CodeConsentSettleOutcome,
     reasons: &[String],
     reply_digest: &[u8; 32],
+    external_reply: bool,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:code-consent-settled:v1");
+    hasher.update(b"oneiron:code-consent-settled:v2");
     hasher.update(&row.binding.binding_digest);
     hasher.update(&row.binding.effect_digest);
     hasher.update(
@@ -576,6 +593,7 @@ fn settlement_facts_digest(
         hasher.update(reason.as_bytes());
     }
     hasher.update(reply_digest);
+    hasher.update(&[u8::from(external_reply)]);
     *hasher.finalize().as_bytes()
 }
 

@@ -27,7 +27,7 @@
 //! # The value never leaves the body (S1 plane discipline)
 //!
 //! At rest the value is **sealed under its own erasable custody key**, one
-//! per credential generation (KS-6, stored schema 2, `storage_seal`), inside
+//! per credential generation (KS-6, stored schema 4, `storage_seal`), inside
 //! the vault DEK plane every entity body gets; `SecretCustodyRecord` is the
 //! opened, in-memory form. The custody discipline is about planes too: the
 //! value NEVER leaves this body into claims (secrets are never claims),
@@ -127,7 +127,7 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn, revoke_side_row_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
-// KS-6: the stored schema-2 form, its value sealed under its custody key.
+// KS-6: the stored form, its value sealed under its custody key.
 pub use self::found_keys::{
     FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard,
     FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
@@ -162,7 +162,7 @@ pub(crate) use self::masked_files::{
     put_masked_file_in_txn, sighted_bytes_in_txn,
 };
 pub use self::owner_door::{
-    ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
+    ManifestSource, OwnerSecretRegistration, PrivateCopySecret, RequestedBinding, SecretRegistered,
 };
 // FIX-LIST 10671: a restore's credentials pending on their source's evidence.
 pub use self::pending_restore::{
@@ -194,7 +194,8 @@ pub(crate) use self::storage_seal::{
     stored_value_held_in_txn, stored_value_opens_in_txn, withheld_credential_row,
 };
 pub(crate) use self::storage_seal::{
-    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+    open_connector_resume_in_txn, read_back_connector_resume_for_activation,
+    retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;
