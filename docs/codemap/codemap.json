@@ -69999,7 +69999,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 7
      }
     },
@@ -70038,8 +70038,18 @@
      "purpose": "Project attributed skill outcomes into the shared learning.reliability cells",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/projector/actor_displacement.rs",
+     "purpose": "Reconcile only native failed actor credit after explicit judge displacement",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -92872,7 +92882,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93140,7 +93150,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6517,
+   "source_files": 6518,
    "test_files": 895
   },
   "oneiron-android": {
