@@ -600,6 +600,32 @@ impl<'a> AgentDispatcher<'a> {
         self.dispatchable_definition_in_txn(&txn, target)
     }
 
+    /// Applies the native lifecycle, approval and enabled checks to an admitted definition.
+    pub(crate) fn ensure_dispatchable_definition(
+        id: EntityId,
+        definition: &AgentDefinition,
+    ) -> Result<()> {
+        if definition.lifecycle_status != ClaimLifecycleStatus::Active {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "agent definition is not active",
+            )));
+        }
+        if !matches!(
+            definition.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "agent definition is not approved",
+            )));
+        }
+        if !definition.enabled {
+            return Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled {
+                id,
+            }));
+        }
+        Ok(())
+    }
+
     pub(crate) fn dispatchable_definition_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
