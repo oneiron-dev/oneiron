@@ -855,3 +855,60 @@ pub(super) fn push_terminal_quarantine_marker(
         terminal_quarantines.push(id);
     }
 }
+
+/// Takes out of `doc` each row it carries that the owner's full window would
+/// not pack now (Engine A; Sol AUD-2): a row whose binding no longer
+/// publishes, or one a later DerivedFrom edge made the words of a row bound
+/// otherwise. Its carrier, edges, birth and binding go; the row stays here.
+/// `pin` names the window pinned history-free before anything goes; the
+/// sweep passes `None`. A vault that holds no policy carries no such row.
+/// Whether anything went, committed.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(in crate::sync) fn withhold_audience_carriers(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    let withheld = {
+        let rtxn = vault.store.env.read_txn()?;
+        if !crate::source_audience::any_policy_in(vault, &rtxn)? {
+            return Ok(false);
+        }
+        let mut carried = Vec::new();
+        map_for_each_value_bytes(&doc.get_map("entities"), |key, _| {
+            if let Ok(id) = EntityId::from_hex(key)
+                && id.to_hex() == key
+            {
+                carried.push(id);
+            }
+        });
+        let mut withheld = Vec::new();
+        for id in carried {
+            if crate::source_audience::withheld_from_replication_in(
+                vault,
+                &rtxn,
+                &id,
+                crate::source_audience::ReplicationScope::FullOwnerWindow,
+            )? {
+                withheld.push(id);
+            }
+        }
+        withheld
+    };
+    if withheld.is_empty() {
+        return Ok(false);
+    }
+    if let Some(key) = pin {
+        require_history_free_window(vault, key)?;
+    }
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    for id in &withheld {
+        remove_entity_crdt_carriers(&entities, &edges, id)?;
+    }
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
+}

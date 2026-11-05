@@ -490,6 +490,9 @@ pub(crate) fn refresh_and_scrub(
     // so the head published is never below one the window carries and a
     // redaction rides before the revision it replaces goes.
     apply_map(vault, doc)?;
+    // A carried row the full window would not pack now leaves it first: a
+    // DerivedFrom edge can join a row to one bound otherwise after its birth.
+    super::window::withhold_audience_carriers(vault, doc, pin)?;
     let rows = carried_rows(doc);
     let published = published_of(vault, &rows)?;
     if published.is_empty() && !holds_map(doc) {
@@ -671,7 +674,12 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
             if reaches(&refused_policies) {
                 continue;
             }
-            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
+            // Only a row this doc's own carrier stands for: the admitted
+            // bytes are the bytes carried. Any other lands with its row's
+            // savepoint at the next forward pass.
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
+                || stored_bytes_in(vault, txn, row)?.as_deref() != carried_bytes(doc, row).as_deref()
+            {
                 continue;
             }
             match source_audience::bind_replicated_in_txn(vault, txn, row, policy)? {
@@ -689,10 +697,25 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
     })
 }
 
+/// The bytes this vault stores for `row`, in `txn`.
+fn stored_bytes_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    crate::ports::EntityStoreRead::port_entity_raw(&vault.store.read(), txn, row)
+}
+
+/// The bytes `doc` carries for `row`.
+fn carried_bytes(doc: &LoroDoc, row: &EntityId) -> Option<Vec<u8>> {
+    map_get_bytes(&doc.get_map("entities"), &row.to_hex())
+}
+
 /// Observer B for the map: what an import brought is merged from the whole
 /// map, so a policy, its source or a late binding lands whatever arrived
-/// first. On a local failure, each bound row the map carries keeps a replay
-/// marker, and the next forward pass lands it.
+/// first. A local failure is logged: the window's next export or persist
+/// ([`refresh_and_scrub`]) and its next forward pass merge the whole map
+/// again, so no replay marker is left that no write would discharge.
 pub(crate) fn materialize_from_delta(
     doc: &LoroDoc,
     _delta: &loro::event::MapDelta<'_>,
@@ -707,31 +730,8 @@ pub(crate) fn materialize_from_delta(
                 reason = "source_audience_materialize_failed",
                 %error,
                 window = window_key,
-                "a carried source audience did not land; its rows replay on the next forward pass"
+                "a carried source audience did not land; the next export or forward pass merges it again"
             );
-            let rows: Vec<EntityId> = carriers(&doc.get_map(SOURCE_AUDIENCES_MAP))
-                .into_iter()
-                .filter_map(|(_, carried)| match carried {
-                    Carrier::Record { row, .. } => Some(row),
-                    Carrier::Policy { .. } => None,
-                })
-                .collect();
-            let marked = vault.with_write_txn_grouped(|txn| {
-                for row in &rows {
-                    crate::sync::quarantine::set_replay_remat_marker_in_txn(
-                        vault, txn, window_key, row,
-                    )?;
-                }
-                Ok(())
-            });
-            if let Err(error) = marked {
-                tracing::error!(
-                    reason = "source_audience_replay_marker_failed",
-                    %error,
-                    window = window_key,
-                    "a carried source audience did not land and its replay markers did not persist"
-                );
-            }
             None
         }
     }
