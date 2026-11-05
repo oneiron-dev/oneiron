@@ -34,8 +34,8 @@ impl Vault {
     /// `live`, a read of `artifact`'s workbook body, projected onto its
     /// imported package and recalculated at `at` in `zone`, as an export
     /// lands it: the bytes, the change count, the engine that recalculated it
-    /// and what the projection adapted. `None` when it equals `base`, the
-    /// body as imported.
+    /// (or why it did not) and what the projection adapted. `None` when it
+    /// equals `base`, the body as imported.
     pub(super) fn project_xlsx_body(
         &self,
         artifact: &EntityId,
@@ -44,7 +44,15 @@ impl Vault {
         live: &XlsxBody,
         at: u64,
         zone: &OfficeRecalcZone,
-    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>, Vec<String>)>> {
+    ) -> Result<
+        Option<(
+            Vec<u8>,
+            usize,
+            Option<CalcEngineStamp>,
+            Option<OfficeRecalcFailure>,
+            Vec<String>,
+        )>,
+    > {
         let changes = xlsx::changes(base, live)?;
         if changes.is_empty() {
             return Ok(None);
@@ -71,8 +79,14 @@ impl Vault {
                 "the body could not be projected onto its package",
             )
         })?;
-        let (bytes, recalc) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
-        Ok(Some((bytes, changes.len(), recalc, projected.effects)))
+        let (bytes, recalc, recalc_failure) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
+        Ok(Some((
+            bytes,
+            changes.len(),
+            recalc,
+            recalc_failure,
+            projected.effects,
+        )))
     }
 
     /// `bodies`, reads of `artifact`'s live workbook, with each formula cell
@@ -183,8 +197,12 @@ impl Vault {
         for (body, &(at, zone)) in bodies.iter().zip(clocks) {
             let (bytes, recalc) =
                 match self.project_xlsx_body(artifact, &head, &base, body, at, zone)? {
-                    Some((bytes, _, recalc, _)) => (bytes, recalc),
-                    None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
+                    Some((bytes, _, recalc, _, _)) => (bytes, recalc),
+                    None => {
+                        let (bytes, recalc, _) =
+                            recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?;
+                        (bytes, recalc)
+                    }
                 };
             if recalc.is_none() {
                 return Err(invalid(

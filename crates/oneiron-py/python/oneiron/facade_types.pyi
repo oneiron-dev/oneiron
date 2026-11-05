@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1232 facade rows, 4489 declarations.
+Census: 1232 facade rows, 4491 declarations.
 Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -20130,6 +20130,9 @@ class OfficeBodyExportVerbRequest(TypedDict):
     made_by: NotRequired[Any | None]
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+class OfficeRecalcFailure(TypedDict):
+    code: str
+    detail: str
 class OfficeRecalcZone(TypedDict):
     utc_offset_minutes: int
     iana_timezone: NotRequired[str | None]
@@ -20145,6 +20148,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    recalc_failure: NotRequired[OfficeRecalcFailure | None]
     recalc_zone: NotRequired[OfficeRecalcZone | None]
     effects: list[str]
 class OfficeBodyExportView(TypedDict):
@@ -20154,6 +20158,7 @@ class OfficeBodyPreviewRequest(TypedDict):
     artifact_ref: str
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+XlsxCellRecalc = Literal["cached_after_failure"]
 class XlsxCell(TypedDict):
     col: int
     row: int
@@ -20161,6 +20166,7 @@ class XlsxCell(TypedDict):
     formula: NotRequired[str | None]
     style: NotRequired[int | None]
     locked: NotRequired[XlsxLock | None]
+    recalc: NotRequired[XlsxCellRecalc | None]
 class XlsxSheet(TypedDict):
     name: str
     cells: list[XlsxCell]
@@ -20184,6 +20190,7 @@ class XlsxPreview(TypedDict):
     frontier: list[int]
     book: XlsxBook
     recalc: NotRequired[str | None]
+    recalc_failure: NotRequired[OfficeRecalcFailure | None]
 class NodeMove(TypedDict):
     node: NodeId
     old_parent: NotRequired[NodeId | None]
