@@ -95,10 +95,21 @@ A wrong-Vault operation fails before changing the token. Its weak origin-registr
 binding is only an ownership check; the original caller, session and author
 admission still apply. Retirement and terminal removal use that origin runtime.
 A revoked caller or invalidated session retires private RAM state. An author
-policy refusal or storage error does not discard its accepted text. A terminal
-releases its fair permit and removes the resident entry. No private stream is
+policy refusal preserves accepted text while any private token remains alive.
+Once all private tokens are gone, the existing idle pump retires a terminally
+refused orphan and releases its fair permit. Registry and pump references do not
+count as private tokens. Storage errors and an unresolved terminal receipt remain
+retryable. A terminal releases its fair permit and removes the resident entry. No private stream is
 recoverable after process exit: its accepted text was never checkpointed.
 This new native door does not change ordinary OnRecord, Continue or Retry APIs.
+
+Explicit OffRecord promotion and later room copy carry each newly saved MESSAGE's
+latest stream receipt and all its generation receipts into the same base writer,
+after native replay and body holds. The replay plan retains the exact overlay
+snapshot from which it selected the MESSAGE, including its lease and retained-memory
+accounting. A later witness publication cannot substitute a newer receipt view.
+Existing base MESSAGEs keep their own receipt history; a promotion retry remains
+answered by its original durable save receipt.
 
 ## Integration boundary
 

@@ -384,3 +384,72 @@ impl Vault {
         Ok(RECEIPT_BY_REF.get(&self.store, &txn, &suffix)?)
     }
 }
+
+impl crate::off_record::FloorWrites<'_> {
+    /// Selects only plan MESSAGEs not already held by base, before replay.
+    pub(crate) fn promoted_stream_messages_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        plan: &crate::session_overlay::PromotePlan,
+        fresh: Option<&std::collections::BTreeSet<EntityId>>,
+    ) -> Result<std::collections::BTreeSet<EntityId>> {
+        let mut messages = std::collections::BTreeSet::new();
+        for op in &plan.ops {
+            if let crate::batch::BatchOp::Put {
+                id, entity_type, ..
+            } = op
+                && *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                && fresh.is_none_or(|fresh| fresh.contains(id))
+                && !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)?
+            {
+                messages.insert(*id);
+            }
+        }
+        Ok(messages)
+    }
+
+    /// Carries the newly saved MESSAGEs' terminal history from the exact source
+    /// view, after native replay and body holds, in that same writer.
+    pub(crate) fn keep_promoted_stream_receipts_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &crate::session_overlay::PromotePlan,
+        messages: &std::collections::BTreeSet<EntityId>,
+    ) -> Result<()> {
+        use crate::session_overlay::{OverlayKeyspace, SnapshotMergeRow};
+
+        let snapshot = plan.source_snapshot();
+        for id in messages {
+            if let Some(bytes) =
+                snapshot.staged_value(OverlayKeyspace::VaultMeta, &RECEIPT.key_bytes(id))
+            {
+                let receipt = RECEIPT.decode_value(bytes)?;
+                if receipt.message_id != *id {
+                    return Err(Error::CorruptedIndex("stream receipt message"));
+                }
+                RECEIPT.put(&vault.store, txn, id, &receipt)?;
+            }
+            let prefix = RECEIPT_BY_REF.key_bytes(&format!("{}:", id.to_hex()));
+            let generations =
+                snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| key.starts_with(&prefix));
+            for row in generations.rows {
+                let SnapshotMergeRow::Single {
+                    key,
+                    value: Some(bytes),
+                } = row
+                else {
+                    continue;
+                };
+                let receipt = RECEIPT_BY_REF.decode_value(&bytes)?;
+                let reference = format!("{}:{}", id.to_hex(), receipt.generation.to_hex());
+                if receipt.message_id != *id || key != RECEIPT_BY_REF.key_bytes(&reference) {
+                    return Err(Error::CorruptedIndex("stream receipt generation"));
+                }
+                RECEIPT_BY_REF.put(&vault.store, txn, &reference, &receipt)?;
+            }
+        }
+        Ok(())
+    }
+}

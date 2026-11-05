@@ -92,6 +92,7 @@ pub(super) struct SessionState {
     generation: EntityId,
     binding: Arc<SessionWitnessBinding>,
     origin: Weak<Mutex<BTreeMap<EntityId, Resident>>>,
+    tokens: Weak<()>,
     agent: EntityId,
     sitting: Option<SessionKey>,
     birth: WitnessTurn,
@@ -128,6 +129,7 @@ impl SessionState {
 #[derive(Clone)]
 pub struct SessionMessageStream {
     state: Arc<Mutex<SessionState>>,
+    _token: Arc<()>,
 }
 
 impl std::fmt::Debug for SessionMessageStream {
@@ -306,11 +308,13 @@ impl SessionWitnessBinding {
         let stream_id = EntityId::now();
         let generation = EntityId::now();
         let waited_ms = u64::try_from(permit.waited().as_millis()).unwrap_or(u64::MAX);
+        let token = Arc::new(());
         let entry = Arc::new(Mutex::new(SessionState {
             stream_id,
             generation,
             binding: Arc::new(self),
             origin: Arc::downgrade(&vault.message_streams.entries),
+            tokens: Arc::downgrade(&token),
             agent,
             sitting,
             birth: turn.clone(),
@@ -330,7 +334,10 @@ impl SessionWitnessBinding {
             }
             entries.insert(stream_id, super::Resident::Session(Arc::clone(&entry)));
         }
-        Ok(SessionMessageStream { state: entry })
+        Ok(SessionMessageStream {
+            state: entry,
+            _token: token,
+        })
     }
 }
 
@@ -345,7 +352,7 @@ pub(super) fn pump(
         return Ok(None);
     }
     let reason = idle_reason(state.idle_timeout_ms);
-    finish_locked(
+    let outcome = finish_locked(
         vault,
         &mut state,
         StreamFinality::Partial,
@@ -353,8 +360,17 @@ pub(super) fn pump(
         None,
         &WitnessAssertions::default(),
         Vec::new(),
-    )
-    .map(Some)
+    );
+    if let Err(MessageStreamError::Memory(error)) = &outcome
+        && error.code != MEMORY_CODE_INTERNAL
+        && state.pending_receipt.is_none()
+        && state.tokens.upgrade().is_none()
+    {
+        // Only actual private tokens keep a refused orphan retryable. Registry
+        // and pump references keep its state alive, but do not own its text.
+        retire_locked(&mut state)?;
+    }
+    outcome.map(Some)
 }
 
 fn native_author(
