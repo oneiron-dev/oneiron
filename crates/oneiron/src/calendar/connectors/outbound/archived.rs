@@ -2,7 +2,9 @@
 use std::collections::BTreeSet;
 
 use super::*;
-use crate::store::{CustodyForkRequirement as Requirement, CustodyPlan, Store, custody_binding_in_txn};
+use crate::store::{
+    CustodyForkRequirement as Requirement, CustodyPlan, Store, custody_binding_in_txn,
+};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
