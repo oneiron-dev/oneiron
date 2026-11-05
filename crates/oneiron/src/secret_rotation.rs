@@ -702,7 +702,10 @@ impl Vault {
 mod owner_door;
 mod revoke;
 
-pub(crate) use self::revoke::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
+pub(crate) use self::revoke::{
+    RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn,
+    revoke_custody_with_context_in_txn, revoke_secret_with_context_in_txn,
+};
 
 #[cfg(test)]
 mod tests;
