@@ -146,6 +146,7 @@ pub struct ScopedRead<'a> {
 }
 
 mod admission;
+mod commitment_reminder_wording;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
