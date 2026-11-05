@@ -111,7 +111,7 @@ export class EngineFixture {
       const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
         "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
       await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
-      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true);
+      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
       if(init.exitCode!==0) throw new CliError(init,"vault-init");
       const bootstrap=await engine.cli.run(["token","bootstrap","--url",engine.url,"--config",config],undefined,LIMITS.readyMs,true);
       if(bootstrap.exitCode!==0) throw new CliError(bootstrap,"owner-bootstrap");
@@ -150,7 +150,7 @@ export class EngineFixture {
   }
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
-      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts});
+      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
     this.server=server;
     const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000});
     await awaitPublic(async()=>{

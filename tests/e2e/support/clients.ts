@@ -207,8 +207,8 @@ export class WsRpcError extends Error {
 
 export class CliClient {
   constructor(readonly binary: string, readonly cwd: string, readonly env: Readonly<Record<string,string>>,readonly artifacts?: Artifacts) {}
-  async run(args: readonly string[], input?: string, timeoutMs: number = LIMITS.requestMs, privateOutput = false): Promise<ProcessResult> {
-    return runProcess([this.binary,...args],{cwd:this.cwd,env:this.env,label:`cli-${secretHex(6)}`,privateOutput,
+  async run(args: readonly string[], input?: string, timeoutMs: number = LIMITS.requestMs, privateOutput = false, diagnosticOutput = false): Promise<ProcessResult> {
+    return runProcess([this.binary,...args],{cwd:this.cwd,env:this.env,label:`cli-${secretHex(6)}`,privateOutput,diagnosticOutput,
       ...(this.artifacts ? {artifacts:this.artifacts} : {}),...(input === undefined ? {} : {input})},timeoutMs);
   }
   async json<T = unknown>(args: readonly string[], input?: unknown): Promise<T> {
