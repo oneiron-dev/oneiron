@@ -6,7 +6,7 @@ use oneiron::{
     LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat, RetryableLlmError,
 };
 use serde_json::{Value, json};
-pub(super) fn build_request(
+pub fn build_request(
     entry: &LlmCatalogEntry,
     request: &LlmRequest,
     stream: bool,
@@ -184,7 +184,7 @@ fn encode_part(
         }
     })
 }
-pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
+pub fn parse_response(body: Value) -> LlmResult<LlmResponse> {
     let events = GeminiAccumulator::default().push(body)?;
     events
         .into_iter()
@@ -205,7 +205,7 @@ pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
         })
         .ok_or_else(|| FatalLlmError::EmptyResponse.into())
 }
-pub(super) fn classify_status(status: u16, body: &Value) -> LlmError {
+pub fn classify_status(status: u16, body: &Value) -> LlmError {
     // Spent prepaid credit parks the offer until the owner tops up (OF-305).
     if status == 402
         || body.pointer("/error/status").and_then(Value::as_str) == Some("BUDGET_EXCEEDED")
