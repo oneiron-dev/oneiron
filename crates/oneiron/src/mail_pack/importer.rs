@@ -431,7 +431,10 @@ impl Vault {
         let mut step = Step {
             vault: self,
             source: source_ref,
-            wire_source: MailSyncSource::of(source_ref, &row),
+            wire_source: MailSyncSource {
+                newer_than,
+                ..MailSyncSource::of(source_ref, &row)
+            },
             row,
             wire,
             landing: Landing::new(self, owner, source_ref, at)?,

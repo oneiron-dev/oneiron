@@ -18,11 +18,12 @@
 //! it, is refused rather than counted as copied.
 //!
 //! Graph tracks changes per mail folder, so the source's change anchor is a
-//! delta link per folder, as the folders stood when they were read. The
-//! anchor is taken with a delta round filtered to mail received from then
-//! on, so it costs one call per folder and lists nothing; deletes and moves
-//! of older mail still come through it, as Graph reports removals whatever
-//! the filter. A folder not copied is read only for the mail that leaves it.
+//! delta link per folder, as the folders stood when they were read. A
+//! folder's first round lists all its mail the copy setting keeps (mail
+//! received since its cutoff, or all), page by page across steps, so mail
+//! that reaches a copied folder by any path (a move, a copy, an import) is
+//! filed, whatever its age; a message copied already lands as the same. A
+//! folder not copied is read only for the mail that leaves it.
 //! A message a folder reports removed is looked up: gone, or under Deleted
 //! Items or Junk Email, it is deleted at the provider; anywhere else it only
 //! moved, and one that left a folder not copied for a copied one is filed
@@ -30,7 +31,7 @@
 //! folder not copied, has each copied message under it looked up again; a
 //! folder that moved out from under one lists all its mail in its next
 //! round. When a round ends, the folders made since the anchor's folders
-//! were read join it, listing their mail received since then.
+//! were read join it, listing all their mail.
 //!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
@@ -86,9 +87,6 @@ const SKIPPED_FOLDERS: [&str; 5] = [
 const TRASH_FOLDERS: [&str; 2] = ["deleteditems", "junkemail"];
 /// The most folders one source's anchor tracks.
 const MAX_FOLDERS: usize = 1_000;
-/// How far before a folder read the mail its delta links take in starts,
-/// for clock skew between the host and Graph.
-const CLOCK_MARGIN_SECS: u64 = 300;
 /// The most folder reads one change-feed page makes while folders are quiet.
 const MAX_FOLDER_READS_PER_PAGE: usize = 100;
 /// The longest Graph id read.
@@ -103,9 +101,6 @@ struct GraphAnchor {
     /// The folders whose mail was not copied when the folders were read.
     #[serde(default)]
     skipped: BTreeSet<String>,
-    /// When the folders were read, less [`CLOCK_MARGIN_SECS`], Unix seconds.
-    #[serde(default)]
-    since: u64,
 }
 
 /// Where a change-feed read stands between its pages.
@@ -131,8 +126,6 @@ struct GraphHistoryCursor {
 struct FolderTree {
     names: BTreeMap<String, &'static str>,
     parents: BTreeMap<String, String>,
-    /// When the folders were read, less [`CLOCK_MARGIN_SECS`], Unix seconds.
-    read_at: u64,
 }
 
 impl FolderTree {
@@ -306,10 +299,7 @@ impl<'v> HttpGraphMailWire<'v> {
     /// Every mail folder of the source with its parent, and the well-known
     /// ones by name.
     fn read_tree(&self, source: &MailSyncSource) -> Result<FolderTree> {
-        let mut tree = FolderTree {
-            read_at: crate::unix_seconds_now().saturating_sub(CLOCK_MARGIN_SECS),
-            ..FolderTree::default()
-        };
+        let mut tree = FolderTree::default();
         let select = [("$select", "id".to_owned())];
         for name in WELL_KNOWN_FOLDERS {
             let url = format!("{GRAPH_ME_URL}/mailFolders/{name}");
@@ -405,29 +395,16 @@ impl<'v> HttpGraphMailWire<'v> {
 impl MailProviderWire for HttpGraphMailWire<'_> {
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
         let tree = self.reread_tree(source)?;
-        let mut anchor = GraphAnchor {
-            since: tree.read_at,
-            ..GraphAnchor::default()
-        };
+        let mut anchor = GraphAnchor::default();
+        // No round is read here: each folder's first round, read by the
+        // change feed page by page, lists the mail the copy setting keeps.
         for folder in tree.parents.keys() {
             if tree.skipped(folder)? {
                 anchor.skipped.insert(folder.clone());
             }
-            let mut link = delta_link(folder, Some(tree.read_at))?;
-            loop {
-                let Some(page) = self.found(source, &link, &[], PREFER_IMMUTABLE_IDS)? else {
-                    // The folder went while the anchor was taken.
-                    break;
-                };
-                if let Some(delta) = text_of(page.get("@odata.deltaLink")) {
-                    anchor.folders.insert(folder.clone(), delta);
-                    break;
-                }
-                match text_of(page.get("@odata.nextLink")) {
-                    Some(next) => link = next,
-                    None => break,
-                }
-            }
+            anchor
+                .folders
+                .insert(folder.clone(), delta_link(folder, source.newer_than)?);
         }
         encode(&anchor)
     }
@@ -504,7 +481,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
 
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
         let url = message_url(provider_id)?;
-        let select = [("$select", format!("{MESSAGE_FIELDS},body,hasAttachments"))];
+        let select = [("$select", format!("{MESSAGE_FIELDS},body"))];
         let Some(message) = self.found(source, &url, &select, PREFER_TEXT_BODY)? else {
             return Ok(None);
         };
@@ -523,23 +500,19 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
         } else {
             tidy_text(content)
         };
+        // `hasAttachments` leaves inline attachments out, so the list is
+        // read for every message, each of its pages; descriptions only.
         let mut attachments = Vec::new();
-        let has_attachments = message
-            .get("hasAttachments")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        if has_attachments {
-            let select = [("$select", "id,name,contentType,size,isInline".to_owned())];
-            let listed = self.found(
-                source,
-                &format!("{url}/attachments"),
-                &select,
-                PREFER_IMMUTABLE_IDS,
-            )?;
-            for attachment in listed
-                .as_ref()
-                .map_or(&[][..], |listed| array(listed, "value"))
-            {
+        let first = [("$select", "id,name,contentType,size,isInline".to_owned())];
+        let mut query: &[(&str, String)] = &first;
+        let mut link = Some(format!("{url}/attachments"));
+        while let Some(page_url) = link.take() {
+            let Some(listed) = self.found(source, &page_url, query, PREFER_IMMUTABLE_IDS)? else {
+                break;
+            };
+            // A next link carries its own query.
+            query = &[];
+            for attachment in array(&listed, "value") {
                 let Some(id) = text_of(attachment.get("id")) else {
                     continue;
                 };
@@ -552,6 +525,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                     size_bytes: attachment.get("size").and_then(Value::as_u64).unwrap_or(0),
                 });
             }
+            link = text_of(listed.get("@odata.nextLink"));
         }
         Ok(Some(MailFull {
             headers,
@@ -642,10 +616,9 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             let mut reached = GraphAnchor {
                 folders: cursor.reached,
                 skipped: BTreeSet::new(),
-                since: tree.read_at,
             };
             // Folders made since the anchor's folders were read join it,
-            // from then; one the round found gone stays out.
+            // listing all their mail; one the round found gone stays out.
             for folder in tree.parents.keys() {
                 if reached.folders.len() >= MAX_FOLDERS {
                     break;
@@ -653,7 +626,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 if !stood.folders.contains_key(folder) && !reached.folders.contains_key(folder) {
                     reached
                         .folders
-                        .insert(folder.clone(), delta_link(folder, Some(stood.since))?);
+                        .insert(folder.clone(), delta_link(folder, source.newer_than)?);
                 }
             }
             let held: Vec<String> = reached.folders.keys().cloned().collect();
@@ -677,7 +650,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                     // lists all its mail.
                     reached
                         .folders
-                        .insert(folder.clone(), delta_link(&folder, None)?);
+                        .insert(folder.clone(), delta_link(&folder, source.newer_than)?);
                 }
                 if now_skipped {
                     reached.skipped.insert(folder);
