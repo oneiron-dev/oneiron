@@ -217,7 +217,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .as_ref()
         .is_some_and(|models| models.extraction_egress)
     {
-        sync_server = sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true));
+        sync_server = sync_server
+            .with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true))
+            .with_tagger_egress(Arc::new(|_: &oneiron::llm::TaggerCall<'_>| true));
     }
     sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
