@@ -16,8 +16,8 @@ const TRUSTED_ORIGIN: SideTable<HexId, TrustedOrigin, Raw> =
 
 /// [`TRUSTED_ORIGIN`]'s value: the trusted body's hash, then the second this vault first
 /// trusted that body (FIX 10936), big-endian. A rewrite of the same body keeps the time, so
-/// what counts from it never moves. The vault-bootstrap seed writes the bare hash: it records
-/// no trust time.
+/// what counts from it never moves. The vault-bootstrap seed stamps the second it seeds
+/// (FIX 11770): the origin row carries hash plus big-endian time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TrustedOrigin {
     hash: [u8; 32],
@@ -196,7 +196,7 @@ pub(crate) fn manifest_is_trusted(
 
 /// The second this vault first trusted `body` at manifest `id` (FIX 10936): its trust stamp's
 /// time, kept across a rewrite of the same body. `None` when that body is not trusted there,
-/// or its stamp records no time (the bootstrap seed's).
+/// or its stamp is a bare hash that records no time.
 pub(crate) fn manifest_trusted_at(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,

@@ -306,7 +306,11 @@ pub enum FatalLlmError {
     /// A request the provider refused, with its message: an HTTP 400's
     /// error text, bounded.
     #[error("invalid request: {message}")]
-    InvalidRequestDetail { message: String },
+    InvalidRequestDetail {
+        message: String,
+        /// The provider's structured error code, never inferred from its text.
+        code: Option<String>,
+    },
     /// A provider's structured refusal because the input exceeds its context
     /// window, with the same bounded provider message as other request errors.
     #[error("context window exceeded: {message}")]

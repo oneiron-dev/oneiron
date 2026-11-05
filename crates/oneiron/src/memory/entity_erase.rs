@@ -498,16 +498,24 @@ impl Memory<'_> {
             }
             self.still_erasable_in_txn(txn, planned, reason)
         };
-        let claim: crate::deletion::DeletionClaim<'_> = &|txn, request, receipt| {
-            let Some(act) = &planned.act else {
-                return Ok(());
+        let apply_claim =
+            |txn: &mut heed::RwTxn<'_>, request: &[u8; 16], receipt: Option<&EntityId>| {
+                let Some(act) = &planned.act else {
+                    return Ok(());
+                };
+                self.vault.claim_completed_authority_act_in_txn(
+                    txn,
+                    act,
+                    uuid::Uuid::from_bytes(*request).to_string(),
+                    receipt.map(EntityId::to_hex),
+                )
             };
-            self.vault.claim_completed_authority_act_in_txn(
-                txn,
-                act,
-                uuid::Uuid::from_bytes(*request).to_string(),
-                receipt.map(EntityId::to_hex),
-            )
+        let claim = match planned.act.as_deref() {
+            Some(act) => Some(crate::deletion::DeletionClaim::new(
+                EntityId::from_hex(act)?,
+                &apply_claim,
+            )),
+            None => None,
         };
         let shares = {
             let txn = store.env.read_txn().map_err(crate::Error::from)?;
@@ -546,7 +554,7 @@ impl Memory<'_> {
                     Err(Error::ConcurrentWrite("delete shares changed").into())
                 }
             },
-            planned.act.is_some().then_some(claim),
+            claim,
         )
     }
 

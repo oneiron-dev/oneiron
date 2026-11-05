@@ -492,7 +492,16 @@ pub fn classify_openai_status(
         }
         400 => refusal_message(body).map_or_else(
             || FatalLlmError::InvalidRequest.into(),
-            |message| FatalLlmError::InvalidRequestDetail { message }.into(),
+            |message| {
+                FatalLlmError::InvalidRequestDetail {
+                    message,
+                    code: body
+                        .pointer("/error/code")
+                        .and_then(JsonValue::as_str)
+                        .map(str::to_owned),
+                }
+                .into()
+            },
         ),
         404 | 409 | 413 | 422 => FatalLlmError::InvalidRequest.into(),
         _ if status >= 500 => RetryableLlmError::ServerError.into(),

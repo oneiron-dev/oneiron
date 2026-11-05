@@ -18,7 +18,9 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod tagger_admission;
 pub use inference_admission::admitted_as;
+pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -65,11 +67,12 @@ pub use step::{
     trap_for_durable_wait, trap_park_owner, validate_json_schema,
 };
 pub(crate) use step::{
-    StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim, forget_step_memo,
-    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
-    register_detached_step_in_txn, signal_step_wait_in_txn,
-    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
-    wake_trap_in_txn,
+    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
+    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
+    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
@@ -209,3 +212,4 @@ pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::routing::llm_routed_seat_accepts_masked;
+pub(crate) use self::step::dreamer_step_state_accepts_masked;
