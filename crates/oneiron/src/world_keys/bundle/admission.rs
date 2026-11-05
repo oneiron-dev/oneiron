@@ -40,7 +40,7 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::world_keys::{
     MachineSecret, RecoveryRootId, RecoveryRootSeed, WrapRecipient, base_world, os_fill,
     recipients, refused,
@@ -415,12 +415,30 @@ struct GrantReaders {
     kit_root: Option<RecoveryRootId>,
 }
 
+enum GrantedKey {
+    Opened(Zeroizing<[u8; 32]>),
+    OutOfMemory,
+}
+
+impl GrantedKey {
+    fn open(&self, pads: &SealedKeyPads, vault_id: &[u8; 32]) -> Result<OpenedKeyPads> {
+        match self {
+            Self::Opened(outer) => pads.open_with_outer(vault_id, outer),
+            Self::OutOfMemory => Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()),
+        }
+    }
+}
+
+fn opening_out_of_memory(error: &Error) -> bool {
+    matches!(error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory)
+}
+
 /// The keys erase opens kept pad objects with ([`SEALED_BUNDLE_ERASE_KEY_SOURCE`]).
 pub(super) struct EraseKeys {
     vault_id: [u8; 32],
     machine: Option<HybridSecretKey>,
-    /// Each checked grant's outer key, by generation.
-    granted: Vec<(SealedBundleGeneration, Zeroizing<[u8; 32]>)>,
+    /// Each checked grant's outer key or opening resource failure, by generation.
+    granted: Vec<(SealedBundleGeneration, GrantedKey)>,
     kit: Option<HybridSecretKey>,
 }
 
@@ -428,29 +446,39 @@ impl EraseKeys {
     /// `pads` opened with the first key, in [`SEALED_BUNDLE_ERASE_KEY_SOURCE`]
     /// order, that opens it.
     pub(super) fn open(&self, pads: &SealedKeyPads) -> Result<OpenedKeyPads> {
+        let mut resource_error = None;
+        let mut take_opened = |result: Result<OpenedKeyPads>| match result {
+            Ok(opened) => Some(opened),
+            Err(error) => {
+                if opening_out_of_memory(&error) {
+                    resource_error.get_or_insert(error);
+                }
+                None
+            }
+        };
         for source in SEALED_BUNDLE_ERASE_KEY_SOURCE {
             let opened = match source {
                 EraseKey::Machine => self
                     .machine
                     .as_ref()
-                    .and_then(|secret| pads.open_with(&self.vault_id, secret).ok()),
+                    .and_then(|secret| take_opened(pads.open_with(&self.vault_id, secret))),
                 EraseKey::AdmissionGrant => self
                     .granted
                     .iter()
                     .filter(|(generation, _)| *generation == pads.generation())
-                    .find_map(|(_, outer)| pads.open_with_outer(&self.vault_id, outer).ok()),
+                    .find_map(|(_, outer)| take_opened(outer.open(pads, &self.vault_id))),
                 EraseKey::Kit => self
                     .kit
                     .as_ref()
-                    .and_then(|secret| pads.open_with(&self.vault_id, secret).ok()),
+                    .and_then(|secret| take_opened(pads.open_with(&self.vault_id, secret))),
             };
             if let Some(opened) = opened {
                 return Ok(opened);
             }
         }
-        Err(refused(
-            "a kept pad object opens neither here, with a grant, nor with the kit",
-        ))
+        Err(resource_error.unwrap_or_else(|| {
+            refused("a kept pad object opens neither here, with a grant, nor with the kit")
+        }))
     }
 }
 
@@ -485,15 +513,23 @@ impl Vault {
         &self,
         machine: &MachineSecret,
         grants: &[SealedPadAdmissionGrant],
-    ) -> Result<Vec<(SealedBundleGeneration, Zeroizing<[u8; 32]>)>> {
+    ) -> Result<Vec<(SealedBundleGeneration, GrantedKey)>> {
         let me = PadAdmissionTarget::of_secret(machine);
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        Ok(grants
+        let mut keys = Vec::new();
+        for grant in grants
             .iter()
             .filter(|grant| grant.recipient == me && grant.issued_by_authority(&fold))
-            .filter_map(|grant| Some((grant.generation, grant.open_key(&machine.secret).ok()?)))
-            .collect())
+        {
+            let key = match grant.open_key(&machine.secret) {
+                Ok(key) => GrantedKey::Opened(key),
+                Err(error) if opening_out_of_memory(&error) => GrantedKey::OutOfMemory,
+                Err(_) => continue,
+            };
+            keys.push((grant.generation, key));
+        }
+        Ok(keys)
     }
 
     /// This machine as a grant's recipient, under its current key.
@@ -513,11 +549,20 @@ impl Vault {
     ) -> Result<OpenedKeyPads> {
         let machine = self.machine_secret_outside_txn()?;
         let vault_id = self.bundle_vault_id()?;
-        self.granted_keys(&machine, std::slice::from_ref(grant))?
-            .iter()
-            .filter(|(generation, _)| *generation == pads.generation())
-            .find_map(|(_, outer)| pads.open_with_outer(&vault_id, outer).ok())
-            .ok_or_else(|| refused("the grant does not open the pad object"))
+        let mut resource_error = None;
+        for (generation, outer) in self.granted_keys(&machine, std::slice::from_ref(grant))? {
+            if generation != pads.generation() {
+                continue;
+            }
+            match outer.open(pads, &vault_id) {
+                Ok(opened) => return Ok(opened),
+                Err(error) if opening_out_of_memory(&error) => {
+                    resource_error.get_or_insert(error);
+                }
+                Err(_) => {}
+            }
+        }
+        Err(resource_error.unwrap_or_else(|| refused("the grant does not open the pad object")))
     }
 
     /// An old reader's grant: the outer key of `pads`, a kept generation's
