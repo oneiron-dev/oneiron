@@ -797,7 +797,7 @@ fn pending_input_in_txn(
     // lexical hint, a text with nothing in it — is `None`, which the caller
     // retires as stale rather than failing the whole leased batch on it.
     let Some(payload) =
-        repo_projection::pending_payload_in_txn(vault, wtxn, raw.entity_type, &raw.body)?
+        repo_projection::pending_payload_in_txn(vault, wtxn, id, raw.entity_type, &raw.body)?
     else {
         return Ok(None);
     };
