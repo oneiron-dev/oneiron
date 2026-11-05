@@ -85,6 +85,7 @@ mod work_resume;
 pub use work_resume::{ResumeRunnerWork, RunnerWorkResume};
 mod connector;
 mod dispatcher;
+pub(crate) use dispatcher::capture_fact::{CanonicalCapture, canonical_capture_in_txn};
 mod error;
 mod exhaust;
 mod host_claim;
