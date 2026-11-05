@@ -219,8 +219,13 @@ fn codespace_range_section(input: ParserInput) -> NomResult<CMapSection> {
     let begin_section = (digit1, space1, tag(&b"begincodespacerange"[..]), multispace1);
     let end_section = (tag(&b"endcodespacerange"[..]), multispace1);
     let parse_range = delimited(space0, code_range_pair, multispace1);
-    let (rest_of_input, ranges_result) = delimited(begin_section, many1(parse_range), end_section).parse(input)?;
-    Ok((rest_of_input, CMapSection::CsRange(ranges_result)))
+    let (rest_of_input, ()) = delimited(
+        begin_section,
+        fold_many1(parse_range, || (), |_, _| ()),
+        end_section,
+    )
+    .parse(input)?;
+    Ok((rest_of_input, CMapSection::CsRange(Vec::new())))
 }
 
 fn code_range_pair(input: ParserInput) -> NomResult<(SourceCode, SourceCode, CodeLen)> {
