@@ -390,6 +390,9 @@ fn stop_for_erase(record: &mut IntentLedgerRecord, reason: IntentEscalationReaso
 impl ErasedForm for IntentLedgerRecord {
     fn into_erased(mut self) -> crate::Result<Self> {
         self.payload = envelope(KIND_ERASED, Named::default(), &[]);
+        // A stopped row is never rechecked again, so it keeps no person's id
+        // for that (FIX 11591).
+        self.authorizing_owner = None;
         stop_for_erase(&mut self, IntentEscalationReason::ActorErased);
         Ok(self)
     }

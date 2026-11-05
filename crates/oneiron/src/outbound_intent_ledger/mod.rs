@@ -6,6 +6,7 @@
 
 mod codec;
 mod dispatch;
+mod escalation;
 pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
