@@ -262,7 +262,45 @@ impl Vault {
         share: Option<String>,
     ) -> RsiResult<()> {
         let mut txn = self.store.env.write_txn()?;
-        let mut line = load(self, &txn)?;
+        let reserved = self.reserve_rsi_line_in_txn(&mut txn, id, amount, kind, purpose, share);
+        if reserved.is_ok() || matches!(&reserved, Err(RsiBudgetError::Exhausted)) {
+            txn.commit().map_err(crate::Error::from)?;
+        }
+        reserved
+    }
+
+    pub(crate) fn reserve_rsi_budget_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        units: u64,
+        purpose: RsiSpendPurpose,
+        share: Option<String>,
+    ) -> RsiResult<()> {
+        self.reserve_rsi_line_in_txn(txn, id, units, RsiLine::Tokens, Some(purpose), share)
+    }
+
+    pub(crate) fn reserve_rsi_exploration_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        exposure: u64,
+    ) -> RsiResult<()> {
+        self.reserve_rsi_line_in_txn(txn, id, exposure, RsiLine::Exposure, None, None)
+    }
+
+    // The caller commits Exhausted too: its existing suspension is durable,
+    // but no refused reservation is left on the line.
+    fn reserve_rsi_line_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        amount: u64,
+        kind: RsiLine,
+        purpose: Option<RsiSpendPurpose>,
+        share: Option<String>,
+    ) -> RsiResult<()> {
+        let mut line = load(self, txn)?;
         if line.suspended {
             return Err(RsiBudgetError::Suspended);
         }
@@ -340,14 +378,12 @@ impl Vault {
             Err(RsiBudgetError::Exhausted) => {
                 line.reservations.remove(&key);
                 line.suspended = true;
-                save(self, &mut txn, &line)?;
-                txn.commit().map_err(crate::Error::from)?;
+                save(self, txn, &line)?;
                 return Err(RsiBudgetError::Exhausted);
             }
             Err(other) => return Err(other),
         }
-        save(self, &mut txn, &line)?;
-        txn.commit().map_err(crate::Error::from)?;
+        save(self, txn, &line)?;
         Ok(())
     }
 

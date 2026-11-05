@@ -162,19 +162,59 @@ fn reserve(
     attempt: Option<AttemptId>,
     at: u64,
 ) -> Result<EntityId> {
-    let binding = binding(vault, root)?;
+    vault.with_write_txn_grouped(|txn| {
+        let reserved = reserve_in_txn(vault, txn, root, line, units, attempt, at);
+        match reserved {
+            Ok(id) => Ok(Ok(id)),
+            // RSI exhaustion also records its existing suspension.
+            Err(error) if is_budget_refusal(&error) => Ok(Err(error)),
+            Err(error) => Err(error),
+        }
+    })?
+}
+
+pub(super) fn reserve_research_work_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    purpose: RsiSpendPurpose,
+    units: u64,
+    attempt: Option<AttemptId>,
+    at: u64,
+) -> Result<EntityId> {
+    reserve_in_txn(
+        vault,
+        txn,
+        root,
+        ResearchReservationLine::Work { purpose },
+        units,
+        attempt,
+        at,
+    )
+}
+
+fn reserve_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    line: ResearchReservationLine,
+    units: u64,
+    attempt: Option<AttemptId>,
+    at: u64,
+) -> Result<EntityId> {
+    let binding = super::binding_in_txn(vault, txn, root)?;
     if units == 0 {
         return Err(invalid("a campaign reservation names its units"));
     }
-    let txn = vault.store.env.read_txn()?;
     if let Some(attempt) = attempt
-        && !nodes_in_txn(vault, &txn, root)?.contains_key(attempt.as_bytes())
+        && !nodes_in_txn(vault, txn, root)?.contains_key(attempt.as_bytes())
     {
         return Err(invalid(
             "the reservation's attempt is not an experiment of this campaign",
         ));
     }
-    let fits = |read: &ResearchBudgetRead| match line {
+    let read = read_in_txn(vault, txn, &binding)?;
+    let fits = match line {
         ResearchReservationLine::Work { .. } => {
             read.work_committed().saturating_add(units) <= read.max_units
         }
@@ -182,18 +222,19 @@ fn reserve(
             read.exploration_committed().saturating_add(units) <= read.exploration_units
         }
     };
-    if !fits(&read_in_txn(vault, &txn, &binding)?) {
+    if !fits {
         return Err(invalid(LEASE_FULL));
     }
-    drop(txn);
     let id = vault.store.clock.entity_id()?;
-    let reserved = match line {
+    match line {
         ResearchReservationLine::Work { purpose } => {
-            vault.reserve_rsi_budget(id, units, purpose, binding.share.clone())
+            vault.reserve_rsi_budget_in_txn(txn, id, units, purpose, binding.share.clone())
         }
-        ResearchReservationLine::Exploration => vault.reserve_rsi_exploration(id, units),
-    };
-    reserved.map_err(rsi_error)?;
+        ResearchReservationLine::Exploration => {
+            vault.reserve_rsi_exploration_in_txn(txn, id, units)
+        }
+    }
+    .map_err(rsi_error)?;
     let row = ResearchReservation {
         id,
         line,
@@ -202,18 +243,7 @@ fn reserve(
         settlement: None,
         reserved_at: at,
     };
-    let recorded = vault.with_write_txn_grouped(|txn| {
-        // A concurrent reservation may have filled the lease meanwhile.
-        if !fits(&read_in_txn(vault, txn, &binding)?) {
-            return Err(invalid(LEASE_FULL));
-        }
-        RESERVATION.put(&vault.store, txn, &(*root.as_bytes(), id), &row)
-    });
-    if let Err(error) = recorded {
-        // Compensate the unrecorded reservation; it was never spent.
-        vault.refund_rsi_budget(id).map_err(rsi_error)?;
-        return Err(error);
-    }
+    RESERVATION.put(&vault.store, txn, &(*root.as_bytes(), id), &row)?;
     Ok(id)
 }
 

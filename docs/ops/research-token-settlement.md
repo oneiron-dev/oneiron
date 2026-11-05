@@ -54,3 +54,16 @@ Only the native bound-scope path can revise this total. No correction changes
 admission, holds, caps, suspension, or exposure accounting. Unknown receipts stay
 reserved, not falsely measured or refunded. These are still native budget
 charges, not provider measurements. FIX 3476 and FIX 9586 remain partial.
+
+## Reservation and continuation commit
+
+The RSI reservation, its campaign receipt, and the continuation's running task
+commit in one writer. The writer first checks that the continuation still equals
+the row the pass read. A losing concurrent pass therefore creates no reservation.
+A failed commit leaves none of these three records behind.
+
+A budget refusal keeps the task at the front and commits the existing budget-held
+state. RSI exhaustion also keeps its existing suspension. Storage and structural
+errors roll the whole write back. The standalone campaign reservation doors use
+the same RSI/campaign write and need no compensating refund. The dispatch dedupe
+key and its reservation-bound task identity do not change.
