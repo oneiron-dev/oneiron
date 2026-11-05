@@ -115,6 +115,8 @@ fn export(
         &current.member_ref,
         current.scope,
         key.as_str(),
+        &input.world_ref,
+        &rows,
         &envelope.envelope.body.update,
         &by,
         travelled,

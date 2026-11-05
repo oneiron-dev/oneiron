@@ -82,7 +82,7 @@ impl SyncClient {
             return Err(refused());
         }
         let window = manager.open_window(&key)?;
-        let (envelope, _, travelled) = crate::sync::selector::guest_share_envelope_body_listing(
+        let (envelope, rows, travelled) = crate::sync::selector::guest_share_envelope_body_listing(
             vault,
             &window.doc,
             &key,
@@ -106,6 +106,8 @@ impl SyncClient {
             &grant.member_ref,
             grant.scope,
             &body.window_key,
+            &body.world_ref,
+            &rows,
             &body.update,
             &by,
             travelled,

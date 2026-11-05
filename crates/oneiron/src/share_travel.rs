@@ -82,6 +82,9 @@ pub enum ExportTarget {
         member_ref: String,
         scope: crate::federation::FederationGrantScope,
         window_key: String,
+        /// Local source bindings retained for destination-aware receipt reads.
+        world_ref: EntityId,
+        source_rows: Vec<EntityId>,
         /// Actual transport row keys after projection, with field names only.
         rows: std::collections::BTreeMap<String, Vec<BornWithField>>,
     },
@@ -147,6 +150,7 @@ impl ExportTarget {
                 scope,
                 window_key,
                 rows,
+                ..
             } => guest_window::receipt_fields(grant_ref, member_ref, *scope, window_key, rows),
         }
     }
@@ -257,6 +261,29 @@ pub(crate) fn export_travel_receipts(
         }
     }
     Ok(receipts)
+}
+
+/// The local source bindings of one kept export travel row. These stay out
+/// of its public fields: transport row aliases do not disclose source ids.
+pub(crate) fn export_travel_source_rows(
+    vault: &Vault,
+    sequence: u64,
+) -> Result<Option<Vec<EntityId>>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(travel) = EXPORT_TRAVEL.get(&vault.store, &txn, &sequence)? else {
+        return Ok(None);
+    };
+    Ok(Some(match travel.target {
+        ExportTarget::GuestWindow {
+            world_ref,
+            mut source_rows,
+            ..
+        } => {
+            source_rows.push(world_ref);
+            source_rows
+        }
+        _ => Vec::new(),
+    }))
 }
 
 /// The born-with text `choice` lets travel with `entity`, read in the door's
