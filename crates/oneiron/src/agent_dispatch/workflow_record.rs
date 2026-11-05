@@ -578,7 +578,12 @@ impl super::AgentDispatcher<'_> {
             let Ok(active) = queue.retry_tip_in_txn(&txn, record.active) else {
                 continue;
             };
-            woke += usize::from(queue.advance_retry_in_txn(&mut txn, active.id, now)?);
+            woke += usize::from(
+                queue.advance_retry_in_txn(&mut txn, active.id, now)?
+                    || super::workflow::tool_wait::advance_saved_retry_in_txn(
+                        self.vault, &mut txn, &active, now,
+                    )?,
+            );
         }
         if woke > 0 {
             txn.commit()?;
