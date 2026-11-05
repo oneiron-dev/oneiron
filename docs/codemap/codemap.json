@@ -123451,7 +123451,7 @@
      "path": "src/models/media/replay.rs",
      "purpose": "A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -123464,6 +123464,16 @@
      "surface": {
       "crate-vis": 13,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/run_replay.rs",
+     "purpose": "One in-flight media run per replay key, without keeping another durable memo",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -127725,7 +127735,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 119,
+     "files": 120,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127881,7 +127891,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1584,
+   "source_files": 1585,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
