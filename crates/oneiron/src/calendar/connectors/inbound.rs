@@ -1,5 +1,6 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
+use super::door::CalendarConnectorOperation;
 use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -40,12 +41,20 @@ use crate::vault::Vault;
 /// failures. A failure applies nothing further and enqueues nothing.
 pub fn run_calendar_connector_sync(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     now: u64,
     jitter_seed: u64,
 ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
-    run_calendar_connector_sync_with_screener(vault, seat, transport, None, false, now, jitter_seed)
+    run_calendar_connector_sync_with_screener(
+        vault,
+        operation,
+        transport,
+        None,
+        false,
+        now,
+        jitter_seed,
+    )
 }
 
 /// [`run_calendar_connector_sync`] with CAL-09's safeguard wired, as a feed
@@ -59,19 +68,21 @@ pub fn run_calendar_connector_sync(
 /// Same contract as [`run_calendar_connector_sync`].
 pub fn run_calendar_connector_sync_with_screener(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     screener: Option<&dyn CalendarBodyScreener>,
     safeguard_enabled: bool,
     now: u64,
     jitter_seed: u64,
 ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
     seat.validate()?;
     if seat.kill_switch_engaged() {
         // No pull, no write, no next attempt — and nothing erased.
         return Ok(CalendarSyncOutcome::Killed);
     }
 
+    operation.revalidate(vault)?;
     let batch = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
@@ -86,6 +97,7 @@ pub fn run_calendar_connector_sync_with_screener(
     for change in &batch.changes {
         apply_remote_change(
             vault,
+            operation,
             seat,
             transport.provider_key(),
             change,
@@ -128,6 +140,7 @@ struct SyncCounters {
 /// `screen`.
 fn apply_remote_change(
     vault: &Vault,
+    operation: &CalendarConnectorOperation,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     change: &RemoteCalendarChange,
@@ -203,6 +216,7 @@ fn apply_remote_change(
             )?;
             write_remote_object(
                 vault,
+                operation,
                 &CalendarRemoteObjectRow {
                     system: system.to_owned(),
                     calendar_ref: seat.config.calendar_ref.clone(),
@@ -213,7 +227,9 @@ fn apply_remote_change(
                     content_hash: super::remote::ics_content_hash(&object.ics, &primary.uid)?,
                     last_seen_at: now,
                     source_blob_ref: Some(source_blob_ref),
+                    carrier: None,
                 },
+                None,
             )?;
             Ok(())
         }
@@ -369,11 +385,15 @@ fn enqueue_next_sync(
 /// a reconciliation pull that itself fails must not mask it.
 pub(super) fn reconcile_remote_object(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     uid: &str,
     now: u64,
 ) {
+    if operation.revalidate(vault).is_err() {
+        return;
+    }
+    let seat = &operation.registration().seat;
     let Ok(batch) = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
@@ -403,6 +423,7 @@ pub(super) fn reconcile_remote_object(
         .ok();
         let _ = write_remote_object(
             vault,
+            operation,
             &CalendarRemoteObjectRow {
                 system: seat.config.system.clone(),
                 calendar_ref: seat.config.calendar_ref.clone(),
@@ -413,7 +434,9 @@ pub(super) fn reconcile_remote_object(
                 content_hash: parsed.content_hash,
                 last_seen_at: now,
                 source_blob_ref,
+                carrier: None,
             },
+            None,
         );
     }
 }
