@@ -383,6 +383,25 @@ struct Masker {
     masked_claims: Vec<(EntityId, ClaimCandidate)>,
 }
 
+/// Runs the native shape plan for a fresh claim without minting custody.
+/// A changed candidate contains stand-in handles and must be discarded. The
+/// caller reads the owner's scan switch; known values stay with the write door.
+pub(crate) fn mask_fresh_claim_candidate(
+    id: EntityId,
+    candidate: &mut ClaimCandidate,
+) -> Result<bool> {
+    let mut plan = Masker {
+        at: Some((id, "claim".to_owned())),
+        ..Default::default()
+    };
+    for value in candidate.values_mut() {
+        if plan.mask_value(value)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Masker {
     fn mask_ops(&mut self, ops: &mut [BatchOp]) -> Result<()> {
         for op in ops {
