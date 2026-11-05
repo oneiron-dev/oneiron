@@ -64,7 +64,7 @@ impl LimitAsk for NativeLimitCollector {
 }
 
 /// One kept engine-row crossing, served to the host that opened the vault.
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct NativeLimitQuestion {
     /// The `[limits]` row key that asked (for example `limits.embedding_dimensions`).
     pub row: String,
