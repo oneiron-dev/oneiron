@@ -34,8 +34,33 @@ the session was anonymous at arrival or is anonymous at completion. Calls that
 start anonymously use the existing traceless native rung and worker path.
 
 This host sends all admitted evidence; it does not impose another row cap or
-silently truncate a model request. Provider-frame tiling and multi-pass
-composition are not implemented by this change. The configured evidence and
-token rows therefore remain partial for model-sized passes and fair resource
-accounting. This change does not attach a production host to the raw search or
-deadline-search doors, and makes no runtime or speed claim.
+silently truncate a model request. When every sampled primary and fallback model
+has current context, output-reserve and measured token-ratio metadata, composition
+can partition whole evidence rows into estimated-size map passes. It reduces only
+pairs of valid drafts that fit that estimate. Each reduction consumes two drafts
+and produces at most one, so free or unmeasured usage cannot leave a reduction
+loop running without progress.
+
+A draft's declared `sourceShortIds` must belong to that pass's actual inputs.
+Prose record links remain display-only under the existing final answer boundary;
+this check does not claim complete semantic grounding or refuse display links. An invalid, blank,
+declined or malformed intermediate is never forwarded as model input. Producer
+cohorts are tracked separately: each destination checks every original pin that
+could have influenced a draft, including inputs not cited by that draft. Whole
+source text and pinned-body validation are unchanged. Map and reduction calls
+use the same request budget and retain earlier usage on any later error.
+
+Frame sizing is an estimate, not a provider bound. The host counts serialized
+operation data, response schema and configured rung prompts with the existing
+o200k tokenizer and measured per-model ratio. Missing, stale or unmeasured
+metadata, or a manifest route outside the inventoried seat, preserves the existing whole-send path and reports that gap. An atomic
+row that exceeds the estimate is still sent whole and reported; it is never
+clipped. If remaining drafts cannot be combined, the existing declined path
+renders all original evidence extractively and says why. Configured rung prompts
+must support `compose` operations carrying either `evidence` rows or `drafts`
+with the same answer/citation schema.
+
+Provider framing, route changes after sampling, reranker wire windows and fair
+resource accounting remain unproved. These rows therefore remain partial. This
+change does not attach a production host to raw search or deadline search, and
+makes no runtime or speed claim.

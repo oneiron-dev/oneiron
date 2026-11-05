@@ -179,7 +179,7 @@ impl Backend {
             self.run_id.clone(),
             declaration,
             self.meter.clone(),
-            self.server.host_account(),
+            Some(self.server.host_account()),
             sink,
             None,
         )

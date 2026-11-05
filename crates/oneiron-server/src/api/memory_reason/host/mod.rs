@@ -21,6 +21,8 @@ use crate::models::{RerankOutcome, rerank_outcome, rerank_request};
 use crate::server::SyncServer;
 
 mod call;
+mod composition;
+mod frame;
 mod sources;
 mod usage;
 
@@ -178,43 +180,7 @@ impl MemoryReasonBackend for Backend {
         request: &MemoryReasonComposeRequest<'_>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<MemoryReasonComposition>> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields, rename_all = "camelCase")]
-        struct Composed {
-            answer: String,
-            source_short_ids: Vec<String>,
-            confidence: f32,
-            gaps: Vec<String>,
-            declined: bool,
-        }
-        let pins = sources::compose_pins(self, request.evidence)?;
-        let schema = json!({"type":"object","properties":{
-            "answer":{"type":"string"},"sourceShortIds":{"type":"array","items":{"type":"string"}},
-            "confidence":{"type":"number","minimum":0,"maximum":1},
-            "gaps":{"type":"array","items":{"type":"string"}},"declined":{"type":"boolean"}},
-            "required":["answer","sourceShortIds","confidence","gaps","declined"],"additionalProperties":false});
-        let evidence: Vec<_> = request.evidence.iter().map(|row| json!({
-            "shortId":row.short_id,"kind":row.kind,"text":row.text,"confidence":row.confidence,
-        })).collect();
-        let data = json!({"operation":"compose","question":request.question,
-            "depth":request.depth,"format":request.format,"evidence":evidence});
-        let answered = self.generate_json(data, schema, &pins, Some(request.token_budget))?;
-        let tokens_used = answered.tokens_used;
-        let composed: Composed =
-            serde_json::from_str(&call::text(&answered.value)).map_err(|_| RetrievalError {
-                error: invalid("memory reason composition is not the requested JSON"),
-                tokens_used,
-            })?;
-        Ok(BackendSpend {
-            tokens_used,
-            value: MemoryReasonComposition {
-                answer: composed.answer,
-                source_short_ids: composed.source_short_ids,
-                confidence: composed.confidence,
-                gaps: composed.gaps,
-                declined: composed.declined,
-            },
-        })
+        composition::compose(self, request)
     }
 }
 
