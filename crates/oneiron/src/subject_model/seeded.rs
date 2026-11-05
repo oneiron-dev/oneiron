@@ -50,13 +50,14 @@ pub(crate) fn ensure_seeded_actor_subject_in_txn(
 ) -> Result<()> {
     validate_anchor_entities_in_txn(vault, txn, actor, subject)?;
     validate_writer_in_txn(vault, txn, writer)?;
-    let body = subject_fact(
+    let mut body = subject_fact(
         PREDICATE_ACTOR_SUBJECT_REF,
         actor,
         Value::from(subject.to_hex()),
         writer,
         at,
     )?;
+    body.scope_facet = crate::claim::substrate_facet_id(subject)?;
     ensure_fact_as_in_txn(vault, txn, &claim_id, body, at)
 }
 
