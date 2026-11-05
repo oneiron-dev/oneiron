@@ -18,6 +18,10 @@ use crate::outbound_intent_ledger::{IntentEscalationReason, IntentLedgerRecord};
 /// admitted `record` is no longer a live owner of `vault`, read in a fresh
 /// snapshot. `None` for a row no owner's proof admitted, an owner still live,
 /// or a read that failed (logged).
+///
+/// The owner's own PERSON is read first: an owner erased, merged or split
+/// away is not live, even where that leaves a shared vault with no live
+/// owner, whose census reads as a fault rather than as `false`.
 pub(super) fn withdrawn_owner(
     vault: &Vault,
     record: &IntentLedgerRecord,
@@ -25,6 +29,9 @@ pub(super) fn withdrawn_owner(
     let owner = record.authorizing_owner?;
     let standing = (|| -> crate::error::Result<bool> {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if !crate::consent::person_is_live_in_txn(vault, &txn, &owner)? {
+            return Ok(false);
+        }
         crate::policy_model::is_live_vault_owner_in_txn(vault, &txn, &owner)
     })();
     match standing {
