@@ -55,12 +55,23 @@ impl HookScope {
 /// pairing, a call with no scope, or a scope that does not parse, takes
 /// nothing.
 pub(super) fn call_within(vault: &Vault, scope: &str, call: &VerbCall) -> Result<bool> {
-    let (Some(wanted), Some(own)) = (
-        HookScope::parse(scope),
-        call.scope.as_deref().and_then(HookScope::parse),
-    ) else {
+    let (Some(wanted), Some(own)) = (HookScope::parse(scope), call.scope.as_ref()) else {
         return Ok(false);
     };
+    for member in own.names().filter_map(HookScope::parse) {
+        if call_scope_within(vault, wanted, member, call)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn call_scope_within(
+    vault: &Vault,
+    wanted: HookScope,
+    own: HookScope,
+    call: &VerbCall,
+) -> Result<bool> {
     if std::mem::discriminant(&wanted) == std::mem::discriminant(&own) {
         return Ok(wanted == own);
     }
