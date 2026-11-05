@@ -3,6 +3,7 @@
 
 mod pending;
 mod sealed;
+pub(crate) mod source;
 
 pub(crate) use sealed::{HomeClaimDelivery, SealedHomeClaimVector};
 
