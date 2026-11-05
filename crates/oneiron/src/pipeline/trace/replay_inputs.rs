@@ -107,6 +107,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             .congruence_query(builder.query_affect)
             .map(|vad| [vad.valence, vad.arousal, vad.dominance]),
     });
+    let mut access_factor_memory = builder
+        .media_search
+        .memory()
+        .map(crate::host_memory::MachineMemory::empty_lease);
     let mut inputs = RetrievalReplayInputs {
         query_ref: builder.replay_query_ref.clone(),
         config: json!({
@@ -196,6 +200,16 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "access_factor_overrides": builder.access_factor_overrides.map(|map| {
                 let mut entries: Vec<_> = map.iter().map(|(id, factor)| (id.to_hex(), factor)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                if let Some(memory) = access_factor_memory.as_mut() {
+                    memory.materialized(
+                        0,
+                        entries.iter().fold(
+                            (entries.capacity() as u64)
+                                .saturating_mul(std::mem::size_of::<(String, &f32)>() as u64),
+                            |bytes, (id, _)| bytes.saturating_add(id.capacity() as u64),
+                        ),
+                    );
+                }
                 entries
             }),
         }),
