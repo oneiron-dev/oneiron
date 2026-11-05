@@ -70,6 +70,17 @@ impl ReceivedHomeClaimVector {
             self.vector.entity_id.as_bytes(),
             &self.vector.source,
         ) != Some(ResponseFamily::StepClaim)
+            || !matches!(
+                ResponseFamily::StepClaim
+                    .scan(
+                        vault.store.attempt_operations,
+                        vault.store.voice_bank_response,
+                        self.vector.entity_id.as_bytes(),
+                        &self.vector.source,
+                    )
+                    .carriage(),
+                Some((_, false))
+            )
         {
             return Ok(RetainedHomeClaimResponseState::OtherSource);
         }
