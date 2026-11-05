@@ -47,7 +47,7 @@ pub(super) fn put_or_stage(
     header: &EntityMetadataHeader,
     blob: &[u8],
     data: &[u8],
-) -> Result<()> {
+) -> Result<Option<crate::entity_doc::RecordDocumentStand>> {
     let occurred = TimeRange {
         start: header.occurred_start,
         end: header.occurred_end,
@@ -62,7 +62,7 @@ pub(super) fn put_or_stage(
             row_version: header.row_version,
             data: data.to_vec(),
         });
-        return Ok(());
+        return Ok(None);
     }
     // FIX 9600: a MESSAGE row an own machine's proven connection sent takes
     // its own-device lane to the put, and the batch threads it to the witness
