@@ -84,12 +84,12 @@ pub use folds::{
 };
 
 pub use conversation::{
-    ChatLog, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
+    ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
-    read_chat_log, seal_conversation_flight,
+    read_action_chat_log, read_chat_log, read_first_chat_log, seal_conversation_flight,
 };
 pub(crate) use conversation::{
-    FoldedTurnSummary, conversation_receipt_in, folded_turn_summary_in,
+    FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
     put_conversation_receipt_in_txn,
 };
 pub use driver::{
