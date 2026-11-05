@@ -101841,7 +101841,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExportKey",
@@ -101858,7 +101858,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 7,
+      "re-export": 2,
       "struct": 7
      }
     },
@@ -101870,6 +101871,36 @@
      "purpose": "A chart at export, by series identity: a bound chart's changed data written over its retained chart part…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/evidence.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/payload.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/projector.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -103313,7 +103344,7 @@
      "purpose": "A 32-byte digest or fingerprint field as 64 lowercase hex digits on a human-readable wire (JSON), and as its…"
     },
     "live": {
-     "files": 63,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -103411,9 +103442,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 7,
+   "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 170,
+   "source_files": 173,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -112201,7 +112232,7 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -112272,6 +112303,16 @@
      "purpose": "Chat generation and witness hook boundaries",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/model_call.rs",
+     "purpose": "Model-call evidence from the actual answering leg, independent of delivery",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -129358,7 +129399,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 666,
+     "files": 667,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129871,7 +129912,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1563,
+   "source_files": 1564,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
