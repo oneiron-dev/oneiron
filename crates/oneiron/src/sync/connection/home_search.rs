@@ -115,6 +115,16 @@ impl HomeSearch {
         self.ask(query, limit, Some(scope), caller).await
     }
 
+    pub(crate) async fn media_vectors_for(
+        &self,
+        space: &str,
+        ids: &[crate::EntityId],
+    ) -> Result<Vec<(crate::EntityId, crate::embed::MediaVectorReplica)>, TransportError> {
+        let mut config = self.config.clone();
+        config.residence_mode = *self.mode.borrow();
+        crate::sync::client::request_media_vectors(&self.vault, &config, space, ids).await
+    }
+
     async fn ask(
         &self,
         query: &str,

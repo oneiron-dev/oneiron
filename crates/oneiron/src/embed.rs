@@ -35,6 +35,8 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
@@ -45,6 +47,8 @@ pub(crate) use repo_projection::{
 };
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
+#[cfg(feature = "sync")]
+pub use space::MediaVectorReplica;
 pub(crate) use space::checkpoint;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
