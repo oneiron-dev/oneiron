@@ -33,10 +33,16 @@ pub(crate) struct SealedHomeClaimVector {
     recipient: EntityId,
     window: String,
     payload_digest: [u8; 32],
+    release_rows: Vec<EntityId>,
     envelope: Vec<u8>,
 }
 
 impl SealedHomeClaimVector {
+    /// The original source identities, retained for the final send judgment.
+    pub(crate) fn release_rows(&self) -> &[EntityId] {
+        &self.release_rows
+    }
+
     fn aad(&self) -> Result<Vec<u8>> {
         rmp_serde::to_vec(&(
             self.entity_id,
@@ -44,6 +50,7 @@ impl SealedHomeClaimVector {
             self.sender_key,
             self.window.as_str(),
             self.payload_digest,
+            &self.release_rows,
         ))
         .map_err(|_| Error::CorruptedIndex("home CLAIM copy binding"))
     }
@@ -110,6 +117,7 @@ impl Vault {
                 recipient: machine,
                 window: delivery.window.to_owned(),
                 payload_digest: *blake3::hash(delivery.payload).as_bytes(),
+                release_rows: vector.release_rows.clone(),
                 envelope: Vec::new(),
             };
             (copy, vector, key, vault_id)
@@ -205,7 +213,7 @@ impl Vault {
             .map_err(crypto_error)?;
         let vector: super::HomeClaimVector = rmp_serde::from_slice(&plaintext)
             .map_err(|_| Error::CorruptedIndex("home CLAIM copy"))?;
-        if vector.entity_id != copy.entity_id {
+        if vector.entity_id != copy.entity_id || vector.release_rows != copy.release_rows {
             return Ok(None);
         }
         Ok(Some(ReceivedHomeClaimVector { peer, vector }))
