@@ -3835,7 +3835,7 @@ class Oneiron:
         def body(self) -> "Oneiron._VaultArtifactsBodyVerbs":
             return Oneiron._VaultArtifactsBodyVerbs(self._client)
         def append(self, input: dict[str, Any]) -> Any:
-            """Appends one version of bytes to a blob artifact's append-only chain."""
+            """Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_append(json.dumps(input, allow_nan=False))))
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""

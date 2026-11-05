@@ -21,12 +21,12 @@ use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
 
 use crate::dto::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
-    DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
-    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
-    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt,
+    ConsolidationJobInput, DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView,
+    Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt,
+    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
     ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
     RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
@@ -1052,6 +1052,19 @@ impl Lower<sdk::ReadBlobVersionRequest> for (String, u64) {
         Ok(sdk::ReadBlobVersionRequest {
             artifact_ref,
             version,
+        })
+    }
+}
+
+impl Lift<engine::BlobVersionAppendOutcome> for BlobVersionAppendOutcome {
+    fn lift(value: engine::BlobVersionAppendOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::BlobVersionAppendOutcome::Landed(view) => Self::Landed {
+                view: BlobVersionView::lift(view)?,
+            },
+            engine::BlobVersionAppendOutcome::Proposed(proposal) => Self::Proposed {
+                proposal: lift_record("vault.artifacts.append", &proposal)?,
+            },
         })
     }
 }
