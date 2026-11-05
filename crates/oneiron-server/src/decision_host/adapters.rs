@@ -215,6 +215,7 @@ impl DecisionProvider for SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         };
         let score_levels = call.score_levels().unwrap_or_default();
         if matches!(call.question.contract, AnswerContract::Score { .. }) && score_levels.is_empty()
@@ -287,6 +288,7 @@ impl DecisionProvider for SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         })
     }
 }
@@ -342,6 +344,7 @@ impl SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         })
     }
 }
