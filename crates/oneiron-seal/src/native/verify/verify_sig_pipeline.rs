@@ -3,15 +3,15 @@
 use lopdf::{Document, Object};
 
 use crate::api::{
-    Counter, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
-    note_current,
+    Counter, SealResourceLimits, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, note_current,
 };
 use crate::error::SealError;
 use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 use super::super::{cms, pdf};
 use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
-use super::verify_chain_gates::{VerifyCtx, malformed_input};
+use super::verify_chain_gates::{VerifyCtx, malformed_input, memory_refused};
 use super::verify_dss_core::EmbeddedCert;
 use super::verify_evidence::CadesEvidence;
 pub(super) use super::verify_evidence::evaluate_envelope;
@@ -81,15 +81,22 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 ///
 /// The nodes the descent visits are counted for the `[limits]` field-tree
 /// row, a failed descent's too; no count of them stops it (Rule 5).
-pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
+pub(super) fn collect_signatures(
+    doc: &Document,
+    limits: &SealResourceLimits,
+) -> Result<Vec<SigEntry>, SealError> {
     let mut work = 0usize;
-    let collected = discover_signatures(doc, &mut work);
+    let collected = discover_signatures(doc, &mut work, limits);
     note_current(Counter::FieldTreeWork, work);
     collected
 }
 
 /// [`collect_signatures`], counting the nodes it visits in `work`.
-fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>, SealError> {
+fn discover_signatures(
+    doc: &Document,
+    work: &mut usize,
+    limits: &SealResourceLimits,
+) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
     let catalog = pdf::catalog(doc).ok_or_else(malformed_input)?;
     let Ok(af_obj) = catalog.get(b"AcroForm") else {
@@ -125,7 +132,7 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         std::collections::BTreeSet::new();
     let mut stack: Vec<(&Object, bool)> = Vec::new();
     for field in fields.iter().rev() {
-        stack.push((field, false));
+        pdf::admitted::push(limits, &mut stack, (field, false)).map_err(memory_refused)?;
     }
     while let Some((node, inherited_sig_ft)) = stack.pop() {
         *work = work.saturating_add(1);
@@ -134,7 +141,7 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         // once: re-walking cannot discover a new signature, and refusing to
         // recurse is what makes a cycle terminate.
         if let Some(id) = node_id
-            && !visited.insert(id)
+            && !pdf::admitted::btree_insert(limits, &mut visited, id).map_err(memory_refused)?
         {
             continue;
         }
@@ -158,7 +165,8 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
                 .as_array()
                 .map_err(|_| malformed_input())?;
             for kid in kids.iter().rev() {
-                stack.push((kid, is_sig_ft));
+                pdf::admitted::push(limits, &mut stack, (kid, is_sig_ft))
+                    .map_err(memory_refused)?;
             }
         }
         // Signature-discovery looks only at SIGNATURE fields (/FT /Sig,
@@ -231,22 +239,49 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
-        let field_name = field
+        let field_name_bytes = field
             .get(b"T")
             .ok()
             .and_then(|o| pdf::resolve(doc, o))
             .and_then(|o| o.as_str().ok())
-            .map_or_else(
-                || "unnamed".to_owned(),
-                |v| String::from_utf8_lossy(v).into_owned(),
-            );
-        out.push(SigEntry {
-            field_name,
-            is_doc_ts,
-            byte_range: br,
-            contents: contents.clone(),
+            .unwrap_or(b"unnamed");
+        let field_name_len = field_name_bytes.utf8_chunks().fold(0usize, |len, chunk| {
+            len.saturating_add(chunk.valid().len())
+                .saturating_add(if chunk.invalid().is_empty() {
+                    0
+                } else {
+                    char::REPLACEMENT_CHARACTER.len_utf8()
+                })
         });
+        limits
+            .memory
+            .admit::<u8>(field_name_len)
+            .map_err(memory_refused)?;
+        let field_name = String::from_utf8_lossy(field_name_bytes).into_owned();
+        limits
+            .memory
+            .admit::<u8>(contents.len())
+            .map_err(memory_refused)?;
+        pdf::admitted::push(
+            limits,
+            &mut out,
+            SigEntry {
+                field_name,
+                is_doc_ts,
+                byte_range: br,
+                contents: contents.clone(),
+            },
+        )
+        .map_err(memory_refused)?;
     }
+    // Stable sorting may allocate a temporary spine; it never copies the
+    // owned names or contents. Keep equal-revision discovery order intact.
+    let scratch_bytes = if out.len() > 1 {
+        out.len().saturating_mul(std::mem::size_of::<SigEntry>())
+    } else {
+        0
+    };
+    let _sort_hold = limits.memory.hold(scratch_bytes).map_err(memory_refused)?;
     out.sort_by_key(|e| e.byte_range[2].saturating_add(e.byte_range[3]));
     Ok(out)
 }
