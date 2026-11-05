@@ -23,10 +23,11 @@ use crate::settings::ReadDestination;
 /// stay committed. On this device the state is the same. Off it, a proposal
 /// filed from a record a world withheld from that destination keeps is left
 /// out of the proposals shown and of every proposal count, as if it were
-/// never filed. Typed-body document and codebase-snapshot carriers also name
-/// their actual source entity in their row keys. Other side rows and carriers
-/// stay unknown. Run, receipt and retry counts omit only contributors whose
-/// actual source entity is known and withheld. Unknown sources never withhold.
+/// never filed. Typed-body document, typed-body fork and codebase-snapshot
+/// carriers also name their actual source entity in their row keys. Other
+/// side rows and carriers stay unknown. Run, receipt and retry counts omit only
+/// contributors whose actual source entity is known and withheld. Unknown
+/// sources never withhold.
 ///
 /// # Errors
 /// As [`secret_lift_as_owner`].
@@ -54,13 +55,20 @@ pub fn secret_lift_as_owner_toward(
 /// The source entity a path actually names. A typed-body document's row key
 /// is that document's entity id, including earlier-frontier proposals filed
 /// by `frontier::keys_of`. A codebase snapshot's key is its CODE_ARTIFACT entity
-/// id. Other carrier and side-row keys remain unknown.
+/// id. A typed-body fork pairs its source entity with its fork id.
+/// Other carrier and side-row keys remain unknown.
 fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
     let path = &proposal.proposal.path;
     if let Some(hex) = path.strip_prefix("record:") {
         return EntityId::from_hex(hex).ok();
     }
     let (table, hex) = path.strip_prefix("carrier:")?.split_once(':')?;
+    if table == crate::side_table::TYPED_BODY_FORK_DOC.name {
+        let (source, fork) = hex.split_at_checked(32)?;
+        let entity = EntityId::from_hex(source).ok()?;
+        EntityId::from_hex(fork).ok()?;
+        return Some(entity);
+    }
     if table != crate::side_table::TYPED_BODY_DOC.name
         && table != crate::side_table::CODEBASE_SNAPSHOT.name
     {
