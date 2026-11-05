@@ -46,3 +46,32 @@ per-answer measurement keep their existing rate behavior.
 This does not change trial backend pins, billing settlement, capture, deadlines,
 model selection or provider fallbacks. Other provider-level rates are not made
 usage-measured by this carrier.
+
+## Native label readings
+
+A native decision reader keeps each question's distribution with that question's
+catalog-priced token cost estimate before the pack's usage is summed. The quote
+uses the same fixed engine model and bound host as the read. It includes both
+attempts when a top-k answer needs a full-vocabulary retry. It does not divide a
+pack's total cost among questions or compare a returned launch alias with the
+engine model. A joint paired read shares its question's measurement.
+
+A third-party native answer needs positive reported input and output counters and
+a known cache-read count. A reported zero cache read is known; a missing or
+inconsistent cache count is not zero for pricing. Missing counters or prices,
+an invalid quote or overflow leave measured cost unknown. The old settlement
+values are unchanged: an unknown cache read still contributes zero to its token
+counter, and a zero output count still retains the one-position accounting floor.
+Those accounting values are not evidence for a known cost estimate.
+
+As before, a model served on this host, or a reader without a bound vault,
+reports no registered native cost.
+
+Native measured unknown is `Some(None)`, not the old input-token-rate fallback.
+Non-finite or negative per-answer prices also stay unknown without rejecting an
+otherwise valid answer. This does not change answer probabilities, paired
+marginals, person-question handling, retries, receipts or lease settlement.
+
+This is a catalog quote, not an invoice or proof of a financial charge. Generic
+`GeneratedRung` provider rates are a separate remainder; this native path does not
+establish their actual answering-model identity or change their pricing.

@@ -163,8 +163,8 @@ fn chat_identity(
 /// One native decision-read answer's cache read and raw usage: its `timings`
 /// as it came, beside its receipt (`tokens_evaluated` in, `timings.cache_n`
 /// read from the cache, `timings.prompt_n` computed). The read is the
-/// record's when its counts agree, else 0, as the standard counter always
-/// read it; the record keeps the read unknown. The identity is what
+/// record's when its counts agree, else unknown. The standard token counter
+/// still uses 0 for an unknown read; the record keeps it unknown. The identity is what
 /// `answering`, the answer's own alias, names: never a chat template, which
 /// a native prompt does not go through; its execution mode is `execution`,
 /// that of the completion the engine sent (FIX 8329).
@@ -173,7 +173,7 @@ pub(super) fn label_read(
     answering: Option<&AnsweringIdentity>,
     execution: Option<&CacheDigest>,
     physical: Option<WorkPhysical>,
-) -> (u64, JsonValue) {
+) -> (Option<u64>, JsonValue) {
     let timings = answer.get("timings");
     let native = |key: &str| timings.and_then(|timings| count(timings, key));
     let input = count(answer, "tokens_evaluated");
@@ -187,7 +187,7 @@ pub(super) fn label_read(
         prefill_us: timings.and_then(|timings| micros(timings, "prompt_ms")),
         generate_us: timings.and_then(|timings| micros(timings, "predicted_ms")),
     });
-    let read = pass.measured_read().unwrap_or(0);
+    let read = pass.measured_read();
     let identity = CacheIdentity {
         execution_mode: execution.cloned(),
         ..answering

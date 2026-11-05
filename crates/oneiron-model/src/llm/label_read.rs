@@ -7,7 +7,7 @@
 //! them. The person yes/no question ("ask a person?") is read separately, its own readout
 //! over yes and no. The host owns the tokenizer, the label verbalizers, the prompt each
 //! question renders over the shared state, and calibration. This seam carries only the
-//! probabilities and the usage to settle.
+//! probabilities, optional per-question cost estimates and the usage to settle.
 
 use super::{BudgetLease, LlmResult, LlmUsage};
 use serde_json::Value as JsonValue;
@@ -78,11 +78,20 @@ pub struct LabelReadRequest<'a> {
     pub work_until: Option<std::time::Instant>,
 }
 
+/// One question's probabilities and optional catalog-priced token cost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelReadDistribution {
+    pub probabilities: Vec<f64>,
+    /// Cost per thousand logical readings of this question, not a provider invoice.
+    /// Unknown includes missing or inconsistent reported counters or catalog prices.
+    pub cost_per_thousand: Option<f64>,
+}
+
 /// One distribution per question of the pack.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LabelReadResponse {
     /// Each question's distribution over its own labels (or joint labels), in request order.
-    pub readouts: Vec<Vec<f64>>,
+    pub readouts: Vec<LabelReadDistribution>,
     /// Tokens the whole pack used, its retries included; settled against its own lease.
     pub usage: LlmUsage,
 }
@@ -99,8 +108,8 @@ pub trait LabelReadModel: Send + Sync {
     fn max_labels(&self) -> usize {
         64
     }
-    /// What a read costs per thousand units it reads, as the reader's host knows its price
-    /// (FIX 11305); none when it knows none, as for a model served on the host itself.
+    /// The provider-level cost per thousand readings when an answer supplies no measured
+    /// cost (FIX 11305); none when unknown, as for a model served on the host itself.
     fn cost_per_thousand(&self) -> Option<f64> {
         None
     }
