@@ -19,6 +19,7 @@ pub(crate) type EntitySideRowEraser = fn(&Store, &mut heed::RwTxn<'_>, &EntityId
 
 /// Every per-entity eraser, one line per module.
 const ERASERS: &[EntitySideRowEraser] = &[
+    crate::agent_dispatch::erase_workflow_tool_source_in_txn,
     crate::typed_body::erase_in_txn,
     crate::office_body::erase_in_txn,
     crate::edit_roundtrip::deck_create::erase_in_txn,
@@ -77,6 +78,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     erase_skipped_send_receipt_in_txn,
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     erase_inbox_cards_in_txn,
+    // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
+    crate::mail_pack::erase_occurrence_rows_in_txn,
     // FIX 11030: a deleted PERSON's unresolved sends, linked by its party key
     // while its body still names it.
     crate::outbound_intent_ledger::link_late_recipients_in_txn,

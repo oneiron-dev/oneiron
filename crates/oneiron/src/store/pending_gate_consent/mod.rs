@@ -5,7 +5,7 @@
 use super::*;
 
 mod indexes;
-mod keys;
+use oneiron_store::pending_gate_consent::keys;
 mod obligation;
 mod records;
 mod run_groups;
