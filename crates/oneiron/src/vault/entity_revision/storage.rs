@@ -15,6 +15,7 @@ use history::{
     RevisionDocument, common_binding, generic_binding, generic_revision_raw, revision_document,
     revision_raw,
 };
+pub(super) use history::{RevisionNamespace, fork_revision_with_namespace};
 mod redact;
 mod retained;
 pub use redact::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
@@ -208,27 +209,7 @@ pub(crate) fn fork_revision(
     id: &EntityId,
     revision: RevisionRef,
 ) -> Result<LoroDoc> {
-    let raw = FRONTIER
-        .get(store, txn, &(*id, revision.0))?
-        .ok_or(Error::EntityNotFound)?;
-    let loaded = match revision_document(store, txn, id, revision, &raw)? {
-        RevisionDocument::Common(doc) => return Ok(doc.doc),
-        RevisionDocument::Generic(doc) => doc,
-    };
-    let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
-    // A revision at the live frontier is the loaded document itself: no
-    // snapshot export and import (FIX 11647).
-    let doc = if loaded.oplog_frontiers() == frontier {
-        loaded
-    } else {
-        loaded
-            .fork_at(&frontier)
-            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?
-    };
-    if reference(id, &raw) != revision && reference(id, &doc_raw(&doc)?) != revision {
-        return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
-    }
-    Ok(doc)
+    fork_revision_with_namespace(store, txn, id, revision).map(|(doc, _)| doc)
 }
 
 pub(super) fn doc_raw(doc: &LoroDoc) -> Result<Vec<u8>> {

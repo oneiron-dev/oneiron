@@ -14,6 +14,12 @@ pub(super) enum RevisionDocument {
     Generic(LoroDoc),
 }
 
+/// The namespace proved for a forked retained revision.
+pub(in crate::vault::entity_revision) enum RevisionNamespace {
+    Common,
+    Generic,
+}
+
 fn retains_frontier(doc: &LoroDoc, frontier: &Frontiers) -> bool {
     doc.frontiers_to_vv(frontier)
         .is_some_and(|vv| vv.includes_vv(&doc.shallow_since_vv().to_vv()))
@@ -92,6 +98,35 @@ pub(super) fn revision_document(
         doc.fork(encoded)?
     };
     Ok(RevisionDocument::Common(doc))
+}
+
+pub(in crate::vault::entity_revision) fn fork_revision_with_namespace(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    revision: RevisionRef,
+) -> Result<(LoroDoc, RevisionNamespace)> {
+    let raw = FRONTIER
+        .get(store, txn, &(*id, revision.0))?
+        .ok_or(Error::EntityNotFound)?;
+    let loaded = match revision_document(store, txn, id, revision, &raw)? {
+        RevisionDocument::Common(doc) => return Ok((doc.doc, RevisionNamespace::Common)),
+        RevisionDocument::Generic(doc) => doc,
+    };
+    let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
+    // A revision at the live frontier is the loaded document itself: no
+    // snapshot export and import (FIX 11647).
+    let doc = if loaded.oplog_frontiers() == frontier {
+        loaded
+    } else {
+        loaded
+            .fork_at(&frontier)
+            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?
+    };
+    if reference(id, &raw) != revision && reference(id, &doc_raw(&doc)?) != revision {
+        return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
+    }
+    Ok((doc, RevisionNamespace::Generic))
 }
 
 /// The record bytes of `id` at `revision`, read on its private loaded document:
