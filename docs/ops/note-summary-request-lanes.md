@@ -25,10 +25,15 @@ original principal path. Conversation targets are unchanged. The current
 room-turn and unsupported narrowed-guest paths still use the existing plain
 queue; this change does not provide portable frozen forms for them.
 
-This covers the actual queued declaration, not every future derivation. The
-projection and explicit re-derivation paths still normalize a fresh declaration
-without its saved requester lane and basis. That is a separate open follow-up.
-A full transferred credential can also freeze as principal before the new
+A NOTE projection preserves these same private fields when it registers the
+saved declaration and observes its sources. Automatic and explicit
+re-derivation carry that original narrowing and grant basis into the new queue
+input. Explicit re-derivation still records its actual requester, but does not
+widen the saved source-reading bound. The native planner checks the current
+requester, frozen credential and source permissions again. Projection identity,
+principal declarations and other summary targets are unchanged.
+
+A full transferred credential can still freeze as principal before the new
 metadata is captured; that separate existing case remains open. No old-format
 reader or migration is supplied.
 
