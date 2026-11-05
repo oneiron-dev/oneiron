@@ -3431,15 +3431,16 @@ evaluator scores it and no loader serves its head, so it holds with
 Each vault retrains its own small draft model at night on its own
 conversations, rooms with other people included. The drafter never leaves the
 vault. Retraining is on by default and the owner can switch it off. Today the
-engine holds the records, the doors, the erase path, the nightly job and the
-serving binding. It does not train yet.
+engine holds the records, the doors, the erase path, the corpus export, the
+nightly job and the serving binding. It does not train yet.
 
 What exists now:
 
 - **Records.** `DrafterVersion` is one attempted or trained head and its run:
   its target, its parent (stock or the last kept version), its recipe, the
   pinned policy revision and cutoff, its dependency set, its job, its state,
-  its generation and a reference to its sealed artifact. `DrafterBinding` is
+  its generation, its corpus manifest and a reference to its sealed artifact.
+  `DrafterBinding` is
   one target's pointer: stock or a retained version, with a generation and
   the head it replaced. A target with no binding serves stock. `DrafterEvent`
   is the content-free history: retrain, qualify, activate, rollback, revert,
@@ -3463,8 +3464,9 @@ What exists now:
   whose training ancestry names it, at both delete doors and at an actor's
   erase, in the erase's own transaction. Each reached version becomes
   `erased`, its generation bumps (this fences its pending job), every binding
-  that served it returns to stock, and the retirement of its artifact keys is
-  staged. The custody finisher retires those keys at housekeeping. A late
+  that served it returns to stock, and the retirement of its artifact keys and
+  its corpus keys is staged. The custody finisher retires those keys at
+  housekeeping. The corpus sweep removes the sealed corpus files. A late
   trainer completion rechecks the version's generation when it publishes, and
   is refused.
 - **Sealed artifacts.** Each version's load set is sealed under an erasable
@@ -3474,13 +3476,58 @@ What exists now:
   each piece of a file. `Vault::publish_drafter_artifact` publishes the
   reference after it checks the version again. Retained versions are never
   evicted.
+- **Corpus.** The export reads one source: the chat breakpoint that a self
+  agent's reply keeps (`CHAT_BREAKPOINT`). A breakpoint holds the request
+  exactly as the rung sent it. Each example is that request, the reply's
+  committed text, its finish reason and the rung. The export never re-renders
+  a prompt. A reply with no breakpoint is not an example. The reply MESSAGE
+  keeps the answer text only, so no example holds a reasoning or tool-call
+  span. Rooms with other people are included, with no per-run consent tick.
+- **Exclusions.** The export leaves a reply out, and counts it under its
+  reason code (`drafter.corpus.*`), when: its rung's wire model is not the
+  target's `model`; the reply was continued; the breakpoint no longer stands
+  for its reader; the request holds a part that is not text, or ends after
+  the user's message; the reply is not final, not the agent's or not readable
+  by its reader; its room has an open off-record stretch; or a record that the
+  example read is erased, a Tier-A withhold (a live session overlay row is
+  one), has no known world or author, or is in an excluded world. Quoted
+  records, summary folds and craft rows count as records that the example
+  read.
+- **Dependency set.** Each example names every record it read, with the world
+  and author of each, the quoted and folded records, its reader and its
+  sitting. The version's set is the union of all examples on both sides and
+  the full ancestry of its parent. The night writes the version only after it
+  checks again, in its own write, that every record is still live.
+- **Split.** Each request digest is one source family, so a Retry of the same
+  request stays on one side. The export holds out a family together with
+  every family whose examples contain one of its replies, so no training
+  example holds bytes of a held-out reply. Families that the fewest other
+  examples contain go first, so each conversation's latest replies are held
+  out first, until one example in `HELD_OUT_DIVISOR` (10) is held out. A
+  training example whose answer is byte-identical to a held-out answer is
+  left out. The trainer gets the training side only.
+- **Custody.** Plaintext stays in the night's process memory. The two sides
+  are sealed in 1 MiB chunks, each side under its own erasable key, minted
+  under the version. The sealed files are in `drafter-corpora/<version>/`
+  under the vault root. `Vault::drafter_training_corpus` opens the training
+  side for the trainer host. `Vault::drafter_held_out_corpus` opens the
+  held-out side for the evaluator. `Vault::sweep_drafter_corpora` removes
+  every directory that no prepared version names.
 - **Nightly job.** `coach.drafter_retrain` is on the Coach's nightly host
   roster, with one pending job per vault. Each night pins the policy revision
   and the cutoff and records one retrain event. With the policy off, the
-  night is `skipped` (`policy_off`). With the policy on, the night is `held`
-  (`no_trainer_recipe`), because no trainer recipe is wired on any host. A
-  night never reports a successful empty retrain, and every target keeps
-  serving stock.
+  night is `skipped` (`policy_off`). With the policy on, a recipe set and a
+  target that the host names, the night exports the corpus. In one write it
+  then checks the policy again, marks the target's earlier `prepared`
+  version `rejected` (its corpus keys retire), and writes a new version in
+  state `prepared` with the corpus manifest (counts, digests, split pin,
+  left-out counts by reason) and the dependency set. The night is then
+  `held` (`no_trainer_recipe`), because no trainer recipe is wired on any
+  host. With no recipe, no target, a policy that changed during the export,
+  or a corpus with an empty side, the night writes no version and is `held`
+  (`no_trainer_recipe`). A night never reports a successful empty retrain,
+  and every target keeps serving stock. The same attempt again returns the
+  outcome it recorded.
 - **Sealed files.** A version's sealed files sit under the vault's
   `drafter-artifacts/<artifact id>/`, one per load-set file, each a run of
   frames (`u32` length, then one sealed chunk of 64 KiB, the last chunk
@@ -3530,8 +3577,8 @@ What exists now:
   way, and the reason when the binding is not applied. A drafter target names
   the worker's backend model digest, its tokenizer digest and `exl3`.
 
-What does not exist yet: the corpus export from the vault's conversations,
-the trainer script and its recipe for the house serving family, the held-out
-evaluator with its token-identity check, automatic activation and rollback,
-a binding for managed workers that one hosted process serves to several
-vaults, and the drafter section of the morning report.
+What does not exist yet: the trainer script and its recipe for the house
+serving family, the held-out evaluator with its token-identity check,
+automatic activation and rollback, a binding for managed workers that one
+hosted process serves to several vaults, the corpus sweep at housekeeping, and
+the drafter section of the morning report.

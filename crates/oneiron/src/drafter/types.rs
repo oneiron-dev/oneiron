@@ -2,7 +2,7 @@
 //! target, its events and the owner's policy. Ids, digests, states, counts
 //! and times only: never conversation text, tokens, weights or keys.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -166,6 +166,49 @@ pub struct DrafterArtifact {
     pub load_set_blake3: [u8; 32],
 }
 
+/// One sealed side of a version's corpus (FIX 14973): its training examples
+/// or its held-out examples, one JSON line each, sealed chunk by chunk under
+/// an erasable key of its own. The record names the key by its random ref
+/// only, and pins the plaintext by its length and BLAKE3.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterCorpusFile {
+    /// Its random id, never derived from its bytes: the sealed file's name
+    /// and its key's incarnation.
+    pub id: [u8; 16],
+    /// The erasable key's random ref: its name in custody, never the key.
+    pub key_ref: [u8; 32],
+    /// How many examples it holds.
+    pub examples: u64,
+    /// How many source families those examples come from.
+    pub families: u64,
+    /// Its plaintext length.
+    pub bytes: u64,
+    /// Its plaintext BLAKE3.
+    pub blake3: [u8; 32],
+    /// How many sealed chunks it is written in.
+    pub chunks: u64,
+}
+
+/// What one version's corpus holds (FIX 14973): its form, its two sealed
+/// sides, the pin of its split and how many replies the export left out,
+/// by reason. Counts and digests only, never an example.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterCorpus {
+    /// The form every example takes, as its trainer reads it.
+    pub form: String,
+    /// The examples the trainer receives.
+    pub training: DrafterCorpusFile,
+    /// The examples only the evaluator opens; never sent to the trainer.
+    pub held_out: DrafterCorpusFile,
+    /// BLAKE3 of the canonical JSON of the held-out families, sorted: the
+    /// split's pin.
+    pub held_out_families_blake3: [u8; 32],
+    /// The replies the export left out, by reason code.
+    pub omitted: BTreeMap<String, u64>,
+}
+
 /// One drafter version, immutable in what it is, and its run: the record of
 /// one attempted or trained head. No second training ledger holds the same
 /// attempt.
@@ -195,6 +238,9 @@ pub struct DrafterVersion {
     pub generation: u64,
     /// Its sealed load set, once published; `None` once erased.
     pub artifact: Option<DrafterArtifact>,
+    /// Its sealed corpus, pinned when the night prepared it; `None` once
+    /// erased.
+    pub corpus: Option<DrafterCorpus>,
     /// Its qualification record, once the host evaluated it.
     pub evaluation: Option<EntityId>,
     /// The vault's recorded clock when it was prepared and last changed.
