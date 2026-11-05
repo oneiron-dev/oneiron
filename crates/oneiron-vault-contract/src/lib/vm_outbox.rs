@@ -501,3 +501,87 @@ fn clip(text: &str) -> String {
         .take(MAX_DETAIL_CHARS)
         .collect()
 }
+
+/// The hidden file a receiving carrier end keeps in a kind's root while it
+/// publishes a set of more than one change there, or until it finishes one
+/// it did not finish (FIX 7543). The end journals the set's changes before
+/// it makes the first, makes this file, makes the changes one by one and
+/// records them, then removes it: so while it stands, the tree may hold part
+/// of a set, and after a crash it stands until the end's recovery has made
+/// the rest. A reader that reads more than one member of a set waits while
+/// it stands and reads the tree again once it is gone; it never refuses for
+/// it. A set of one change is published by one rename and needs no wait. It
+/// is hidden, so no scan or member name takes it.
+pub const VM_OUTBOX_SET_MARK: &str = ".vm-outbox-set";
+
+/// Whether the kind root `root` holds a set its carrier end is still
+/// publishing or still has to finish ([`VM_OUTBOX_SET_MARK`]): a reader of
+/// more than one of a set's members then waits for a later look.
+pub fn vm_outbox_set_unfinished(root: &std::path::Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(root.join(VM_OUTBOX_SET_MARK)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Reads `members` of the kind root `root` whole, all as they stood at one
+/// point between the carrier's sets (FIX 7543); a member not there reads as
+/// `None`. Returns `None` while a set is unfinished there
+/// ([`VM_OUTBOX_SET_MARK`]) or when one changed any of them while they were
+/// read: the reader waits for a later look, never refuses, and never sees a
+/// set midway. Each member is opened before the mark is first checked and
+/// read through that same open file; afterwards the mark is checked again
+/// and each name must still be the file that was read. A set the carrier
+/// began after the first check renames a new file over a member it changes,
+/// and one it left unfinished keeps the mark, so either shows here.
+#[cfg(unix)]
+pub fn vm_outbox_read_set(
+    root: &std::path::Path,
+    members: &[&str],
+) -> std::io::Result<Option<Vec<Option<Vec<u8>>>>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let identity = |metadata: &std::fs::Metadata| (metadata.dev(), metadata.ino());
+    let mut opened = Vec::with_capacity(members.len());
+    for member in members {
+        opened.push(match std::fs::File::open(root.join(member)) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        });
+    }
+    if vm_outbox_set_unfinished(root)? {
+        return Ok(None);
+    }
+    let mut read = Vec::with_capacity(members.len());
+    for file in &opened {
+        read.push(match file {
+            Some(file) => {
+                let mut reader: &std::fs::File = file;
+                let mut bytes = Vec::new();
+                reader.read_to_end(&mut bytes)?;
+                Some(bytes)
+            }
+            None => None,
+        });
+    }
+    if vm_outbox_set_unfinished(root)? {
+        return Ok(None);
+    }
+    for (member, file) in members.iter().zip(&opened) {
+        let now = match std::fs::metadata(root.join(member)) {
+            Ok(metadata) => Some(identity(&metadata)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let then = match file {
+            Some(file) => Some(identity(&file.metadata()?)),
+            None => None,
+        };
+        if now != then {
+            return Ok(None);
+        }
+    }
+    Ok(Some(read))
+}
