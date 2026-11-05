@@ -1,7 +1,7 @@
 //! Refresh one already-verified issued registration. Publication stays with
 //! the caller holding its protected record lock, never a detached verifier.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron::dispatch_byoa::SIWC_RESPONSES_BASE_URL;
 use serde::Deserialize;
@@ -28,7 +28,10 @@ impl Drop for Tokens {
     }
 }
 
-pub(super) async fn rotate(mut record: CredentialRecord) -> anyhow::Result<CredentialRecord> {
+pub(super) async fn rotate(
+    mut record: CredentialRecord,
+    timeout: Duration,
+) -> anyhow::Result<CredentialRecord> {
     let refresh_token = record
         .refresh_token
         .as_deref()
@@ -39,6 +42,7 @@ pub(super) async fn rotate(mut record: CredentialRecord) -> anyhow::Result<Crede
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
+        .timeout(timeout)
         .build()?;
     let response = http
         .post(super::TOKEN_ENDPOINT)

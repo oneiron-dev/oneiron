@@ -61,7 +61,10 @@ impl SiwcResponses {
         headers.insert("content-type".to_owned(), "application/json".to_owned());
         Ok(Self {
             http: ProviderHttp::siwc(provider)?,
-            credentials: Arc::new(CredentialSource::select(&selection.credential_file)?),
+            credentials: Arc::new(CredentialSource::select(
+                &selection.credential_file,
+                provider.timeout_secs,
+            )?),
             config: OpenAiCompatConfig::from_catalog(catalog.clone()),
             catalog: catalog
                 .into_iter()

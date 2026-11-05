@@ -108,6 +108,8 @@ media ports do not consume this new credential selection.
 
 Before opening a Responses call, the backend refreshes an expired access token
 using the saved issued client ID and refresh token at the official token endpoint.
+The existing provider `timeout_secs` bounds the whole refresh HTTP request,
+including its response body; the normal provider default remains unchanged.
 Same-backend callers share a refresh; the per-record lock also serializes it with
 local sign-in. Another process holding that lock can make an expired-token call
 fail; a later call rereads the record. A returned rotating refresh token replaces
