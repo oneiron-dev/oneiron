@@ -52,7 +52,8 @@ pub(crate) use replica::{
     redacted_successor_in, thread_source_in,
 };
 pub(crate) use walk::{
-    ReplicationScope, readable_with_read_in, withheld_by_lineage_in, withheld_from_replication_in,
+    ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
+    withheld_from_replication_in,
 };
 
 /// One policy, by its id.
@@ -156,6 +157,14 @@ pub(crate) fn held_back_in(
 /// Whether the vault holds any row back.
 pub(crate) fn any_held_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(HELD.iter_from(&vault.store, txn, &[])?.next().is_some())
+}
+
+/// Every row held back here, and why.
+pub(crate) fn held_rows_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, HeldBack)>> {
+    HELD.scan(&vault.store, txn)
 }
 
 /// Holds the row `id` back for `why`, in `txn`: a withholding stands over a
