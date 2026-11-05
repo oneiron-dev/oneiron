@@ -234,8 +234,9 @@ pub(super) struct WithheldKey {
 /// edge's key is its source's, the actor it names split out, so the key, and
 /// the edge with it, goes with that actor; a whole document pin's key, the
 /// digest of the pin naming no one, is its citer's, held while the message
-/// it quotes is, as the pin is. `None` for every other key (a part's digest
-/// among them), which keeps its window whole as [`key_refusal`] names.
+/// it quotes is, as the pin is. `None` for every other key: a part's digest
+/// is withheld under its manifests' holders ([`withheld_part_key`]), and any
+/// other keeps its window whole as [`key_refusal`] names.
 pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
     match root {
         "edges" => {
@@ -266,6 +267,23 @@ pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
         }
         _ => None,
     }
+}
+
+/// Whether the skeleton withholds `key` of `root` as a part's digest (FIX
+/// 10278): a part of a parted window value, filed under its digest. Its key
+/// goes with every holder a manifest names the part for
+/// ([`super::parts::PartHolders`]), as its value does; the digest itself
+/// names no one.
+pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
+    is_part_key(key)
+        && matches!(
+            root,
+            ROOM_TURNS_MAP
+                | ROOM_FACTS_MAP
+                | DOCUMENT_PINS_MAP
+                | MESSAGE_DOCS_MAP
+                | REPO_MANIFESTS_MAP
+        )
 }
 
 /// The key `no_one`, a split of a withheld key of `root`, with each of

@@ -26,6 +26,7 @@ use loro::{EncodedBlobMode, ExportMode, IdSpan, ImportBlobMetadata, LoroDoc, Lor
 
 use super::owners::{
     WINDOW_ROOTS, WithheldKey, key_fill, key_refusal, root_entry, root_fill, withheld_key,
+    withheld_part_key,
 };
 use super::parts::PartHolders;
 use super::{
@@ -260,6 +261,40 @@ impl<'o> Classifier<'o> {
         None
     }
 
+    /// A part's withheld digest key (FIX 10278): one copy under each holder
+    /// a manifest names the part for, the same holders its value goes to,
+    /// whole. Met before the manifests were noted, the capture runs again
+    /// once they are.
+    fn part_key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
+        let placed = match &self.parts {
+            Some(parts) => parts.place(root, key),
+            None => {
+                self.needs_parts = true;
+                return None;
+            }
+        };
+        let holders = match placed {
+            Placement::Owned(holders) => holders,
+            Placement::Unclassified { owner, reason } => return self.refuse(owner, reason),
+            _ => return self.refuse(None, SyncUnclassified::OrphanPart),
+        };
+        if holders.is_empty() {
+            return self.refuse(None, SyncUnclassified::NoOwner);
+        }
+        let handles: Vec<OwnerId> = holders
+            .into_iter()
+            .map(|holder| self.handle(Home::Holder(holder)))
+            .collect();
+        self.plans.push(Plan {
+            root: root.to_owned(),
+            key: key.to_owned(),
+            kind: SlotKind::Key,
+            value: key.as_bytes().to_vec(),
+            split: None,
+        });
+        Some(handles)
+    }
+
     /// The capture-local handle of `home`: equal homes share one, and two
     /// holders of one owner with other dependencies do not.
     fn handle(&mut self, home: Home) -> OwnerId {
@@ -282,7 +317,7 @@ impl Classify for Classifier<'_> {
         match key_refusal(root, key) {
             None => true,
             // A key its family withholds is asked for its holders next.
-            Some(_) if withheld_key(root, key).is_some() => false,
+            Some(_) if withheld_key(root, key).is_some() || withheld_part_key(root, key) => false,
             Some(reason) => {
                 self.refuse(None, reason);
                 false
@@ -293,6 +328,9 @@ impl Classify for Classifier<'_> {
     /// A key withheld in an atom of its own (FIX 10279): its holders' copies
     /// hold it, the actor it names split out, made before any value under it.
     fn key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
+        if withheld_part_key(root, key) {
+            return self.part_key_holders(root, key);
+        }
         let Some(WithheldKey { holders, split }) = withheld_key(root, key) else {
             let reason = key_refusal(root, key).unwrap_or(SyncUnclassified::NoOwner);
             return self.refuse(None, reason);
