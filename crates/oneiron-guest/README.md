@@ -49,8 +49,9 @@ A source file uses one request regardless of byte length. File chunks and
 source closes are not requests. A partial or malformed seed fails before any
 component executes; callers discard its scratch state.
 
-Limits: 8 MiB frames; 64 MiB components in sequential nonempty chunks; 1 MiB
-source text, step-result JSON and individual file chunks. Snapshot and proposed
+Limits: 8 MiB encoded frames; 64 MiB components in sequential nonempty chunks;
+1 MiB source text and individual file chunks. Step-result JSON has no separate
+whole-result size check; its encoded frame must still fit. Snapshot and proposed
 files have no whole-file wire size bound. Canonical path/tree checks remain in
 the shared sandbox contract, including 4096-byte virtual paths. Source and
 outbound request budgets are 16384 (outbound reserves result and finish slots).

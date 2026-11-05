@@ -5,8 +5,7 @@ use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
     protocol::{
-        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session,
-        Snapshot,
+        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot,
     },
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
@@ -271,9 +270,6 @@ fn proposals(
     base: &Snapshot,
     proposed: &mut Proposed,
 ) -> Result<Vec<GuestProposal>> {
-    if output.result_json.len() > MAX_FILE {
-        return Err(Error::Runtime("step result bounds"));
-    }
     serde_json::from_str::<serde_json::Value>(&output.result_json)
         .map_err(|_| Error::Runtime("result-json is invalid JSON"))?;
     let mut proposals = Vec::new();
