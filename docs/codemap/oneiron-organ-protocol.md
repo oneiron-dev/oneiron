@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codec/ser/compound.rs` | src | s | 3 crate-vis | — | Sequence, map and struct output, including unknown-length compounds |
 | `src/codec/ser/ext.rs` | src | s | 3 crate-vis | — | rmp-serde's typed MessagePack extension contract |
 | `src/frame.rs` | src | m | 1 enum · 7 fn · 1 re-export | FrameError | Framing (protocol 2.0): a message is one or more frames back to back, each `len: u32 LE \| more: u8 \| len… |
-| `src/frame/booked.rs` | src | s | 1 trait · 6 fn · 1 crate-vis | FrameBooking | Booked messages (FIX 6195): room for every allocation a message makes, made before it is made |
+| `src/frame/booked.rs` | src | s | 1 trait · 7 fn · 1 const · 1 crate-vis | FrameBooking | Booked messages (FIX 6195): room for every allocation a message makes, made before it is made |
 | `src/lib.rs` | src | s | 5 mod · 7 re-export | — | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/memory.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const | MemoryAnswer, MemoryAsk | The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it… |
 | `src/memory/borrowed.rs` | src | s | 1 crate-vis | — | Borrowed decoding for the two fixed-size memory control types |
