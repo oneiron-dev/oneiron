@@ -347,6 +347,58 @@ impl OutboundResultSender for ServedConnectorCallHost {
     fn remote_task(&self) -> Option<RemoteTaskHandle> {
         self.remote_task.clone()
     }
+
+    fn end_remote_task(&mut self, call: &FrozenOutboundCall, handle: &RemoteTaskHandle) {
+        let Some(poll) = handle.poll.as_ref() else {
+            return;
+        };
+        let Ok(view) = FrozenToolCallView::read(call) else {
+            return;
+        };
+        let Some(connector) = self.connectors.get(view.server()) else {
+            return;
+        };
+        if connector.endpoint != view.endpoint() {
+            return;
+        }
+        let Ok(protocol) = HeaderValue::from_str(&poll.protocol) else {
+            return;
+        };
+        let session = match poll
+            .session
+            .as_deref()
+            .map(HeaderValue::from_str)
+            .transpose()
+        {
+            Ok(session) => session,
+            Err(_) => return,
+        };
+        // The credential the send presented, through its own door again.
+        self.grant = None;
+        self.run = None;
+        self.credential = match poll.credential {
+            RemoteTaskCredential::Record(custody) => Some(custody),
+            RemoteTaskCredential::Route => None,
+        };
+        let route = match self.vault.route_connector_call(view.server()).ok().flatten() {
+            Some(route) => route,
+            None => return,
+        };
+        let key_ref = view.key_ref().and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
+        let auth = match self.presenting(route).present_again(&self.vault, row) {
+            Some(presented) => presented.auth,
+            None => return,
+        };
+        let live = LiveSession {
+            client: self.client.clone(),
+            endpoint: view.endpoint().to_owned(),
+            protocol,
+            session,
+            auth,
+        };
+        live.end();
+    }
 }
 
 impl ConnectorCallHost for ServedConnectorCallHost {

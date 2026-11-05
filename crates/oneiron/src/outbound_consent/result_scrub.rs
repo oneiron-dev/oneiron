@@ -115,6 +115,15 @@ pub trait OutboundResultSender {
         None
     }
 
+    /// Releases a remote-task session whose Deferred write did not land.
+    /// This courtesy must not change the send outcome or storage error.
+    fn end_remote_task(
+        &mut self,
+        _call: &FrozenOutboundCall,
+        _handle: &crate::outbound_intent_ledger::RemoteTaskHandle,
+    ) {
+    }
+
     /// The wait the last send's provider asked for when it refused that send
     /// for rate or quota (FIX 8818). By default a sender names none.
     fn provider_wait(&self) -> Option<crate::outbound_intent_ledger::ProviderWait> {

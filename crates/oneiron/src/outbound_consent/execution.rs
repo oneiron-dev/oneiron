@@ -545,6 +545,14 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
         self.inner.remote_task()
     }
 
+    fn end_remote_task(
+        &mut self,
+        call: &FrozenOutboundCall,
+        handle: &crate::outbound_intent_ledger::RemoteTaskHandle,
+    ) {
+        self.inner.end_remote_task(call, handle);
+    }
+
     fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
         self.inner.reported_cost()
     }

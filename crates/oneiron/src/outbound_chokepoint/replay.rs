@@ -447,8 +447,20 @@ fn send_pending_with_gate<T: OutboundTransport>(
         // whose delivery is unknown.
         OutboundSendOutcome::Deferred => match transport.remote_task() {
             Some(handle) => {
-                let deferred = defer_record(vault, record.id, handle, now_ms)?;
-                Ok(effect_result(&deferred, Some(outcome), replayed, None))
+                // A sync error can follow a committed Deferred row. Keep its
+                // session for polling unless the read confirms no kept task.
+                match defer_record(vault, record.id, handle.clone(), now_ms) {
+                    Ok(deferred) => Ok(effect_result(&deferred, Some(outcome), replayed, None)),
+                    Err(error) => {
+                        if !vault
+                            .remote_task_still_due(&record.id, &handle.id)
+                            .unwrap_or(true)
+                        {
+                            transport.end_remote_task(&call, &handle);
+                        }
+                        Err(error)
+                    }
+                }
             }
             None if record.idempotency_supported => {
                 let uncertain = record_possible_delivery(vault, record.id)?;
