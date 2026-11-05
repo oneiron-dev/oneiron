@@ -510,14 +510,18 @@ pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerA
 
 /// Cross-checks a worker's own device capacity report with the pre-load
 /// query. The first valid report fills an unknown; a mismatch keeps the
-/// device query and logs rather than silently rewriting capacity.
-pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
+/// device query and logs rather than silently rewriting capacity. Only the
+/// row's hosted instance reports (FIX 13884): a replaced row's old clone
+/// fills nothing.
+pub(super) fn report_device_stats(worker: &InferenceWorker, stats: &JsonValue) {
     let Some(host) = HOST.get() else {
         return;
     };
-    let Some(device) = host
-        .lock()
+    let worker_id = worker.spec().worker_id.as_str();
+    let workers = host.lock();
+    let Some(device) = workers
         .get(worker_id)
+        .filter(|hosted| hosted.worker.same_instance(worker))
         .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone())
     else {
         return;

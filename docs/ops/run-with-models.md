@@ -644,7 +644,11 @@ Device tickets and executor activity for a managed native worker use the actual
 worker instance, not its reusable configured id. Reconfiguring that id onto
 another device never redirects an old instance's ticket or activity to the
 replacement's device. An unknown or replaced binding keeps the existing
-unmediated ticket path; the actual worker's status still updates.
+unmediated ticket path; the actual worker's status still updates. A call
+carries its origin worker into its released-body reports, and device capacity
+fills only from the hosted instance's own stats: an old report never fills a
+replacement's capacity. An unknown capacity stays unknown until a valid query
+or the actual instance's report; it is not reported as zero.
 
 ## 3. Let the Dreamer work
 
