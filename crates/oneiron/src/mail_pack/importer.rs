@@ -219,14 +219,12 @@ impl Step<'_> {
     }
 
     /// A message out of the provider's trash or spam: a kept copy is live
-    /// again, and one that never landed lands now, under the copy setting.
+    /// again.
     fn restore(&mut self, provider_id: &str) -> MemoryResult<()> {
+        // One that never landed comes as its own Added, under the copy
+        // setting: a label change alone fetches nothing.
         if self.known(provider_id)? {
             restore_from_provider_trash(self.vault, self.source, provider_id, self.at)?;
-            return Ok(());
-        }
-        if self.row.copy != MailCopySetting::SearchOnly {
-            self.land_headers(provider_id)?;
         }
         Ok(())
     }

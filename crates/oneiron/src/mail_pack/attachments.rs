@@ -233,9 +233,13 @@ pub(super) fn forget_message_attachments_in_txn(
 
 /// Deletes the opened-attachment artifacts whose message was erased, a
 /// bounded batch at a time: after every delete commits, and at each import
-/// step. Each leaves the owed rows before its own delete runs; one that
-/// fails is owed again and logged.
+/// step. An artifact stays owed until its delete has committed, so one
+/// that fails, or a crash between, is tried again; a failure is logged. A
+/// collection the deletes it runs reach again returns at once.
 pub(crate) fn collect_after_delete(vault: &Vault) {
+    let Some(_running) = Collecting::enter() else {
+        return;
+    };
     if let Err(error) = collect_owed_erases(vault) {
         tracing::warn!(
             reason = "mail_attachment_erase_owed",
@@ -245,32 +249,49 @@ pub(crate) fn collect_after_delete(vault: &Vault) {
     }
 }
 
+thread_local! {
+    /// Whether this thread is collecting owed attachment erases now.
+    static COLLECTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// This thread's one collection while it runs.
+struct Collecting;
+
+impl Collecting {
+    fn enter() -> Option<Self> {
+        if COLLECTING.with(|running| running.replace(true)) {
+            return None;
+        }
+        Some(Self)
+    }
+}
+
+impl Drop for Collecting {
+    fn drop(&mut self) {
+        COLLECTING.with(|running| running.set(false));
+    }
+}
+
 fn collect_owed_erases(vault: &Vault) -> Result<()> {
-    let owed: Vec<(EntityId, u64)> = {
+    let owed: Vec<EntityId> = {
         let txn = vault.store.env.read_txn()?;
         let mut owed = Vec::new();
         for row in ERASE_OWED.iter_from(&vault.store, &txn, &[])? {
             if owed.len() >= ERASES_PER_COLLECTION {
                 break;
             }
-            owed.push(row?);
+            owed.push(row?.0);
         }
         owed
     };
-    for (artifact, at) in owed {
+    for artifact in owed {
+        if vault.get_blob_artifact(&artifact)?.is_some() {
+            vault
+                .delete_entity_with_reason(&artifact, crate::deletion::DeleteReason::UserDelete)?;
+        }
         vault.with_write_txn_grouped(|txn| {
             ERASE_OWED.delete(&vault.store, txn, &artifact).map(drop)
         })?;
-        if vault.get_blob_artifact(&artifact)?.is_none() {
-            continue;
-        }
-        if let Err(error) =
-            vault.delete_entity_with_reason(&artifact, crate::deletion::DeleteReason::UserDelete)
-        {
-            vault
-                .with_write_txn_grouped(|txn| ERASE_OWED.put(&vault.store, txn, &artifact, &at))?;
-            return Err(error);
-        }
     }
     Ok(())
 }
