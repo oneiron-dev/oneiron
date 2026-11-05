@@ -468,7 +468,10 @@ impl TextFileSink {
     }
 
     /// Uses room admitted before the original constructor allocates its buffer.
-    pub(in crate::api) fn new_admitted(file: File, memory: &mut crate::machine::MemoryLease) -> Self {
+    pub(in crate::api) fn new_admitted(
+        file: File,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Self {
         let sink = Self::new(file);
         memory.materialized(super::SPOOL_PIECE as u64, sink.writer.capacity() as u64);
         sink
