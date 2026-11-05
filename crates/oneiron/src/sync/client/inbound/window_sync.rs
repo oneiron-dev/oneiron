@@ -219,9 +219,15 @@ impl SyncClient {
                     return Ok(Vec::new());
                 }
                 // The home this connection proved, if it proved one, sent these bytes.
-                match self.import_own_device_window_update(window_key, payload, self.home_peer) {
+                let mut answers = Vec::new();
+                match self.import_own_device_window_update(
+                    window_key,
+                    payload,
+                    self.home_peer,
+                    Some(&mut answers),
+                ) {
                     // What answers a deferred sealed update this import let in (FIX 10474).
-                    Ok(answers) => Ok(answers),
+                    Ok(()) => Ok(answers),
                     // The update builds on history this window's own shallow root cut away: no
                     // update can bring it level, the server's replacement can.
                     Err(_) if self.update_reaches_below_root(&key, payload) => {
@@ -381,21 +387,26 @@ impl SyncClient {
         Ok(evidence)
     }
 
-    /// Imports each staged world update whose edges now resolve, and first
-    /// installs each deferred sealed one whose isolated check now passes
-    /// (FIX 10474), until a pass lets none in. Returns what answers a
-    /// deferred update whose pads did not install.
+    /// Imports each staged world update whose edges now resolve until a pass
+    /// lets none in. Under `answers`, the frames a window frame's handler
+    /// returns, each deferred sealed update whose isolated check now passes is
+    /// installed first, and what answers one whose pads did not install is
+    /// added there (FIX 10474); without them, deferred updates wait for a
+    /// drain that can answer.
     pub(in crate::sync::client) fn drain_staged_world_updates(
         &mut self,
-    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        mut answers: Option<&mut Vec<Vec<u8>>>,
+    ) -> std::result::Result<(), TransportError> {
         let mut healed = Vec::new();
-        let mut answers = Vec::new();
         loop {
             if self.staged_world_count() == 0 {
                 break;
             }
             let evidence = self.staged_entity_evidence()?;
-            let mut progressed = self.install_deferred_sealed_updates(&evidence, &mut answers)?;
+            let mut progressed = match answers.as_deref_mut() {
+                Some(answers) => self.install_deferred_sealed_updates(&evidence, answers)?,
+                None => false,
+            };
             // An installed one is staged now, as its window imports it.
             let evidence = if progressed {
                 self.staged_entity_evidence()?
@@ -464,7 +475,7 @@ impl SyncClient {
             )
             .map_err(|error| TransportError::Storage(format!("heal staged world edge: {error}")))?;
         }
-        Ok(answers)
+        Ok(())
     }
 
     pub(in crate::sync::client) fn import_accepted_window_update(

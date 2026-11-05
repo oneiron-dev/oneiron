@@ -402,7 +402,9 @@ impl SyncClient {
                 SealedCheck::Waits => {
                     self.defer_sealed_update(key, envelope)?;
                     // What it carries may prove an edge another staged update waits on.
-                    return self.drain_staged_world_updates().map(ControlFlow::Break);
+                    let mut answers = Vec::new();
+                    self.drain_staged_world_updates(Some(&mut answers))?;
+                    return Ok(ControlFlow::Break(answers));
                 }
                 SealedCheck::Answered(answer) => return Ok(ControlFlow::Break(answer)),
             }
@@ -473,10 +475,11 @@ impl SyncClient {
 
     /// The isolated check a sealed envelope's `payload` of `key` under
     /// `sub_tag` passes before its capsule installs: the one its import door
-    /// runs, without the cutoffs it carries staged (FIX 10474). An own-device
-    /// update is read over its window with the world updates still staged for
-    /// it, a replacement over a fresh window. A federation lane's frames take
-    /// the federation admission at their door, and the other kinds the checks
+    /// runs, on the bytes that door reads ([`Self::payload_as_admitted`]),
+    /// without the cutoffs they carry staged (FIX 10474). An own-device update
+    /// is read over its window with the world updates still staged for it, a
+    /// replacement over a fresh window. A federation lane's frames take the
+    /// federation admission at their door, and the other kinds the checks
     /// their callers run.
     fn sealed_payload_check(
         &self,
@@ -490,6 +493,10 @@ impl SyncClient {
         match sub_tag {
             window_sub_tags::UPDATE => {
                 let window = self.ensure_window(key.as_str())?;
+                let Some(admitted) = self.payload_as_admitted(payload, Some(&window.doc)) else {
+                    return Ok(SealedCheck::Admitted);
+                };
+                let payload: &[u8] = &admitted;
                 // A base window's import reads no staged world row.
                 let world = key.world().is_some();
                 let evidence = if world {
@@ -535,6 +542,13 @@ impl SyncClient {
                 }
             }
             window_sub_tags::REPLACEMENT => {
+                let window = self.window(key.as_str());
+                let Some(admitted) =
+                    self.payload_as_admitted(payload, window.as_ref().map(|window| &window.doc))
+                else {
+                    return Ok(SealedCheck::Admitted);
+                };
+                let payload: &[u8] = &admitted;
                 let evidence = self.staged_entity_evidence()?;
                 check_bounded_replacement(
                     &self.vault,
@@ -556,6 +570,22 @@ impl SyncClient {
             // down has no door here, and nothing of it installs.
             _ => Ok(SealedCheck::Answered(Vec::new())),
         }
+    }
+
+    /// `payload` as its import door reads it, `context` the window it imports
+    /// into: its repo copies translated onto the sources this device holds,
+    /// with nothing recorded (FIX 7608 slice 4). `None` when it holds on a
+    /// ruled cause or its translation fails here: its door judges it once its
+    /// pads are in, as it always did (FIX 10474). The recorded translation
+    /// runs again after the pads install.
+    fn payload_as_admitted<'p>(
+        &self,
+        payload: &'p [u8],
+        context: Option<&LoroDoc>,
+    ) -> Option<Cow<'p, [u8]>> {
+        crate::sync::selector::repo_sync_frame_as_admitted(&self.vault, payload, context)
+            .ok()
+            .flatten()
     }
 
     /// Keeps `envelope`, a sealed world update of `key` whose isolated check
@@ -648,13 +678,21 @@ impl SyncClient {
                 self.deferred_sealed_updates.remove(index);
                 continue;
             }
-            match check_window_update_with_staged_worlds(
-                &self.vault,
-                &live.doc,
-                &self.deferred_sealed_updates[index].envelope.payload,
-                &key,
-                evidence,
-            ) {
+            let checked = {
+                let payload: &[u8] = &self.deferred_sealed_updates[index].envelope.payload;
+                match self.payload_as_admitted(payload, Some(&live.doc)) {
+                    // Its door judges it once its pads are in.
+                    None => Ok(()),
+                    Some(admitted) => check_window_update_with_staged_worlds(
+                        &self.vault,
+                        &live.doc,
+                        &admitted,
+                        &key,
+                        evidence,
+                    ),
+                }
+            };
+            match checked {
                 Ok(()) => {}
                 Err(crate::Error::InvalidConfig(reason)) if reason == EDGE_ENDPOINT_UNRESOLVED => {
                     index += 1;
@@ -723,8 +761,9 @@ impl SyncClient {
             let window = self.window(key.as_str());
             if envelope.form == WindowPadForm::Sealed
                 && let Some(doc) = window.as_ref().map(|window| &window.doc).or(cold)
+                && let Some(admitted) = self.payload_as_admitted(&envelope.payload, None)
             {
-                check_window_update_residence_with_vault(&self.vault, doc, &envelope.payload, key)
+                check_window_update_residence_with_vault(&self.vault, doc, &admitted, key)
                     .map_err(|error| {
                         TransportError::from_window_admission(
                             &error,
@@ -778,7 +817,9 @@ impl SyncClient {
                     &empty
                 }
             };
-            if let Err(error) = check_promotion_snapshot(&self.vault, doc, &envelope.payload) {
+            if let Some(admitted) = self.payload_as_admitted(&envelope.payload, None)
+                && let Err(error) = check_promotion_snapshot(&self.vault, doc, &admitted)
+            {
                 tracing::warn!(%window, kind = ?error.kind(), "promotion snapshot refused");
                 return Ok(None);
             }

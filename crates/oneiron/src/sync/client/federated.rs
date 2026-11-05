@@ -40,26 +40,24 @@ impl SyncClient {
             return self.import_federated_window_update(window_key, update, role);
         }
         // A tier its caller names proves no connection: the bytes take no
-        // own-device lane (FIX 11709). A deferred sealed update this import
-        // lets in whose pads do not install schedules their repair; the
-        // receipt and ask that answer it are dropped, as this door returns
-        // no frames (FIX 10474).
-        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown)
-            .map(drop)
+        // own-device lane (FIX 11709). This door answers no frame, so a
+        // sealed update deferred on this connection waits for a window
+        // frame's drain (FIX 10474).
+        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown, None)
     }
 
     /// The own-device import of raw window bytes `from` sent: the machine this
     /// client's connection proved when they came in. Their MESSAGE rows take
     /// the own-device lane while `from` stands here as one of the owner's own
-    /// machines and no federation peer is bound (FIX 11709). Returns what
-    /// answers a deferred sealed update the drain after it let in whose pads
-    /// did not install (FIX 10474).
+    /// machines and no federation peer is bound (FIX 11709). `answers` is
+    /// the drain's after it ([`Self::drain_staged_world_updates`]).
     pub(super) fn import_own_device_window_update(
         &mut self,
         window_key: &str,
         update: &[u8],
         from: PeerMachine,
-    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        answers: Option<&mut Vec<Vec<u8>>>,
+    ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
         if update.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
@@ -93,7 +91,7 @@ impl SyncClient {
                     "unresolved world updates past the memory bound",
                 ));
             }
-            return self.drain_staged_world_updates();
+            return self.drain_staged_world_updates(answers);
         }
         let own_device = self.own_device_import(from);
         self.import_accepted_window_update_with_evidence(
@@ -103,7 +101,7 @@ impl SyncClient {
             &std::collections::HashMap::new(),
             own_device.as_ref(),
         )?;
-        self.drain_staged_world_updates()
+        self.drain_staged_world_updates(answers)
     }
 
     /// Builds a selector request frame for a selector-capable caller.
