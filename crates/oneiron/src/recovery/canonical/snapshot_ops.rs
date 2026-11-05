@@ -9,6 +9,7 @@ impl CanonicalSnapshot {
     pub fn validate(&self) -> Result<()> {
         validation::validate(self)?;
         row_births::validate(self)?;
+        source_audiences::validate(self)?;
         withdrawn_cutoffs::validate(self)
     }
 

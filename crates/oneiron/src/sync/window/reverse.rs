@@ -474,6 +474,12 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // Engine A: so do its binding and policy closure.
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::source_audiences::mirror_record(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
             // OF-522: a TURN's room row rides beside its carrier the same
             // way, and is refreshed when only the row changed.
             if window_key.world().is_none()
@@ -752,6 +758,12 @@ pub(super) fn remove_entity_crdt_carriers(
     // The row's birth leaves with its carrier.
     if let Some(doc) = loro::ContainerTrait::doc(entities_map)
         && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
+    {
+        removed = true;
+    }
+    // So does its binding, and each policy no other binding reaches.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
+        && crate::sync::source_audiences::remove_record(&doc, id)?
     {
         removed = true;
     }

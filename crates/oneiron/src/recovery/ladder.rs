@@ -48,6 +48,7 @@ impl RecoveryManifest {
         add("row_births", pack(&snapshot.row_births)?);
         add("withdrawn_cutoffs", pack(&snapshot.withdrawn_cutoffs)?);
         add("asset_body_refs", pack(&snapshot.asset_body_refs)?);
+        add("source_audiences", pack(&snapshot.source_audiences)?);
         add("schema", pack(&snapshot.schema_manifest)?);
         add("containers", pack(&snapshot.container_manifests)?);
         for document in &snapshot.doc_snapshots {

@@ -25,11 +25,12 @@
 //!
 //! A row a source landed carries its source in its own bytes: a mail
 //! CONVERSATION's or TURN's `import_source` (one of the pack's own source
-//! names), a MESSAGE through its TURN. Bindings and policies are this
-//! vault's own rows and do not travel with a replica, so such a row read
-//! where its binding is absent reads to no one; and a bound row, or a row
-//! whose words came from one, does not leave this vault by window
-//! replication ([`withheld_from_replication_in`]).
+//! names), a MESSAGE through its TURN. Such a row read where its binding is
+//! absent reads to no one. Bindings and policies travel with their rows on
+//! the owner's full-window lane only ([`super::replica`]): a row bound to a
+//! policy that resolves here leaves by it, its binding beside it; a row
+//! whose words came from a row bound otherwise, and every bound row on any
+//! other lane, does not leave this vault ([`withheld_from_replication_in`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -175,13 +176,25 @@ fn word_sources(
     Ok((every, supports))
 }
 
-/// Whether the row `id` stays out of window replication: it is bound to a
-/// source audience, a source landed it, or its words came from such a row
-/// (any support of a CLAIM counts, so a claim also supported elsewhere stays
-/// too). Bindings and policies do not travel with a replica, so a bound row
-/// stays on the vault that landed it and is read there through the scoped
-/// reads. Where the vault holds no policy only a row a source landed is
-/// withheld, by its own stamp.
+/// The lane a row would leave this vault on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReplicationScope {
+    /// The owner-grade full-window lane, which carries a row's binding and
+    /// policy beside it (Engine A, 6 Nov 03:46).
+    FullOwnerWindow,
+    /// Any lane that carries no audience: a selector, a federation.
+    Restricted,
+}
+
+/// Whether the row `id` stays out of replication on `scope`. On a restricted
+/// lane: when it is bound to a source audience, a source landed it, or its
+/// words came from such a row (any support of a CLAIM counts, so a claim
+/// also supported elsewhere stays too). On the full owner window: unless it
+/// is itself bound to a policy whose closure resolves here, and nothing its
+/// words came from is bound to another policy or was landed by a source
+/// with no binding; such a row travels with its binding and policy. Where
+/// the vault holds no policy only a row a source landed is withheld, by its
+/// own stamp.
 ///
 /// # Errors
 ///
@@ -190,6 +203,7 @@ pub(crate) fn withheld_from_replication_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
+    scope: ReplicationScope,
 ) -> Result<bool> {
     let dbs = vault.store.read();
     if !super::any_policy_in(vault, txn)? {
@@ -198,18 +212,29 @@ pub(crate) fn withheld_from_replication_in(
             None => Ok(false),
         };
     }
+    // The policy the row travels under, when the lane carries one.
+    let travels_under = match scope {
+        ReplicationScope::Restricted => None,
+        ReplicationScope::FullOwnerWindow => match super::binding_in(vault, txn, id)? {
+            Some(policy) if super::replica::publishable_in(vault, txn, &policy)? => Some(policy),
+            _ => None,
+        },
+    };
     // A worklist, not recursion: an ancestry chain of any length is read
     // without growing the stack.
     let mut seen = BTreeSet::from([*id]);
     let mut pending = vec![*id];
     while let Some(row) = pending.pop() {
-        if super::binding_in(vault, txn, &row)?.is_some() {
-            return Ok(true);
+        let binding = super::binding_in(vault, txn, &row)?;
+        match (binding, travels_under) {
+            (Some(bound), Some(policy)) if bound == policy => {}
+            (Some(_), _) => return Ok(true),
+            (None, _) => {}
         }
         let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &row)? else {
             continue;
         };
-        if source_marked_in(&dbs, txn, row, &bytes)? {
+        if binding.is_none() && source_marked_in(&dbs, txn, row, &bytes)? {
             return Ok(true);
         }
         let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;

@@ -53,9 +53,11 @@ use loro::{CommitOptions, LoroDoc};
 /// A file-plane ASSET packs as the carrier of its manifest, its body
 /// reference beside it (FIX 5489, `asset_body::references::mirror_ref`).
 ///
-/// A row bound to a source audience, or whose words came from one, stays on
-/// this vault: its binding does not travel (FIX 12559,
-/// `source_audience::withheld_from_replication_in`).
+/// A row bound to a source audience packs on this full window when its own
+/// binding and policy closure resolve, and rides beside them
+/// (`source_audiences::mirror_record`); one whose binding does not resolve,
+/// or whose words came from a row bound otherwise, stays on this vault
+/// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
@@ -64,7 +66,12 @@ pub(super) fn window_packing_excludes_entity(
     let rtxn = vault.store.env.read_txn()?;
     if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
         || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
-        || crate::source_audience::withheld_from_replication_in(vault, &rtxn, id)?
+        || crate::source_audience::withheld_from_replication_in(
+            vault,
+            &rtxn,
+            id,
+            crate::source_audience::ReplicationScope::FullOwnerWindow,
+        )?
     {
         return Ok(true);
     }
@@ -533,6 +540,9 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // each at this vault's current revision (Engine A, 6 Nov 03:46).
+    crate::sync::source_audiences::refresh_and_scrub(vault, doc, Some(key))?;
     // A persisted or returned snapshot carries the same project history as
     // a delta does (Astra #1434 r9 F5).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -744,6 +754,10 @@ fn replay_mirrors(
             if crate::sync::row_birth::mirror_local_birth(vault, doc, id)? {
                 wrote_edges = true;
             }
+            // And between the entity and its binding and policy closure.
+            if crate::sync::source_audiences::mirror_record(vault, doc, id)? {
+                wrote_edges = true;
+            }
             if wrote_edges {
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
                 replayed += 1;
@@ -791,6 +805,8 @@ fn replay_mirrors(
         }
         // Rule A: the birth rides in the same bridge commit as its row.
         crate::sync::row_birth::mirror_local_birth(vault, doc, id)?;
+        // Engine A: so do its binding and policy closure.
+        crate::sync::source_audiences::mirror_record(vault, doc, id)?;
 
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 

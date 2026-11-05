@@ -377,6 +377,9 @@ impl ForwardRun {
             doc,
             window_key.as_str(),
         )?;
+        // Engine A: the policies the window carries settle before its rows,
+        // so each row's binding meets its policy in the row's own savepoint.
+        crate::sync::source_audiences::apply_map(vault, doc)?;
         let plan = entity_pass::plan(&remat_ctx(
             vault,
             doc,

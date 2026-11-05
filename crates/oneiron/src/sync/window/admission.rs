@@ -101,6 +101,10 @@ fn validate_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    // Engine A: one accumulator of source audience bindings and policy
+    // revisions over the held map and everything the update can leave.
+    let mut audiences = crate::sync::source_audiences::AdmissionRows::default();
+    audiences.note_held(doc);
     // OF-013: the withdrawn cutoffs and epoch floors the update carries,
     // staged once it is admitted.
     let mut cutoffs = Vec::new();
@@ -210,6 +214,12 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
         )?;
+        // Engine A: and every source audience binding and policy revision.
+        crate::sync::source_audiences::admit_map(
+            vault,
+            &candidate.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP),
+            &mut audiences,
+        )?;
         // FIX 853: and every document quote pin and MESSAGE document.
         crate::sync::document_pins::admit_document_pin_map(
             key,
@@ -281,6 +291,11 @@ fn validate_window_update(
             crate::sync::room_facts::admit_room_fact_map(
                 key,
                 &root.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
+            )?;
+            crate::sync::source_audiences::admit_map(
+                vault,
+                &root.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP),
+                &mut audiences,
             )?;
             crate::sync::document_pins::admit_document_pin_map(
                 key,
@@ -379,6 +394,10 @@ fn validate_window_update(
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
     let room_facts =
         ContainerID::new_root(crate::sync::room_facts::ROOM_FACTS_MAP, ContainerType::Map);
+    let source_audiences = ContainerID::new_root(
+        crate::sync::source_audiences::SOURCE_AUDIENCES_MAP,
+        ContainerType::Map,
+    );
     let document_pins = ContainerID::new_root(
         crate::sync::document_pins::DOCUMENT_PINS_MAP,
         ContainerType::Map,
@@ -416,6 +435,8 @@ fn validate_window_update(
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == room_facts {
             crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
+        } else if op.container == source_audiences {
+            crate::sync::source_audiences::admit_carrier(vault, &map_key, &value, &mut audiences)?;
         } else if op.container == document_pins {
             crate::sync::document_pins::admit_document_pin_carrier(key, &map_key, &value)?;
         } else if op.container == message_docs {

@@ -76,6 +76,7 @@ pub(crate) fn capture_canonical_window_within(
             "withdrawn_cutoffs",
             "peer_origins",
             "asset_body_refs",
+            "source_audiences",
         ]
         .contains(&name.as_str())
     }) {
@@ -117,6 +118,7 @@ pub(crate) fn capture_canonical_window_within(
         row_births: Vec::new(),
         withdrawn_cutoffs: Vec::new(),
         asset_body_refs: Vec::new(),
+        source_audiences: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         // A pad row goes by its bare reference, its pad in current custody
@@ -424,6 +426,7 @@ pub(crate) fn capture_canonical_window_within(
     #[cfg(feature = "sync")]
     {
         row_births::capture(vault, &txn, doc, &mut snapshot, budget)?;
+        source_audiences::capture(vault, &txn, doc, &mut snapshot, budget)?;
         withdrawn_cutoffs::capture(vault, &txn, doc, &mut snapshot, budget)?;
         asset_body_refs::capture(doc, &mut snapshot, budget)?;
     }
