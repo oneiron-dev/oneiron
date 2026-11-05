@@ -334,7 +334,8 @@ impl KeptInput<'_, '_> {
         binding: &InputBinding<'_>,
         secret: &MachineSecret,
     ) -> Result<Option<(Zeroizing<Vec<u8>>, Option<Attached>)>> {
-        self.read_rows(|rows, len| open_framed(binding, rows, len, secret))
+        self.read_rows(|rows, len| open_framed(binding, rows, len, secret).transpose())?
+            .transpose()
     }
 
     /// What `read` makes of this input's `len` bytes, its rows read in
@@ -374,21 +375,39 @@ pub(super) fn open_framed(
     mut reader: impl Read,
     len: u64,
     secret: &MachineSecret,
-) -> Option<(Zeroizing<Vec<u8>>, Option<Attached>)> {
-    let mut prefix = vec![0; usize::try_from(len.min(ATTACHED_HEAD_MAX as u64)).ok()?];
-    reader.read_exact(&mut prefix).ok()?;
-    let (form, taken, envelope_len) = match attached_head(&prefix)? {
+) -> Result<Option<(Zeroizing<Vec<u8>>, Option<Attached>)>> {
+    let Ok(prefix_len) = usize::try_from(len.min(ATTACHED_HEAD_MAX as u64)) else {
+        return Ok(None);
+    };
+    let mut prefix = vec![0; prefix_len];
+    if reader.read_exact(&mut prefix).is_err() {
+        return Ok(None);
+    }
+    let Some(head) = attached_head(&prefix) else {
+        return Ok(None);
+    };
+    let (form, taken, envelope_len) = match head {
         Some((form, envelope_len)) => (Some(form), form.head_len(), u64::from(envelope_len)),
         None => (None, 0, len),
     };
-    let mut rest = prefix.get(taken..)?.chain(reader);
-    let body = binding.open(&mut rest, envelope_len, secret)?;
+    let Some(prefix) = prefix.get(taken..) else {
+        return Ok(None);
+    };
+    let mut rest = prefix.chain(reader);
+    let Some(body) = binding.open(&mut rest, envelope_len, secret)? else {
+        return Ok(None);
+    };
     let Some(form) = form else {
-        return Some((body, None));
+        return Ok(Some((body, None)));
     };
     let mut tail = Vec::new();
-    rest.read_to_end(&mut tail).ok()?;
-    Some((body, Some(attached_tail(form, &tail)?)))
+    if rest.read_to_end(&mut tail).is_err() {
+        return Ok(None);
+    }
+    let Some(attached) = attached_tail(form, &tail) else {
+        return Ok(None);
+    };
+    Ok(Some((body, Some(attached))))
 }
 
 /// A kept input's bytes in order, each row read as the one before it is

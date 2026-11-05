@@ -93,45 +93,79 @@ impl InputBinding<'_> {
         reader: impl Read,
         len: u64,
         secret: &MachineSecret,
-    ) -> Option<Zeroizing<Vec<u8>>> {
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
         let mut reader = reader.take(len);
-        let mut label = vec![0; usize::try_from(len.min(ENVELOPES_LABEL.len() as u64)).ok()?];
-        reader.read_exact(&mut label).ok()?;
+        let Ok(label_len) = usize::try_from(len.min(ENVELOPES_LABEL.len() as u64)) else {
+            return Ok(None);
+        };
+        let mut label = vec![0; label_len];
+        if reader.read_exact(&mut label).is_err() {
+            return Ok(None);
+        }
         if label != ENVELOPES_LABEL {
             if len > MAX_ENVELOPE_BYTES {
-                return None;
+                return Ok(None);
             }
             let mut envelope = label;
             let read = envelope.len();
-            envelope.resize(usize::try_from(len).ok()?, 0);
-            reader.read_exact(envelope.get_mut(read..)?).ok()?;
+            let Ok(len) = usize::try_from(len) else {
+                return Ok(None);
+            };
+            envelope.resize(len, 0);
+            let Some(tail) = envelope.get_mut(read..) else {
+                return Ok(None);
+            };
+            if reader.read_exact(tail).is_err() {
+                return Ok(None);
+            }
             return self.open_one(&envelope, secret, &self.key_id());
         }
-        let count = u32::from_be_bytes(read_array(&mut reader)?);
+        let Some(count) = read_array(&mut reader) else {
+            return Ok(None);
+        };
+        let count = u32::from_be_bytes(count);
         if count < 2 {
-            return None;
+            return Ok(None);
         }
         // Each run is shorter than its envelope, so the joined body never
         // moves and leaves no unwiped copy behind.
-        let mut body = Zeroizing::new(Vec::with_capacity(usize::try_from(len).ok()?));
+        let Ok(capacity) = usize::try_from(len) else {
+            return Ok(None);
+        };
+        let mut body = Zeroizing::new(Vec::with_capacity(capacity));
         for index in 0..count {
-            let size = u64::from(u32::from_be_bytes(read_array(&mut reader)?));
+            let Some(size) = read_array(&mut reader) else {
+                return Ok(None);
+            };
+            let size = u64::from(u32::from_be_bytes(size));
             if size > MAX_ENVELOPE_BYTES {
-                return None;
+                return Ok(None);
             }
-            let mut envelope = vec![0; usize::try_from(size).ok()?];
-            reader.read_exact(&mut envelope).ok()?;
-            let run = self.open_one(&envelope, secret, &self.numbered_key_id(index, count))?;
+            let Ok(size) = usize::try_from(size) else {
+                return Ok(None);
+            };
+            let mut envelope = vec![0; size];
+            if reader.read_exact(&mut envelope).is_err() {
+                return Ok(None);
+            }
+            let Some(run) =
+                self.open_one(&envelope, secret, &self.numbered_key_id(index, count))?
+            else {
+                return Ok(None);
+            };
             body.extend_from_slice(&run);
         }
         // The closing mark ends the frame: one byte past it is malformed.
         let mut end = Vec::new();
-        reader
+        if reader
             .by_ref()
             .take(ENVELOPES_END.len() as u64 + 1)
             .read_to_end(&mut end)
-            .ok()?;
-        (end == ENVELOPES_END).then_some(body)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        Ok((end == ENVELOPES_END).then_some(body))
     }
 }
 

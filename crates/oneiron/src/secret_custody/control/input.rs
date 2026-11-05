@@ -228,9 +228,9 @@ impl InputBinding<'_> {
         reader: impl Read,
         len: u64,
         secret: &MachineSecret,
-    ) -> Option<Zeroizing<Vec<u8>>> {
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
         if secret.machine != self.holder {
-            return None;
+            return Ok(None);
         }
         self.open_read(reader, len, secret)
     }
@@ -242,8 +242,14 @@ impl InputBinding<'_> {
         envelope: &[u8],
         secret: &MachineSecret,
         key_id: &[u8],
-    ) -> Option<Zeroizing<Vec<u8>>> {
-        let envelope = Envelope::parse(envelope).ok()?;
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let envelope = match Envelope::parse(envelope) {
+            Ok(envelope) => envelope,
+            Err(oneiron_crypto::Error::OutOfMemory) => {
+                return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+            }
+            Err(_) => return Ok(None),
+        };
         let recipient = WrapRecipient::Machine(self.holder).envelope_recipient();
         let policy = OpenPolicy {
             purpose: Purpose::SecretFile,
@@ -256,11 +262,13 @@ impl InputBinding<'_> {
             min_epoch: EPOCH,
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
-        let payload = envelope
-            .open(OpenKey::Hybrid(&secret.secret), &policy)
-            .ok()?;
-        let body = payload.strip_prefix(INPUT_LABEL)?;
-        Some(Zeroizing::new(body.to_vec()))
+        let Ok(payload) = envelope.open(OpenKey::Hybrid(&secret.secret), &policy) else {
+            return Ok(None);
+        };
+        let Some(body) = payload.strip_prefix(INPUT_LABEL) else {
+            return Ok(None);
+        };
+        Ok(Some(Zeroizing::new(body.to_vec())))
     }
 }
 

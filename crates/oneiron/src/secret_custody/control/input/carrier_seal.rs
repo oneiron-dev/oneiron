@@ -381,8 +381,12 @@ pub(crate) fn open_leaf_input(
         let len = len.checked_sub(LEAF_HEAD_BYTES as u64)?;
         match head.layer {
             LeafLayer::UnderHolder => {
-                let under = binding.open(rows, len, secret)?;
-                Some((carrier.open(leaf, None, &under).ok()?, None))
+                let under = match binding.open(rows, len, secret) {
+                    Ok(Some(under)) => under,
+                    Ok(None) => return None,
+                    Err(error) => return Some(Err(error)),
+                };
+                Some(Ok((carrier.open(leaf, None, &under).ok()?, None)))
             }
             LeafLayer::OverHolder => {
                 // Only a surface's input that fit one row was sealed on top.
@@ -392,11 +396,14 @@ pub(crate) fn open_leaf_input(
                 let mut sealed = vec![0; usize::try_from(len).ok()?];
                 rows.read_exact(&mut sealed).ok()?;
                 let over = carrier.open(leaf, None, &sealed).ok()?;
-                open_framed(binding, over.as_slice(), over.len() as u64, secret)
+                open_framed(binding, over.as_slice(), over.len() as u64, secret).transpose()
             }
-            LeafLayer::OverHolderParts => open_parts(rows, len, carrier, leaf, binding, secret),
+            LeafLayer::OverHolderParts => {
+                open_parts(rows, len, carrier, leaf, binding, secret).transpose()
+            }
         }
-    })
+    })?
+    .transpose()
 }
 
 /// The head row of the input the request names `digest` of, as this vault
