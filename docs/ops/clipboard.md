@@ -20,7 +20,8 @@ its writer. Before any clip payload, the existing native world-privacy door
 sets an unconfigured world to `MyMachines` plaintext reads,
 `CloudAndMyMachines` sealed copies and `Inherit` model order. It supplies the
 observed zero revision, so a concurrent owner choice is not overwritten.
-Reopen preserves existing settings. Native profile, holder and key-work
+A concurrent first opener's nonzero revision is accepted without replaying
+our defaults. Reopen preserves existing settings. Native profile, holder and key-work
 outcomes are not replaced with a fabricated profile or an `Everywhere`
 plaintext fallback. This is not end-to-end sync/key-release runtime proof.
 
@@ -64,6 +65,10 @@ world empties its text records and keeps the empty role's WORLD metadata.
 Private-copy custody is not joined or erased by these ordinary-text APIs.
 
 Reports name completed native deletions and selected masked-text bytes.
+Malformed values in this family are warned about without logging their text
+and skipped by paging/cleanup; clip/all erasure can still remove them without
+parsing their text. Timestamp-range erasure selects only valid timestamps.
+
 They do **not** claim measured free filesystem pages, immediate LMDB file
 shrinkage, backup removal completion, sync delivery, or secret-custody-byte
 reclamation. Host scheduling and a working low-disk observation remain

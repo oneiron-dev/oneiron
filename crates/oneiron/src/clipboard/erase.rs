@@ -6,7 +6,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
-use super::intake::ClipMetadata;
+use super::clipboard_world_id;
 use super::retention::ClipboardRetention;
 
 /// Which ordinary Clipboard records the owner erases. Ranges are [from, before).
@@ -30,44 +30,69 @@ impl Vault {
     /// Carries out the owner's erase through the existing hard-delete door,
     /// preserving its legal holds, dependent cleanup, receipt and sweep work.
     /// No reader or writer is held across separate deletion transactions.
+    /// Clip/all erasure also reaches malformed values in this exact family.
     pub fn erase_clipboard_as_owner(
         &self,
         owner: &AuthenticatedOwner,
         selection: ClipboardErase,
     ) -> Result<ClipboardEraseReport> {
-        let rows = {
+        let selected = {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-            self.clipboard_metadata_in_txn(&txn)?
+            match selection {
+                ClipboardErase::Clip { clip } => {
+                    if self.clipboard_claim_in_txn(&txn, clip)?.is_some() {
+                        vec![(clip, None)]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                ClipboardErase::Range { from, before } => self
+                    .clipboard_metadata_in_txn(&txn)?
+                    .into_iter()
+                    .filter(|row| row.copied_at >= from && row.copied_at < before)
+                    .map(|row| (row.clip, Some(row.copied_at)))
+                    .collect(),
+                ClipboardErase::All => {
+                    let mut clips = Vec::new();
+                    for clip in self.claims_for_subject_in_txn(&txn, &clipboard_world_id()?)? {
+                        if self.clipboard_claim_in_txn(&txn, clip)?.is_some() {
+                            clips.push((clip, None));
+                        }
+                    }
+                    clips
+                }
+            }
         };
         let mut erased = Vec::new();
-        for row in rows.into_iter().filter(|row| match selection {
-            ClipboardErase::Clip { clip } => row.clip == clip,
-            ClipboardErase::Range { from, before } => {
-                row.copied_at >= from && row.copied_at < before
-            }
-            ClipboardErase::All => true,
-        }) {
-            if self.erase_clipboard_row(owner, row, DeleteReason::UserHardDelete, None)? {
-                erased.push(row.clip);
+        for (clip, copied_at) in selected {
+            if self.erase_clipboard_id(
+                owner,
+                clip,
+                DeleteReason::UserHardDelete,
+                None,
+                copied_at,
+            )? {
+                erased.push(clip);
             }
         }
         Ok(ClipboardEraseReport { erased })
     }
 
-    pub(super) fn erase_clipboard_row(
+    pub(super) fn erase_clipboard_id(
         &self,
         owner: &AuthenticatedOwner,
-        row: ClipMetadata,
+        clip: EntityId,
         reason: DeleteReason,
         policy: Option<&ClipboardRetention>,
+        copied_at: Option<u64>,
     ) -> Result<bool> {
         let context = {
             let txn = self.store.env.read_txn()?;
-            owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             let manifest = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
             DeletionGateContext::new(
-                owner.actor(),
+                actor,
                 EdgeActorClass::Human,
                 crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
                 manifest.read_frontier_hash()?,
@@ -78,24 +103,33 @@ impl Vault {
             if let Some(expected) = policy
                 && self.clipboard_retention_in_txn(txn)? != *expected
             {
-                return Err(Error::ConcurrentWrite);
+                return Err(Error::ConcurrentWrite("Clipboard cleanup policy changed"));
             }
             Ok(())
         };
         let selected = |txn: &heed::RoTxn<'_>| {
-            let Some(current) = self.clipboard_entry_in_txn(txn, row.clip)? else {
-                return Err(Error::ConcurrentWrite);
+            let Some(current) = self.clipboard_claim_in_txn(txn, clip)? else {
+                return Err(Error::ConcurrentWrite("Clipboard selection changed"));
             };
-            if current.copied_at != row.copied_at
-                || u64::try_from(current.text.len()).unwrap_or(u64::MAX) != row.text_bytes
-            {
-                return Err(Error::ConcurrentWrite);
+            if let Some(expected) = copied_at {
+                let actual = current
+                    .value
+                    .as_map()
+                    .and_then(|fields| {
+                        fields
+                            .iter()
+                            .find(|(key, _)| key.as_str() == Some(super::intake::KEY_COPIED_AT))
+                    })
+                    .and_then(|(_, value)| value.as_u64());
+                if actual != Some(expected) {
+                    return Err(Error::ConcurrentWrite("Clipboard copy position changed"));
+                }
             }
             Ok(())
         };
         let gate = GatedDeletion::with_pre_scrub_check(context, &reverify, &selected);
         Ok(self
-            .delete_entity_with_reason_gated(&row.clip, reason, gate)?
+            .delete_entity_with_reason_gated(&clip, reason, gate)?
             .existed)
     }
 }

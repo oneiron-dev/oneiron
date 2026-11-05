@@ -127,7 +127,13 @@ impl Vault {
         }
         let mut erased = Vec::new();
         for row in rows.into_iter().filter(|row| selected.contains(&row.clip)) {
-            if self.erase_clipboard_row(owner, row, DeleteReason::PolicyDelete, Some(&settings))? {
+            if self.erase_clipboard_id(
+                owner,
+                row.clip,
+                DeleteReason::PolicyDelete,
+                Some(&settings),
+                Some(row.copied_at),
+            )? {
                 erased.push(row.clip);
             }
         }
