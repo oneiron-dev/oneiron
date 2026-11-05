@@ -41,6 +41,7 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod admission;
+mod output_retention;
 mod output_settle;
 mod view;
 pub use admission::MadeByReader;
@@ -405,33 +406,8 @@ impl Vault {
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        if output.media_type != body.media_type {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "a native output must export the artifact's own media type",
-            )));
-        }
-        if (!authorize_content_write && output.bytes.is_empty()) || output.name.trim().is_empty() {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "a native output needs a file name and non-empty bytes",
-            )));
-        }
-        let report = serde_json::to_string(&output.report).map_err(|_| {
-            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "native output report does not encode",
-            ))
-        })?;
-        if report.len() > NATIVE_OUTPUT_REPORT_MAX_BYTES {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "native output report is too large",
-            )));
-        }
-        crate::batch::secret_scan::scan_metadata_field(&output.name)?;
-        if !authorize_content_write && OfficeFormat::from_media_type(&output.media_type).is_ok() {
-            // An organ's office export must at least open as a package before
-            // it waits. A direct append keeps the append door's byte acceptance
-            // (FIX 8208): its authorized Keep reaches the same core append.
-            crate::edit_roundtrip::read_office_package(&output.bytes)?;
-        }
+        let report =
+            output_retention::validate_native_output(output, &body, authorize_content_write)?;
         let head = self.blob_artifact_head(artifact_id)?;
         let base = match (base_override, &deck) {
             (Some(base), _) => Some(base),
@@ -442,33 +418,15 @@ impl Vault {
         // retention: Keep preserves this envelope instead of rebinding it to
         // the keeper, and the provenance matches what Keep settles under
         // (blind review of #4554).
-        let row = PendingRow {
-            proposal_ref: output.run_ref.clone(),
-            retained_by: actor.entity_ref(),
-            retained_by_kind: self.get_entity_type(&actor.entity_ref())?,
+        let row = output_retention::native_output_pending_row(
+            output,
+            (actor, self.get_entity_type(&actor.entity_ref())?),
             retained_at,
-            made_by: output.made_by.as_ref().map(|named| {
-                Vault::bind_retained_producer_envelope(
-                    &actor,
-                    &BlobVersionProvenance::AgentRun {
-                        run_ref: output.run_ref.clone(),
-                    },
-                    named,
-                    retained_at,
-                )
-            }),
-            base_version: base.map(|(version, _)| version),
-            base_content_hash: base.map(|(_, hash)| hash),
-            explicit_fork: base_override.is_some(),
-            new_bytes: output.bytes.clone(),
-            read_rows: Vec::new(),
-            deck: deck.map(|(_, hold)| hold),
-            body: PendingBody::Output {
-                name: output.name.clone(),
-                media_type: output.media_type.clone(),
-                report,
-            },
-        };
+            base,
+            base_override.is_some(),
+            deck.map(|(_, hold)| hold),
+            report,
+        );
         if authorize_content_write {
             self.put_pending_with_content_write_grant(artifact_id, &row, reader, actor)
         } else {
@@ -739,13 +697,14 @@ impl Vault {
         let lane =
             admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
         self.with_write_txn_grouped(|wtxn| {
-            self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, &actor)?;
-            if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
-                admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
-            }
-            self.put_pending_in_txn(wtxn, artifact_id, row)
-        })?;
-        Ok(row.view(*artifact_id))
+            self.put_pending_with_content_write_grant_in_txn(
+                wtxn,
+                artifact_id,
+                row,
+                lane.as_ref(),
+                actor,
+            )
+        })
     }
 
     /// Holds `row` beside its artifact in `wtxn`: a settled ref, or one already
