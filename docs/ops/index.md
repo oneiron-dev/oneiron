@@ -33,6 +33,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [The built-in web connector](web-connector.md) — `connector.web.search` and `fetch`: the
   deploy's `TAVILY_API_KEY`, the owner's provider switch, result shapes and usage rows.
+- [Clipboard native storage doors](clipboard.md) — owner-bound ordinary text capture,
+  masked read pages, cleanup policy and clip/range/world erasure; host watcher not yet wired.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to
