@@ -1,6 +1,11 @@
-//! Preserve only the actor ledger's validated binary reference positions.
+//! Core half of `serialize::export_actor_references`: its store-layer items live in `oneiron_store::serialize::export_actor_references` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::serialize::export_actor_references::*;
+
 use super::ExportValue;
 use crate::{entity_id::EntityId, write_envelope::claim_body::ClaimBody};
+
 fn field<'a>(value: &'a mut ExportValue, name: &str) -> Option<&'a mut ExportValue> {
     let ExportValue::Map(entries) = value else {
         return None;
@@ -9,6 +14,7 @@ fn field<'a>(value: &'a mut ExportValue, name: &str) -> Option<&'a mut ExportVal
         matches!(key,ExportValue::String(key) if key==name).then_some(value)
     })
 }
+
 fn reference(id: EntityId) -> ExportValue {
     if crate::batch::secret_scan::scan_file_content("", id.as_bytes()).is_some() {
         ExportValue::Nil
@@ -16,6 +22,7 @@ fn reference(id: EntityId) -> ExportValue {
         ExportValue::EntityReference(id.as_bytes().to_vec())
     }
 }
+
 pub(super) fn export_actor_references(body: &ClaimBody, exported: &mut ExportValue) {
     let Some(refs) = crate::actor_claims::actor_archive_references(body) else {
         return;
