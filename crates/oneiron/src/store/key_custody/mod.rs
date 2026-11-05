@@ -24,7 +24,7 @@ mod fork;
 mod head;
 mod holders;
 mod home;
-mod identity;
+use oneiron_store::key_custody::identity;
 mod kept_images;
 mod log;
 mod outbox;
