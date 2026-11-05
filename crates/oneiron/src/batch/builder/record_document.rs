@@ -10,6 +10,64 @@ use crate::entity_doc::{RecordDocumentCandidate, RecordDocumentPreparation, Reco
 use crate::error::Result;
 use crate::sync::SelectedRecordDocument;
 
+/// The replicated batch's applying outcome. Only the native variant owns an
+/// actual installed document that survived all original final checks.
+pub(crate) enum IngestedPutOutcome {
+    Applied,
+    NativeRecordApplied(AppliedRecordDocument),
+    DocumentStands(RecordDocumentStand),
+}
+
+/// Not a commit receipt: the ingest savepoint and its parent still own commit.
+/// The original actor frame, if observed, stays with its actual installed result.
+pub(crate) struct AppliedRecordDocument {
+    installed: crate::entity_doc::PendingRecordDocument,
+    content_writes: Option<super::super::actor_content::ContentWriteSet>,
+}
+
+impl AppliedRecordDocument {
+    pub(super) fn finish(
+        vault: &crate::Vault,
+        txn: &mut heed::RwTxn<'_>,
+        records: Vec<crate::entity_doc::PendingRecordDocument>,
+        candidate: Option<&RecordDocumentCandidate<'_, '_>>,
+        content_writes: &mut Option<super::super::actor_content::ContentWriteSet>,
+    ) -> Result<Option<Self>> {
+        let mut records = records.into_iter();
+        match (candidate, records.next(), records.next()) {
+            (None, None, None) => Ok(None),
+            (Some(candidate), Some(installed), None) => {
+                installed.require_in_txn(&vault.store, txn, candidate)?;
+                Ok(Some(Self {
+                    installed,
+                    content_writes: content_writes.take(),
+                }))
+            }
+            _ => Err(crate::error::Error::InvariantViolation(
+                "record document result differs from its applying batch",
+            )),
+        }
+    }
+
+    pub(crate) fn require_entity(&self, expected: &crate::EntityId) -> Result<()> {
+        if self.installed.entity() != *expected {
+            return Err(crate::error::Error::InvariantViolation(
+                "native record result names another ingest row",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn into_entity(self) -> crate::EntityId {
+        let Self {
+            installed,
+            content_writes,
+        } = self;
+        drop(content_writes);
+        installed.entity()
+    }
+}
+
 /// Every outcome keeps the actual queued operation. Independent local text
 /// remains on its own physical route; none of these outcomes is admission.
 pub(super) enum RecordDocumentOp<'selected, 'carrier> {

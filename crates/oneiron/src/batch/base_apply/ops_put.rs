@@ -189,6 +189,10 @@ pub(super) fn apply_put_arm(
         own_device,
     )?;
     #[cfg(feature = "sync")]
+    if let Some(record_document) = applied.record_document {
+        state.record_documents.push(record_document);
+    }
+    #[cfg(feature = "sync")]
     if let Some(pending) = applied.pending_native_skill_put {
         state.pending_native_skill_puts.push(pending);
     }

@@ -42,9 +42,9 @@ mod projections;
 mod rewrite;
 
 #[cfg(feature = "sync")]
-pub(in crate::batch) use native_skill::PendingNativeSkillPut;
-#[cfg(feature = "sync")]
 pub(crate) use native_skill::AdmittedRecordDocumentPut;
+#[cfg(feature = "sync")]
+pub(in crate::batch) use native_skill::PendingNativeSkillPut;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(
@@ -133,9 +133,8 @@ pub(in crate::batch) fn apply_put_beside<'a>(
     #[cfg(feature = "sync")]
     let pending_native_skill_put = PendingNativeSkillPut::capture(store, wtxn, &fixed, data)?;
     #[cfg(feature = "sync")]
-    let admitted_record_document = AdmittedRecordDocumentPut::after_phases(
-        store, wtxn, &fixed, data, record_refinement,
-    )?;
+    let admitted_record_document =
+        AdmittedRecordDocumentPut::after_phases(store, wtxn, &fixed, data, record_refinement)?;
     audit::audit_and_stage_body(
         store,
         wtxn,
@@ -174,8 +173,13 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         installed_record_document.as_ref(),
     )?;
     #[cfg(feature = "sync")]
+    let record_document = installed_record_document
+        .map(|installed| installed.after_projections(store, wtxn, &fixed.id, data))
+        .transpose()?;
+    #[cfg(feature = "sync")]
     let applied = AppliedPut {
         pending_native_skill_put,
+        record_document,
         ..applied
     };
     Ok(applied)

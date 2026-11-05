@@ -6,7 +6,9 @@
 
 mod candidate;
 pub(super) use candidate::AdmittedRecordDocument;
-pub(crate) use candidate::{InstalledRecordDocument, install_record_document_in_txn};
+pub(crate) use candidate::{
+    InstalledRecordDocument, PendingRecordDocument, install_record_document_in_txn,
+};
 mod native_doors;
 mod native_sources;
 mod refinement;
