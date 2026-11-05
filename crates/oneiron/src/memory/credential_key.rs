@@ -204,10 +204,12 @@ impl Vault {
         owner: bool,
         base: fn(&VerifiedSlip) -> Option<ScopedReadActorKey>,
     ) -> Result<Option<ScopedReadActorKey>> {
-        let claims = proof.claims();
-        if claims.holder_ref != holder.to_hex() {
+        if proof.claims().holder_ref != holder.to_hex() {
             return Ok(None);
         }
+        let proof = self.member_bounded_slip_view_in_txn(txn, proof.clone())?;
+        let proof = &proof;
+        let claims = proof.claims();
         let Some(key) = base(proof) else {
             return Ok(None);
         };
