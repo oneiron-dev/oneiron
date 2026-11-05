@@ -199,13 +199,13 @@ pub(super) fn capture(
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
             let (DocKey(_, head), bytes) = row?;
-            // A retained parent goes in below, from its own document; the
-            // value of a decided fork no pending fork needs stays out.
+            // Only pending forks' own values go here. Their retained parents
+            // go in below; unneeded retired heads stay out.
             if head == live_head
                 || required.contains(&(note, head))
                 || NOTE_FORK
                     .get(&vault.store, txn, &head)?
-                    .is_some_and(|fork| fork.decided)
+                    .is_none_or(|fork| fork.decided)
             {
                 continue;
             }
@@ -294,7 +294,22 @@ pub(super) fn from_doc(
     birth_actor: Option<[u8; 16]>,
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
-    let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    let (text, title, mut authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    if live {
+        let author = birth_actor.map(id).transpose()?.map_or(
+            crate::note::NoteActor::Erased,
+            crate::note::NoteActor::Actor,
+        );
+        // Canonical values bind only an existing birth to this actual core.
+        // Rebuilding native history removes its author literal again.
+        for record in &mut authorship {
+            if record.operation.as_bytes() == &entity_id
+                && record.actor == crate::note::NoteActor::Erased
+            {
+                record.actor = author;
+            }
+        }
+    }
     if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }
