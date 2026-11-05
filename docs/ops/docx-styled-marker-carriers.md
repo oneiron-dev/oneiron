@@ -2,8 +2,10 @@
 
 A styled whole-paragraph replacement keeps existing bookmarks, comment range
 boundaries and comment references once, at their original native inline
-positions. Their marker-only segments stay Normal. The old text keeps the
-existing deletion or stacked-deletion status; replacement text stays Inserted.
+positions and statuses. Existing Normal markers stay Normal; prior inserted or
+deleted markers keep their own revision rather than being made current. The
+old text keeps the existing deletion or stacked-deletion status; replacement
+text stays Inserted.
 
 Rejecting the replacement restores the original text around those same markers.
 Accepting it removes the old text, so an interior range collapses to the boundary

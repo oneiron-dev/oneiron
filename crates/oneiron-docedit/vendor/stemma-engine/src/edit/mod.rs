@@ -7006,8 +7006,8 @@ fn validate_range_brackets(
 
 /// Apply a `ReplaceParagraphText` step using "whole-paragraph segment
 /// replace": wrap original text in Deleted segments and the freshly-built
-/// inlines in one Inserted segment. Structural markers stay Normal at their
-/// original positions, with no duplicated identities. Used for
+/// inlines in one Inserted segment. Structural markers keep their original
+/// statuses and positions, with no duplicated identities. Used for
 /// content fragments the inline-diff path can't handle today —
 /// `StyledText` (marks on new text) and `NewHyperlink` (creating an
 /// `<link>` opaque from markup).
@@ -7027,22 +7027,11 @@ fn apply_segment_replace_paragraph(
     let fmt = first_text_formatting(para);
     let stamped = stamp_revision(revision, rev_counter);
 
-    // Collect old inlines: every inline from every Normal segment becomes
-    // the body of the single Deleted segment. (The caller has already
-    // validated that all existing segments are Normal — that's a
-    // precondition of ReplaceParagraphText.)
-    let mut old_inlines: Vec<InlineNode> = Vec::new();
-    for seg in &para.segments {
-        for inline in &seg.inlines {
-            old_inlines.push(inline.clone());
-        }
-    }
-
     // Build a lookup of preserved inlines so `PreservedInlineRef` can
     // resolve to a clone of the original.
     let mut preserved_lookup: std::collections::HashMap<NodeId, InlineNode> =
         std::collections::HashMap::new();
-    for inline in &old_inlines {
+    for inline in para.all_inlines() {
         match inline {
             InlineNode::OpaqueInline(o) => {
                 preserved_lookup.insert(o.id.clone(), inline.clone());
@@ -7119,28 +7108,29 @@ fn apply_segment_replace_paragraph(
         ))),
         None => Some(TrackingStatus::Deleted(stamped.clone())),
     };
-    let normal = TrackingStatus::Normal;
-    for inline in old_inlines {
-        // A text replacement does not delete its structural markers. Keep
-        // each once at its original position, outside the text's tombstone:
-        // reject restores its old range; accept collapses removed old text.
-        let status = if is_structural_marker(&inline) {
-            Some(&normal)
-        } else {
-            old_status.as_ref()
-        };
-        let Some(status) = status else {
-            continue;
-        };
-        if let Some(last) = new_segments.last_mut()
-            && last.status == *status
-        {
-            last.inlines.push(inline);
-        } else {
-            new_segments.push(TrackedSegment {
-                status: status.clone(),
-                inlines: vec![inline],
-            });
+    for segment in &para.segments {
+        for inline in &segment.inlines {
+            // Keep each structural marker once at its original position and
+            // status, outside the replacement text's tombstone. Normal
+            // markers survive both resolutions; prior revisions stay prior.
+            let status = if is_structural_marker(inline) {
+                Some(&segment.status)
+            } else {
+                old_status.as_ref()
+            };
+            let Some(status) = status else {
+                continue;
+            };
+            if let Some(last) = new_segments.last_mut()
+                && last.status == *status
+            {
+                last.inlines.push(inline.clone());
+            } else {
+                new_segments.push(TrackedSegment {
+                    status: status.clone(),
+                    inlines: vec![inline.clone()],
+                });
+            }
         }
     }
     if !new_inlines.is_empty() {

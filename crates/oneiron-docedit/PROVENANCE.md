@@ -107,9 +107,10 @@ The non-text inline nodes themselves are preserved unchanged.
 
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
-Decoration or comment range/reference marker in one Normal carrier at its
-original inline position, instead of consuming it into the old text's deletion.
-Rejection restores its original text range; acceptance collapses removed old
+Decoration or comment range/reference marker in one carrier at its original
+inline position and status, instead of consuming it into the old text's deletion.
+Normal markers stay current, and prior inserted/deleted markers keep their own
+revision. Rejection restores the original current range; acceptance collapses removed old
 text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
