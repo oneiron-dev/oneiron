@@ -15256,7 +15256,7 @@
     },
     {
       "name": "connector.call",
-      "description": "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.",
+      "description": "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data.",
       "input": "crate::outbound_consent::ConnectorCallRequest",
       "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>",
       "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::connector_call_host_only(memory, &input)?)",
@@ -15272,7 +15272,7 @@
     },
     {
       "name": "connector.schema",
-      "description": "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.",
+      "description": "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest.",
       "input": "crate::task_verb::sdk::ConnectorSchemaRequest",
       "output": "crate::task_verb::sdk::ConnectorSchemaReply",
       "call": "crate::task_verb::sdk::connector_schema_read(memory, input)?",

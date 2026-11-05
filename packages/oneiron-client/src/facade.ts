@@ -3493,8 +3493,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.decisions.asks": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },
   "connector.list": { description: "Every live catalogued connector whose name or summary matches the query.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.status": { description: "One catalogued connector by name, removed ones included.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "connector.call": { description: "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "connector.schema": { description: "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "connector.call": { description: "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "connector.schema": { description: "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.call_status": { description: "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.commit": { description: "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.remember": { description: "Commits one claim through the gate, the same as vault.claims.upsert.", scope: "Write", proposes: true, hostDoor: false, section: false },
@@ -7034,9 +7034,9 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       list: (input: Facade.ConnectorListRequest, options?: O): FacadeReturns<"connector.list">[K] => invoke("connector.list", input, options, newInvocation()),
       /** One catalogued connector by name, removed ones included. */
       status: (input: Facade.ConnectorNameRequest, options?: O): FacadeReturns<"connector.status">[K] => invoke("connector.status", input, options, newInvocation()),
-      /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
+      /** Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data. */
       call: (input: Facade.ConnectorCallRequest, options?: O): FacadeReturns<"connector.call">[K] => invoke("connector.call", input, options, newInvocation()),
-      /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
+      /** One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest. */
       schema: (input: Facade.ConnectorSchemaRequest, options?: O): FacadeReturns<"connector.schema">[K] => invoke("connector.schema", input, options, newInvocation()),
       /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
       call_status: (input: Facade.ConnectorCallStatusRequest, options?: O): FacadeReturns<"connector.call_status">[K] => invoke("connector.call_status", input, options, newInvocation()),
