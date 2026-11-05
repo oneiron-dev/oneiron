@@ -21,6 +21,7 @@
 //! ([`drop_room_media_copies_in_txn`], FIX 9398), so no room serves a vector of a record that
 //! is gone.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
@@ -488,22 +489,83 @@ impl Vault {
     }
 }
 
+thread_local! {
+    /// The records a batch on this thread has deleted or erased while its
+    /// [`RoomMediaDrops`] is open, with the store it writes: their room copies drop once, as it
+    /// closes.
+    static PENDING_ROOM_DROPS: RefCell<Option<(*const Store, BTreeSet<EntityId>)>> =
+        const { RefCell::new(None) };
+}
+
+/// One batch's room media drop (FIX 9398). While it is open on a thread,
+/// [`drop_room_media_copies_in_txn`] collects the ids the batch deletes or erases in its store,
+/// and closing it drops their copies in each room once, still inside the batch's writer. A batch
+/// of many deletes then copies a room's state once, not once per record. Only the outermost of
+/// nested batches drops; an inner one adds to it.
+pub(crate) struct RoomMediaDrops<'s> {
+    store: &'s Store,
+    outermost: bool,
+}
+
+impl<'s> RoomMediaDrops<'s> {
+    /// Opens it for a batch applied in `_writer`, which commits only after it closes.
+    pub(crate) fn open(store: &'s Store, _writer: &RwTxn<'_>) -> Self {
+        let outermost = PENDING_ROOM_DROPS.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            let outermost = pending.is_none();
+            if outermost {
+                *pending = Some((std::ptr::from_ref(store), BTreeSet::new()));
+            }
+            outermost
+        });
+        Self { store, outermost }
+    }
+}
+
+impl Drop for RoomMediaDrops<'_> {
+    fn drop(&mut self) {
+        if !self.outermost {
+            return;
+        }
+        if let Some((_, ids)) = PENDING_ROOM_DROPS.with(|pending| pending.borrow_mut().take()) {
+            drop_room_media_copies(self.store, &ids);
+        }
+    }
+}
+
 /// Drops, in every live room and retained sealed stretch, `id`'s staged media vector and device
 /// rows in every space, one retired since included, and its `MediaVector` journal entries, inside
 /// `_writer`, the writer that deletes or erases it beside base's own
 /// ([`super::delete_media_vectors_in_txn`]), FIX 9398. It runs before that writer commits, so no
-/// older room write can publish a dropped row again. A promotion keeps the room's copies of the
-/// vectors it replayed, so without this they would outlive the record until the room closes. A
-/// room whose overlay lock is poisoned serves no read; it keeps its rows until it closes.
+/// older room write can publish a dropped row again: at once, or as the open [`RoomMediaDrops`]
+/// of a batch in the same store closes. A promotion keeps the room's copies of the vectors it
+/// replayed, so without this they would outlive the record until the room closes.
 pub(crate) fn drop_room_media_copies_in_txn(store: &Store, _writer: &RwTxn<'_>, id: &EntityId) {
+    let collected = PENDING_ROOM_DROPS.with(|pending| match pending.borrow_mut().as_mut() {
+        Some((owner, ids)) if std::ptr::eq(*owner, store) => {
+            ids.insert(*id);
+            true
+        }
+        _ => false,
+    });
+    if !collected {
+        drop_room_media_copies(store, &BTreeSet::from([*id]));
+    }
+}
+
+/// Drops every room's staged media copies of `ids`. A room whose overlay lock is poisoned serves
+/// no read; it keeps its rows until it closes.
+fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
+    if ids.is_empty() {
+        return;
+    }
     let overlays = store.off_record_sessions.live_overlay_handles();
     if overlays.is_empty() {
         return;
     }
     let prefixes = super::space::repo_projection::media_row_prefixes();
-    let ids = BTreeSet::from([*id]);
     for overlay in overlays {
-        if let Err(error) = overlay.invalidate_repo_media_copies(&prefixes, &ids) {
+        if let Err(error) = overlay.invalidate_repo_media_copies(&prefixes, ids) {
             tracing::warn!(
                 error = %error,
                 "a room keeps its staged media copies of a deleted record until it closes"
