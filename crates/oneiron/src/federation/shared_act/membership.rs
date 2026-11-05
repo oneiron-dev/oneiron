@@ -221,6 +221,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: data.clone(),
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

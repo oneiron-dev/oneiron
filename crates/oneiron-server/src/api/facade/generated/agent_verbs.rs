@@ -467,6 +467,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.off_record.discard", post(facade_route))
         .route("/vault.off_record.recall", post(facade_route))
         .route("/vault.off_record.notes.create", post(facade_route))
+        .route("/vault.off_record.artifacts.save", post(facade_route))
         .route("/vault.off_record.claims.upsert", post(facade_route))
         .route("/self.off_record.execute", post(facade_route))
         .route("/self.off_record.results.list", post(facade_route))

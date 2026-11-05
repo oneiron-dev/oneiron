@@ -455,6 +455,7 @@ vaultOffRecordWitness(input: unknown): unknown
 vaultOffRecordDiscard(input: unknown): unknown
 vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
+vaultOffRecordArtifactsSave(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 selfOffRecordResultsList(input: unknown): unknown
