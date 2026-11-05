@@ -11,10 +11,8 @@ use super::{
 };
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND;
-use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-};
 use crate::{EntityId, Error, Result, Vault};
 
 /// The owner's change of the binding.
@@ -191,7 +189,9 @@ fn source_order(source: &FeedbackTriageHandoffSource) -> (&str, usize, &str, &st
 
 impl Vault {
     /// Queues the Coach's feedback sweep now, coalescing with a sweep
-    /// already queued, and answers its attempt. The sweep runs on the bound
+    /// already queued, and answers its attempt. Joining a running sweep
+    /// retains one later ordinary sweep (FIX 7552); waiting work covers the
+    /// request without another sweep. The sweep runs on the bound
     /// skill; with none bound it completes doing nothing, and its status
     /// shows `skill_unbound`.
     ///
@@ -206,22 +206,7 @@ impl Vault {
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            let outcome = DreamerRunnerStore::new(self).enqueue_kind_in_txn(
-                txn,
-                COACH_HOST_QUEUE_KIND,
-                DreamerAttemptPayload {
-                    attempt_type: COACH_FEEDBACK_SWEEP_FACET.into(),
-                    input: rmpv::Value::Nil,
-                    parent_attempt: None,
-                },
-                Some(COACH_FEEDBACK_SWEEP_FACET.into()),
-                None,
-                now,
-            )?;
-            let status = match outcome {
-                EnqueueDreamerAttemptOutcome::Enqueued(status)
-                | EnqueueDreamerAttemptOutcome::Existing(status) => status,
-            };
+            let status = super::sweep_pending::requested_in_txn(self, txn, now)?;
             Ok(FeedbackTriageRun {
                 attempt: attempt_ref(status.attempt.id)?,
             })

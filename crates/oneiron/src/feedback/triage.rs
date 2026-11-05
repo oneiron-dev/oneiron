@@ -44,6 +44,7 @@ mod jobs;
 mod owner;
 mod source;
 mod source_state;
+mod sweep_pending;
 mod target;
 mod work;
 mod work_store;

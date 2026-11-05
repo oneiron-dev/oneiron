@@ -238,7 +238,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/mcp/tool-first", post(mcp_tool_first_gateway))
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
-        .route("/api/search/semantic", post(search_semantic))
+        .route(
+            "/api/search/semantic",
+            post(search_semantic).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
         .route("/api/search/text", get(search_text))
         .route("/api/entity/{id}", get(get_entity))
         .route("/api/edges/{id}", get(get_edges))
