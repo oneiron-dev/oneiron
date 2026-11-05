@@ -423,6 +423,7 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.discard`
 - `vault.off_record.recall`
 - `vault.off_record.notes.create`
+- `vault.off_record.artifacts.save`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
 - `self.off_record.results.list`
@@ -1200,3 +1201,18 @@ both bindings and their export-census tests in one change.
 - `vault.custody.members.drain.commit`
 - `vault.custody.members.drain.folder`
 - `vault.custody.members.reenrol`
+- `vault.mail.pack.install`
+- `vault.mail.sources.connect`
+- `vault.mail.sources.list`
+- `vault.mail.sources.settings.set`
+- `vault.mail.sources.members.set`
+- `vault.mail.sources.audience_events`
+- `vault.mail.threads.share`
+- `vault.mail.threads.unshare`
+- `vault.mail.compliance.setting`
+- `vault.mail.compliance.set`
+- `vault.mail.compliance.log`
+- `vault.mail.sources.sync_status`
+- `vault.mail.inbox`
+- `vault.mail.threads.read`
+- `vault.mail.compliance.search`
