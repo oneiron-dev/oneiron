@@ -405,9 +405,11 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            codebase_manifest_files,
             recall_query_bytes,
             requested_result_rows,
             embedding_dimensions,
+            shared_merge_evidence_rows,
             memory_reason_evidence_rows,
             memory_reason_tokens,
         } = over;
@@ -660,9 +662,14 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
             (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
+            (
+                EngineLimit::SharedMergeEvidenceRows,
+                shared_merge_evidence_rows,
+            ),
             (
                 EngineLimit::MemoryReasonEvidenceRows,
                 memory_reason_evidence_rows,

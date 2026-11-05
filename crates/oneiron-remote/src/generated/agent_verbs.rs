@@ -1314,6 +1314,9 @@ impl OneironClient {
                 "vault.off_record.notes.create" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
+                "vault.off_record.artifacts.save" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordArtifactSaved,
+                >(client, verb, &input),
                 "vault.off_record.claims.upsert" => {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
@@ -9004,6 +9007,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.off_record.notes.create", value)
+    }
+    pub fn vault_off_record_artifacts_save(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordArtifactSaveRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordArtifactSaved, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.artifacts.save", value)
     }
     pub fn vault_off_record_claims_upsert(
         &self,

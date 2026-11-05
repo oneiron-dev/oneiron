@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::Vault;
+use crate::authority::EffectiveRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -17,6 +18,7 @@ use super::storage_admission::{
     require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
     residual_speaker_label, sample_digest, unambiguous_invite_remainder,
 };
+use super::stored::{StoredPrint, StoredSample};
 use super::types::{
     VoiceAttributionEvidence, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentRequest,
     VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintRecordV1, VoiceResolvedSegment,
@@ -126,6 +128,9 @@ impl Vault {
             .collect();
         let calibration = calibration_for(&sample_languages);
 
+        // This reads the device keystore before the writer. Its error belongs
+        // only to a private-world seal; base and public worlds need no key.
+        let machine = self.machine_secret_outside_txn();
         let store = &self.store;
         let subject = request.subject_ref;
         self.with_write_txn_grouped(|wtxn| {
@@ -170,19 +175,36 @@ impl Vault {
                 print_generation: self.store.clock.entity_id()?,
                 created_at: previous
                     .as_ref()
-                    .map_or(request.requested_at, |prior| prior.created_at),
+                    .map_or(request.requested_at, |prior| prior.metadata.created_at),
                 updated_at: request.requested_at,
-                delete_after: previous.and_then(|prior| prior.delete_after),
+                delete_after: previous.and_then(|prior| prior.metadata.delete_after),
             };
             let space_digest = digest16(b"voice_identity.space", request.space.space_id.as_bytes());
-            PRINT_RECORD.put(store, wtxn, &(subject, space_digest), &record)?;
+            let content_key = match record.world_ref {
+                Some(world) => {
+                    let fold = self.authority_view_readonly_in_txn(wtxn)?;
+                    if fold.world_privacy(world).read == EffectiveRead::Everywhere {
+                        None
+                    } else {
+                        let machine = machine?;
+                        let key_id = fold.current_world_key(world)
+                            .ok_or_else(|| invalid_voice("the voice print world has no counted content key"))?
+                            .id;
+                        Some(self.world_content_key_in_txn(wtxn, &machine, &key_id)?)
+                    }
+                }
+                None => None,
+            };
+            let stored = StoredPrint::new(self, wtxn, &record, content_key.as_ref())?;
+            PRINT_RECORD.put(store, wtxn, &(subject, space_digest), &stored)?;
             PRINT_POINTER.put(store, wtxn, &subject, &request.space.space_id)?;
             if let Some(delete_after) = record.delete_after {
                 note_print_retention_wake(store, wtxn, delete_after)?;
             }
             for sample in &ordered {
                 let digest = sample_digest(&subject, &sample.sample_id);
-                SAMPLE.put(store, wtxn, &digest, sample)?;
+                let sample = StoredSample::new(self, wtxn, sample, &stored.metadata, content_key.as_ref())?;
+                SAMPLE.put(store, wtxn, &digest, &sample)?;
             }
             // The owner's typed question a third party's print owes, kept with
             // it (FIX 10789). An ask, never a block: a question that does not
@@ -210,6 +232,7 @@ impl Vault {
         let segments = admit_match_segments(request)?;
         let known_threshold = request.policy.known_threshold;
 
+        let machine = self.machine_secret_outside_txn();
         let rtxn = self.store.env.read_txn()?;
         let candidates = load_match_candidates(
             self,
@@ -217,6 +240,7 @@ impl Vault {
             &request.space_id,
             &request.purpose,
             self.now_recorded_at(),
+            machine,
         )?;
         drop(rtxn);
 
@@ -434,9 +458,10 @@ impl Vault {
         let Some(roster) = ROSTER.get(&self.store, &rtxn, &digest)? else {
             return Ok(false);
         };
-        let Some(print) = read_active_print(&self.store, &rtxn, &owner_actor)? else {
+        let Some(stored) = read_active_print(&self.store, &rtxn, &owner_actor)? else {
             return Ok(false);
         };
+        let print = &stored.metadata;
         if print.contact_ref.is_some()
             || print.space.space_id != roster.embedding_space_id
             || print
@@ -482,20 +507,20 @@ impl Vault {
         let store = &self.store;
         self.with_write_txn_grouped(|wtxn| {
             require_relationship_entity(store, wtxn, &relationship_ref)?;
-            let record =
+            let mut record =
                 read_active_print(store, wtxn, &subject_ref)?.ok_or(Error::EntityNotFound)?;
-            if record.relationship_ref != Some(relationship_ref) {
+            if record.metadata.relationship_ref != Some(relationship_ref) {
                 return Err(invalid_voice(
                     "voice print is not linked to the supplied relationship",
                 ));
             }
-            let updated = VoicePrintRecordV1 {
-                updated_at: ended_at,
-                delete_after: Some(delete_after),
-                ..record
-            };
-            let digest = digest16(b"voice_identity.space", updated.space.space_id.as_bytes());
-            PRINT_RECORD.put(store, wtxn, &(subject_ref, digest), &updated)?;
+            record.metadata.updated_at = ended_at;
+            record.metadata.delete_after = Some(delete_after);
+            let digest = digest16(
+                b"voice_identity.space",
+                record.metadata.space.space_id.as_bytes(),
+            );
+            PRINT_RECORD.put(store, wtxn, &(subject_ref, digest), &record)?;
             note_print_retention_wake(store, wtxn, delete_after)
         })
     }
@@ -513,7 +538,11 @@ impl Vault {
                 let Some(record) = read_active_print(store, wtxn, &subject)? else {
                     continue;
                 };
-                if record.delete_after.is_some_and(|deadline| deadline <= now) {
+                if record
+                    .metadata
+                    .delete_after
+                    .is_some_and(|deadline| deadline <= now)
+                {
                     expired.push(subject);
                 }
             }

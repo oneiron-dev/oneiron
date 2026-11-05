@@ -53,6 +53,7 @@ mod in_process;
 mod invocation;
 mod lens_frames;
 pub mod llm;
+mod native_limit_questions;
 mod remote;
 
 use std::fmt;
@@ -75,6 +76,7 @@ pub use crate::in_process::{
 };
 pub use crate::invocation::pending_invocation;
 pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
+pub use crate::native_limit_questions::NativeLimitQuestion;
 use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
@@ -463,6 +465,25 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => Some(embedded.actor_hex()),
             Backend::Remote(_) => None,
+        }
+    }
+
+    /// Latest engine-limit crossings retained by this handle's native host.
+    ///
+    /// A successful embedded `open` or `open_with_host_root` exposes the
+    /// internally opened vault's collector, shared by same-vault reopens.
+    /// `Some` with an empty vector means no crossing has been retained.
+    /// Reading a snapshot does not clear it. Each row holds only its key,
+    /// configured boundary and latest measured value, never call content or
+    /// actor identity.
+    ///
+    /// Returns `None` for remote or attached vaults and for handles rebound
+    /// to an actor, delegated read credential, room or off-record session.
+    /// This is Rust host metadata, not a facade verb or a remote request.
+    pub fn native_limit_questions(&self) -> Result<Option<Vec<NativeLimitQuestion>>, MemoryError> {
+        match &self.backend {
+            Backend::Embedded(embedded) => embedded.native_limit_questions(),
+            Backend::Remote(_) => Ok(None),
         }
     }
 
