@@ -570,8 +570,8 @@ impl Vault {
 
     /// Why the occurrence of `output` that `owner` holds is withheld from a
     /// view leaving the vault: an erase of the run's actor took it (FIX
-    /// 5718), the secret scan marked it, or it carries taint refs, live or
-    /// stale alike. Another occurrence of the same bytes neither withholds
+    /// 5718), a source erase withdrew its exact owned occurrence (FIX 9348),
+    /// the secret scan marked it, or it carries taint refs, live or stale alike. Another occurrence of the same bytes neither withholds
     /// nor clears it.
     pub(crate) fn code_run_result_withheld_in_txn(
         &self,
@@ -579,7 +579,9 @@ impl Vault {
         owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<Option<&'static str>> {
-        if self.result_erased_in_txn(rtxn, owner)? {
+        if self.result_erased_in_txn(rtxn, owner)?
+            || (owner.is_some() && self.output_withdrawn_in_txn(rtxn, owner, output)?)
+        {
             return Ok(Some(RESPONSE_ERASED));
         }
         let (refs, secret) = self.result_marks_in_txn(rtxn, owner, output)?;
