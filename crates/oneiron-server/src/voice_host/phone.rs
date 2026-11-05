@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::claim::{ScopedRead, ScopedReadActorKey};
 use oneiron::federation::Scope;
+use oneiron::interlocutor::InterlocutorSet;
 use oneiron::voice_cascade::GenerationEpoch;
 use oneiron::{EntityId, Vault};
 
@@ -22,11 +23,12 @@ pub struct PhoneCallRead {
 
 /// Consent and sources of the voice core's current generation. The voice
 /// core still owns its epoch, cancellation and playout state.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 struct PreparedPhoneOutput {
     generation: GenerationEpoch,
     scope: Scope,
     sources: Vec<EntityId>,
+    interlocutors: InterlocutorSet,
 }
 
 impl PhoneCallRead {
@@ -93,14 +95,16 @@ impl PhoneCallRead {
         generation: GenerationEpoch,
         scope: Scope,
         sources: Vec<EntityId>,
+        interlocutors: InterlocutorSet,
     ) -> Result<(), HostError> {
-        if !self.output_is_current(&scope, &sources)? {
+        if !self.output_is_current(&scope, &sources, &interlocutors)? {
             return Err(HostError::Stale);
         }
         let next = PreparedPhoneOutput {
             generation,
             scope,
             sources,
+            interlocutors,
         };
         let mut prepared = self.prepared.lock().map_err(|_| HostError::Stopped)?;
         if let Some(prior) = prepared.as_ref()
@@ -126,17 +130,22 @@ impl PhoneCallRead {
         let Some(prepared) = prepared.filter(|prepared| prepared.generation == generation) else {
             return false;
         };
-        self.output_is_current(&prepared.scope, &prepared.sources)
+        self.output_is_current(&prepared.scope, &prepared.sources, &prepared.interlocutors)
             .unwrap_or(false)
     }
 
-    /// Source rows and consent share one native snapshot; source bodies are
-    /// not loaded merely to check an audio packet's continued standing.
+    /// Consent, source admission and the native disclosure closure share
+    /// one snapshot, including Tier-A marks and withdrawn source rows.
     pub(super) fn output_is_current(
         &self,
         prepared_scope: &Scope,
         sources: &[EntityId],
+        interlocutors: &InterlocutorSet,
     ) -> Result<bool, HostError> {
-        Ok(self.read().phone_line_output_scope(sources)?.as_ref() == Some(prepared_scope))
+        Ok(self
+            .read()
+            .phone_line_output_scope(sources, interlocutors)?
+            .as_ref()
+            == Some(prepared_scope))
     }
 }

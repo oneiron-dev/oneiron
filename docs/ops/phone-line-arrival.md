@@ -68,9 +68,12 @@ This also applies to point reads, derived sources and the session view. Erase, d
 or a binding mismatch admits no row through the call key. Ordinary keys with no phone
 ceiling keep their existing behavior. `ScopedRead::phone_line_scope` reports the live
 consent ceiling for prepared-context invalidation. `phone_line_output_scope` checks that
-ceiling and every supplied source row in one snapshot, without materializing source
-bodies. A caller must compare it with the scope captured before assembling context;
-re-stamping an old response with the new scope does not make that response safe.
+ceiling, every supplied source row and the native disclosure rules in one snapshot.
+That includes Tier-A marks, withdrawal and the existing turn-message and summary-source
+closure; these disclosure checks may read source bodies. The actual anonymous
+interlocutor set travels with the prepared generation. A caller must compare the result
+with the scope captured before assembling context; re-stamping an old response with the
+new scope does not make that response safe.
 
 The server has an optional call-bound reader and a weak PCM dequeue fence. Existing
 voice sessions set that reader to `None` and keep their owner-only behavior. No phone
@@ -87,9 +90,17 @@ action cannot replace the captured phone credential. Clones and the room/thread
 rebinders retain it. Agent-class verification and the normal recall world defaults
 still use the existing Memory path; no actor label or new all-world default replaces it.
 
-Anonymous disclosure handling, complete tool/notice source accounting, explicit
-no-recognition execution and the actual answering lifecycle remain open. These native
-read and output-check ports are not a claim that a phone call can be answered.
+The phone-only memories path keeps the caller anonymous and uses the native phone
+reader's live line consent for disclosure, not a fabricated contact clearance or owner
+presence. It accepts only an anonymous first-claim audience, with no contact, room entry,
+voiceprint evidence or owner claim. B's credential and line ceiling still apply to every
+read, and the existing non-owner Tier-A and live-source rules still apply. Generic
+Unknown and room disclosure behavior is unchanged. The assembly and narrowing receipts
+still describe the actual anonymous audience.
+
+Complete tool/notice source accounting, explicit no-recognition execution and the actual
+answering lifecycle remain open. These native read and output-check ports are not a
+claim that a phone call can be answered.
 
 ## HTTP doors
 
