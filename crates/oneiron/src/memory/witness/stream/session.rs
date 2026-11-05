@@ -100,6 +100,7 @@ pub(super) struct SessionState {
     idle_timeout_ms: u64,
     terminal: bool,
     completion: Option<MessageCompletion>,
+    pending_receipt: Option<MessageStreamReceipt>,
     permit: Option<crate::live_rows::LivePermit>,
 }
 
@@ -310,6 +311,7 @@ impl SessionWitnessBinding {
             idle_timeout_ms: policy.idle_timeout_ms,
             terminal: false,
             completion: None,
+            pending_receipt: None,
             permit: Some(permit),
         }));
         {
@@ -461,6 +463,7 @@ fn check_caller_locked(vault: &Vault, state: &mut SessionState) -> MessageStream
 fn retire_locked(vault: &Vault, state: &mut SessionState) -> MessageStreamResult<()> {
     state.terminal = true;
     state.completion = None;
+    state.pending_receipt = None;
     state.permit.take();
     state.text.clear();
     let handle = state.handle();
@@ -481,6 +484,21 @@ fn finish_locked(
     parts: Vec<ContentPart>,
 ) -> MessageStreamResult<SessionStreamOutcome> {
     check_caller_locked(vault, state)?;
+    // A failed postcommit read is not evidence of rollback. Resolve that exact
+    // generation before any retry can mint another MESSAGE.
+    if let Some(candidate) = state.pending_receipt.clone() {
+        match state.binding.stream_terminal_receipt(vault, &candidate)? {
+            Some(found) if found == candidate => return retained_locked(vault, state, found),
+            None => state.pending_receipt = None,
+            Some(_) => {
+                return Err(MessageStreamError::Memory(Box::new(MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "session terminal receipt changed",
+                    &["Retry after repairing the stored stream receipt."],
+                ))));
+            }
+        }
+    }
     let author = native_author(vault, state.agent, state.sitting);
     let turn = terminal_turn(&state.birth, state.text.clone(), assertions, parts);
     state.binding.admit_stream(&author, &turn)?;
@@ -499,18 +517,7 @@ fn finish_locked(
                     &["Cancel the stream; nothing was returned."],
                 ))));
             };
-            let completion = MessageCompletion {
-                incomplete: !receipt.complete(),
-                generating: false,
-                finish_reason: receipt.finish_reason.clone(),
-            };
-            state.terminal = true;
-            state.completion = Some(completion);
-            state.permit.take();
-            state.text.clear();
-            let handle = state.handle();
-            vault.message_streams.remove(handle)?;
-            Ok(SessionStreamOutcome::Retained(receipt))
+            retained_locked(vault, state, receipt)
         }
         Ok(SessionWitnessOutcome::Unretained) => {
             let end = SessionStreamEnd {
@@ -534,24 +541,34 @@ fn finish_locked(
             let Some(candidate) = terminal.staged() else {
                 return Err(error.into());
             };
+            state.pending_receipt = Some(candidate.clone());
             match state.binding.stream_terminal_receipt(vault, &candidate) {
-                Ok(Some(found)) if found == candidate => {
-                    let completion = MessageCompletion {
-                        incomplete: !found.complete(),
-                        generating: false,
-                        finish_reason: found.finish_reason.clone(),
-                    };
-                    state.terminal = true;
-                    state.completion = Some(completion);
-                    state.permit.take();
-                    state.text.clear();
-                    let handle = state.handle();
-                    vault.message_streams.remove(handle)?;
-                    Ok(SessionStreamOutcome::Retained(found))
+                Ok(Some(found)) if found == candidate => retained_locked(vault, state, found),
+                Ok(None) => {
+                    state.pending_receipt = None;
+                    Err(error.into())
                 }
-                Ok(Some(_)) | Ok(None) => Err(error.into()),
+                Ok(Some(_)) => Err(error.into()),
                 Err(read_error) => Err(read_error.into()),
             }
         }
     }
+}
+
+fn retained_locked(
+    vault: &Vault,
+    state: &mut SessionState,
+    receipt: MessageStreamReceipt,
+) -> MessageStreamResult<SessionStreamOutcome> {
+    state.completion = Some(MessageCompletion {
+        incomplete: !receipt.complete(),
+        generating: false,
+        finish_reason: receipt.finish_reason.clone(),
+    });
+    state.terminal = true;
+    state.pending_receipt = None;
+    state.permit.take();
+    state.text.clear();
+    vault.message_streams.remove(state.handle())?;
+    Ok(SessionStreamOutcome::Retained(receipt))
 }

@@ -83,7 +83,9 @@ sink, after MESSAGE staging and before its effect. Canonical text bytes and
 reply-assertion types are read from that same staged view. No latest-row guess,
 caller-chosen MESSAGE id, second writer or base sidecar for an overlay is used.
 A post-commit hook error is recognized only by the exact immutable generation
-receipt in that same captured route, never by its RAM candidate alone.
+receipt in that same captured route, never by its RAM candidate alone. If that
+read fails, the stream keeps the exact candidate and resolves it before a retry
+can mint another MESSAGE. Only a successful absent lookup permits a fresh write.
 
 A revoked caller or invalidated session retires private RAM state. An author
 policy refusal or storage error does not discard its accepted text. A terminal
