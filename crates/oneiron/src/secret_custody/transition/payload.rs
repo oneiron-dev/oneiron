@@ -276,19 +276,27 @@ impl CustodyTransition {
     /// place and the runs joined in order (FIX 7953). `None` when the pieces
     /// hold no envelope for it or one does not open; what was joined is
     /// wiped.
+    ///
+    /// # Errors
+    /// Envelope parsing's working-memory allocation fault.
     pub(super) fn open_value(
         pieces: &[Self],
         vault_id: &[u8; 32],
         machine: EntityId,
         secret: &HybridSecretKey,
-    ) -> Option<Zeroizing<Vec<u8>>> {
-        let binding = pieces.first()?.binding();
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let Some(first) = pieces.first() else {
+            return Ok(None);
+        };
+        let binding = first.binding();
         let held: Vec<&(CustodyRecipientPermit, Vec<u8>)> = pieces
             .iter()
             .flat_map(|piece| &piece.sealed)
             .filter(|(to, _)| to.machine == machine)
             .collect();
-        let count = u32::try_from(held.len()).ok().filter(|count| *count > 0)?;
+        let Some(count) = u32::try_from(held.len()).ok().filter(|count| *count > 0) else {
+            return Ok(None);
+        };
         let recipient = WrapRecipient::Machine(machine).envelope_recipient();
         // Each run is shorter than its envelope, so the joined value never
         // moves and leaves no unwiped copy behind.
@@ -301,7 +309,13 @@ impl CustodyTransition {
             } else {
                 numbered_value_key_id(&binding, permit, index, count)
             };
-            let envelope = Envelope::parse(envelope).ok()?;
+            let envelope = match Envelope::parse(envelope) {
+                Ok(envelope) => envelope,
+                Err(oneiron_crypto::Error::OutOfMemory) => {
+                    return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+                }
+                Err(_) => return Ok(None),
+            };
             let policy = OpenPolicy {
                 purpose: Purpose::SecretFile,
                 vault_id,
@@ -313,10 +327,15 @@ impl CustodyTransition {
                 min_epoch: VALUE_EPOCH,
                 argon2_max: Argon2Cost::RFC9106_SECOND,
             };
-            let payload = envelope.open(OpenKey::Hybrid(secret), &policy).ok()?;
-            value.extend_from_slice(payload.strip_prefix(VALUE_LABEL)?);
+            let Ok(payload) = envelope.open(OpenKey::Hybrid(secret), &policy) else {
+                return Ok(None);
+            };
+            let Some(payload) = payload.strip_prefix(VALUE_LABEL) else {
+                return Ok(None);
+            };
+            value.extend_from_slice(payload);
         }
-        Some(value)
+        Ok(Some(value))
     }
 
     /// What each value envelope's key id binds beside its permit.

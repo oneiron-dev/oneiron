@@ -155,24 +155,31 @@ impl Vault {
     /// ([`CustodyPieces::open_value`]), then under the transition's carrier
     /// key when it names one: `None` while this install holds no such key,
     /// so the transition stays kept and pending until the key is answered.
+    ///
+    /// # Errors
+    /// Envelope parsing's working-memory allocation fault.
     pub(crate) fn open_custody_value(
         &self,
         pieces: &CustodyPieces,
         vault_id: &[u8; 32],
         secret: &crate::world_keys::MachineSecret,
-    ) -> Option<zeroize::Zeroizing<Vec<u8>>> {
-        let opened = pieces.open_value(vault_id, secret.machine, &secret.secret)?;
+    ) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+        let Some(opened) = pieces.open_value(vault_id, secret.machine, &secret.secret)? else {
+            return Ok(None);
+        };
         let lead = pieces.lead();
         let Some(carrier) = lead.carrier else {
-            return Some(opened);
+            return Ok(Some(opened));
         };
         if !CUSTODY_CARRIER_LEAF_WIRE
             || carrier.kind != CustodyKind::CustodyTransition
             || carrier.credential != lead.id
         {
-            return None;
+            return Ok(None);
         }
-        let leaf = self.carrier_leaf_outside_txn(&carrier)?;
-        carrier.open(&leaf, None, &opened).ok()
+        let Some(leaf) = self.carrier_leaf_outside_txn(&carrier) else {
+            return Ok(None);
+        };
+        Ok(carrier.open(&leaf, None, &opened).ok())
     }
 }
