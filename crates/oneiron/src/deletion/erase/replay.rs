@@ -45,15 +45,17 @@ impl Vault {
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
         let applied = self.store.env.write_txn().and_then(|mut wtxn| {
-            let (outcome, _changed) =
+            let (outcome, _changed, cancelled) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
             wtxn.commit()?;
-            Ok(outcome)
+            Ok((outcome, cancelled))
         });
         self.store.flush_legal_hold_refusals_settled();
         // A fence its actor scrub committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
-        let outcome = applied?;
+        let (outcome, cancelled) = applied?;
+        crate::attempt_queue::AttemptQueue::new(self)
+            .erased_payload_cancellations_committed(&cancelled);
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
@@ -74,7 +76,8 @@ impl Vault {
     ///
     /// Also returns the other documents whose local reads this apply changed
     /// (citing NOTEs, rewritten merge events, a restamped subject edge's
-    /// endpoints); the caller notifies them only after its commit.
+    /// endpoints), and actual native cancellation generations. The caller
+    /// publishes their notices and cancellation signals only after its root commit.
     ///
     /// Every branch, the absent-id ones included, ends at one post-effect
     /// hook: a Grant a decision seal names decides seal standing again in
@@ -85,7 +88,11 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         raw_value: &[u8],
-    ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+    ) -> Result<(
+        ReplayedTombstoneOutcome,
+        Vec<EntityId>,
+        Vec<(crate::attempt_queue::AttemptId, u32)>,
+    )> {
         // A Grant this replica holds, live or as a deleted shell, that its
         // peer deleted (a user delete or a hard erase, never an archive)
         // stays known withdrawn here, judged by its stored type alone
@@ -109,7 +116,11 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         raw_value: &[u8],
-    ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+    ) -> Result<(
+        ReplayedTombstoneOutcome,
+        Vec<EntityId>,
+        Vec<(crate::attempt_queue::AttemptId, u32)>,
+    )> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
         // A held world keeps its pads on either reason, before any work here
@@ -132,7 +143,8 @@ impl Vault {
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         // Receiver-only room MESSAGE content must be erased before the TURN
         // loses its PartOf edges, even when the host never held the child.
-        crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
+        let mut cancelled =
+            crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub. A hard replay of
         // a classified corrupt CLAIM takes the audited exception (FIX 7800).
@@ -213,6 +225,7 @@ impl Vault {
                         || had_merge_receipt,
                 },
                 changed_documents,
+                cancelled,
             ));
         }
 
@@ -281,10 +294,10 @@ impl Vault {
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             // A replayed erase holds no owner act here: the machine that made
             // it carries its custody revokes (FIX 11883).
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
                 None,
-            )?;
+            )?);
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
@@ -292,15 +305,17 @@ impl Vault {
                     sweep_key: None,
                 },
                 Vec::new(),
+                cancelled,
             ));
         }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
         // leave this replica as unreadable as the origin, so the local shells
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
-        let (cascaded_shells, mut changed_documents) =
+        let (cascaded_shells, mut changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
-        let (_existed, citing) = self.purge_entity_active_store_in_txn(
+        cancelled.extend(shell_cancelled);
+        let (_existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             wtxn,
             id,
             decoded.request_id.as_ref(),
@@ -308,6 +323,7 @@ impl Vault {
             None,
         )?;
         changed_documents.extend(citing);
+        cancelled.extend(purged_cancelled);
         // The replay reserves no topology delete, so the purge kept the
         // checkpoint payload leaves; the tombstone's own reason settles them.
         crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
@@ -321,6 +337,9 @@ impl Vault {
         // the purge so local delete truth survives CRDT-map manipulation.
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
         crate::deletion::ActorErasureWriter::new(self, wtxn, *id).erase_planned_pack_revision()?;
+        let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut *wtxn, *id);
+        crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
+        crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = captured.refs() {
@@ -408,6 +427,7 @@ impl Vault {
                 sweep_key: Some(sweep_key),
             },
             changed_documents,
+            cancelled,
         ))
     }
 

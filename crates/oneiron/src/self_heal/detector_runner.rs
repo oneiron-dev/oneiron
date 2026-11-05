@@ -119,6 +119,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_DIAGNOSTIC,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
