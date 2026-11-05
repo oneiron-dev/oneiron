@@ -298,6 +298,13 @@ impl ConsolidationExecutor<'_> {
                         charges.record_usage(usage);
                     }
                 }
+                if let Some(usage) = decided
+                    .as_ref()
+                    .err()
+                    .and_then(DurableStepError::spent_usage)
+                {
+                    charges.record_usage(usage);
+                }
                 return Err(error.into());
             }
         }
