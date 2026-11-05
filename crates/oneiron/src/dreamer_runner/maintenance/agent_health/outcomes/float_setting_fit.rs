@@ -16,7 +16,8 @@ use crate::{Result, Vault};
 /// dismissed fits `m`, which suppresses under strict `>` exactly. Finite raw
 /// pair, catalog-bounded `D`, witnessed `m > D`, and a finite catalog-bounded
 /// target are required; no epsilon, no `+1`, no clamp, no reconstruction
-/// from rounded fields.
+/// from rounded fields. An owner verdict with no feasible target withdraws
+/// any earlier fit of this same review state.
 fn float_setting_target(
     reviewer: &str,
     outcome: AgentHealthOutcome,
@@ -37,24 +38,26 @@ fn float_setting_target(
         AgentHealthOutcome::Confirmed | AgentHealthOutcome::Dismissed => {
             let (dial, measured) = match (exact_dial, exact_measured) {
                 (Some(dial), Some(measured)) => (dial, measured),
-                _ => return None,
+                _ => return Some((spec, None)),
             };
             if !dial.is_finite() || !measured.is_finite() {
-                return None;
+                return Some((spec, None));
             }
             if dial < spec.min || dial > spec.max {
-                return None;
+                return Some((spec, None));
             }
             if measured <= dial {
-                return None;
+                return Some((spec, None));
             }
             let target = match outcome {
                 AgentHealthOutcome::Confirmed => dial,
                 AgentHealthOutcome::Dismissed => measured,
-                AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => return None,
+                AgentHealthOutcome::Open | AgentHealthOutcome::Unresolved => {
+                    return Some((spec, None));
+                }
             };
             if !target.is_finite() || target < spec.min || target > spec.max {
-                return None;
+                return Some((spec, None));
             }
             Some((spec, Some(target)))
         }
