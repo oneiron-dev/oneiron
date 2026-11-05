@@ -25,6 +25,7 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
+pub(crate) use off_device::served_form_rows;
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;

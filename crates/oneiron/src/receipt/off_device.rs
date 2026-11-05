@@ -179,6 +179,20 @@ fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<
     Ok(Some(rows))
 }
 
+/// The rows a served-form receipt names: the ASSET it served and the
+/// ASSET_TEXT it read in place of the body ([`ROW_FIELDS`]). A read of a
+/// room's own served forms withholds one whose rows its key does not read
+/// (FIX 7355).
+pub(crate) fn served_form_rows(receipt: &ReceiptRecord) -> Vec<EntityId> {
+    ROW_FIELDS
+        .iter()
+        .filter(|(kind, _)| *kind == ReceiptKind::ServedForm)
+        .flat_map(|(_, names)| names.iter())
+        .filter_map(|name| receipt.fields.get(*name))
+        .flat_map(|value| value.split(',').filter_map(row_of).collect::<Vec<_>>())
+        .collect()
+}
+
 /// The row `value` names: 32 hex, after any `<kind>:` prefixes.
 fn row_of(value: &str) -> Option<EntityId> {
     let hex = value.trim().rsplit(':').next()?;

@@ -44,6 +44,13 @@ impl ReceiptReader for SessionReadContext<'_> {
         )
     }
 
+    /// The room's served forms name rows of the room's other participants:
+    /// each takes a page place only when the key reads its ASSET and
+    /// ASSET_TEXT (FIX 7355).
+    fn screens_served_form_rows(&self) -> bool {
+        true
+    }
+
     /// The rows of `ids` the key reads in the room, each by its lane's point
     /// read in one snapshot, as `vault.get` reads it here. The key is the
     /// read's credential, so every receipt is judged by it.

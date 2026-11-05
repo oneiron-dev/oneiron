@@ -47,6 +47,13 @@ pub(crate) trait ReceiptReader {
     /// point read; `None` for a handle bound to no credential, which keeps
     /// every receipt.
     fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>>;
+    /// Whether a served form takes a page place only when this reader's key
+    /// reads the ASSET and ASSET_TEXT it names, as well as its trigger: a
+    /// room's reader does, since the room's served forms name rows of the
+    /// room's other participants (FIX 7355). Base keeps its contract.
+    fn screens_served_form_rows(&self) -> bool {
+        false
+    }
     /// Whether this reader is the vault owner, who reads the world names on
     /// his own notices (FIX 5493).
     fn reads_owner_notices(&self) -> bool;
@@ -251,8 +258,9 @@ pub(crate) fn receipts_of_kinds_for(
 
 /// `receipts` cut to what `reader`'s credential reads, before any page cut
 /// (OF-172 D2): a receipt whose trigger names a row the lane withholds takes
-/// no page place, and pure metadata stays. An unbound handle keeps them all,
-/// in one lane read over all named rows.
+/// no page place, and pure metadata stays. For a reader that screens served
+/// forms, a served form's ASSET and ASSET_TEXT are judged the same way. An
+/// unbound handle keeps them all, in one lane read over all named rows.
 fn credential_kept_receipts(
     reader: &impl ReceiptReader,
     receipts: Vec<ReceiptRecord>,
@@ -260,7 +268,15 @@ fn credential_kept_receipts(
     if receipts.is_empty() {
         return Ok(receipts);
     }
-    let ids: Vec<EntityId> = receipts.iter().filter_map(trigger_row_of).collect();
+    let screens_forms = reader.screens_served_form_rows();
+    let named = |receipt: &ReceiptRecord| -> Vec<EntityId> {
+        let mut rows: Vec<EntityId> = trigger_row_of(receipt).into_iter().collect();
+        if screens_forms && receipt.receipt_kind == ReceiptKind::ServedForm {
+            rows.extend(crate::receipt::served_form_rows(receipt));
+        }
+        rows
+    };
+    let ids: Vec<EntityId> = receipts.iter().flat_map(&named).collect();
     if ids.is_empty() {
         return Ok(receipts);
     }
@@ -269,7 +285,7 @@ fn credential_kept_receipts(
     };
     Ok(receipts
         .into_iter()
-        .filter(|receipt| trigger_row_of(receipt).is_none_or(|id| readable.contains(&id)))
+        .filter(|receipt| named(receipt).iter().all(|id| readable.contains(id)))
         .collect())
 }
 
