@@ -62,6 +62,7 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
                 code: None,
+                disk_floor: None,
             }))
         else {
             return ResponseScan::opaque_row();
@@ -151,6 +152,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
                 code: None,
+                disk_floor: None,
             }))?;
         if let Some(rows) = rows {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
