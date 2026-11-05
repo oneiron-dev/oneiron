@@ -48,6 +48,14 @@ pub struct ServeArgs {
     #[arg(long = "managed-by-hypnos")]
     pub managed_by_hypnos: bool,
 
+    /// Operator enterprise/advanced capability for this hosted vault's owner
+    /// to select checkpoint roots without the host. Never owner settings.
+    #[arg(
+        long = "managed-checkpoint-host-opt-out",
+        requires = "managed_by_hypnos"
+    )]
+    pub managed_checkpoint_host_opt_out: bool,
+
     /// Supervisor⇄vault wire contract version this child was spawned against.
     /// Required in managed mode; an unknown version exits non-zero before any
     /// IO happens.
