@@ -65,9 +65,11 @@ const EXPANDED_RESERVE_FLOOR_BYTES: u64 = 256 << 20;
 /// this machine now (FIX 7943): the fixed minimum, or the memory measured
 /// free past the reserve above when that is more. Raise-only, so a file a
 /// walk serves on the fixed floor is served on every machine; where no
-/// memory reads, the fixed minimum stands. Read live, once per walk, when
-/// the walk first decodes a member: a walk over bytes that hold no
-/// container reads no memory at all (L15 recall speed).
+/// memory reads, the fixed minimum stands. Read live, once per walk, at the
+/// walk's first ask of its budget (a limit, a ceiling, a copy check or a
+/// charge), then kept for the whole walk: a walk over bytes that hold no
+/// container asks nothing, so it reads no memory (L15 recall speed). The
+/// free memory read then may differ from what it was at the walk's start.
 fn expanded_floor() -> usize {
     use oneiron_contracts::limit_ask::{available_memory_bytes, machine_memory_bytes};
     let reserve = machine_memory_bytes().map_or(EXPANDED_RESERVE_FLOOR_BYTES, |total| {
