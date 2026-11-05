@@ -4701,7 +4701,7 @@
      "surface": {
       "crate-vis": 48,
       "mod": 2,
-      "re-export": 70
+      "re-export": 71
      }
     },
     {
@@ -4826,7 +4826,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -4897,6 +4897,20 @@
      "purpose": "A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkNoVouchDiagnostic"
+     ],
+     "path": "src/authority/owner_work_diagnostics.rs",
+     "purpose": "Owner-work no-vouch report-only diagnostic (FIX 4633)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -89370,7 +89384,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 253,
+     "files": 254,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90884,7 +90898,7 @@
    },
    "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6382,
+   "source_files": 6383,
    "test_files": 895
   },
   "oneiron-android": {
