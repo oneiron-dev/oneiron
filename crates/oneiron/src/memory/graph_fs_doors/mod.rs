@@ -128,7 +128,7 @@ impl Memory<'_> {
         self.graph_fs_bytes(input, "graph_fs.read_file")
     }
 
-    /// The same file read, with cooperative snapshot-mask checkpoints.
+    /// The same file read, with cooperative container-mask checkpoints.
     /// Pacing carries no authority and changes no mount or cursor selection.
     pub fn graph_fs_read_file_with_pacing(
         &self,
