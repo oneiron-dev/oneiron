@@ -287,7 +287,9 @@ pub(super) fn apply_ops_with_authority_beside(
         wtxn,
         &mut ops.ops,
         text_index_trusted,
-        !replay,
+        !replay
+            || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
+                if grant.selected_saver().is_some()),
         mutation_recorded_at,
     )?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this

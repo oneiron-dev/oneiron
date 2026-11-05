@@ -1,5 +1,7 @@
 //! Explicit selected scratch saves. Authority, selection and landing share one writer.
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+use zeroize::Zeroizing;
 
 use super::room::{Hearing, post_notice};
 use super::save_grant::{SaveGrant, not_a_holder};
@@ -13,7 +15,8 @@ use crate::off_record::promote::{
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::session_overlay::{
     JournalRole, OverlayKeyspace, OverlaySnapshot, PromotePlan, replayed_subject,
@@ -25,6 +28,7 @@ use crate::{EdgeActorClass, EntityId, Error, Result, TimeRange, Vault, WriteActo
 pub(in crate::off_record) struct PreparedScratchSave {
     saver: WriteActor,
     artifacts: Vec<PreparedArtifact>,
+    turns: Vec<PromotePlan>,
     members: BTreeSet<EntityId>,
     documents: BTreeSet<EntityId>,
     snapshot: OverlaySnapshot,
@@ -47,7 +51,6 @@ enum PreparedArtifact {
         edges: Vec<BatchOp>,
         birth: SavedRoomBirth,
     },
-    Turn(PromotePlan),
     Shell {
         id: EntityId,
         header: EntityMetadataHeader,
@@ -63,6 +66,7 @@ pub(in crate::off_record) struct SavedScratch {
     pub(super) documents: BTreeSet<EntityId>,
     pub(super) snapshot: OverlaySnapshot,
     pub(super) turns: Vec<PromotePlan>,
+    kept_messages: Vec<(EntityId, super::registry::KeptMessage)>,
 }
 
 impl PreparedScratchSave {
@@ -82,8 +86,54 @@ impl PreparedScratchSave {
         grant: &PromoteReplayGrant,
     ) -> Result<SavedScratch> {
         let mut mapping = Vec::new();
-        let mut turns = Vec::new();
         let mut members = BTreeSet::new();
+        let mut kept_messages = Vec::new();
+        for plan in &self.turns {
+            let mut held: BTreeSet<EntityId> = if plan.appends() {
+                floor
+                    .copy_append(
+                        vault,
+                        txn,
+                        session_ref,
+                        plan,
+                        &self.initiator,
+                        vault.now_recorded_at(),
+                    )?
+                    .held
+            } else {
+                floor
+                    .promote(
+                        vault,
+                        txn,
+                        session_ref,
+                        plan,
+                        &self.initiator,
+                        vault.now_recorded_at(),
+                    )?
+                    .replayed
+                    .into_iter()
+                    .collect()
+            };
+            held.retain(|id| plan.replayed.contains(id));
+            for id in &held {
+                let raw = Zeroizing::new(vault.store.port_entity_raw(txn, id)?.ok_or(
+                    Error::InvariantViolation("selected turn save left no durable row"),
+                )?);
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("saved transcript entity header"))?;
+                if header.entity_type == ENTITY_TYPE_MESSAGE {
+                    kept_messages.push((
+                        *id,
+                        super::registry::KeptMessage {
+                            turn: plan.turn(),
+                            at: header.occurred_start,
+                            digest: *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes(),
+                        },
+                    ));
+                }
+            }
+            members.extend(held);
+        }
         for artifact in self.artifacts {
             match artifact {
                 PreparedArtifact::Note {
@@ -140,18 +190,6 @@ impl PreparedScratchSave {
                     birth.land(vault, txn, grant)?;
                     members.insert(id);
                 }
-                PreparedArtifact::Turn(plan) => {
-                    let outcome = floor.promote(
-                        vault,
-                        txn,
-                        session_ref,
-                        &plan,
-                        &self.initiator,
-                        vault.now_recorded_at(),
-                    )?;
-                    members.extend(outcome.replayed);
-                    turns.push(plan);
-                }
             }
         }
         for id in &members {
@@ -178,7 +216,8 @@ impl PreparedScratchSave {
             members,
             documents: self.documents,
             snapshot: self.snapshot,
-            turns,
+            turns: self.turns,
+            kept_messages,
         })
     }
 }
@@ -193,6 +232,7 @@ struct Selection<'a, 'v> {
     members: BTreeSet<EntityId>,
     documents: BTreeSet<EntityId>,
     artifacts: Vec<PreparedArtifact>,
+    turns: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
 impl Selection<'_, '_> {
@@ -310,18 +350,7 @@ impl Selection<'_, '_> {
                 }
             }
             ENTITY_TYPE_TURN if !root => {
-                // A staged subject needs its actual TURN identity and shell,
-                // not the rest of the talk. The existing typed DAG promotion
-                // door owns its native parent/head/author admission.
-                let plan = self.snapshot.plan_promotion_where(id, |entry| {
-                    matches!(
-                        entry.role,
-                        JournalRole::ConversationShell | JournalRole::TurnPut
-                    ) || matches!(&entry.op,
-                        BatchOp::Edge { src, .. } | BatchOp::PublicEdgeWithCreatedAt { src, .. }
-                            | BatchOp::EdgeWithCreatedAt { src, .. } if *src == id
-                    )
-                })?;
+                self.turns.entry(id).or_default();
                 if let Some(room) = self.room {
                     super::room::require_sight_in_txn(
                         vault,
@@ -332,12 +361,34 @@ impl Selection<'_, '_> {
                         &[header.occurred_start],
                     )?;
                 }
-                self.members.extend(plan.replayed.iter().copied());
-                // The plan already owns its native shell and TURN edges.
-                return {
-                    self.artifacts.push(PreparedArtifact::Turn(plan));
-                    Ok(())
-                };
+                return Ok(());
+            }
+            ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY if !root => {
+                let source = self.snapshot.journal_entries().iter().find(|entry| {
+                    matches!(&entry.op,
+                        BatchOp::Put { id: source, entity_type, data, .. }
+                            if *source == id && *entity_type == header.entity_type && *data == body
+                    ) && matches!((header.entity_type, entry.role),
+                        (ENTITY_TYPE_MESSAGE, JournalRole::MessagePartOf)
+                            | (ENTITY_TYPE_SUMMARY, JournalRole::SummaryDerivedFrom))
+                }).ok_or(Error::EntityNotFound)?;
+                let turn = source.scope.turn();
+                if let Some(room) = self.room {
+                    super::room::require_sight_in_txn(
+                        vault,
+                        txn,
+                        self.session.session_ref(),
+                        room,
+                        EntityId::from_hex(self.key.actor_ref())?,
+                        &[header.occurred_start],
+                    )?;
+                }
+                self.turns.entry(turn).or_default().insert(id);
+                for dependency in dependencies {
+                    self.select(txn, dependency, false)?;
+                }
+                self.members.insert(id);
+                return Ok(());
             }
             ENTITY_TYPE_CONVERSATION if !root => {
                 if !self.snapshot.journal_entries().iter().any(|entry| entry.role == JournalRole::ConversationShell
@@ -360,6 +411,29 @@ impl Selection<'_, '_> {
         self.members.insert(id);
         self.artifacts.push(artifact);
         Ok(())
+    }
+
+    fn turn_plans(&mut self, promoted: &[[u8; 16]]) -> Result<Vec<PromotePlan>> {
+        let mut plans = Vec::new();
+        for (turn, selected) in &self.turns {
+            let keep = |entry: &crate::session_overlay::JournalEntry| {
+                matches!(
+                    entry.role,
+                    JournalRole::ConversationShell | JournalRole::TurnPut
+                ) || matches!(&entry.op,
+                    BatchOp::Edge { src, .. } | BatchOp::PublicEdgeWithCreatedAt { src, .. }
+                        | BatchOp::EdgeWithCreatedAt { src, .. } if *src == *turn
+                ) || replayed_subject(&entry.op).is_some_and(|id| selected.contains(&id))
+            };
+            let plan = if promoted.contains(turn.as_bytes()) {
+                self.snapshot.plan_append_where(*turn, keep)?
+            } else {
+                self.snapshot.plan_promotion_where(*turn, keep)?
+            };
+            self.members.extend(plan.replayed.iter().copied());
+            plans.push(plan);
+        }
+        Ok(plans)
     }
 }
 
@@ -405,7 +479,7 @@ impl OffRecordSession<'_> {
             true,
             |txn| {
                 owner.revalidate_as_vault_owner_in_txn(self.vault, txn)?;
-                Ok((key, PromoteInitiator::room_owner(actor)))
+                Ok((key.clone(), PromoteInitiator::room_owner(actor)))
             },
         )
     }
@@ -415,12 +489,11 @@ impl OffRecordSession<'_> {
         reference: &str,
         saver: WriteActor,
         owner: bool,
-        authority: impl FnOnce(&heed::RoTxn<'_>) -> Result<(ScopedReadActorKey, PromoteInitiator)>,
+        mut authority: impl FnMut(&heed::RoTxn<'_>) -> Result<(ScopedReadActorKey, PromoteInitiator)>,
     ) -> Result<PromoteOutcome> {
         let mut state = self.recording_state()?;
         let room = state.record.room.map(EntityId::from_bytes).transpose()?;
-        let saved = self.vault.with_write_txn_grouped(|txn| {
-            let (key, initiator) = authority(txn)?;
+        let prepare = |txn: &heed::RoTxn<'_>, key, initiator| -> Result<PreparedScratchSave> {
             if let Some(room) = room {
                 if !self.is_member_in_txn(txn, room, saver.entity_ref())? {
                     return Err(super::room::not_in_room(
@@ -462,8 +535,10 @@ impl OffRecordSession<'_> {
                 members: BTreeSet::new(),
                 documents: BTreeSet::new(),
                 artifacts: Vec::new(),
+                turns: BTreeMap::new(),
             };
             selection.select(txn, id, true)?;
+            let turns = selection.turn_plans(&state.record.promoted_turns)?;
             let temporary_short_ids = selection
                 .members
                 .iter()
@@ -476,25 +551,49 @@ impl OffRecordSession<'_> {
                 .into_iter()
                 .flatten()
                 .collect();
-            let prepared = PreparedScratchSave {
+            Ok(PreparedScratchSave {
                 saver,
                 artifacts: selection.artifacts,
+                turns,
                 members: selection.members,
                 documents: selection.documents,
                 snapshot: selection.snapshot,
                 initiator,
                 temporary_short_ids,
-            };
-            let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
+            })
+        };
+        let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
+        // The preview only brings selected result files into the vault. It
+        // never mints a replay grant; the committing writer prepares afresh.
+        #[cfg(unix)]
+        let preview_turns = {
+            let txn = self.vault.store.env.read_txn()?;
+            let (key, initiator) = authority(&txn)?;
+            prepare(&txn, key, initiator)?.turns
+        };
+        #[cfg(unix)]
+        let bodies = floor.import_result_bodies(self.vault, self.session_ref(), &preview_turns)?;
+        let saved = self.vault.with_write_txn_grouped(|txn| {
+            let (key, initiator) = authority(txn)?;
+            let prepared = prepare(txn, key, initiator)?;
+            #[cfg(unix)]
+            floor.require_preimported_selected_results(&preview_turns, &prepared.turns)?;
             let landed =
                 floor.save_scratch_in_txn(self.vault, txn, self.session_ref(), prepared)?;
             Ok((landed, Hearing::in_txn(self.vault, txn, room)))
-        })?;
-        let (saved, hearing) = saved;
+        });
+        #[cfg(unix)]
+        self.vault.discard_unnamed_promoted_bodies(bodies);
+        let (saved, hearing) = saved?;
         // No retirement or room-visible success before the durable commit.
         for plan in &saved.turns {
             if !state.record.promoted_turns.contains(plan.turn().as_bytes()) {
                 state.record.promoted_turns.push(*plan.turn().as_bytes());
+            }
+        }
+        if state.record.room.is_some() {
+            for (id, kept) in saved.kept_messages {
+                state.kept_messages.entry(id).or_insert(kept);
             }
         }
         post_notice(

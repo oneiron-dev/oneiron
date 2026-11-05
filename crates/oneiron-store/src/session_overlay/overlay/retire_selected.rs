@@ -18,9 +18,10 @@
 //! * Journal entries retire by snapshot identity: the exact snapshot seqs
 //!   whose replayed subject is in `saved` go; entries published after the
 //!   snapshot (new seqs) and entries of unsaved subjects stay.
-//! * BM25/text, vector/HNSW, PPR, phonetic, queue and attempt rows stay in
-//!   place exactly like the existing helper leaves them, as do the
-//!   accumulator halves and the session short-id ordinal.
+//! * Per-entity text rows retire only as one snapshot-matched footprint,
+//!   so masked native text is not shadowed by its staged source. Shared
+//!   accumulator halves, vector/HNSW, PPR, phonetic, queue and attempt rows
+//!   and the session short-id ordinal stay in place.
 //!
 //! Owned footprints come from the SNAPSHOT — its typed journal, its staged
 //! entity headers, its staged edge keys, its short-id reverse values, and
@@ -32,6 +33,8 @@
 //! [`PromotePlan`]: super::super::journal::PromotePlan
 use std::collections::BTreeSet;
 use std::sync::Arc;
+
+use zeroize::Zeroize;
 
 use oneiron_base::edge::EdgeKind;
 use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -61,6 +64,8 @@ use oneiron_contracts::error::OffRecordError;
 // NOTE_HEAD binding: `note/documents.rs:41-42` (`SideTable<EntityId, ..>`;
 // `EntityId` keys spell raw bytes, `side_table/key.rs`).
 const NOTE_HEAD_PREFIX: &[u8] = b"note_head:v1:";
+/// `INDEX_SOURCE_TEXT` (`side_table/decls/vault_meta_f_l.rs`), keyed by id16.
+const INDEX_SOURCE_TEXT_PREFIX: &[u8] = b"index_source:text:v1:";
 /// `NOTE_HEAD_DOC` (`note_head_doc:v1:`, `vault_meta_m_r.rs:108`): one row
 /// per head document a NOTE's text plane ever held. Key: id16 (note) + id16
 /// (head), raw-concatenated (`note/documents.rs:44-47`).
@@ -200,6 +205,7 @@ impl SessionOverlay {
                     header.learned_at,
                 );
             }
+            drop_text_footprint(&mut next, snap, id);
             drop_short_id_pair(&mut next, snap, id);
             drop_id_prefixed_row(
                 &mut next,
@@ -293,6 +299,65 @@ fn drop_snapshot_matched(
     };
     if want == have {
         drop_overlay_row(next, keyspace, key);
+    }
+}
+
+/// Retire only this id's captured text revision. A later text rewrite owns
+/// its whole footprint even when some of its terms have unchanged postings.
+fn drop_text_footprint(next: &mut OverlayState, snap: &OverlayState, id: &EntityId) {
+    let key = id.as_bytes().as_slice();
+    let mut source_key = INDEX_SOURCE_TEXT_PREFIX.to_vec();
+    source_key.extend_from_slice(key);
+    let same = |space, key: &[u8]| {
+        snapshot_present(snap, space, key)
+            .is_some_and(|want| snapshot_present(next, space, key) == Some(want))
+    };
+    if !same(OverlayKeyspace::TextForward, key) || !same(OverlayKeyspace::VaultMeta, &source_key) {
+        return;
+    }
+    let KeyspaceState::DupSort { rows, .. } =
+        snap.keyspaces[OverlayKeyspace::TextPostings.slot()].as_ref()
+    else {
+        return;
+    };
+    for (term, captured) in rows {
+        let Some(want) = captured.present.get(key) else {
+            continue;
+        };
+        drop_text_posting(next, term, key, want);
+    }
+    for space in [
+        OverlayKeyspace::TextForward,
+        OverlayKeyspace::TextDocFieldLengths,
+        OverlayKeyspace::TextMeta,
+    ] {
+        drop_snapshot_matched(next, snap, space, key);
+    }
+    drop_snapshot_matched(next, snap, OverlayKeyspace::VaultMeta, &source_key);
+}
+
+/// Remove an owned present duplicate, never a base duplicate or a mask.
+fn drop_text_posting(next: &mut OverlayState, term: &[u8], id: &[u8], want: &[u8]) {
+    let KeyspaceState::DupSort { rows, .. } =
+        Arc::make_mut(&mut next.keyspaces[OverlayKeyspace::TextPostings.slot()])
+    else {
+        return;
+    };
+    let Some(delta) = rows.get_mut(term) else {
+        return;
+    };
+    if delta.present.get(id).map(Vec::as_slice) != Some(want) {
+        return;
+    }
+    if let Some((mut identity, mut value)) = delta.present.remove_entry(id) {
+        identity.zeroize();
+        value.zeroize();
+    }
+    if delta.present.is_empty() && delta.deleted.is_empty() && !delta.delete_base {
+        if let Some((mut term, delta)) = rows.remove_entry(term) {
+            term.zeroize();
+            drop(delta);
+        }
     }
 }
 
