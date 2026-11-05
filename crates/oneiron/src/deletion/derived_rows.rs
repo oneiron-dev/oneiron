@@ -40,6 +40,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::store::query_memo_lifetime::erase_memos_for_source_in_txn,
     // FIX 10466: every inference snapshot whose dependency set reaches it.
     crate::store::snapshot_catalog::erase_in_txn,
+    // FIX 15128: every drafter training example whose dependency set names it.
+    crate::drafter::erase_drafter_examples_for_source_in_txn,
     // FIX 12569: every drafter version whose training ancestry reaches it.
     crate::drafter::erase_drafters_for_source_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.

@@ -157,7 +157,8 @@ pub enum SweepWork {
         failed: u64,
     },
     DrafterCorpora {
-        /// Corpus directories and stray files removed.
+        /// Training examples past the bound, corpus directories and stray
+        /// files removed.
         removed: u64,
     },
 }

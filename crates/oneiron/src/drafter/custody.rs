@@ -66,6 +66,19 @@ impl DrafterSealing {
         }
     }
 
+    /// The sealing of one training example's body (FIX 15128): `seal` is
+    /// the body's random id, and `key` its erasable key, minted under the
+    /// example as a version's are under the version, so an erase that drops
+    /// the example retires it. An example sealing is never published.
+    pub(super) fn for_example(example: EntityId, seal: [u8; 16], key: DrafterArtifactKey) -> Self {
+        Self {
+            version: example,
+            generation: 0,
+            artifact: seal,
+            key,
+        }
+    }
+
     /// The version the artifact belongs to.
     #[must_use]
     pub fn version(&self) -> EntityId {

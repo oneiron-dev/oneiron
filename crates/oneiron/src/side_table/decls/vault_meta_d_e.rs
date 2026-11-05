@@ -73,6 +73,19 @@ side_tables! {
     /// an activation, a rollback, a revert, an erase or a policy change. Key: id16 (the event,
     /// time-ordered).
     DRAFTER_EVENT: VaultMeta b"drafter:event:v1:" Named Engine;
+    /// FIX 15128: one answered chat reply's drafter training example, apart from its chat
+    /// breakpoint: its conversation, reply, generation, TURN, agent, requester, the wire model
+    /// its rung named, its source family, its dependency set and its sealed body's pin, never
+    /// a text. Key: id16 (the example, time-ordered). An erase of a record its dependency set
+    /// names drops it and retires its key.
+    DRAFTER_EXAMPLE: VaultMeta b"drafter:example:v1:" Named Engine;
+    /// FIX 15128, FIX 15129: one example's request exactly as its rung sent it and the span
+    /// the reply generated (reasoning, tool calls and text), sealed under the example's own
+    /// erasable key. Key: id16 (the example).
+    DRAFTER_EXAMPLE_BODY: VaultMeta b"drafter:example_body:v1:" Raw Ciphertext;
+    /// FIX 15128: marker that an example's dependency set names a record, for the erase of
+    /// that record. Key: id16 (the record) + id16 (the example).
+    DRAFTER_EXAMPLE_SOURCE: VaultMeta b"drafter:example_source:v1:" Raw Engine;
     /// FIX 12569: the owner's drafter policy: on or off, the excluded worlds and the recipe, at
     /// its revision. Key: ().
     DRAFTER_POLICY: VaultMeta b"drafter:policy:v1" Named;

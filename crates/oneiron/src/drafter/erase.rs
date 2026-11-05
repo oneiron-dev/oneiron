@@ -20,6 +20,11 @@
 //!   files after;
 //! - drops every evaluation that names one of them (FIX 14975).
 //!
+//! The training examples an erased record reaches go in the same
+//! transaction, by their own eraser (FIX 15128,
+//! [`super::erase_drafter_examples_for_source_in_txn`]), registered beside
+//! this one at both delete doors and run at an actor's erase.
+//!
 //! Only content-free evidence stays: the erase event names the versions and
 //! the jobs it fenced, never the source.
 
@@ -28,6 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 
 use super::evaluation::erase_evaluations_in_txn;
+use super::traffic::erase_drafter_examples_for_source_in_txn;
 use super::{
     BINDINGS, BindingMove, DrafterActor, DrafterBinding, DrafterDependencies, DrafterEventKind,
     DrafterServing, DrafterVersion, DrafterVersionState, EVENTS, POLICY, VERSIONS,
@@ -222,8 +228,9 @@ pub(crate) fn erase_drafters_for_source_in_txn(
 }
 
 /// The version table's declared scrub, for every drafter family: an erased
-/// id's versions go as [`erase_drafters_for_source_in_txn`] takes them, and
-/// an erased actor is forgotten in the policy and the events that name it.
+/// id's versions go as [`erase_drafters_for_source_in_txn`] takes them, the
+/// training examples that name it go (FIX 15128), and an erased actor is
+/// forgotten in the policy and the events that name it.
 /// An event row that does not decode goes. One-way, in the erase's own
 /// transaction.
 ///
@@ -236,6 +243,7 @@ pub(crate) fn erase_drafter_actor_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let store = &vault.store;
+    erase_drafter_examples_for_source_in_txn(store, wtxn, id)?;
     erase_drafters_for_source_in_txn(store, wtxn, id)?;
     if let Some(mut policy) = POLICY.get_lenient(store, wtxn, &())?
         && policy.set_by.as_mut().is_some_and(|by| by.forget(id))

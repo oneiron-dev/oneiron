@@ -18,11 +18,11 @@ mod visibility;
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use chat_breakpoint::erase_chat_breakpoints_in_txn;
 pub use chat_breakpoint::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, chat_breakpoint,
     chat_breakpoint_stands, keep_chat_breakpoint,
 };
-pub(crate) use chat_breakpoint::{chat_breakpoints_in_txn, erase_chat_breakpoints_in_txn};
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, record_author, replay_room_message_tombstone,

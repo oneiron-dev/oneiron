@@ -173,34 +173,6 @@ pub fn chat_breakpoint(
     BREAKPOINTS.get(&vault.store, &txn, &(conversation, message, generation))
 }
 
-/// Every kept breakpoint in `txn` that decodes, by its key (conversation,
-/// reply MESSAGE, stream generation), and how many rows did not decode. The
-/// drafter's corpus reads each reply's request as its rung sent it here
-/// (FIX 14973).
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn chat_breakpoints_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-) -> Result<(Vec<((EntityId, EntityId, EntityId), ChatBreakpoint)>, u64)> {
-    use crate::side_table::SideKey;
-    let mut rows = Vec::new();
-    let mut damaged = 0;
-    for row in BREAKPOINTS.iter_raw_from(store, txn, &[])? {
-        let (key, value) = row?;
-        match (
-            <(EntityId, EntityId, EntityId) as SideKey>::decode_key(&key),
-            BREAKPOINTS.decode_value(&value),
-        ) {
-            (Some(key), Ok(seed)) => rows.push((key, seed)),
-            _ => damaged += 1,
-        }
-    }
-    Ok((rows, damaged))
-}
-
 /// Whether `seed` still stands, read again as its reader in one snapshot:
 /// its request is its digest's, every turn it was read from projects the
 /// same fingerprint, every summary it holds still stands, and every craft

@@ -42,7 +42,7 @@ CUDA and the driver. No CUDA device refuses the job.
         | {"kind": "version", "version": "<32 hex>", "dir": "<abs dir>",
            "files": [{"name": "trainable-...", "bytes": 0, "blake3": "<hex>"}]},
  "training": {"path": "<abs training.jsonl>", "bytes": 0, "blake3": "<hex>", "examples": 0,
-              "form": "oneiron.drafter.chat_breakpoint.v1"}}
+              "form": "oneiron.drafter.chat_traffic.v1"}}
 ```
 
 `version`, `spec_blake3`, `generation`, `admission`, `recipe` and `target` are echoed, never
@@ -77,16 +77,23 @@ target's device work line. The lab's recipe pilot (lr 2e-5, 2 epochs, 1024 ancho
 
 ## Recipe `drafter.dflash.exl3.v1`
 
-1. **Examples.** Each training line is one kept chat request and its reply's committed text
-   (`oneiron.drafter.chat_breakpoint.v1`). The request becomes the template's input as the
-   engine's OpenAI-compatible chat wire maps it (`oneiron.drafter.openai-chat-render/1`): one
-   text part as a string, several as text parts, the request's tools, its
-   `chat_template_kwargs` and an own server's seat effort. The prompt renders with the served
-   target's `chat_template.jinja` (generation prompt on), then with the answer appended as the
-   assistant's message; the template's own bridge to the answer joins the prompt. The span is
-   the answer's tokens and, for a reply that stopped, its end token. A request with anything but
-   text, a template that refuses or does not extend its prompt, an answer it does not render, or
-   tokens that do not extend the prompt's, leaves the example out, counted by reason.
+1. **Examples.** Each training line is one answered chat reply of the vault's traffic
+   (`oneiron.drafter.chat_traffic.v1`): `request`, exactly as the reply's answering rung sent it,
+   and `generated`, the span the reply generated (its reasoning, tool calls and text, in the
+   engine's provider-neutral parts, in order), with `finish_reason`. The request becomes the
+   template's input as the engine's OpenAI-compatible chat wire maps it
+   (`oneiron.drafter.openai-chat-render/2`): one text part as a string, several as text parts,
+   the request's tools, its `chat_template_kwargs` and an own server's seat effort. The span
+   becomes the assistant's message: its text as `content`, its reasoning as `reasoning_content`
+   and its tool calls as `tool_calls`. The prompt renders with the served target's
+   `chat_template.jinja` (generation prompt on), then with that message appended. A reply that
+   reasoned or called a tool spans everything the template renders after the generation prompt;
+   a text-only reply spans from its text, the template's own bridge to it joining the prompt.
+   The span runs to the turn's first end token, and through it for a reply that stopped or
+   called a tool. A request with anything but text, a reasoning part whose tokens the line does
+   not hold (a summary, a count or opaque data), a template that refuses or does not extend its
+   prompt, a text it does not render, tokens that do not extend the prompt's, or a turn with no
+   end token leaves the example out, counted by reason.
 2. **Taps.** The tap model (transformers, bf16, local files only, no remote code) reads each
    example; a forward hook keeps the output of each decoder layer the drafter's
    `dflash_config.target_layer_ids` names, concatenated, for the positions a block may see, and

@@ -3,33 +3,31 @@
 //! own drafter on, read from the vault's own conversations, rooms with other
 //! people included, and sealed inside the vault.
 //!
-//! **Source.** The engine keeps the exact request a reply's rung was sent in
-//! one place: a self agent's chat breakpoint (`CHAT_BREAKPOINT`, FIX 4465 D),
-//! kept once the reply is saved and only when its own captured call answered
-//! it. Every example is that request as the rung sent it (the template's
-//! input and the settings it ran under, as the request carries them), the
-//! reply's committed text, its finish reason and the rung, never a
-//! re-render. A reply with no breakpoint has no exact request kept and is no
-//! example. The reply MESSAGE keeps the answer text only: reasoning and
-//! tool-call spans the rung emitted are not on it, so no example holds them.
-//! The target's `model` pin is the wire model its rung names.
+//! **Source.** The vault's chat traffic (FIX 15128, `traffic.rs`): one
+//! example per answered reply of any agent, a live turn's, a queued Continue's
+//! or Retry's, whether or not its context board rode, each kept once its
+//! reply was saved whole. Every example is the request exactly as the reply's
+//! answering rung sent it and the span the reply generated (FIX 15129): its
+//! reasoning, tool calls and text, in the provider-neutral parts the request
+//! uses, with its finish reason, never a re-render. The target's `model` pin
+//! is the wire model its rung names.
 //!
-//! **Exclusions.** A reply stays out, counted under its reason, when its
-//! rung is not the target's; it was continued; its breakpoint no longer
-//! stands as its reader reads it; its request holds a part other than text
-//! (a tool call or result, an image or audio, whose sources no row names) or
-//! ends past the user's message; it is not final, not the answering agent's
-//! or not readable by its reader now; its room holds an open off-record
-//! stretch; or a record it was read from (its conversation, its TURN, every
-//! retained turn and MESSAGE of its request, each summary and every turn and
-//! MESSAGE the summary folds, each craft row) is erased, a Tier-A withhold (a
-//! live session overlay's transient row among them), of no known world or
-//! author, or sits, or a record it quotes sits, in a world the owner's policy
-//! excludes. No per-run consent tick is asked: the ruling is the data basis.
+//! **Exclusions.** An example stays out, counted under its reason, when its
+//! rung is not the target's; its body no longer opens (its key retired); its
+//! request holds a part other than text (a tool call or result, an image or
+//! audio, whose sources no row names) or ends past a user's message; it
+//! generated nothing; its room holds an open off-record stretch; or a record
+//! it was read from (its conversation, its reply and TURN, every row of its
+//! call's sources, each MESSAGE's TURN, each summary and every turn and
+//! MESSAGE the summary folds) is erased, a Tier-A withhold (a live session
+//! overlay's transient row among them), of no known world or author, or sits,
+//! or a record it quotes sits, in a world the owner's policy excludes. No
+//! per-run consent tick is asked: the ruling is the data basis.
 //!
 //! **Dependencies.** Each example names every record it was read from, the
-//! worlds and authors of each, the records it quotes and folds, its reader
-//! and its sitting, so an erase of any of them reaches the version
+//! worlds and authors of each, the records it quotes and folds, its agent and
+//! its requester, as walked again at the export and as kept with it, so an
+//! erase of any of them reaches the version
 //! ([`super::erase_drafters_for_source_in_txn`]).
 //!
 //! **Split.** Source families are assigned before the split: one family per
@@ -38,8 +36,8 @@
 //! one of its replies, so no training example carries a held-out reply's
 //! bytes; families whose replies fewest other examples hold go first (each
 //! conversation's latest replies), until one example in
-//! [`HELD_OUT_DIVISOR`] is held out. A training example whose answer is
-//! byte-identical to a held-out one's stays out. The trainer receives the
+//! [`HELD_OUT_DIVISOR`] is held out. A training example whose generated span
+//! is byte-identical to a held-out one's stays out. The trainer receives the
 //! training side only; the held-out side is sealed under a key of its own
 //! and only the evaluator opens it.
 //!
@@ -48,7 +46,8 @@
 //! under the version (purpose `DrafterArtifact`), so an erase of the version
 //! retires both. The sealed files sit under `drafter-corpora/<version>/`;
 //! [`Vault::sweep_drafter_corpora`] removes every directory no prepared,
-//! training or returned version names.
+//! training or returned version names, and drops the examples past the
+//! traffic's bound.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -59,32 +58,30 @@ use heed::{RoTxn, RwTxn};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
+use super::traffic::{
+    DrafterExampleBody, DrafterExampleRecord, example_records_in, open_example_body_in,
+};
 use super::{
     DrafterCorpus, DrafterCorpusFile, DrafterDependencies, DrafterPolicy, DrafterSealing,
     DrafterTarget, DrafterVersionState, VERSIONS, hash_json, invalid,
 };
-use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::claim::base_world_id;
-use crate::conversation::{
-    ChatBreakpoint, ChatBreakpointRung, chat_breakpoint_stands, chat_breakpoints_in_txn,
-};
 use crate::conversation_dag::{message_body_quotes, turn_body_quotes};
 use crate::disclosure::{DisclosureTier, disclosure_tier};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
-use crate::memory::{MessageDurabilityRequest, MessageStreamReceipt, StreamFinality};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::store::Store;
 use crate::store::drafter_custody::{
     drafter_artifact_key_in_txn, mint_drafter_artifact_key_in_txn,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::{ContentPart, EdgeKind, FinishReason, LlmMessageRole, LlmRequest, Vault, WriteActor};
+use crate::{ContentPart, EdgeKind, FinishReason, LlmMessage, LlmMessageRole, LlmRequest, Vault};
 
-/// The form every example takes, as its trainer reads it: one JSON line of a
-/// kept chat breakpoint's request and the reply's committed text.
-pub(super) const DRAFTER_CORPUS_FORM: &str = "oneiron.drafter.chat_breakpoint.v1";
+/// The form every example takes, as its trainer reads it: one JSON line of
+/// a reply's request as its rung sent it and the span the reply generated.
+pub(super) const DRAFTER_CORPUS_FORM: &str = "oneiron.drafter.chat_traffic.v1";
 /// One example in this many is held out (rounded up). Not an owner ruling:
 /// the engine's own choice until the evaluator (FIX 14975) states the sample
 /// it needs.
@@ -96,33 +93,20 @@ const SEALED_SUFFIX: &str = ".sealed";
 /// A sealed corpus file's name while it is written.
 const STAGING_SUFFIX: &str = ".sealed.part";
 
-/// A breakpoint row that does not decode.
-const OMIT_BREAKPOINT_DAMAGED: &str = "drafter.corpus.breakpoint_damaged";
+/// An example record that does not decode.
+const OMIT_EXAMPLE_DAMAGED: &str = "drafter.corpus.example_damaged";
 /// The reply's rung is not the target's model.
 const OMIT_OTHER_MODEL: &str = "drafter.corpus.other_model";
-/// The reply was continued: more than one generation, so its text is not
-/// what its kept request alone generated.
-const OMIT_CONTINUED_REPLY: &str = "drafter.corpus.continued_reply";
-/// The kept request ends past the user's message.
+/// The request ends past the user's message: a Continue its rung prefills.
 const OMIT_REQUEST_TAIL: &str = "drafter.corpus.request_tail";
-/// The breakpoint no longer stands: its request, a turn, a summary or a
-/// craft row it was read from moved, or its reader reads it no longer.
-const OMIT_BREAKPOINT_STALE: &str = "drafter.corpus.breakpoint_stale";
-/// The breakpoint names no reader class this engine knows.
-const OMIT_READER_UNBOUND: &str = "drafter.corpus.reader_unbound";
 /// The request holds a part other than text, whose sources no row names.
 const OMIT_UNTRACKED_PART: &str = "drafter.corpus.untracked_part";
 /// The reply's room holds an open off-record stretch.
 const OMIT_OFF_RECORD: &str = "drafter.corpus.off_record";
-/// The reply is partial, cancelled, recovered, lost text, or empty.
-const OMIT_REPLY_NOT_FINAL: &str = "drafter.corpus.reply_not_final";
-/// The reply's writer is not the breakpoint's answering agent.
-const OMIT_REPLY_NOT_AGENT: &str = "drafter.corpus.reply_not_agent";
-/// The reply or its text does not read for its reader now.
-const OMIT_REPLY_UNREADABLE: &str = "drafter.corpus.reply_unreadable";
-/// The reply MESSAGE lies in no one TURN.
-const OMIT_REPLY_TURN_UNKNOWN: &str = "drafter.corpus.reply_turn_unknown";
-/// A record the example was read from is erased or absent.
+/// The reply generated no text, reasoning or tool call.
+const OMIT_GENERATED_EMPTY: &str = "drafter.corpus.generated_empty";
+/// A record the example was read from is erased or absent, or its body's
+/// key is retired.
 const OMIT_SOURCE_ERASED: &str = "drafter.corpus.source_erased";
 /// A record the example was read from is a Tier-A withhold.
 const OMIT_SOURCE_WITHHELD: &str = "drafter.corpus.source_withheld";
@@ -130,13 +114,12 @@ const OMIT_SOURCE_WITHHELD: &str = "drafter.corpus.source_withheld";
 const OMIT_AUTHOR_UNKNOWN: &str = "drafter.corpus.author_unknown";
 /// A summary whose folded turns are not known.
 const OMIT_FOLD_UNKNOWN: &str = "drafter.corpus.fold_unknown";
-/// A craft row whose record is not known.
-const OMIT_CRAFT_UNKNOWN: &str = "drafter.corpus.craft_unknown";
 /// The example reaches a world the owner's policy excludes.
 const OMIT_EXCLUDED_WORLD: &str = "drafter.corpus.excluded_world";
 /// A row the export read refused it or did not decode.
 const OMIT_ROW_FAILED: &str = "drafter.corpus.row_failed";
-/// A training example whose answer is byte-identical to a held-out one's.
+/// A training example whose generated span is byte-identical to a held-out
+/// one's.
 const OMIT_HELD_OUT_DUPLICATE: &str = "drafter.corpus.held_out_duplicate";
 
 /// Counts one reply left out under `code`.
@@ -182,10 +165,10 @@ impl CorpusSide {
 
 /// Every record one example was read from, and whose erase it follows.
 #[derive(Debug, Default)]
-struct DependencyWalk {
+pub(super) struct DependencyWalk {
     sources: BTreeSet<EntityId>,
     derived: BTreeSet<EntityId>,
-    worlds: BTreeSet<EntityId>,
+    pub(super) worlds: BTreeSet<EntityId>,
     authors: BTreeSet<EntityId>,
     erase_subjects: BTreeSet<EntityId>,
 }
@@ -205,9 +188,18 @@ impl DependencyWalk {
         self.erase_subjects.extend(other.erase_subjects);
     }
 
-    /// The walk as a version's dependency set, every list sorted, known
-    /// whole.
-    fn into_dependencies(self) -> DrafterDependencies {
+    /// Adds every list of `kept`, an example's own set, to this walk's.
+    fn absorb_dependencies(&mut self, kept: &DrafterDependencies) {
+        self.sources.extend(kept.sources.iter().copied());
+        self.derived.extend(kept.derived.iter().copied());
+        self.worlds.extend(kept.worlds.iter().copied());
+        self.authors.extend(kept.authors.iter().copied());
+        self.erase_subjects
+            .extend(kept.erase_subjects.iter().copied());
+    }
+
+    /// The walk as a dependency set, every list sorted, known whole.
+    pub(super) fn into_dependencies(self) -> DrafterDependencies {
         DrafterDependencies {
             sources: self.sources.into_iter().collect(),
             worlds: self.worlds.into_iter().collect(),
@@ -236,17 +228,10 @@ pub(super) fn union_dependencies(into: &mut DrafterDependencies, from: &DrafterD
     into.precise &= from.precise;
 }
 
-/// One reply its reader's own reads admitted, before its dependencies are
-/// walked.
-struct Reply {
-    conversation: EntityId,
-    reply: EntityId,
-    generation: EntityId,
-    seed: ChatBreakpoint,
-    request: LlmRequest,
-    reader: WriteActor,
-    receipt: MessageStreamReceipt,
-    answer: String,
+/// The rung one example names, as its trainer and evaluator read it.
+#[derive(Serialize)]
+struct ExampleRung<'a> {
+    wire_model: &'a str,
 }
 
 /// One example as its trainer reads it.
@@ -258,21 +243,22 @@ struct ExampleLine<'a> {
     conversation: EntityId,
     reply: EntityId,
     generation: EntityId,
-    rung: &'a ChatBreakpointRung,
+    rung: ExampleRung<'a>,
     /// The request exactly as the rung was sent it.
     request: &'a LlmRequest,
-    /// The reply's committed text: the answer the rung generated.
-    answer: &'a str,
-    finish_reason: Option<&'a FinishReason>,
+    /// The span the reply generated: its reasoning, tool calls and text, in
+    /// order, in the parts the request uses.
+    generated: &'a LlmMessage,
+    finish_reason: &'a FinishReason,
 }
 
 /// One example: its family, its reply, every record it was read from, the
-/// BLAKE3 of its answer and its serialized line.
+/// BLAKE3 of its generated span and its serialized line.
 pub(super) struct DrafterExample {
     family: String,
     reply: EntityId,
     walk: DependencyWalk,
-    answer_blake3: [u8; 32],
+    generated_blake3: [u8; 32],
     line: Zeroizing<Vec<u8>>,
 }
 
@@ -323,14 +309,14 @@ fn text_only(request: &LlmRequest) -> bool {
     })
 }
 
-/// The record a craft row names: an actor claim's id, or a skill's loaded
-/// entity; `None` for a row that names no record.
-fn craft_record(entry: &ManifestEntry) -> Option<EntityId> {
-    match entry.kind {
-        ManifestKind::ActorClaim => EntityId::from_hex(&entry.reference).ok(),
-        ManifestKind::Skill => entry.revision.as_ref().map(|(id, _)| *id),
-        _ => None,
-    }
+/// Whether `generated` holds a token the model generated: text, reasoning
+/// text or a tool call.
+fn holds_generated_tokens(generated: &LlmMessage) -> bool {
+    generated.content.iter().any(|part| match part {
+        ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => !text.is_empty(),
+        ContentPart::ToolCall { .. } => true,
+        _ => false,
+    })
 }
 
 /// The records the row `id` of `entity_type`, with body `body`, quotes: each
@@ -354,17 +340,16 @@ fn quoted_records(id: EntityId, entity_type: u8, body: &[u8]) -> Vec<EntityId> {
 enum Lineage {
     /// Its bytes are in the request.
     Source,
-    /// The request's bytes derive from it: a summary, what it folds, a craft
-    /// row.
+    /// The request's bytes derive from it: what a summary folds.
     Derived,
 }
 
 impl Vault {
     /// The corpus of the vault's own replies for `target`, judged under
-    /// `policy` (FIX 14973): every kept chat breakpoint at the export's
-    /// snapshot, whose clock is the cutoff, read as each reply's reader reads
-    /// it, each example with every record it was read from. A reply that
-    /// fails a check stays out, counted under its reason.
+    /// `policy` (FIX 14973, FIX 15128): every training example the traffic
+    /// keeps at the export's snapshot, whose clock is the cutoff, each with
+    /// every record it was read from. A reply that fails a check stays out,
+    /// counted under its reason.
     ///
     /// # Errors
     /// Storage and I/O faults; any other fault leaves its reply out.
@@ -374,40 +359,39 @@ impl Vault {
         policy: &DrafterPolicy,
     ) -> Result<DrafterExport> {
         let mut omitted = BTreeMap::new();
-        // The breakpoints at the cutoff, in a snapshot closed before any read
-        // that opens its own: this thread holds one read at a time.
-        let (breakpoints, damaged, cutoff) = {
+        // The examples at the cutoff, in a snapshot closed before the
+        // off-record reads, which open their own: this thread holds one read
+        // at a time.
+        let (records, damaged, cutoff) = {
             let txn = self.dependency_read_txn()?;
             let cutoff = self.now_recorded_at();
-            let (rows, damaged) = chat_breakpoints_in_txn(&self.store, &txn)?;
-            (rows, damaged, cutoff)
+            let (records, damaged) = example_records_in(&self.store, &txn)?;
+            (records, damaged, cutoff)
         };
         if damaged > 0 {
-            *omitted
-                .entry(OMIT_BREAKPOINT_DAMAGED.to_owned())
-                .or_default() += damaged;
+            *omitted.entry(OMIT_EXAMPLE_DAMAGED.to_owned()).or_default() += damaged;
         }
-        let mut generations: BTreeMap<(EntityId, EntityId), u64> = BTreeMap::new();
-        for ((conversation, reply, _), _) in &breakpoints {
-            *generations.entry((*conversation, *reply)).or_default() += 1;
-        }
-        let mut replies = Vec::new();
-        for ((conversation, reply, generation), seed) in breakpoints {
-            let continued = generations
-                .get(&(conversation, reply))
-                .is_some_and(|count| *count > 1);
-            let key = (conversation, reply, generation);
-            match self.drafter_reply(target, key, seed, continued) {
-                Ok(Ok(found)) => replies.push(found),
-                Ok(Err(code)) => omit(&mut omitted, code),
-                Err(error) if fails_export(&error) => return Err(error),
-                Err(_) => omit(&mut omitted, OMIT_ROW_FAILED),
+        let mut off_record: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut candidates = Vec::with_capacity(records.len());
+        for (id, record) in records {
+            if record.wire_model != target.model {
+                omit(&mut omitted, OMIT_OTHER_MODEL);
+                continue;
             }
+            let room = record.conversation;
+            if *off_record
+                .entry(room)
+                .or_insert_with(|| self.room_has_unrecorded_stretch(room))
+            {
+                omit(&mut omitted, OMIT_OFF_RECORD);
+                continue;
+            }
+            candidates.push((id, record));
         }
-        let mut examples = Vec::with_capacity(replies.len());
+        let mut examples = Vec::with_capacity(candidates.len());
         let txn = self.dependency_read_txn()?;
-        for found in replies {
-            match self.drafter_example_in(&txn, policy, found) {
+        for (id, record) in candidates {
+            match self.drafter_example_in(&txn, policy, id, record) {
                 Ok(Ok(example)) => examples.push(example),
                 Ok(Err(code)) => omit(&mut omitted, code),
                 Err(error) if fails_export(&error) => return Err(error),
@@ -423,26 +407,24 @@ impl Vault {
         })
     }
 
-    /// The reply breakpoint `seed`, kept under `key` (conversation, reply,
-    /// generation), names, as its reader reads it now; or why it stays out.
-    /// Each read opens its own snapshot.
-    fn drafter_reply(
+    /// Example `id`, kept as `record`, as one corpus example: its body
+    /// opened, every record it was read from walked again in `txn` and its
+    /// kept set added; or why it stays out.
+    fn drafter_example_in(
         &self,
-        target: &DrafterTarget,
-        key: (EntityId, EntityId, EntityId),
-        seed: ChatBreakpoint,
-        continued: bool,
-    ) -> Result<std::result::Result<Reply, &'static str>> {
-        let (conversation, reply, generation) = key;
-        if seed.rung.wire_model != target.model {
-            return Ok(Err(OMIT_OTHER_MODEL));
-        }
-        if continued {
-            return Ok(Err(OMIT_CONTINUED_REPLY));
-        }
-        let Some(request) = seed.captured_request() else {
-            return Ok(Err(OMIT_BREAKPOINT_STALE));
+        txn: &RoTxn<'_>,
+        policy: &DrafterPolicy,
+        id: EntityId,
+        record: DrafterExampleRecord,
+    ) -> Result<std::result::Result<DrafterExample, &'static str>> {
+        let Some(body) = open_example_body_in(&self.store, txn, &id, &record)? else {
+            return Ok(Err(OMIT_SOURCE_ERASED));
         };
+        let DrafterExampleBody {
+            request,
+            generated,
+            finish_reason,
+        } = body;
         if !text_only(&request) {
             return Ok(Err(OMIT_UNTRACKED_PART));
         }
@@ -453,122 +435,21 @@ impl Vault {
         {
             return Ok(Err(OMIT_REQUEST_TAIL));
         }
-        let Some(reader) = seed.reader() else {
-            return Ok(Err(OMIT_READER_UNBOUND));
+        if !holds_generated_tokens(&generated) {
+            return Ok(Err(OMIT_GENERATED_EMPTY));
+        }
+        let records = record.dependencies.sources.iter().copied();
+        let mut walk = match self.walk_example_in(
+            txn,
+            record.agent,
+            record.requester,
+            record.conversation,
+            records,
+        )? {
+            Ok(walk) => walk,
+            Err(code) => return Ok(Err(code)),
         };
-        if self.room_has_unrecorded_stretch(conversation) {
-            return Ok(Err(OMIT_OFF_RECORD));
-        }
-        if chat_breakpoint_stands(self, &seed)?.is_err() {
-            return Ok(Err(OMIT_BREAKPOINT_STALE));
-        }
-        let memory = self.memory(reader.entity_ref(), reader.actor_class());
-        let durability = memory
-            .messages_durability(&MessageDurabilityRequest {
-                message_id: reply.to_hex(),
-                after_generation: None,
-                limit: Some(2),
-            })
-            .ok()
-            .and_then(|read| read.value);
-        let Some(durability) = durability else {
-            return Ok(Err(OMIT_REPLY_UNREADABLE));
-        };
-        let Some(receipt) = durability.latest_receipt else {
-            return Ok(Err(OMIT_REPLY_UNREADABLE));
-        };
-        if durability.receipts.len() > 1 || receipt.generation != generation {
-            return Ok(Err(OMIT_CONTINUED_REPLY));
-        }
-        if receipt.finality != StreamFinality::Final
-            || receipt.recovered
-            || receipt.ephemeral_text_lost
-        {
-            return Ok(Err(OMIT_REPLY_NOT_FINAL));
-        }
-        if receipt.actor != seed.agent {
-            return Ok(Err(OMIT_REPLY_NOT_AGENT));
-        }
-        let answer = memory
-            .message_stream_committed_text(&receipt)
-            .ok()
-            .and_then(|read| read.value);
-        let Some(answer) = answer else {
-            return Ok(Err(OMIT_REPLY_UNREADABLE));
-        };
-        if answer.is_empty() {
-            return Ok(Err(OMIT_REPLY_NOT_FINAL));
-        }
-        Ok(Ok(Reply {
-            conversation,
-            reply,
-            generation,
-            seed,
-            request,
-            reader,
-            receipt,
-            answer,
-        }))
-    }
-
-    /// `found` as one example, every record it was read from walked in
-    /// `txn`; or why it stays out.
-    fn drafter_example_in(
-        &self,
-        txn: &RoTxn<'_>,
-        policy: &DrafterPolicy,
-        found: Reply,
-    ) -> Result<std::result::Result<DrafterExample, &'static str>> {
-        let Reply {
-            conversation,
-            reply,
-            generation,
-            seed,
-            request,
-            reader,
-            receipt,
-            answer,
-        } = found;
-        let mut walk = DependencyWalk::default();
-        walk.authors.extend([reader.entity_ref(), seed.agent]);
-        walk.erase_subjects.insert(reader.entity_ref());
-        walk.erase_subjects.extend(seed.session);
-        let turns = self.turns_of_in(txn, reply)?;
-        let [turn] = turns.as_slice() else {
-            return Ok(Err(OMIT_REPLY_TURN_UNKNOWN));
-        };
-        // A conversation's author is not asked for: its rows name theirs.
-        if let Some(code) =
-            self.walk_record_in(txn, conversation, Lineage::Source, false, &mut walk)?
-        {
-            return Ok(Err(code));
-        }
-        let mut records = vec![(reply, Lineage::Source), (*turn, Lineage::Source)];
-        for span in &seed.sources {
-            records.push((span.turn, Lineage::Source));
-            records.extend(span.messages.iter().map(|id| (*id, Lineage::Source)));
-        }
-        for summary in &seed.summaries {
-            records.push((*summary, Lineage::Derived));
-            let Some(spans) = self.summary_folded_spans_in_txn(txn, summary)? else {
-                return Ok(Err(OMIT_FOLD_UNKNOWN));
-            };
-            for span in spans {
-                records.push((span.turn, Lineage::Derived));
-                records.extend(span.messages.into_iter().map(|id| (id, Lineage::Derived)));
-            }
-        }
-        for entry in &seed.craft_entries {
-            let Some(id) = craft_record(entry) else {
-                return Ok(Err(OMIT_CRAFT_UNKNOWN));
-            };
-            records.push((id, Lineage::Derived));
-        }
-        for (id, lineage) in records {
-            if let Some(code) = self.walk_record_in(txn, id, lineage, true, &mut walk)? {
-                return Ok(Err(code));
-            }
-        }
+        walk.absorb_dependencies(&record.dependencies);
         if walk
             .worlds
             .iter()
@@ -578,30 +459,94 @@ impl Vault {
         }
         let line = ExampleLine {
             form: DRAFTER_CORPUS_FORM,
-            family: &seed.request_digest,
-            conversation,
-            reply,
-            generation,
-            rung: &seed.rung,
+            family: &record.family,
+            conversation: record.conversation,
+            reply: record.reply,
+            generation: record.generation,
+            rung: ExampleRung {
+                wire_model: &record.wire_model,
+            },
             request: &request,
-            answer: &answer,
-            finish_reason: receipt.finish_reason.as_ref(),
+            generated: &generated,
+            finish_reason: &finish_reason,
         };
         let mut bytes = Zeroizing::new(
             serde_json::to_vec(&line).map_err(|_| invalid("a drafter example did not encode"))?,
         );
         bytes.push(b'\n');
         Ok(Ok(DrafterExample {
-            family: seed.request_digest.clone(),
-            reply,
+            generated_blake3: hash_json(&generated)?,
+            family: record.family,
+            reply: record.reply,
             walk,
-            answer_blake3: *blake3::hash(answer.as_bytes()).as_bytes(),
             line: bytes,
         }))
     }
 
+    /// Walks one example's `records` in `txn` into a fresh walk (FIX 15128):
+    /// each as a source with the records it quotes, each MESSAGE's live TURN
+    /// beside it, and each summary's folded turns and messages as derived;
+    /// `agent` and `requester` as its authors, `requester` as an erase
+    /// subject. The conversation's and the agent definition's own authors are
+    /// not asked for: their rows name theirs. The traffic walks it in the
+    /// write that keeps an example, the export again at each night. Why the
+    /// example stays out, or the walk.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub(super) fn walk_example_in(
+        &self,
+        txn: &RoTxn<'_>,
+        agent: EntityId,
+        requester: EntityId,
+        conversation: EntityId,
+        records: impl IntoIterator<Item = EntityId>,
+    ) -> Result<std::result::Result<DependencyWalk, &'static str>> {
+        let mut walk = DependencyWalk::default();
+        walk.authors.extend([agent, requester]);
+        walk.erase_subjects.insert(requester);
+        let mut queue: Vec<EntityId> = records.into_iter().collect();
+        queue.reverse();
+        let mut seen = BTreeSet::new();
+        while let Some(id) = queue.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let author_required = id != agent && id != conversation;
+            if let Some(code) =
+                self.walk_record_in(txn, id, Lineage::Source, author_required, &mut walk)?
+            {
+                return Ok(Err(code));
+            }
+            let LiveEntityRow::Live { entity_type, .. } =
+                live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            match entity_type {
+                ENTITY_TYPE_MESSAGE => queue.extend(self.turns_of_in(txn, id)?),
+                ENTITY_TYPE_SUMMARY => {
+                    let Some(spans) = self.summary_folded_spans_in_txn(txn, &id)? else {
+                        return Ok(Err(OMIT_FOLD_UNKNOWN));
+                    };
+                    for span in spans {
+                        for folded in std::iter::once(span.turn).chain(span.messages) {
+                            if let Some(code) =
+                                self.walk_record_in(txn, folded, Lineage::Derived, true, &mut walk)?
+                            {
+                                return Ok(Err(code));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(Ok(walk))
+    }
+
     /// The live TURNs MESSAGE `message` is part of, in `txn`.
-    fn turns_of_in(&self, txn: &RoTxn<'_>, message: EntityId) -> Result<Vec<EntityId>> {
+    pub(super) fn turns_of_in(&self, txn: &RoTxn<'_>, message: EntityId) -> Result<Vec<EntityId>> {
         let mut turns = Vec::new();
         for edge in self.store.port_edges(
             txn,
@@ -734,25 +679,33 @@ pub(super) fn live_examples_in(
 /// The families held out of `examples`: a family goes with every family
 /// whose examples hold one of its replies, those whose replies the fewest
 /// other families hold first, ties broken by the BLAKE3 of the family, until
-/// one example in [`HELD_OUT_DIVISOR`] (rounded up) is held out.
+/// one example in [`HELD_OUT_DIVISOR`] (rounded up) is held out. A reply a
+/// Continue extended is the reply of each family that generated a part of
+/// it.
 fn held_out_families(examples: &[DrafterExample]) -> BTreeSet<String> {
     let mut members: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut reply_family: BTreeMap<EntityId, &str> = BTreeMap::new();
+    let mut reply_families: BTreeMap<EntityId, BTreeSet<&str>> = BTreeMap::new();
     for example in examples {
         *members.entry(example.family.as_str()).or_default() += 1;
-        reply_family.insert(example.reply, example.family.as_str());
+        reply_families
+            .entry(example.reply)
+            .or_default()
+            .insert(example.family.as_str());
     }
     // Each family, and the other families whose examples hold its replies.
     let mut dependents: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for example in examples {
         for id in example.walk.records() {
-            if let Some(family) = reply_family.get(id).copied()
-                && family != example.family.as_str()
-            {
-                dependents
-                    .entry(family)
-                    .or_default()
-                    .insert(example.family.as_str());
+            let Some(families) = reply_families.get(id) else {
+                continue;
+            };
+            for family in families.iter().copied() {
+                if family != example.family.as_str() {
+                    dependents
+                        .entry(family)
+                        .or_default()
+                        .insert(example.family.as_str());
+                }
             }
         }
     }
@@ -820,7 +773,8 @@ impl SideBuilder {
 }
 
 /// Splits `examples` into the held-out families and the rest, a training
-/// example whose answer a held-out one's repeats left out under its reason;
+/// example whose generated span a held-out one's repeats left out under its
+/// reason;
 /// `None` when either side is empty.
 ///
 /// # Errors
@@ -830,10 +784,10 @@ pub(super) fn split_examples(
     omitted: &mut BTreeMap<String, u64>,
 ) -> Result<Option<DrafterSplit>> {
     let held = held_out_families(&examples);
-    let held_answers: BTreeSet<[u8; 32]> = examples
+    let held_spans: BTreeSet<[u8; 32]> = examples
         .iter()
         .filter(|example| held.contains(&example.family))
-        .map(|example| example.answer_blake3)
+        .map(|example| example.generated_blake3)
         .collect();
     let mut training = SideBuilder::new();
     let mut held_out = SideBuilder::new();
@@ -841,7 +795,7 @@ pub(super) fn split_examples(
     for example in examples {
         let side = if held.contains(&example.family) {
             &mut held_out
-        } else if held_answers.contains(&example.answer_blake3) {
+        } else if held_spans.contains(&example.generated_blake3) {
             omit(omitted, OMIT_HELD_OUT_DUPLICATE);
             continue;
         } else {
@@ -1055,25 +1009,27 @@ impl Vault {
         open_side(&sealing, side, &file, &sealed).map(Some)
     }
 
-    /// Removes every sealed corpus directory no prepared, training or
-    /// returned version names, and
-    /// every file in a kept one its corpus does not name: a superseded,
-    /// rejected or erased version's, a damaged row's, a write's leftover. An
-    /// erase retires the keys in its own transaction; this removes the
-    /// sealed bytes after. A night runs it before its export and after its
-    /// write; housekeeping runs it at open and daily (FIX 15259). Returns
-    /// how many directories and files it removed.
+    /// Drops the training examples past the traffic's bound (FIX 15128,
+    /// `DRAFTER_EXAMPLES_KEPT`), their keys' retirement staged, then removes
+    /// every sealed corpus directory no prepared, training or returned
+    /// version names, and every file in a kept one its corpus does not name:
+    /// a superseded, rejected or erased version's, a damaged row's, a
+    /// write's leftover. An erase retires the keys in its own transaction;
+    /// this removes the sealed bytes after. A night runs it before its
+    /// export and after its write; housekeeping runs it at open and daily
+    /// (FIX 15259). Returns how many examples, directories and files it
+    /// removed.
     ///
     /// # Errors
-    /// Storage and I/O faults.
+    /// Storage, custody and I/O faults.
     pub fn sweep_drafter_corpora(&self) -> Result<u64> {
+        let mut removed = self.sweep_drafter_examples()?;
         let root = self.store.drafter_corpus_dir();
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(removed),
             Err(error) => return Err(error.into()),
         };
-        let mut removed = 0_u64;
         let txn = self.store.env.read_txn()?;
         for entry in entries {
             let entry = entry?;

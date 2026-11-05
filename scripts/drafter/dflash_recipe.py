@@ -9,10 +9,11 @@ one EAGLE-3 (Apache-2.0) publishes. The training loop is the in-house prototype'
 (muse-glimmer-afterglow `drafter/train_drafter.py`, 3 Nov 2026). This file copies no code from any
 of them: it is written from those descriptions in plain torch.
 
-What is new engineering here, not a port: rendering the engine's kept chat requests with the
-served target's own chat template and tokenizer, reading taps from an HF checkpoint of the served
-target, and exporting through the operator's EXL3 converter. Nothing here is qualified: the host's
-evaluator (FIX 14975) decides whether a trained version serves.
+What is new engineering here, not a port: rendering the engine's kept chat requests and the spans
+their replies generated with the served target's own chat template and tokenizer, reading taps
+from an HF checkpoint of the served target, and exporting through the operator's EXL3 converter.
+Nothing here is qualified: the host's evaluator (FIX 14975) decides whether a trained version
+serves.
 
 Every number the recipe uses is a setting the job carries (`SETTINGS`): this file supplies none.
 """
@@ -35,9 +36,11 @@ from safetensors.torch import load_file, save_file
 
 FAMILY = "drafter.dflash.exl3.v1"
 RUNTIME = "exl3"
-CORPUS_FORM = "oneiron.drafter.chat_breakpoint.v1"
-# How a kept request becomes the template's input: the engine's OpenAI-compatible chat mapping.
-RENDER = "oneiron.drafter.openai-chat-render/1"
+CORPUS_FORM = "oneiron.drafter.chat_traffic.v1"
+# How a kept request and its generated span become the template's input: the engine's
+# OpenAI-compatible chat mapping, the span as the assistant's message with its reasoning and its
+# tool calls.
+RENDER = "oneiron.drafter.openai-chat-render/2"
 # The tap convention: the output of each named decoder layer, 0-based.
 TAP_CONVENTION = "decoder_layer_output"
 # The load set's trainable state: the serving loader reads `config.json` and globs
@@ -226,37 +229,80 @@ def encode(served: ServedTarget, text: str) -> list[int]:
     return served.tokenizer.encode(text, add_special_tokens=False).ids
 
 
+def generated_message(line: dict) -> dict | str:
+    """The reply's generated span (`generated`: the engine's provider-neutral parts, in the order
+    the target generated them) as the chat template's assistant message: its text joined as
+    `content`, its reasoning joined as `reasoning_content` and its tool calls as `tool_calls`. A
+    string is the reason the example stays out: a reasoning part whose tokens the line does not
+    hold (a summary, a count, or opaque data), a part no assistant generates, or nothing at all."""
+    generated = line.get("generated")
+    if not isinstance(generated, dict) or generated.get("role") != "assistant":
+        return "not_generated"
+    texts, thoughts, calls = [], [], []
+    for part in generated.get("content") or []:
+        kind = part.get("kind") if isinstance(part, dict) else None
+        if kind == "text":
+            texts.append(part.get("text", ""))
+        elif kind == "reasoning":
+            if part.get("reasoning_kind", "full") != "full" or part.get("data") is not None:
+                return "reasoning_unrendered"
+            thoughts.append(part.get("text", ""))
+        elif kind == "tool_call":
+            calls.append({"type": "function", "id": part.get("call_id"),
+                          "function": {"name": part.get("name"), "arguments": part.get("input")}})
+        else:
+            return "generated_part"
+    message = {"role": "assistant", "content": "".join(texts)}
+    if "".join(thoughts):
+        message["reasoning_content"] = "".join(thoughts)
+    if calls:
+        message["tool_calls"] = calls
+    if not message["content"] and len(message) == 2:
+        return "generated_empty"
+    return message
+
+
 def render_example(served: ServedTarget, line: dict) -> tuple[list[int], int, int] | str:
-    """One corpus example as `(ids, span start, span end)`: the served prompt, the template's own
-    bridge to an answer, the answer's tokens and, for a reply that stopped, its end token. The span
-    is the answer and its end token: the tokens the target generated that the corpus holds. A
-    string is the reason the example stays out."""
-    request, answer = line.get("request") or {}, line.get("answer")
+    """One corpus example as `(ids, span start, span end)`: the served prompt, then the span the
+    target generated, rendered as the template renders the assistant's message, up to the turn's
+    end token, and through it for a reply that stopped or called a tool. A reply that reasoned or
+    called a tool spans everything the template renders after the generation prompt; a text-only
+    reply spans from its text, the template's own bridge to the text joining the prompt. The span
+    is the tokens the target generated that the corpus holds. A string is the reason the example
+    stays out."""
+    request = line.get("request") or {}
     messages = wire_messages(request)
-    if messages is None or not isinstance(answer, str) or not answer:
+    if messages is None:
         return "not_text"
+    reply = generated_message(line)
+    if isinstance(reply, str):
+        return reply
     tools, kwargs = wire_tools(request), template_kwargs(request)
     try:
         before = served.template.render(messages=messages, tools=tools, add_generation_prompt=True,
                                         add_vision_id=False, **kwargs)
-        full = served.template.render(messages=messages + [{"role": "assistant", "content": answer}],
-                                      tools=tools, add_generation_prompt=False, add_vision_id=False,
-                                      **kwargs)
+        full = served.template.render(messages=messages + [reply], tools=tools,
+                                      add_generation_prompt=False, add_vision_id=False, **kwargs)
     except Exception:  # noqa: BLE001 - a template refusal is the example's, never the job's
         return "template_refused"
     if not full.startswith(before):
         return "template_prefix"
     tail = full[len(before):]
-    at = tail.find(answer)
-    if at < 0:
-        return "answer_not_rendered"
-    prefix = before + tail[:at]
-    prefix_ids, answered = encode(served, prefix), encode(served, prefix + answer)
-    full_ids = encode(served, full)
-    if answered[: len(prefix_ids)] != prefix_ids or full_ids[: len(answered)] != answered:
+    if "reasoning_content" in reply or "tool_calls" in reply:
+        at = 0
+    else:
+        at = tail.find(reply["content"])
+        if at < 0:
+            return "answer_not_rendered"
+    prefix_ids, full_ids = encode(served, before + tail[:at]), encode(served, full)
+    if full_ids[: len(prefix_ids)] != prefix_ids:
         return "token_prefix"
-    start, end = len(prefix_ids), len(answered)
-    if line.get("finish_reason") == "stop" and end < len(full_ids) and full_ids[end] in served.eos_ids:
+    start = len(prefix_ids)
+    end = next((index for index in range(start, len(full_ids)) if full_ids[index] in served.eos_ids),
+               None)
+    if end is None:
+        return "turn_end_not_rendered"
+    if line.get("finish_reason") in ("stop", "tool_calls"):
         end += 1
     if end - start < 2:
         return "span_too_short"

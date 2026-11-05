@@ -3505,7 +3505,8 @@ What exists now:
   its corpus keys is staged. The custody finisher retires those keys at
   housekeeping. The corpus sweep removes the sealed corpus files. A late
   trainer completion rechecks the version's generation when it publishes, and
-  is refused.
+  is refused. The same erase drops every training example whose dependency
+  set names the record, and stages the retirement of each example's key.
 - **Sealed artifacts.** Each version's load set is sealed under an erasable
   key of its own (purpose `DrafterArtifact`). The version record names the key
   by its random ref, never by its bytes. `Vault::begin_drafter_artifact` mints
@@ -3513,27 +3514,49 @@ What exists now:
   each piece of a file. `Vault::publish_drafter_artifact` publishes the
   reference after it checks the version again. Retained versions are never
   evicted.
-- **Corpus.** The export reads one source: the chat breakpoint that a self
-  agent's reply keeps (`CHAT_BREAKPOINT`). A breakpoint holds the request
-  exactly as the rung sent it. Each example is that request, the reply's
-  committed text, its finish reason and the rung. The export never re-renders
-  a prompt. A reply with no breakpoint is not an example. The reply MESSAGE
-  keeps the answer text only, so no example holds a reasoning or tool-call
-  span. Rooms with other people are included, with no per-run consent tick.
-- **Exclusions.** The export leaves a reply out, and counts it under its
+- **Traffic.** The drafter trains on the vault's whole chat traffic. Every
+  answered reply is one training example: a live chat turn's and a queued
+  Continue's or Retry's, of any agent, whether or not the context board rode.
+  The host hands the reply over once it is saved whole and its outcome is
+  handed on (`Vault::keep_drafter_example`). The example is a record apart
+  from the self agent's chat breakpoint, which stays the reuse seed and keeps
+  its own rules. It holds the request exactly as the answering rung sent it
+  (the rung's prompt first, the board included when it rode) and the span the
+  reply generated: its reasoning, tool calls and text, in the parts the
+  request uses. The request and the span are one body, sealed under an
+  erasable key of the example's own (purpose `DrafterArtifact`). No example
+  is kept for a reply that failed or is not saved whole, a reused prefix that
+  fell back to today's call, a turn that keeps no model-call record (it keeps
+  no durable record or runs off the record), a call whose rows are not known
+  whole, or a rung that is not this host's drafter target. The engine keeps
+  none while the policy is off, in a room with an open off-record stretch, or
+  when a record is erased, a Tier-A withhold, of no known world or author, or
+  in an excluded world (`drafter.example.*` and `drafter.corpus.*` reasons,
+  logged). The newest `DRAFTER_EXAMPLES_KEPT` (2048) examples are kept; the
+  corpus sweep drops older ones and retires their keys.
+- **Corpus.** The export reads the training examples. Each corpus line
+  (`oneiron.drafter.chat_traffic.v1`) is the request as the rung sent it,
+  the generated span (`generated`), its finish reason and the rung's wire
+  model. The export never re-renders a prompt. Rooms with other people are
+  included, with no per-run consent tick.
+- **Exclusions.** The export leaves an example out, and counts it under its
   reason code (`drafter.corpus.*`), when: its rung's wire model is not the
-  target's `model`; the reply was continued; the breakpoint no longer stands
-  for its reader; the request holds a part that is not text, or ends after
-  the user's message; the reply is not final, not the agent's or not readable
-  by its reader; its room has an open off-record stretch; or a record that the
-  example read is erased, a Tier-A withhold (a live session overlay row is
-  one), has no known world or author, or is in an excluded world. Quoted
-  records, summary folds and craft rows count as records that the example
-  read.
-- **Dependency set.** Each example names every record it read, with the world
-  and author of each, the quoted and folded records, its reader and its
-  sitting. The version's set is the union of all examples on both sides and
-  the full ancestry of its parent. The night writes the version only after it
+  target's `model`; its body no longer opens; the request holds a part that
+  is not text, or ends after the user's message (a Continue whose rung
+  prefills); the reply generated no text, reasoning or tool call; its room
+  has an open off-record stretch; or a record that the example read is
+  erased, a Tier-A withhold (a live session overlay row is one), has no known
+  world or author, or is in an excluded world. Quoted records, each
+  message's TURN and summary folds count as records that the example read.
+- **Dependency set.** Each example names every record it read (the turn's
+  sources: the agent's definition, its craft, its log, the board's rows when
+  the board rode, the requester's message), its reply MESSAGE, TURN and
+  conversation, with the world and author of each, the quoted and folded
+  records, its agent and its requester. An index row per named id lets an
+  erase of any of them drop the example. The export walks every record again
+  and adds the set the example kept. The version's set is the union of all
+  examples on both sides and the full ancestry of its parent, so the same
+  erase reaches the version. The night writes the version only after it
   checks again, in its own write, that every record is still live.
 - **Split.** Each request digest is one source family, so a Retry of the same
   request stays on one side. The export holds out a family together with
@@ -3541,15 +3564,16 @@ What exists now:
   example holds bytes of a held-out reply. Families that the fewest other
   examples contain go first, so each conversation's latest replies are held
   out first, until one example in `HELD_OUT_DIVISOR` (10) is held out. A
-  training example whose answer is byte-identical to a held-out answer is
-  left out. The trainer gets the training side only.
+  training example whose generated span is byte-identical to a held-out span
+  is left out. The trainer gets the training side only.
 - **Custody.** Plaintext stays in the night's process memory. The two sides
   are sealed in 1 MiB chunks, each side under its own erasable key, minted
   under the version. The sealed files are in `drafter-corpora/<version>/`
   under the vault root. `Vault::drafter_training_corpus` opens the training
   side for the trainer host. `Vault::drafter_held_out_corpus` opens the
-  held-out side for the evaluator. `Vault::sweep_drafter_corpora` removes
-  every directory that no prepared, training or returned version names.
+  held-out side for the evaluator. `Vault::sweep_drafter_corpora` drops the
+  training examples past the bound, then removes every directory that no
+  prepared, training or returned version names.
 - **Nightly job.** `coach.drafter_retrain` is on the Coach's nightly host
   roster, with one pending job per vault. Each night pins the policy revision
   and the cutoff and records one retrain event. With the policy off, the

@@ -57,7 +57,8 @@ pub enum HousekeepingSweep {
     /// and follows the body's edits.
     AnnotationBodyAnchors,
     /// Removal of the sealed drafter corpora no live drafter version names
-    /// (FIX 14973, FIX 15259).
+    /// (FIX 14973, FIX 15259), and of the training examples past the
+    /// drafter traffic's bound (FIX 15128).
     DrafterCorpusSweep,
     /// Due signing reminders.
     EsignReminders,

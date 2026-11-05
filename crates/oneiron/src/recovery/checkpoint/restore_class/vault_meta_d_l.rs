@@ -30,9 +30,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // FIX 12569: the drafter's pointers, evaluations, events, policy and
     // versions stand as the live vault holds them: no image brings back an
     // erased version, an older pointer or a policy the owner changed since.
+    // FIX 15128: nor an erased or swept training example.
     (&t::DRAFTER_BINDING, LIVE),
     (&t::DRAFTER_EVALUATION, LIVE),
     (&t::DRAFTER_EVENT, LIVE),
+    (&t::DRAFTER_EXAMPLE, LIVE),
+    (&t::DRAFTER_EXAMPLE_BODY, LIVE),
+    (&t::DRAFTER_EXAMPLE_SOURCE, LIVE),
     (&t::DRAFTER_POLICY, LIVE),
     (&t::DRAFTER_VERSION, LIVE),
     (&t::DREAMER_DETACHED_STEP, CONTENT),

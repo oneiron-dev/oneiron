@@ -23,6 +23,15 @@
 //! transaction ([`erase_drafters_for_source_in_txn`]). Each version's sealed
 //! artifact sits under its own erasable key ([`DrafterSealing`]).
 //!
+//! The drafter trains on the vault's whole chat traffic (FIX 15128, FIX
+//! 15129, `traffic`): the host hands every answered reply over once it is
+//! saved whole, and [`crate::Vault::keep_drafter_example`] keeps it as one
+//! training example, apart from the chat breakpoint: the request exactly as
+//! its rung sent it and the span the reply generated, sealed under the
+//! example's own erasable key, every record it was read from indexed so its
+//! erase drops the example ([`erase_drafter_examples_for_source_in_txn`]).
+//! The newest [`DRAFTER_EXAMPLES_KEPT`] are kept.
+//!
 //! The nightly job, `coach.drafter_retrain`, pins the policy revision and
 //! its cutoff and records how the night ended. With a recipe a trainer
 //! connector of its host lists and a target its host serves a drafter for,
@@ -64,6 +73,7 @@ mod nightly;
 mod policy;
 mod report;
 mod serving;
+mod traffic;
 mod training;
 mod types;
 
@@ -104,6 +114,8 @@ pub use serving::{
     DrafterLoadSetPlan, DrafterMaterialized, DrafterServedView, DrafterServingPlan,
     DrafterServingPlans, DrafterServingRuntime, DrafterUnservedReason,
 };
+pub(crate) use traffic::erase_drafter_examples_for_source_in_txn;
+pub use traffic::{DRAFTER_EXAMPLES_KEPT, DrafterExampleKept, DrafterTrafficReply};
 pub use training::{
     DRAFTER_TRAINABLE_PREFIX, DrafterParentLoadSet, DrafterTrainingDispatch, DrafterTrainingJob,
     DrafterTrainingMark,
