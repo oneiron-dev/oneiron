@@ -27,7 +27,12 @@ pub struct PublisherCandidateRef {
     pub occurrence: usize,
 }
 
-pub(super) fn publisher_candidates_with_refs(
+/// Pairs every candidate in the host's full input slice with its local reference.
+/// Use the complete slice before filtering; equal ids and inputs take their
+/// occurrence numbers from collection order. This is association data only,
+/// not proof of external publisher identity or authority.
+#[must_use]
+pub fn publisher_candidates_with_refs(
     pinned: &[PublisherCandidate],
 ) -> Vec<(&PublisherCandidate, PublisherCandidateRef)> {
     let mut occurrences: HashMap<(String, PublisherCandidateInput), usize> = HashMap::new();
