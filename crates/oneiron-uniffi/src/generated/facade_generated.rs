@@ -148,12 +148,12 @@ export_facade! {
 "self.inbox.list" => fn self_inbox_list(&self, input: InboxListRequest) -> NotificationPage = |client| {
     let input: oneiron::task_verb::sdk::InboxListRequest = crate::codec::lower_record("self.inbox.list", input)?;
     let output = client.self_inbox_list(&input)?;
-    crate::codec::lift_record("self.inbox.list", &output)
+    Lift::lift(output)
 };
 "self.inbox.mark" => fn self_inbox_mark(&self, input: InboxMarkRequest) -> NotificationRow = |client| {
     let input: oneiron::task_verb::sdk::InboxMarkRequest = crate::codec::lower_record("self.inbox.mark", input)?;
     let output = client.self_inbox_mark(&input)?;
-    crate::codec::lift_record("self.inbox.mark", &output)
+    Lift::lift(output)
 };
 "self.inbox.concern" => fn self_inbox_concern(&self, input: ConcernCardRequest) -> AgentHealthCardView = |client| {
     let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest = crate::codec::lower_record("self.inbox.concern", input)?;
@@ -1094,7 +1094,7 @@ export_facade! {
 "self.inbox.get" => fn self_inbox_get(&self, input: InboxItemRequest) -> InboxItemView = |client| {
     let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.get", input)?;
     let output = client.self_inbox_get(&input)?;
-    crate::codec::lift_record("self.inbox.get", &output)
+    Lift::lift(output)
 };
 "self.inbox.done" => fn self_inbox_done(&self, input: InboxItemRequest) -> InboxItemMarked = |client| {
     let input: oneiron::agent_inbox_lens::InboxItemRequest = crate::codec::lower_record("self.inbox.done", input)?;

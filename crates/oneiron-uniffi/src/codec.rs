@@ -48,6 +48,7 @@ mod identity_act_now;
 mod key_value;
 mod lens_actions;
 mod lens_frames;
+mod notifications;
 mod policy_settings;
 mod proposal_results;
 mod proposals;
