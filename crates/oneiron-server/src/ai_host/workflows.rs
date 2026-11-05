@@ -266,6 +266,9 @@ fn pump_once(
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
+        // Existing wakes and the existing slow recheck also revisit native
+        // hook waits. This hint never authorizes the retained verb body.
+        recheck |= dispatcher.resume_workflow_tool(*root, now_secs())?;
         // A notice a crash or a refusal left owed goes out first.
         recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
         loop {
@@ -279,6 +282,7 @@ fn pump_once(
             let mut retryable = false;
             let mut held = None;
             let mut parked = false;
+            let mut hook_wait = false;
             let progress = dispatcher.run_workflow_step_output_with_confession(
                 *root,
                 LEASE_OWNER,
@@ -331,7 +335,9 @@ fn pump_once(
                     let ran = runner.run(runtime, vault, step, context);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
-                    bind_attribution(vault, step.attempt.id);
+                    if !matches!(&ran, Err(fault) if fault.hook_wait) {
+                        bind_attribution(vault, step.attempt.id);
+                    }
                     match ran {
                         Ok(output) => {
                             // The try completed: no retry follows it, and no
@@ -351,6 +357,13 @@ fn pump_once(
                                 None => output.objectives.into_iter().map(unanswered).collect(),
                             };
                             Ok((output.bytes, objectives))
+                        }
+                        // The admitted transcript and its Hook pause are
+                        // already durable. This is a real wait, not a failed
+                        // tool/model result or a try for the failure ladder.
+                        Err(fault) if fault.hook_wait => {
+                            hook_wait = true;
+                            Err(fault.error)
                         }
                         // The meter ran out inside the model call: held as
                         // at the boundary, from the checkpoint before the
@@ -410,13 +423,17 @@ fn pump_once(
                 match &progress {
                     Ok(_) if claimed.is_some() => status.workflows.completed += 1,
                     Ok(_) => {}
-                    Err(_) if held.is_some() || parked => {}
+                    Err(_) if held.is_some() || parked || hook_wait => {}
                     Err(error) => {
                         status.workflows.failed += u64::from(claimed.is_some());
                         status.workflows.last_error = Some(error.to_string());
                     }
                 }
             });
+            if hook_wait {
+                recheck = true;
+                break;
+            }
             // The held leaf waits paused; its workflow waits with it until
             // the owner resumes the hold. The notice rides the hold, and
             // goes to the owners now.
