@@ -21,21 +21,21 @@ pub struct HomeSearch {
 }
 
 /// The vault's hold on its own sync connection's home search: the live
-/// search, and the mode the last own-device connection that attached ran,
-/// which the vault keeps once that connection drops (FIX 2905).
+/// search, and the mode the configured link resolves or the last own-device
+/// connection ran, kept once that connection drops (FIX 2905).
 #[derive(Default)]
 pub(crate) struct HomeSearchSlot {
     search: Weak<HomeSearch>,
-    /// The mode the attached connection ran when it attached, or when it
-    /// dropped; `None` until one attaches.
+    /// The configured link's resolved mode before first attachment, then
+    /// the attached connection's mode when it attached or dropped.
     mode: Option<SyncResidenceMode>,
 }
 
 /// What this device's own sync connection says of its residence (FIX 2905):
 /// whether its local answers are the whole vault it may read.
 pub enum DeviceResidence {
-    /// The device holds every window it may read, or no own-device sync
-    /// connection ever attached over the vault: its local answer is whole.
+    /// The device holds every window it may read, or no own-device link
+    /// has been configured over the vault: its local answer is whole.
     HoldsEverything,
     /// The device syncs only what it opened. `search` is the live
     /// connection's home search; `None` once that connection dropped, when
@@ -150,10 +150,25 @@ impl Drop for HomeSearch {
 }
 
 impl Vault {
+    /// Records a configured own-device link before a connection can attach.
+    /// An attached connection's live or last mode still takes precedence.
+    pub fn record_configured_device_residence(
+        &self,
+        configured: SyncResidenceMode,
+    ) -> crate::Result<()> {
+        let mode = crate::sync::residence::resolve_residence_mode(self, configured)?;
+        let mut slot = self
+            .home_search
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        slot.mode.get_or_insert(mode);
+        Ok(())
+    }
+
     /// This device's home search, while it syncs only what it opened and an
     /// own-device sync connection over it lives. `None` on a machine that
-    /// holds every window, or with no such connection: its local search is
-    /// the whole answer.
+    /// holds every window, or has no live connection. An Opened device
+    /// without a connection still reports a partial local answer.
     #[must_use]
     pub fn home_search(&self) -> Option<Arc<HomeSearch>> {
         match self.device_residence() {
@@ -165,8 +180,8 @@ impl Vault {
     /// Whether this device syncs only what it opened, as the last
     /// own-device sync connection that attached over the vault runs it: the
     /// mode it runs now while it lives, the mode it ran when it dropped
-    /// after. A host whose connection never attached reads as holding
-    /// everything.
+    /// after. Before first attachment it uses the configured link's resolved
+    /// mode; with no configured link, it reads as holding everything.
     #[must_use]
     pub fn device_residence(&self) -> DeviceResidence {
         // The slot is let go before a search is: dropping the last one
