@@ -24,8 +24,10 @@ custody IDs do not change. PERSON replacements use the native bare `pr…` gramm
 Other runs and global mark writers do not load these PERSON prints.
 
 Canonical and session-bound executor output sinks use the same matching path for
-streamed console, finish, stored values and files, runtime-returned step bodies,
-and recorded output/reply evidence. Stored programs and executed JavaScript stay
+streamed console, finish, stored values and files, and runtime-returned step
+bodies. Serialized executor control records, reply evidence and source maps keep
+the existing custody-only path: PERSON substring matching must not rewrite JSON
+keys, status tags or identifiers. Stored programs and executed JavaScript stay
 byte-exact and unswept. Existing output publication, provenance, taint, input-row
 and final-sweep behavior stay in place.
 

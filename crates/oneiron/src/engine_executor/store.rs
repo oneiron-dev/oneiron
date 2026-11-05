@@ -37,7 +37,7 @@ pub(super) fn record_output(
     path: String,
     raw: &[u8],
 ) -> EngineExecutorResult<()> {
-    let mut sink = storage.code_run_output_sink_for(record.run_id)?;
+    let mut sink = storage.code_run_output_sink()?;
     sink.write(raw)?;
     publish_output(storage, record, path, sink).map(drop)
 }
@@ -91,7 +91,7 @@ pub(super) fn record_reply_evidence(
     seq: u64,
     reply: &crate::LlmMessage,
 ) -> EngineExecutorResult<()> {
-    let mut sink = storage.code_run_output_sink_for(record.run_id)?;
+    let mut sink = storage.code_run_output_sink()?;
     write_json(&mut sink, reply)?;
     publish_output(storage, record, reply_output_path(seq), sink).map(drop)
 }
