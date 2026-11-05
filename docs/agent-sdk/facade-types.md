@@ -4490,21 +4490,21 @@ export type WidenProposalsView = { proposals: WidenProposalView[] }
 /** `oneiron::agent_dispatch::widen_doors::WidenProposalAnswer` */
 export type WidenProposalAnswer = { proposal_id: string }
 /** `oneiron::memory::claims::settle::ClaimProposalReviewRequest` */
-export type ClaimProposalReviewRequest = { claim_ref: string }
+export type ClaimProposalReviewRequest = { claim_ref: string; grant_ref?: string | null }
 /** `oneiron::memory::claims::settle::ClaimProposalReview` */
 export type ClaimProposalReview = { review_id: string; proposal_ref: string; claim: ClaimView; opener_ref?: string | null; pending_ref?: string | null }
 /** `oneiron::memory::claims::settle::ClaimSettleDecision` */
 export type ClaimSettleDecision = "approve" | "reject"
 /** `oneiron::memory::claims::settle::ClaimSettleRequest` */
-export type ClaimSettleRequest = { claim_ref: string; review_id: string; decision: ClaimSettleDecision }
+export type ClaimSettleRequest = { claim_ref: string; review_id: string; decision: ClaimSettleDecision; grant_ref?: string | null }
 /** `oneiron::memory::claims::settle::ClaimSettlementVerdict` */
 export type ClaimSettlementVerdict = "landed" | "rejected"
 /** `oneiron::memory::claims::settle::ClaimChangeVerdict` */
 export type ClaimChangeVerdict = { claim_ref: string; verdict: ClaimSettlementVerdict }
 /** `oneiron::memory::claims::settle::ClaimSettlementAnswer` */
-export type ClaimSettlementAnswer = { kind: "word"; person_ref: string }
+export type ClaimSettlementAnswer = { kind: "word"; person_ref: string } | { kind: "grant"; grant_ref: string }
 /** `oneiron::memory::claims::settle::ClaimSettlementReason` */
-export type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined"
+export type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined" | "gate.claim.settle.holder_approved" | "gate.claim.settle.holder_declined"
 /** `oneiron::memory::claims::settle::ClaimSettlementRevert` */
 export type ClaimSettlementRevert = { verb: string; claim_ref: string }
 /** `oneiron::memory::claims::settle::SettleWarningCode` */
