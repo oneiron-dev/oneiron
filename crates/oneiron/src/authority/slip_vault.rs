@@ -700,6 +700,47 @@ impl Vault {
         self.store.notify_credential_revocations();
         Ok(true)
     }
+    /// Opens an effect writer behind the native one-shot spend turn. This is
+    /// serialization, not admission: the effect still judges the credential,
+    /// target and Gate in that writer before consuming the instrument.
+    pub(crate) fn with_capability_spend_txn<T>(
+        &self,
+        credential: &VerifiedSlip,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let _spend_guard = credential
+            .claims()
+            .single_use
+            .then(|| super::slip_replay::spend_guard(self))
+            .transpose()?;
+        self.with_write_txn(write)
+    }
+
+    /// Consumes a live verified one-shot in the effect's own transaction.
+    /// The caller holds the native spend turn from before opening its writer.
+    /// The explicit host issuer signs the ordinary SlipConsume record; no
+    /// owner identity or signing key is inferred from the credential.
+    pub(crate) fn consume_verified_capability_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        credential: &VerifiedSlip,
+    ) -> Result<()> {
+        if !credential.claims().single_use {
+            return Ok(());
+        }
+        if !self.capability_slip_is_live_in_txn(txn, credential)? {
+            return Err(invalid_authority());
+        }
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipConsume {
+                slip_id: credential.claims().slip_id,
+            },
+        )
+    }
+
     /// Verifies the binding and burns single-use authority before returning it.
     /// Request nonce consumption is transactionally shared with SlipConsume.
     pub fn authenticate_capability_slip(
