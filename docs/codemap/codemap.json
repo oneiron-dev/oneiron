@@ -6634,7 +6634,7 @@
      "path": "src/batch/builder/preflight.rs",
      "purpose": "Claim-gate preflight loop including CommitmentGapDecay arms",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -7328,7 +7328,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -33284,7 +33284,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 11,
-      "fn": 8,
+      "fn": 9,
       "re-export": 3
      }
     },
