@@ -41,6 +41,8 @@ struct Registry {
 pub(crate) struct HostLegalCaptures {
     registry: Mutex<Registry>,
     stopped: AtomicBool,
+    /// Live prospective-capture connections (FIX 13866).
+    pub(super) prospective: super::outbox::ProspectiveAttempts,
 }
 
 struct LiveOrder {
@@ -440,6 +442,7 @@ impl HostLegalCaptures {
 
     fn stop(&self) -> Result<()> {
         self.stopped.store(true, Ordering::Release);
+        self.prospective.cancel(None);
         let orders: Vec<_> = self
             .registry
             .lock()
