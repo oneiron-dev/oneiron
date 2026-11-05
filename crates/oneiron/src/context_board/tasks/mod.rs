@@ -8,6 +8,7 @@
 //! node-local `vault_meta` rows.
 
 mod authority_state;
+mod budget;
 mod projection;
 mod render;
 

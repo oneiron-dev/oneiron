@@ -21,6 +21,7 @@ pub(crate) use run_self::describe_self_for_run;
 mod scratchpad;
 mod session;
 mod standing;
+mod tasks_budget;
 mod turn_actions;
 
 pub(crate) use board::{
@@ -104,6 +105,15 @@ pub(crate) struct ContextBoardRequest {
     #[serde(default)]
     #[schema(example = 1200)]
     board_budget_tok: Option<usize>,
+    /// Optional concrete TASK-row token allotment for this explicit render,
+    /// like `board_budget_tok`: concrete rows including their `fits:` rows
+    /// and the overflow footer. Project/fanout lead rows ride outside it.
+    /// `Some(0)` is a literal zero for optional rows; the footer and any
+    /// hook pins may exceed it and are reported, never withheld. `None`
+    /// keeps the 100-row behavior. Never above the effective board cap.
+    #[serde(default)]
+    #[schema(example = 400)]
+    tasks_budget_tok: Option<usize>,
 }
 
 /// The assembled context for one turn.
@@ -477,6 +487,26 @@ pub(crate) async fn context_board_hydrate(
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
     )
     .await?;
+    // The SAME board budget request the final render reuses; a tasks-row
+    // slice above its effective cap is refused before any assembly runs.
+    let board_budget_request = oneiron::context_board::BoardBudgetRequest {
+        harness_default_tok: standing
+            .as_ref()
+            .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
+                prefix.other_context_tokens
+            }),
+        caller_limit_tok: req.board_budget_tok,
+        explicit_override_tok: None,
+    };
+    if let Some(tasks_budget) = req.tasks_budget_tok
+        && tasks_budget > oneiron::context_board::resolve_board_budget(board_budget_request).cap_tok
+    {
+        return Err(crate::error::ApiError::bad_request(
+            "tasks budget exceeds board cap",
+            Some("tasks_budget_tok"),
+        )
+        .into());
+    }
     let mut parts = board::board_parts(
         &server,
         &auth,
@@ -487,6 +517,7 @@ pub(crate) async fn context_board_hydrate(
         &observed_reads,
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &hook_pins,
+        req.tasks_budget_tok,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -520,18 +551,10 @@ pub(crate) async fn context_board_hydrate(
             you: parts.you.as_deref(),
             changes: Some(&changed_line),
         },
-        oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: standing
-                .as_ref()
-                .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
-                    prefix.other_context_tokens
-                }),
-            caller_limit_tok: req.board_budget_tok,
-            explicit_override_tok: None,
-        },
+        board_budget_request,
     )
     .map_err(board::board_frame_error)?;
-    let board_budget = ContextBoardRenderBudget::of(&board_render);
+    let board_budget = ContextBoardRenderBudget::of(&board_render, parts.tasks_budget.clone());
     // What a chat turn's context records keep of this render (FIX 6921).
     let chat_context =
         chat_emit::capture_chat_context(&auth, memories.as_ref(), &parts.authority, &board_render);

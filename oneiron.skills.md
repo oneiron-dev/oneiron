@@ -449,6 +449,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "assemble this turn's context"
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
+- TASKS row allotment: Optional `tasks_budget_tok` selects this hydration's concrete task rows by tokens instead of the default row cap. It cannot exceed the effective whole-board cap (`board_budget_tok` narrowed by the harness default). The allotment includes the selected rows, their `fits:` hints, and the overflow footer; project and fan-out lead rows remain outside it. Omitted task rows keep an exact count when the source was exhausted, otherwise a lower-bound footer. Zero requests no optional task rows. Hook-pinned tasks and the footer remain; `board_budget.tasks` reports the requested `budget_tok`, the post-pin, pre-shed row projection's `projected_tok`, and `exceeds_budget` when that projection exceeds the allotment. Omitting the field keeps the existing row cap. This is a per-request view, not a saved layout or fold setting; the global shed order still applies.
 
 #### core-conversations-list - `GET /v1/core/conversations`
 
