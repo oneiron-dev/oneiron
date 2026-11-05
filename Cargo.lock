@@ -8522,6 +8522,7 @@ dependencies = [
  "oneiron",
  "oneiron-remote",
  "oneiron-server",
+ "serde",
  "serde_json",
 ]
 
