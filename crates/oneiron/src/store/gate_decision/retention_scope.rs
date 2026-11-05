@@ -145,3 +145,14 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    /// Exact append-time scope bytes; absence is preserved, not reconstructed.
+    pub(crate) fn gate_clone_retention_scope_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision: GateDecisionId,
+    ) -> Result<Option<Vec<u8>>> {
+        DECISION_SCOPE.get_bytes(self, txn, &decision)
+    }
+}

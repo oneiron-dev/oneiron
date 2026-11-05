@@ -415,3 +415,25 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    /// Exact owned scrub rows. The decision is the trailing key component,
+    /// so filter inside the cursor walk rather than collecting the table.
+    pub(crate) fn for_each_gate_clone_scrub_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision: GateDecisionId,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        for row in PENDING_SCRUB.iter_raw_from(self, txn, &[])? {
+            let (key, raw) = row?;
+            if key.len() != 33 || key[0] > 1 {
+                return Err(Error::CorruptedIndex("gate decision pending scrub"));
+            }
+            if key[17..] == decision.as_bytes()[..] {
+                visit(&key, &raw)?;
+            }
+        }
+        Ok(())
+    }
+}
