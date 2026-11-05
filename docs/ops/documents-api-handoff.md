@@ -80,8 +80,9 @@ bodies, `set_story_runs` covers authored headers/footers only. Each change names
 explicit story scope and its story-local block id; a header's `p_1` never addresses
 the body's `p_1`. Header/footer runs land as one whole-paragraph tracked
 redline with exactly the requested six text marks, including empty mark sets and
-same-text edits. Absent marks are explicitly off on new runs; source deletion
-history and unrelated run properties remain intact. Ordinary `set_story_text`
+same-text edits. Absent marks are explicitly off on new runs, including the
+complex-script bold/italic slots; script selectors, source deletion history and
+unrelated run properties remain intact. Ordinary `set_story_text`
 keeps native formatting inheritance. This is not the body's granular formatting
 pass. Notes take plain text at
 native granularity (surviving marks on unchanged words only); marked runs on a note

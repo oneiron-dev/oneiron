@@ -220,6 +220,18 @@ fn set_exact_replacement_marks(para: &mut ParagraphNode, content: &ParagraphCont
             node.rpr_authored.bold_off = !target.bold;
             node.rpr_authored.italic = true;
             node.rpr_authored.italic_off = !target.italic;
+            node.rpr_authored.bold_cs = true;
+            node.rpr_authored.italic_cs = true;
+            node.style_props.bold_cs = if target.bold {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+            node.style_props.italic_cs = if target.italic {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
             node.rpr_authored.underline = true;
             node.rpr_authored.underline_off = !target.underline;
             node.rpr_authored.vert_align = true;
