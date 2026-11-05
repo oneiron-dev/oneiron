@@ -66,6 +66,12 @@ input, sandbox, hooks, return contract, carrier and generator census stay
 unchanged. Other opaque output types keep the existing encoding fallback;
 this change does not add record or container conversions.
 
+`vault.kv.get`, `vault.kv.search` and `vault.kv.put` use owned keyed-memory
+result lifts. Each item's required value moves into `WireJson`; a null value
+stays present as JSON `null`. Namespace segments, keys, revisions, unsigned
+second timestamps and put-receipt metadata retain their existing types and
+values. Optional lookup absence and search order remain unchanged.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions
