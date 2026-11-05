@@ -422,7 +422,13 @@ pub(super) fn compact_window_with(
         tracing::error!("sweep: shallow cut not rooted at the window's tip — deferred");
         return Ok(CompactOutcome::UnprovedDefer);
     }
-    let (shallow, vv) = (cut.bytes, cut.version.encode());
+    // Its pads rest by reference where custody here holds them (FIX 10527),
+    // as every persisted snapshot's do: a row kept raw in the rows it was
+    // rebuilt from does not outlive this cut so. A fault keeps the cut's
+    // bytes, warned.
+    let shallow =
+        crate::sync::window::persisted_window_pads(vault, key, &cut.bytes, None).into_owned();
+    let vv = cut.version.encode();
 
     let merged_keys: BTreeSet<Vec<u8>> = update_rows
         .iter()
@@ -503,7 +509,14 @@ pub(super) fn compact_window_with(
             wtxn,
             &crate::store::legal_hold::HoldActor::TIMER,
         ) {
-            held.set(super::holds::refused_by_hold(&refused));
+            let missing_hold = matches!(&refused, Error::CorruptedIndex("legal hold target"));
+            if missing_hold {
+                tracing::warn!(
+                    error = %refused,
+                    "sweep: indexed legal hold row missing — compaction deferred"
+                );
+            }
+            held.set(super::holds::refused_by_hold(&refused) || missing_hold);
             return Err(refused);
         }
 

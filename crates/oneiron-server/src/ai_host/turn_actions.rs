@@ -170,6 +170,8 @@ async fn act(
     let place = blocking(|| vault.turn_room_work(action.assistant_turn))
         .map_err(|error| error.to_string())?;
     let (room, branch) = place.map_or((action.conversation, None), |work| (work.room, work.branch));
+    let model_call_no_record_at_arrival =
+        crate::api::ai::chat::model_call_keeps_no_record(vault, actor, None, Some(room), None);
     let funding = blocking(|| room_launch_funding(vault, room, branch, context.agent, actor))
         .map_err(|fault| fault.to_string())?;
     let seat = ai
@@ -235,10 +237,11 @@ async fn act(
         messages.push(text_message(role, line.text));
     }
     // FIX 6920: the board the action reads, hydrated once, as its
-    // requester's kept slip reads now. It rides as one request-only User
-    // right before the user turn the reply answers, so a Continue's saved
-    // reply and its suffix stay after it; the witness and the log never
-    // hold it.
+    // requester's kept slip reads now. It rides in two parts (I1 = C, FIX
+    // 14677): its state part as one request-only User right before the user
+    // turn the reply answers, its query part and the opener as one right
+    // after it, so a Continue's saved reply and its suffix stay after both;
+    // the witness and the log never hold it.
     let board = match server.and_then(Weak::upgrade) {
         Some(server) => {
             action_board(
@@ -253,7 +256,6 @@ async fn act(
         }
         None => None,
     };
-    let answers = messages.len();
     messages.push(text_message(LlmMessageRole::User, context.user_text));
     // FIX 6676: the craft joins once the restored history and the user's
     // turn are in, where the session layout places it, and before any saved
@@ -262,18 +264,23 @@ async fn act(
     if let Some(craft) = shown {
         place_craft(&mut messages, lead, craft, layout);
     }
+    let answers = messages.len() - 1;
     if action.action == TurnAction::Continue && !context.saved.is_empty() {
         today_sources.add(Some(&[action.assistant_turn, action.message]));
     }
     let text = ActionText {
         saved: context.saved,
         answers,
+        opener: crate::api::ai::chat::turn_opener(settings.turn_opener, vault),
     };
     let (admitted, board_context, board_rows) =
         admit_action(vault, ai, &seat, &action, text, messages, board)?;
     if let Some(rows) = &board_rows {
         today_sources.add(Some(rows));
     }
+    // The requester's board rode today's call, so the conversation's next
+    // turn reads one too: a published successor gets its tail prepared.
+    let board_rode = board_rows.is_some();
     let today_sources = today_sources.rows();
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
@@ -356,6 +363,9 @@ async fn act(
             payer: WriteActor::new(actor, class),
             funding,
             budget_units: settings.turn_budget_units,
+            model_call_caller: actor,
+            model_call_room: Some(room),
+            model_call_no_record_at_arrival,
             credential: TurnCredential::Action {
                 action: Box::new(action),
                 vault: Arc::clone(vault),
@@ -391,7 +401,10 @@ async fn act(
         None => answering,
     };
     let answering = match action_session {
-        Some(session) => session.commit_on_answer(answering),
+        Some(session) => session.commit_on_answer(
+            answering,
+            server.filter(|_| board_rode).and_then(Weak::upgrade),
+        ),
         None => answering,
     };
     drop(answering.subscription);

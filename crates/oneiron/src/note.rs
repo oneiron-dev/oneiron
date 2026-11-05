@@ -11,6 +11,7 @@ pub use crate::store::note_body::{
 pub(crate) use crate::store::note_body::{decode_note_body_using, validate_markdown};
 
 mod reads;
+pub(crate) use reads::PreparedNoteRead;
 pub use reads::{
     NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
     NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
@@ -311,11 +312,13 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
 pub(crate) use document_store::{
     DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
 };
+pub(crate) use saved::PreparedSavedNote;
 mod files;
 pub use files::{
     DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts,

@@ -29,7 +29,7 @@ use crate::task_type::{
 use crate::temporal::TimeRange;
 
 use self::validation::validate_tree;
-use super::team_shape::team_shape_skill;
+use super::team_shape::team_shape_root_in_txn;
 use super::widen_record::invalid;
 
 mod validation;
@@ -63,7 +63,19 @@ fn tree_in_force_in_txn(
     project: Option<EntityId>,
     reads: &mut Reads,
 ) -> Result<TaskTypeTree> {
-    let vault_skill = team_shape_skill()?;
+    let vault_skill = team_shape_root_in_txn(vault, txn)?;
+    tree_in_force_with_root_in_txn(vault, txn, project, vault_skill, reads)
+}
+
+/// The same tree selection over an already resolved team-shape root, so the
+/// sourced load reuses the exact algorithm once without a second lookup.
+fn tree_in_force_with_root_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    vault_skill: EntityId,
+    reads: &mut Reads,
+) -> Result<TaskTypeTree> {
     if project.is_some() {
         // A project's visibility folds rows this module cannot name.
         reads.unknown();
@@ -80,6 +92,22 @@ fn tree_in_force_in_txn(
         }
         None => TaskTypeTree::seeded(),
     })
+}
+
+/// [`load_team_type_tree_in_txn`] with the actual default-hub alias and pin
+/// the initial root selection consulted in `txn`: `Some` even when no
+/// installed holder matched that alias, `None` only when no lookup
+/// occurred. The tree is the same selection from the same resolved root
+/// once; the lookup is audit metadata only, never a complete
+/// entity-source set, a read grant, or the donor tree's source.
+pub(crate) fn load_team_type_tree_sourced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+) -> Result<(TaskTypeTree, Option<crate::skill_hub::HubRef>)> {
+    let (vault_skill, lookup) = super::team_shape::team_shape_root_sourced_in_txn(vault, txn)?;
+    let tree = tree_in_force_with_root_in_txn(vault, txn, project, vault_skill, &mut Reads::Off)?;
+    Ok((tree, lookup))
 }
 
 /// The vault's task-type tree in force as one read loaded it (FIX 7103):
@@ -197,7 +225,7 @@ pub(crate) fn load_team_type_tree_at_in_txn(
     if in_force.version == version {
         return Ok(Some(in_force));
     }
-    for skill in kept_revisions_in_txn(vault, txn, project, team_shape_skill()?)? {
+    for skill in kept_revisions_in_txn(vault, txn, project, team_shape_root_in_txn(vault, txn)?)? {
         if vault.get_skill_record_in_txn(txn, &skill)?.is_some()
             && let Some(tree) = stored_tree_unchecked_in_txn(vault, txn, &skill, &mut Reads::Off)?
             && tree.version == version
@@ -294,6 +322,16 @@ pub(crate) fn team_shape_skill_in_force_in_txn(
     head_in_force_in_txn(vault, txn, project, &mut Reads::Off)
 }
 
+/// The loadable head of any skill root, using the same native succession
+/// walk as the team-shape tree in the caller's snapshot.
+pub(super) fn skill_head_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+) -> Result<Option<EntityId>> {
+    vault_head_in_txn(vault, txn, root, &mut Reads::Off)
+}
+
 /// [`team_shape_skill_in_force_in_txn`], noting the rows it reads in
 /// `reads`.
 fn head_in_force_in_txn(
@@ -302,7 +340,7 @@ fn head_in_force_in_txn(
     project: Option<EntityId>,
     reads: &mut Reads,
 ) -> Result<Option<EntityId>> {
-    let vault_skill = team_shape_skill()?;
+    let vault_skill = team_shape_root_in_txn(vault, txn)?;
     if project.is_some() {
         // A project's visibility folds rows this module cannot name.
         reads.unknown();
@@ -370,7 +408,7 @@ pub fn store_team_type_tree(
         if record.lifecycle_status != SkillLifecycle::Candidate {
             return Err(invalid("a stored type tree goes into an open fork"));
         }
-        let vault_skill = team_shape_skill()?;
+        let vault_skill = team_shape_root_in_txn(vault, txn)?;
         if !in_lineage_in_txn(vault, txn, fork, vault_skill)? {
             return Err(invalid("fork is not in the team-shape skill's lineage"));
         }

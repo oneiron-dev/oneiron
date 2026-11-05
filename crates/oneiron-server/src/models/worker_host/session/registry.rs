@@ -63,6 +63,8 @@ pub(super) struct Ops {
     /// `session.export` and `session.import`, in the snapshot format this
     /// side speaks.
     pub(super) snapshot: bool,
+    /// `session.prepare` (I1 = C).
+    pub(super) prepare: bool,
 }
 
 /// One worker incarnation's sessions.
@@ -594,6 +596,20 @@ impl HostReservation {
             extra.bytes = 0;
         }
         Some(())
+    }
+
+    /// Releases credit no longer needed by the remaining allocation phase.
+    pub(super) fn release_excess(&mut self, keep: u64) {
+        let excess = self.bytes.saturating_sub(keep);
+        if excess == 0 {
+            return;
+        }
+        let mut reserved = copies()
+            .reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(excess);
+        self.bytes -= excess;
     }
 
     /// Registers a covered copy without charging its reserved bytes twice.

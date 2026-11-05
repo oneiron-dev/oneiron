@@ -80,6 +80,25 @@ pub(super) fn drain_one(
     }
 }
 
+/// A retained run's intent, under the current binding and hook switch on
+/// every attempt, as the startup drain judges pending work.
+pub(super) fn drain_one_current(
+    vault: &Vault,
+    key: &RunKey,
+    report: &mut HookPassReport,
+) -> Result<()> {
+    let intent = {
+        let rtxn = vault.store.env.read_txn()?;
+        INTENTS.get(&vault.store, &rtxn, key)?
+    };
+    if let Some(intent) = intent.filter(|intent| intent.state == HookIntentState::Pending) {
+        let bindings = vault.pack_hook_bindings()?;
+        let enabled = vault.hooks_enabled()?;
+        apply_intent(vault, &bindings, enabled, key, intent, report)?;
+    }
+    Ok(())
+}
+
 fn apply_intent(
     vault: &Vault,
     bindings: &[(EntityId, PackHookBinding)],
@@ -285,7 +304,7 @@ fn land(
     input: &ClaimInput,
 ) -> std::result::Result<Landed, String> {
     memory
-        .claim_propose(input)
+        .claim_propose_for_hook_replay(input)
         .map(|receipt| Landed {
             row: Some(*id.as_bytes()),
             reference: receipt.receipt_ref,
