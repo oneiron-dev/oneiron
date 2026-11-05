@@ -169,6 +169,7 @@ impl BatchBuilder<'_> {
                 self.origin,
                 authority_beside,
                 own_device,
+                Some(NativePublicationContext { vault, actor: None }),
             )?;
         }
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;

@@ -18,6 +18,8 @@ mod lift;
 mod message_parts;
 mod message_stream;
 mod metadata;
+#[cfg(feature = "sync")]
+mod native_skill_state;
 pub mod office;
 mod pins;
 mod promotion_evidence;
@@ -73,6 +75,8 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+#[cfg(feature = "sync")]
+pub(crate) use native_skill_state::SkillStateSnapshot;
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;

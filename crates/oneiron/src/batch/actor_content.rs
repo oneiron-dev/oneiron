@@ -224,7 +224,7 @@ pub(crate) fn apply_actor_ops(
         ));
     }
     let effects = ContentWriteSet::before(vault, txn, actor, &ops)?;
-    apply_ops_with_origin(
+    apply_ops_with_authority_beside(
         &vault.store,
         &vault.config,
         &vault.analyzer,
@@ -233,6 +233,12 @@ pub(crate) fn apply_actor_ops(
         text_index_trusted,
         gate_mode,
         origin,
+        None,
+        None,
+        Some(NativePublicationContext {
+            vault,
+            actor: Some(*actor),
+        }),
     )?;
     if let Some(effects) = effects {
         effects.after(vault, txn, actor)?;
