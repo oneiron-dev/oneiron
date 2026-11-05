@@ -207,7 +207,12 @@ impl SessionBinding<'_> {
                         }
                         RoutedDbs::Session(_) => {
                             stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
-                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)
+                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, record)?;
+                            super::overlay_erase::fence_overlay_replay_in_txn(
+                                &write,
+                                wtxn,
+                                record.run_id,
+                            )
                         }
                     }
                 })

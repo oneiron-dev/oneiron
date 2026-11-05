@@ -5,6 +5,7 @@ mod continuation;
 mod folds;
 mod lift;
 mod model_seat;
+mod overlay_erase;
 mod program_resume;
 mod read_worlds;
 mod reader_folds;
@@ -31,6 +32,7 @@ pub(crate) use self::continuation::{
     StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
     seed_continuation_run,
 };
+pub(crate) use self::overlay_erase::erase_gone_actors_in_live_overlays;
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
