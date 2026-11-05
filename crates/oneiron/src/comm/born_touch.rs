@@ -130,8 +130,7 @@ impl DeferredBornTouches {
                 continue;
             }
             let body = crate::claim::decode_claim_body(&row.body, false)?;
-            let claim = CommClaim::from_claim_body(&body)
-                .map_err(super::generic_put_routing::source_event_error)?;
+            let claim = CommClaim::from_claim_body(&body)?;
             let (id, source_position) =
                 touch_event_binding(touch.id, &row.encode(), &touch.birth, &body, &claim.value)
                     .map_err(super::generic_put_routing::source_event_error)?;
