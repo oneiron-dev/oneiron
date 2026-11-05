@@ -64,7 +64,7 @@ impl RecordingJsHost<'_, '_> {
             Ok(Some(output)) => self.captured.push(output),
             Ok(None) => {}
             Err(error) => {
-                tracing::warn!(run = %self.run_id, seq, error = %error,
+                tracing::warn!(run = %self.run_id.to_hex(), seq, error = %error,
                     "accepted task refusal output is unavailable");
             }
         }
