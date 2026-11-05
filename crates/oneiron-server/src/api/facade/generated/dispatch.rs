@@ -16957,6 +16957,46 @@ async fn vault_consent_create_auto_weave_grant(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_create_nightly_link_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.create_nightly_link_grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.create_nightly_link_grant", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consent.create_nightly_link_grant",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_consent_create_nightly_link_grant(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_registry(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40180,6 +40220,9 @@ async fn call_verb_row(
         }
         "vault.consent.create_auto_weave_grant" => {
             Box::pin(vault_consent_create_auto_weave_grant(server, call, input)).await
+        }
+        "vault.consent.create_nightly_link_grant" => {
+            Box::pin(vault_consent_create_nightly_link_grant(server, call, input)).await
         }
         "vault.consent.registry" => Box::pin(vault_consent_registry(server, call, input)).await,
         "vault.consent.failure_signals_held" => {

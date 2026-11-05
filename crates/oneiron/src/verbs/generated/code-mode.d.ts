@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1279 code-mode rows (1239 host rows, 40 run rows), 4529 declarations.
-// Replies: 1094 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1280 code-mode rows (1240 host rows, 40 run rows), 4530 declarations.
+// Replies: 1095 fully typed, 184 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -2093,6 +2093,7 @@ declare namespace Sdk {
   type CreateStandingGrantRequest = { bound: StandingGrantBound };
   type AutoWeaveWriterClass = "agent" | "system";
   type AutoWeaveGrantRequest = { writer: string; writer_class: AutoWeaveWriterClass; scope: string; scope_id: string };
+  type NightlyLinkGrantRequest = Record<string, never>;
   type ConsentRegistryQuery = { limit: number; include_revoked?: boolean };
   type ConsentDomain = "disclosure" | "action";
   type ConsentGrantStatus = "active" | "revoked";
@@ -5868,6 +5869,8 @@ declare const vault: Sdk.VaultHost & {
     create_auto_weave_grant(input: Sdk.AutoWeaveGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class. */
     create_bypass_grant(input: Sdk.CreateBypassGrantRequest): Promise<Sdk.ConsentActReceipt[] | StoredResult>;
+    /** The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default. */
+    create_nightly_link_grant(input: Sdk.NightlyLinkGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
     create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */

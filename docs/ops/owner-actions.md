@@ -929,6 +929,29 @@ The step reports that remainder as `deferred` and does not wait for it. A lane j
 wake already holds queued (one Coach host job per kind, one curator slot, one remainder) stays
 under that wake's root, not this one.
 
+## Let the Dreamer apply its nightly identity links
+
+Nightly continuations propose `SameAs` links. They apply those links only under the owner's
+standing action grant for this vault's Dreamer; without one, each link remains proposed.
+To mint that existing grant through the SDK, MCP or HTTP facade:
+
+```sh
+oneiron api call vault.consent.create_nightly_link_grant --data '{}'
+```
+
+Over HTTP, call `POST /v1/core/facade/vault.consent.create_nightly_link_grant` with `{}` and
+an owner credential. Over MCP, pass `{"spec": {}}`. The vault resolves its own Dreamer System
+principal and mints exactly `dreamer.nightly_link.apply` on `dreamer:nightly-links`, without a
+project target or budget. No actor id or class comes from the request, and no grant is minted
+by default. The generic standing-action request's project/audience envelope does not express
+this bound.
+
+The answer is the normal consent receipt, including `grant_ref`. It appears in
+`vault.consent.registry`; withdraw it with `vault.consent.revoke`, passing
+`{"grant": "<grant_ref>"}`. The landing transaction still checks that the grant is active and
+its issuer is a live vault owner. Minting it changes no reader scope, trust, model policy or
+other Dreamer setting, and does not start a night step.
+
 ## Revert anything the Dreamer changed
 
 The Dreamer applies its own work at once and keeps what it replaced as history. You take any one
