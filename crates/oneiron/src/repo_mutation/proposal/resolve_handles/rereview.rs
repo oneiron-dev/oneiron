@@ -33,7 +33,74 @@ impl Vault {
         mut request: RepoMutationRequest,
         catalog: LensCatalog,
     ) -> Result<RepoProposal> {
-        let source = self.repo_proposal(original)?.ok_or(Error::EntityNotFound)?;
+        let prepared = RereviewPrepared::new(self, original, &mut request)?;
+        let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
+            request,
+            RepoProposalReview::Explicit(catalog),
+            ProposalBase::CurrentCheckout,
+            None,
+            None,
+            |txn| {
+                prepared.revalidate(self, txn)?;
+                Ok(Ok(()))
+            },
+        )?;
+        Ok(proposed.unwrap_or_else(|never| match never {}))
+    }
+
+    pub(crate) fn propose_repo_rereview_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repository: EntityId,
+        original: EntityId,
+        mut request: RepoMutationRequest,
+        review: RepoProposalReview,
+    ) -> Result<RepoProposal> {
+        let prepared = RereviewPrepared::new(self, original, &mut request)?;
+        let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
+            owner,
+            repository,
+            request,
+            review,
+            |txn| {
+                prepared.revalidate(self, txn)?;
+                Ok(Ok(()))
+            },
+        )?;
+        Ok(proposed.unwrap_or_else(|never| match never {}))
+    }
+
+    pub(crate) fn propose_repo_rereview_for_run<R>(
+        &self,
+        original: EntityId,
+        mut request: RepoMutationRequest,
+        review: RepoProposalReview,
+        base: crate::repo_mutation::snapshot::RepoPinnedBase,
+        stamp: crate::memory::repo_doors::RepoRunStamp,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<RepoProposal, R>> {
+        let prepared = RereviewPrepared::new(self, original, &mut request)?;
+        self.propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
+            if let Err(refused) = check(txn)? {
+                return Ok(Err(refused));
+            }
+            prepared.revalidate(self, txn)?;
+            Ok(Ok(()))
+        })
+    }
+}
+
+struct RereviewPrepared {
+    original: EntityId,
+    values: BoundValues,
+    expected_source: Zeroizing<Vec<u8>>,
+}
+
+impl RereviewPrepared {
+    fn new(vault: &Vault, original: EntityId, request: &mut RepoMutationRequest) -> Result<Self> {
+        let source = vault
+            .repo_proposal(original)?
+            .ok_or(Error::EntityNotFound)?;
         if source.status != RepoProposalStatus::Approved
             || source.operation_seq.is_some()
             || source.merge_stack.is_some()
@@ -50,11 +117,35 @@ impl Vault {
             return Err(invalid("re-review names another repository"));
         }
         let (path, content) = source.ordinary_file()?;
+        match (&source.operation, &request.operation) {
+            (
+                RepoProposalOperation::CommitFile,
+                RepoMutationOperation::CommitFile { path: target, .. },
+            ) if target.as_str() == path => (),
+            (
+                RepoProposalOperation::ResolveConflictFile {
+                    branch_subject: old_subject,
+                    open_conflict_claim_id: old_conflict,
+                    branch_name: old_branch,
+                },
+                RepoMutationOperation::ResolveConflictFile {
+                    branch_subject,
+                    open_conflict_claim_id,
+                    branch_name,
+                    path: target,
+                    ..
+                },
+            ) if target.as_str() == path
+                && *branch_subject == *old_subject
+                && *open_conflict_claim_id == *old_conflict
+                && branch_name.as_str() == old_branch.as_str() => {}
+            _ => return Err(invalid("re-review names another operation target")),
+        }
         let spans = handle_spans(content);
         if spans.is_empty() {
             return Err(invalid("re-review source carries no secret handles"));
         }
-        let values = BoundValues(spans_values(self, &spans)?);
+        let values = BoundValues(spans_values(vault, &spans)?);
         let ranges = resolved_span_ranges(&spans, &values.0)?;
         let resolved_len = ranges
             .last()
@@ -70,69 +161,41 @@ impl Vault {
         std::str::from_utf8(&resolved)
             .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))?;
         let projected = redacted_candidate(&resolved, &values)?;
-        match (&source.operation, &mut request.operation) {
-            (
-                RepoProposalOperation::CommitFile,
-                RepoMutationOperation::CommitFile {
-                    path: target,
-                    content,
-                    ..
-                },
-            ) if target.as_str() == path => *content = projected,
-            (
-                RepoProposalOperation::ResolveConflictFile {
-                    branch_subject: old_subject,
-                    open_conflict_claim_id: old_conflict,
-                    branch_name: old_branch,
-                },
-                RepoMutationOperation::ResolveConflictFile {
-                    branch_subject,
-                    open_conflict_claim_id,
-                    branch_name,
-                    path: target,
-                    content,
-                    ..
-                },
-            ) if target.as_str() == path
-                && *branch_subject == *old_subject
-                && *open_conflict_claim_id == *old_conflict
-                && branch_name.as_str() == old_branch.as_str() =>
-            {
-                *content = projected
-            }
+        match &mut request.operation {
+            RepoMutationOperation::CommitFile { content, .. }
+            | RepoMutationOperation::ResolveConflictFile { content, .. } => *content = projected,
             _ => return Err(invalid("re-review names another operation target")),
         }
         let expected_source = Zeroizing::new(PROPOSAL.encode_value(&source)?);
-        let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
-            request,
-            RepoProposalReview::Explicit(catalog),
-            ProposalBase::CurrentCheckout,
-            None,
-            None,
-            |txn| {
-                let current = PROPOSAL.get(&self.store, txn, &original)?
-                    .ok_or(Error::EntityNotFound)?;
-                let current_bytes = Zeroizing::new(PROPOSAL.encode_value(&current)?);
-                if *current_bytes != *expected_source {
-                    return Err(invalid("re-review source changed; submit a fresh proposal"));
-                }
-                for (text, value, custody, _) in &values.0 {
-                    let (_, id) = crate::secret_custody::handle_record_in_txn(
-                        &self.store, txn, text,
-                    )?;
-                    let live = Zeroizing::new(self
-                        .get_secret_value_in_txn(txn, &id, REPO_LANDING_EFFECTOR)?
-                        .ok_or(Error::EntityNotFound)?);
-                    if id != *custody || live.as_slice() != value.as_slice() {
-                        return Err(invalid(
-                            "a handle's binding changed while resolving handles; submit a fresh proposal",
-                        ));
-                    }
-                }
-                Ok(Ok(()))
-            },
-        )?;
-        Ok(proposed.unwrap_or_else(|never| match never {}))
+        Ok(Self {
+            original,
+            values,
+            expected_source,
+        })
+    }
+
+    fn revalidate(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let current = PROPOSAL
+            .get(&vault.store, txn, &self.original)?
+            .ok_or(Error::EntityNotFound)?;
+        let current_bytes = Zeroizing::new(PROPOSAL.encode_value(&current)?);
+        if *current_bytes != *self.expected_source {
+            return Err(invalid("re-review source changed; submit a fresh proposal"));
+        }
+        for (text, value, custody, _) in &self.values.0 {
+            let (_, id) = crate::secret_custody::handle_record_in_txn(&vault.store, txn, text)?;
+            let live = Zeroizing::new(
+                vault
+                    .get_secret_value_in_txn(txn, &id, REPO_LANDING_EFFECTOR)?
+                    .ok_or(Error::EntityNotFound)?,
+            );
+            if id != *custody || live.as_slice() != value.as_slice() {
+                return Err(invalid(
+                    "a handle's binding changed while resolving handles; submit a fresh proposal",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
