@@ -73,6 +73,7 @@ pub mod logging;
 #[cfg(target_os = "macos")]
 mod mac_worker_bootstrap;
 mod machine;
+mod mail_host;
 pub mod managed;
 mod managed_owner_check;
 pub mod mcp;
