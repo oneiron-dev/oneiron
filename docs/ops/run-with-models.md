@@ -34,6 +34,15 @@ file or the live setup runtime refuses the request. Invalid answers use the norm
 error response. The existing `GET` and `POST /v1/owner/settings/models` Responses `store`
 switch is separate and unchanged.
 
+An embedded binding that uses `embedded_serve_config` retains its explicit
+vault path and optional dimensions for first-run model setup on the open
+vault. Setup replays those inputs over the file and environment; dimensions
+not supplied by the binding still come from those layers, so a later sizing
+change is still detected. A caller that constructs `ServeConfig` directly can
+state the same inputs in `embedded_holder_overrides`; leaving it unset keeps
+that caller's existing setup behavior. Managed argv/settings-only holders
+still have no config rewrite target, and setup writes no managed settings file.
+
 ## 2. Point a seat at a model
 
 Each provider is one entry of data. Pick any of the three levels below. HIGH
