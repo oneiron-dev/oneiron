@@ -568,6 +568,8 @@ impl EgressRelay for OpenEgressProxy {
     /// a name of the allowlist admits is read first for a QUIC Initial's
     /// name (FIX 8991). One its flow holds fails with `EAGAIN` at once: it
     /// is no refusal, no request is receipted and the guest gets no reply.
+    /// The reply from such an address teaches the gate the server's QUIC
+    /// connection IDs.
     fn datagram(&self, target: SocketAddr, bytes: &[u8]) -> io::Result<Vec<u8>> {
         if target.port() == 53 {
             return dns::answer(self, bytes);
@@ -595,7 +597,11 @@ impl EgressRelay for OpenEgressProxy {
                 quic::Gated::Release(release) => Some(release),
             },
         };
-        self.relay_datagrams(target, &url, bytes, release)
+        let reply = self.relay_datagrams(target, &url, bytes, release)?;
+        if authority == RawAuthority::Named {
+            quic::observe_reply(self, target, &reply);
+        }
+        Ok(reply)
     }
     fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse> {
         if let Some(answer) = fixture::fetch(self, &request) {

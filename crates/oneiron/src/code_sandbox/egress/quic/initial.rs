@@ -6,7 +6,8 @@
 //! header, a Retry, a Version Negotiation packet or a version it does not
 //! know. What follows has no boundary the gate can read, so it is opaque.
 //! The fixed bit is not checked: a server that greases it (RFC 9287) still
-//! reads the packet.
+//! reads the packet. The same walk reads the plaintext headers of a
+//! server's reply, unopened, for the connection IDs it carries.
 
 /// The QUIC versions whose Initials the gate opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,39 +43,51 @@ impl Version {
 
 /// A long-header packet type.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum PacketType {
+pub(super) enum PacketType {
     Initial,
     ZeroRtt,
     Handshake,
     Retry,
 }
 
-/// One Initial packet of a datagram, bounded by its Length field.
-pub(super) struct InitialPacket<'a> {
+/// One long-header packet of a datagram, bounded by its Length field.
+pub(super) struct LongPacket<'a> {
     pub(super) version: Version,
-    /// The Destination Connection ID its keys derive from.
+    pub(super) packet_type: PacketType,
+    /// Its Destination Connection ID.
     pub(super) dcid: &'a [u8],
+    /// Its Source Connection ID.
+    pub(super) scid: &'a [u8],
     /// The packet, from its first byte to the end its Length sets.
     pub(super) bytes: &'a [u8],
     /// Where its protected packet number starts in `bytes`.
     pub(super) number_at: usize,
 }
 
-/// The Initial packets `datagram` carries, in order.
-pub(super) fn initials(datagram: &[u8]) -> Vec<InitialPacket<'_>> {
-    let mut initials = Vec::new();
+/// The long-header packets `datagram` carries, in order, up to where the
+/// walk stops.
+pub(super) fn long_packets(datagram: &[u8]) -> Vec<LongPacket<'_>> {
+    let mut packets = Vec::new();
     let mut rest = datagram;
-    while let Some((initial, end)) = long_packet(rest) {
-        initials.extend(initial);
-        rest = &rest[end..];
+    while let Some(packet) = long_packet(rest) {
+        rest = &rest[packet.bytes.len()..];
+        packets.push(packet);
     }
-    initials
+    packets
 }
 
-/// The long-header packet `bytes` starts with and where it ends, when its
-/// type carries a Length; the packet itself only for an Initial. None
-/// where the walk stops, or for a packet its own Length does not fit.
-fn long_packet(bytes: &[u8]) -> Option<(Option<InitialPacket<'_>>, usize)> {
+/// The Initial packets `datagram` carries, in order.
+pub(super) fn initials(datagram: &[u8]) -> Vec<LongPacket<'_>> {
+    long_packets(datagram)
+        .into_iter()
+        .filter(|packet| packet.packet_type == PacketType::Initial)
+        .collect()
+}
+
+/// The long-header packet `bytes` starts with, when its type carries a
+/// Length. None where the walk stops, or for a packet its own Length does
+/// not fit.
+fn long_packet(bytes: &[u8]) -> Option<LongPacket<'_>> {
     let mut reader = Reader::new(bytes);
     let first = reader.u8()?;
     if first & 0x80 == 0 {
@@ -86,7 +99,7 @@ fn long_packet(bytes: &[u8]) -> Option<(Option<InitialPacket<'_>>, usize)> {
         return None;
     }
     let dcid = reader.connection_id()?;
-    reader.connection_id()?;
+    let scid = reader.connection_id()?;
     if packet_type == PacketType::Initial {
         let token = reader.varint()?;
         reader.take(usize::try_from(token).ok()?)?;
@@ -94,14 +107,14 @@ fn long_packet(bytes: &[u8]) -> Option<(Option<InitialPacket<'_>>, usize)> {
     let length = usize::try_from(reader.varint()?).ok()?;
     let number_at = reader.at;
     let end = number_at.checked_add(length)?;
-    let packet = bytes.get(..end)?;
-    let initial = (packet_type == PacketType::Initial).then_some(InitialPacket {
+    Some(LongPacket {
         version,
+        packet_type,
         dcid,
-        bytes: packet,
+        scid,
+        bytes: bytes.get(..end)?,
         number_at,
-    });
-    Some((initial, end))
+    })
 }
 
 // The frame types an Initial may carry that the gate reads (RFC 9000 12.4,

@@ -1,12 +1,12 @@
 //! The client Initial keys of a QUIC connection, and the opening of one
 //! Initial packet with them (FIX 8991): RFC 9001 5, RFC 9369 3.3.
 //!
-//! The keys derive from the packet's own Destination Connection ID, as a
-//! server derives a new connection's keys from its first Initial. HMAC and
-//! HKDF are written here on SHA-256: the engine has no HMAC or HKDF crate
-//! of its own.
+//! The keys derive from the Destination Connection ID of the connection's
+//! first Initial, its key epoch (RFC 9001 5.2): the client keeps them when
+//! it sends its later Initials to the ID the server chose. HMAC and HKDF are
+//! written here on SHA-256: the engine has no HMAC or HKDF crate of its own.
 
-use super::initial::{InitialPacket, Version};
+use super::initial::{LongPacket, Version};
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::aes::cipher::BlockEncrypt;
 use aes_gcm::aes::{Aes128, Block};
@@ -46,8 +46,7 @@ const VERSION_2: InitialSuite = InitialSuite {
 /// The label prefix of HKDF-Expand-Label (RFC 8446 7.1).
 const TLS13: &[u8] = b"tls13 ";
 
-/// An Initial packet opened under the keys of its own Destination
-/// Connection ID.
+/// An Initial packet opened under its connection's client keys.
 pub(super) struct OpenedInitial {
     /// Its full packet number.
     pub(super) number: u64,
@@ -55,13 +54,17 @@ pub(super) struct OpenedInitial {
     pub(super) payload: Vec<u8>,
 }
 
-/// Opens `packet` under the client keys its own Destination Connection ID
-/// derives (RFC 9001 5.3, 5.4). Its packet number is rebuilt as a server
-/// with no state for the connection rebuilds it, and against `largest`,
-/// the largest number of the connection the gate opened before. None when
-/// it authenticates neither way.
-pub(super) fn open(packet: &InitialPacket<'_>, largest: Option<u64>) -> Option<OpenedInitial> {
-    let keys = ClientKeys::derive(packet.version, packet.dcid);
+/// Opens `packet`, an Initial, under the client keys `epoch` derives: the
+/// Destination Connection ID of its connection's first Initial (RFC 9001
+/// 5.3, 5.4). Its packet number is rebuilt against `largest`, the largest
+/// number of the connection the gate opened, or from 0 for a connection
+/// the gate has no flow for. None when it does not authenticate.
+pub(super) fn open(
+    packet: &LongPacket<'_>,
+    epoch: &[u8],
+    largest: Option<u64>,
+) -> Option<OpenedInitial> {
+    let keys = ClientKeys::derive(packet.version, epoch);
     let at = packet.number_at;
     // The sample starts four bytes past the packet number's start,
     // whatever its length, and lies inside this packet.
@@ -76,24 +79,15 @@ pub(super) fn open(packet: &InitialPacket<'_>, largest: Option<u64>) -> Option<O
         *byte ^= unmask;
         truncated = (truncated << 8) | u64::from(*byte);
     }
-    let bits = 8 * length as u32;
-    let ciphertext = &packet.bytes[at + length..];
-    let cipher = Aes128Gcm::new(&keys.key.into());
-    let stateless = rebuild(None, truncated, bits);
-    let known = largest
-        .map(|largest| rebuild(Some(largest), truncated, bits))
-        .filter(|number| *number != stateless);
-    [Some(stateless), known]
-        .into_iter()
-        .flatten()
-        .find_map(|number| {
-            let payload = Payload {
-                msg: ciphertext,
-                aad: &header,
-            };
-            let payload = cipher.decrypt(&keys.nonce(number).into(), payload).ok()?;
-            Some(OpenedInitial { number, payload })
-        })
+    let number = rebuild(largest, truncated, 8 * length as u32);
+    let payload = Payload {
+        msg: &packet.bytes[at + length..],
+        aad: &header,
+    };
+    let payload = Aes128Gcm::new(&keys.key.into())
+        .decrypt(&keys.nonce(number).into(), payload)
+        .ok()?;
+    Some(OpenedInitial { number, payload })
 }
 
 /// The full packet number nearest the one after `largest` whose low `bits`

@@ -1,13 +1,25 @@
 //! The QUIC flows of one proxy, by target, version and the Destination
-//! Connection ID their keys derive from (FIX 8991).
+//! Connection ID their keys derive from (FIX 8991), and the aliases the
+//! server's replies taught them.
+//!
+//! A flow records the client's Source Connection ID from its first Initial,
+//! and the largest packet number of every Initial of it the gate opened,
+//! with CRYPTO or without. A server answers the client's Source Connection
+//! ID and names its own, and the client's later Initials go to that ID
+//! under the flow's keys (RFC 9001 5.2). So a reply to an admitted flow's
+//! client teaches the flow one alias: the target, the version and the
+//! server's Source Connection ID. A packet's flow is found by its own key or
+//! through an alias. A new alias replaces the flow's old one, and a flow
+//! that held the same alias loses it.
 //!
 //! A flow is pending until its ClientHello is whole. Then the one call that
 //! made it whole judges it and sends the datagrams it held, while calls for
 //! the same flow wait. An admitted flow keeps its ClientHello and a refused
 //! flow keeps a tombstone, each for the egress config's datagram timeout.
 //! A pending flow ends that long after its first datagram, and what it
-//! held is dropped, never sent. The table lock covers no DNS lookup, no
-//! policy check and no remote receive.
+//! held is dropped, never sent. A flow and its alias end together; a later
+//! Initial of its connection opens under no flow's keys and is refused. The
+//! table lock covers no DNS lookup, no policy check and no remote receive.
 
 use super::EgressDatagramNameRefusal;
 use super::initial::Version;
@@ -19,16 +31,30 @@ use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 /// One QUIC connection as its opening Initial names it: the target, the
-/// version and the Destination Connection ID.
+/// version and the Destination Connection ID. An alias has the same form,
+/// with the server's Source Connection ID.
 pub(super) type FlowKey = (SocketAddr, Version, Vec<u8>);
 
 /// The CRYPTO frames of one datagram's Initials, as offset and bytes, or
 /// why they cannot be read.
 pub(super) type Frames = Result<Vec<(u64, Vec<u8>)>, &'static str>;
 
+/// What one datagram's opened Initials, all of one connection, carry for
+/// its flow.
+pub(super) struct Opened {
+    /// The flow: the key of the connection's first Initial.
+    pub(super) key: FlowKey,
+    /// The client's Source Connection ID in those Initials' headers.
+    pub(super) client_scid: Vec<u8>,
+    /// The largest packet number among those Initials.
+    pub(super) number: u64,
+    /// Their CRYPTO frames, none for Initials that carry no CRYPTO.
+    pub(super) frames: Frames,
+}
+
 /// The QUIC flows of one proxy.
 pub(in crate::code_sandbox::egress) struct FlowTable {
-    flows: Mutex<HashMap<FlowKey, Flow>>,
+    maps: Mutex<FlowMaps>,
     /// Woken when a flow's release settles.
     settled: Condvar,
     /// How long a flow lives after it starts or settles: the egress
@@ -36,11 +62,24 @@ pub(in crate::code_sandbox::egress) struct FlowTable {
     lifetime: Duration,
 }
 
+/// The flows by key, and each alias with the key of the flow it names.
+#[derive(Default)]
+struct FlowMaps {
+    flows: HashMap<FlowKey, Flow>,
+    aliases: HashMap<FlowKey, FlowKey>,
+}
+
 struct Flow {
-    /// When the flow and what it holds are dropped.
+    /// When the flow, its alias and what it holds are dropped.
     expires: Instant,
     /// The largest packet number of its Initials the gate opened.
     largest: u64,
+    /// The client's Source Connection ID in its first Initial: the
+    /// Destination Connection ID of the server's replies.
+    client_scid: Vec<u8>,
+    /// The server's Source Connection ID a reply taught the flow, the
+    /// Destination Connection ID of the client's later Initials.
+    alias: Option<Vec<u8>>,
     state: FlowState,
 }
 
@@ -58,7 +97,7 @@ enum FlowState {
         hello: Vec<u8>,
         _room: Vec<HostNetPermit>,
     },
-    /// Refused: later CRYPTO is refused the same way.
+    /// Refused: later Initials are refused the same way.
     Refused(EgressDatagramNameRefusal),
 }
 
@@ -68,9 +107,10 @@ struct HeldDatagram {
     room: HostNetPermit,
 }
 
-/// What a datagram's CRYPTO does to its flow.
+/// What a datagram's Initials do to their flow.
 pub(super) enum Step<'a> {
-    /// The flow's ClientHello was admitted, and the CRYPTO agrees with it.
+    /// The flow's ClientHello was admitted, and the datagram's CRYPTO, if
+    /// any, agrees with it.
     Agreed,
     /// The datagram is held until the ClientHello is whole.
     Held,
@@ -86,40 +126,89 @@ impl FlowTable {
     /// An empty table whose flows live `lifetime`.
     pub(in crate::code_sandbox::egress) fn new(lifetime: Duration) -> Self {
         Self {
-            flows: Mutex::new(HashMap::new()),
+            maps: Mutex::new(FlowMaps::default()),
             settled: Condvar::new(),
             lifetime,
         }
     }
 
-    /// The largest packet number of `key`'s Initials the gate opened.
-    pub(super) fn largest(&self, key: &FlowKey) -> Option<u64> {
-        self.flows.lock().ok()?.get(key).map(|flow| flow.largest)
+    /// The key of the flow an Initial to `target` in `version` with `dcid`
+    /// belongs to, found by its own key or through an alias, and the
+    /// largest packet number of that flow's Initials the gate opened.
+    pub(super) fn connection(
+        &self,
+        target: SocketAddr,
+        version: Version,
+        dcid: &[u8],
+    ) -> Option<(FlowKey, u64)> {
+        let mut maps = self.maps.lock().ok()?;
+        maps.sweep();
+        let key = (target, version, dcid.to_vec());
+        let key = if maps.flows.contains_key(&key) {
+            key
+        } else {
+            maps.aliases.get(&key)?.clone()
+        };
+        let largest = maps.flows.get(&key)?.largest;
+        Some((key, largest))
     }
 
-    /// Adds `frames`, which `datagram`'s Initials up to packet `number`
-    /// carry for `key`, to its flow, and holds `datagram` while the flow's
-    /// ClientHello is not whole. Bytes are held on `floor`.
+    /// Makes `server_scid` the alias of the one admitted flow at `target` in
+    /// `version` whose client's Source Connection ID is `client_scid`. No
+    /// such flow, or more than one, learns nothing.
+    pub(super) fn learn_alias(
+        &self,
+        target: SocketAddr,
+        version: Version,
+        client_scid: &[u8],
+        server_scid: &[u8],
+    ) {
+        let Ok(mut maps) = self.maps.lock() else {
+            return;
+        };
+        maps.sweep();
+        let mut admitted = maps.flows.iter().filter(|(key, flow)| {
+            key.0 == target
+                && key.1 == version
+                && flow.client_scid == client_scid
+                && matches!(flow.state, FlowState::Admitted { .. })
+        });
+        let (Some((key, _)), None) = (admitted.next(), admitted.next()) else {
+            return;
+        };
+        let key = key.clone();
+        maps.alias(&key, server_scid);
+    }
+
+    /// Adds what `opened` carries to its flow, which it starts when there is
+    /// none, and holds `datagram` while the flow's ClientHello is not
+    /// whole. Bytes are held on `floor`.
     pub(super) fn ingest(
         &self,
-        key: FlowKey,
-        number: u64,
-        frames: Frames,
+        opened: Opened,
         datagram: &[u8],
         floor: &dyn HostNetFloor,
     ) -> Step<'_> {
+        let Opened {
+            key,
+            client_scid,
+            number,
+            frames,
+        } = opened;
         let target = key.0;
         let unverifiable = |why| EgressDatagramNameRefusal::Unverifiable { target, why };
-        let mut flows = match self.settled_table(&key) {
-            Ok(flows) => flows,
+        let mut maps = match self.settled_maps(&key) {
+            Ok(maps) => maps,
             Err(Unavailable::Unsettled) => return Step::Unsettled,
             Err(Unavailable::Poisoned) => {
                 return Step::Refused(unverifiable("the gate's flow table is poisoned"));
             }
         };
-        let flow = flows.entry(key.clone()).or_insert_with(|| Flow {
+        let flow = maps.flows.entry(key.clone()).or_insert_with(|| Flow {
             expires: after(self.lifetime),
             largest: number,
+            client_scid,
+            alias: None,
             state: FlowState::Pending {
                 crypto: CryptoStream::default(),
                 held: Vec::new(),
@@ -152,7 +241,7 @@ impl FlowTable {
                 else {
                     return Step::Unsettled;
                 };
-                drop(flows);
+                drop(maps);
                 Step::Whole(Release::new(self, key, crypto, held))
             }
             Err(why) => {
@@ -164,33 +253,61 @@ impl FlowTable {
         }
     }
 
-    /// The table, swept of ended flows, once `key`'s flow is not being
+    /// The maps, swept of ended flows, once `key`'s flow is not being
     /// released: waits up to the flow lifetime for another call's release.
-    fn settled_table(
-        &self,
-        key: &FlowKey,
-    ) -> Result<MutexGuard<'_, HashMap<FlowKey, Flow>>, Unavailable> {
+    fn settled_maps(&self, key: &FlowKey) -> Result<MutexGuard<'_, FlowMaps>, Unavailable> {
         let deadline = after(self.lifetime);
-        let mut flows = self.flows.lock().map_err(|_| Unavailable::Poisoned)?;
+        let mut maps = self.maps.lock().map_err(|_| Unavailable::Poisoned)?;
         loop {
-            let now = Instant::now();
-            flows
-                .retain(|_, flow| flow.expires > now || matches!(flow.state, FlowState::Releasing));
-            let releasing = flows
+            maps.sweep();
+            let releasing = maps
+                .flows
                 .get(key)
                 .is_some_and(|flow| matches!(flow.state, FlowState::Releasing));
             if !releasing {
-                return Ok(flows);
+                return Ok(maps);
             }
-            let wait = deadline.saturating_duration_since(now);
+            let wait = deadline.saturating_duration_since(Instant::now());
             if wait.is_zero() {
                 return Err(Unavailable::Unsettled);
             }
-            flows = self
+            maps = self
                 .settled
-                .wait_timeout(flows, wait)
+                .wait_timeout(maps, wait)
                 .map_err(|_| Unavailable::Poisoned)?
                 .0;
+        }
+    }
+}
+
+impl FlowMaps {
+    /// Drops the ended flows that no call is releasing, and the aliases of
+    /// flows that are gone.
+    fn sweep(&mut self) {
+        let now = Instant::now();
+        self.flows
+            .retain(|_, flow| flow.expires > now || matches!(flow.state, FlowState::Releasing));
+        let flows = &self.flows;
+        self.aliases.retain(|_, key| flows.contains_key(&*key));
+    }
+
+    /// Makes `server_scid` the one alias of the flow `key`. Its old alias
+    /// goes, and a flow that held this alias before loses it.
+    fn alias(&mut self, key: &FlowKey, server_scid: &[u8]) {
+        let (target, version) = (key.0, key.1);
+        let Some(flow) = self.flows.get_mut(key) else {
+            return;
+        };
+        if let Some(old) = flow.alias.replace(server_scid.to_vec()) {
+            self.aliases.remove(&(target, version, old));
+        }
+        if let Some(previous) = self
+            .aliases
+            .insert((target, version, server_scid.to_vec()), key.clone())
+            && previous != *key
+            && let Some(other) = self.flows.get_mut(&previous)
+        {
+            other.alias = None;
         }
     }
 }
@@ -300,8 +417,8 @@ impl Drop for Release<'_> {
                 _room: std::mem::take(&mut self.hello_room),
             },
         };
-        if let Ok(mut flows) = self.table.flows.lock()
-            && let Some(flow) = flows.get_mut(&self.key)
+        if let Ok(mut maps) = self.table.maps.lock()
+            && let Some(flow) = maps.flows.get_mut(&self.key)
         {
             flow.state = state;
             flow.expires = after(self.table.lifetime);

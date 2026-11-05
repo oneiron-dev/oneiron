@@ -8,12 +8,17 @@
 //! stays the host resolver's.
 //!
 //! The gate walks the datagram's coalesced long-header packets. It opens
-//! each version 1 or version 2 Initial under the client keys of the
-//! packet's own Destination Connection ID, as a server opens the first
-//! Initial of a new connection. An Initial that does not open can open no
-//! connection: it is a later Initial of a connection whose first Initial
-//! the gate judged, so it goes on. So does an Initial with no CRYPTO
-//! frame, and so does all else the walk does not reach.
+//! each version 1 or version 2 Initial under its connection's client keys:
+//! those of the Destination Connection ID the connection's first Initial
+//! carried (RFC 9001 5.2). An Initial finds its flow by its own Destination
+//! Connection ID or through the flow's alias, and its packet number is
+//! rebuilt against the flow's largest. An Initial of no flow opens under
+//! the keys of its own Destination Connection ID, its number rebuilt from
+//! 0, as a server opens a new connection's first Initial. An Initial that
+//! does not open is refused as unverifiable: a server whose packet number
+//! state differs from the gate's could still open it and read a ClientHello
+//! the gate never judged. An opened Initial of no flow with no CRYPTO frame
+//! goes on, and so does all else the walk does not reach.
 //!
 //! The CRYPTO frames of the opened Initials go to their flow, which
 //! reassembles them until the ClientHello is whole. The ClientHello is
@@ -24,19 +29,35 @@
 //! for it. The call that makes the ClientHello whole and admits it sends
 //! the held datagrams and then its own, in that order, through one socket.
 //!
+//! The reply to a datagram sent to a named address is walked too, unopened:
+//! long headers are plaintext. A version 1 or version 2 server Initial or
+//! Handshake whose Destination Connection ID is the client Source
+//! Connection ID of one admitted flow at that address, in that version,
+//! makes its Source Connection ID that flow's alias. The client's later
+//! Initials go there under the flow's keys. A Retry or a Version
+//! Negotiation packet teaches nothing: after a Retry the client's next
+//! Initial opens under its own new Destination Connection ID and is judged
+//! as a new flow. A flow and its alias end together, after the egress
+//! datagram timeout; a later Initial of its connection then opens under no
+//! keys the gate holds and is refused.
+//!
 //! What the gate does not do: it judges the name a connection opens with.
 //! The relay still sends one datagram batch and reads one reply per call,
-//! from a fresh source port, so it is not a full QUIC transport. Opaque UDP
-//! to an address a name admits is unchanged, as the ruling says, and that
-//! includes the short-header packets of an admitted connection.
+//! from a fresh source port, so it is not a full QUIC transport. Every reply
+//! the guest gets from a named address passes the gate, but a server
+//! datagram the relay does not read reaches neither. A reply in another
+//! version than its flow's teaches no alias. Opaque UDP to an address a
+//! name admits is unchanged, as the ruling says, and that includes the
+//! short-header packets of an admitted connection.
 
 mod crypto;
 mod flows;
 mod initial;
 mod reassembly;
 
-use self::flows::{FlowKey, Frames, Step};
 pub(super) use self::flows::{FlowTable, Release};
+use self::flows::{Frames, Opened, Step};
+use self::initial::PacketType;
 use super::{OpenEgressProxy, dns, name_gate};
 use crate::policy_model::{PolicyClassifyDecision, PolicyVerdictCategory};
 use std::io;
@@ -48,10 +69,10 @@ use std::net::SocketAddr;
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum EgressDatagramNameRefusal {
     /// `egress_name_unverifiable`: the Initial carries no name the
-    /// allowlist can check: a ClientHello with no server name or one that
-    /// does not parse, a frame the gate does not read, CRYPTO that
-    /// disagrees or runs past the ClientHello, or a flow the host-net byte
-    /// floor cannot hold.
+    /// allowlist can check: it does not open under its connection's keys,
+    /// its ClientHello has no server name or does not parse, it carries a
+    /// frame the gate does not read or CRYPTO that disagrees or runs past
+    /// the ClientHello, or the host-net byte floor cannot hold its flow.
     #[error(
         "egress_name_unverifiable: the QUIC Initial to {target} carries no name the owner allowlist can check ({why})"
     )]
@@ -88,8 +109,9 @@ impl EgressDatagramNameRefusal {
 
 /// What the gate does with one datagram.
 pub(super) enum Gated<'a> {
-    /// Send it as before: no Initial that opens carries CRYPTO, or its
-    /// CRYPTO agrees with its flow's admitted ClientHello.
+    /// Send it as before: it carries no Initial, only Initials of no flow
+    /// that carry no CRYPTO, or Initials of an admitted flow whose CRYPTO,
+    /// if any, agrees with its ClientHello.
     Forward,
     /// Its flow holds it; the guest gets no reply for it.
     Held,
@@ -113,7 +135,7 @@ pub(super) fn gate<'a>(
         Ok(None) => return Ok(Gated::Forward),
         Err(why) => return Err(refuse(proxy, unverifiable(why))),
     };
-    let step = flows.ingest(opened.key, opened.number, opened.frames, datagram, proxy);
+    let step = flows.ingest(opened, datagram, proxy);
     let release = match step {
         Step::Agreed => return Ok(Gated::Forward),
         Step::Held => return Ok(Gated::Held),
@@ -142,41 +164,39 @@ pub(super) fn gate<'a>(
     }
 }
 
-/// The CRYPTO one datagram's opened Initials carry for their flow.
-struct Opened {
-    key: FlowKey,
-    /// The largest packet number among those Initials.
-    number: u64,
-    frames: Frames,
-}
+/// Why an Initial that does not open is refused.
+const UNOPENED: &str = "an Initial that does not open under its connection's keys";
 
-/// The flow `datagram`'s opened Initials carry CRYPTO for, if any. Their
-/// frames are read whole; those of Initials of more than one connection in
-/// one datagram cannot be judged.
+/// What `datagram`'s Initials carry for their flow, once each opened under
+/// its connection's keys; none when they are all of no flow and carry no
+/// CRYPTO. Their frames are read whole; Initials of more than one
+/// connection in one datagram cannot be judged.
 fn read(
     flows: &FlowTable,
     target: SocketAddr,
     datagram: &[u8],
 ) -> Result<Option<Opened>, &'static str> {
     let mut found: Option<Opened> = None;
+    let mut tracked = false;
     for packet in initial::initials(datagram) {
-        let key = (target, packet.version, packet.dcid.to_vec());
-        let Some(opened) = crypto::open(&packet, flows.largest(&key)) else {
-            continue;
+        let flow = flows.connection(target, packet.version, packet.dcid);
+        tracked |= flow.is_some();
+        let (key, largest) = match flow {
+            Some((key, largest)) => (key, Some(largest)),
+            None => ((target, packet.version, packet.dcid.to_vec()), None),
         };
+        let opened = crypto::open(&packet, &key.2, largest).ok_or(UNOPENED)?;
         let frames: Frames = initial::crypto_frames(&opened.payload).map(|frames| {
             frames
                 .into_iter()
                 .map(|(offset, data)| (offset, data.to_vec()))
                 .collect()
         });
-        if frames.as_ref().is_ok_and(Vec::is_empty) {
-            continue;
-        }
         match found.as_mut() {
             None => {
                 found = Some(Opened {
                     key,
+                    client_scid: packet.scid.to_vec(),
                     number: opened.number,
                     frames,
                 });
@@ -192,7 +212,32 @@ fn read(
             Some(_) => return Err("the datagram carries Initials of more than one connection"),
         }
     }
+    let crypto_free = found
+        .as_ref()
+        .is_some_and(|opened| opened.frames.as_ref().is_ok_and(Vec::is_empty));
+    if crypto_free && !tracked {
+        return Ok(None);
+    }
     Ok(found)
+}
+
+/// Teaches the flows at `target` the server connection IDs `reply` names:
+/// the reply to a datagram to `target`, an address a name of the allowlist
+/// admits. Its long headers are read unopened. Each version 1 or version 2
+/// server Initial or Handshake makes its Source Connection ID the alias of
+/// the one admitted flow whose client's Source Connection ID it is sent to.
+/// The walk stops at a Retry or a Version Negotiation packet.
+pub(super) fn observe_reply(proxy: &OpenEgressProxy, target: SocketAddr, reply: &[u8]) {
+    for packet in initial::long_packets(reply) {
+        if matches!(
+            packet.packet_type,
+            PacketType::Initial | PacketType::Handshake
+        ) {
+            proxy
+                .quic_flows
+                .learn_alias(target, packet.version, packet.dcid, packet.scid);
+        }
+    }
 }
 
 /// Receipts `refusal` as a blocked `datagram_name` naming its address and
