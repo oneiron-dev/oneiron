@@ -9,7 +9,7 @@
 //! them in the writer that publishes the admitted body through a sink of
 //! its own.
 
-use super::{BodyDir, BodySink};
+use super::{BodyDir, BodySink, finish_scanned};
 use crate::batch::secret_scan::{BodySpool, SPOOL_HEAD_BYTES};
 use crate::store::BodySpill;
 use crate::{Error, Result};
@@ -51,25 +51,30 @@ impl BodySink {
             .take()
             .ok_or(Error::InvariantViolation("result body sink finished twice"))?;
         let head = meter.head[..meter.head.len().min(SPOOL_HEAD_BYTES)].to_vec();
-        let facts = meter.finish(0);
         let Some(spill) = self.spill.take() else {
+            let facts = finish_scanned::finish_sink_scanned(meter, 0, || {
+                Ok(crate::batch::secret_scan::write_payload_hit(&self.inline))
+            })?;
             let bytes = std::mem::take(&mut self.inline);
             return Ok(BodySpool::held(facts, head, bytes));
         };
         let temp = spill.temp().to_owned();
-        let held = spill
-            .finish(&facts.digest, facts.len)
-            .and_then(|spilled| spilled.reader())
-            .and_then(|file| {
-                let dir = BodyDir {
-                    dir: self.dir.dir.try_clone()?,
-                    sealed: self.dir.sealed.clone(),
-                    session: self.dir.session,
-                };
-                Ok((file, dir))
-            });
+        let digest = *meter.hasher.finalize().as_bytes();
+        let len = meter.len;
+        let held = spill.finish(&digest, len).and_then(|spilled| {
+            let file = spilled.reader()?;
+            let facts = finish_scanned::finish_sink_scanned(meter, 0, || {
+                finish_scanned::scanned_file_hit(&file, &digest, len)
+            })?;
+            let dir = BodyDir {
+                dir: self.dir.dir.try_clone()?,
+                sealed: self.dir.sealed.clone(),
+                session: self.dir.session,
+            };
+            Ok((facts, file, dir))
+        });
         match held {
-            Ok((file, dir)) => Ok(BodySpool::spilled(facts, head, file, dir, temp)),
+            Ok((facts, file, dir)) => Ok(BodySpool::spilled(facts, head, file, dir, temp)),
             Err(error) => {
                 self.dir.discard(&temp);
                 Err(error)

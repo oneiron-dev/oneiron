@@ -38,6 +38,13 @@ codegen-units = 256
 [profile.release]
 lto = "thin"
 
+# Tuning-only build profile; publish measurements from release, not this profile.
+[profile.bench-fast]
+inherits = "release"
+incremental = true
+codegen-units = 256
+lto = "off"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
