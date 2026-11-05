@@ -18,7 +18,9 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod tagger_admission;
 pub use inference_admission::admitted_as;
+pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
