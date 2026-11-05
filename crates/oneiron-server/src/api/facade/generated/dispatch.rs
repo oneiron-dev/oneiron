@@ -32662,6 +32662,28 @@ async fn vault_esign_signing_signature(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_esign_signing_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.signing.preview",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_esign_seal_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41332,6 +41354,9 @@ async fn call_verb_row(
         }
         "vault.esign.signing.signature" => {
             Box::pin(vault_esign_signing_signature(server, call, input)).await
+        }
+        "vault.esign.signing.preview" => {
+            Box::pin(vault_esign_signing_preview(server, call, input)).await
         }
         "vault.esign.seal.get" => Box::pin(vault_esign_seal_get(server, call, input)).await,
         "vault.conversations.create" => {
