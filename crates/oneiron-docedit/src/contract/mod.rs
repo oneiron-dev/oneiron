@@ -15,7 +15,7 @@
 mod run;
 
 use crate::ArchiveLimits;
-use crate::docx_body::{DocxBlock, DocxChange, DocxRevision};
+use crate::docx_body::{DocxBlock, DocxChange, DocxRevision, DocxStory};
 use crate::graphic::GraphicLimits;
 use crate::pptx_comments::{
     PptxAnchorOutcome, PptxCommentEdit, PptxCommentLimits, PptxSlideIdentity,
@@ -29,7 +29,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The op table's version. A call naming another refuses before any op runs.
-pub const CONTRACT_SCHEMA: u32 = 1;
+pub const CONTRACT_SCHEMA: u32 = 2;
 
 /// Error detail ceiling in bytes, as an organ's error detail.
 pub const MAX_DETAIL_BYTES: usize = 512;
@@ -43,7 +43,7 @@ pub const PPTX_MEDIA_TYPE: &str =
 pub const JSON_MEDIA_TYPE: &str = "application/json";
 
 /// One call: the contract schema, the op and its args.
-/// `{"schema": 1, "op": "docx.read", "args": {...}}`.
+/// `{"schema": 2, "op": "docx.read", "args": {...}}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Call {
     pub schema: u32,
@@ -51,7 +51,7 @@ pub struct Call {
     pub op: Op,
 }
 
-/// The schema-1 op table. Each op names its byte inputs by index into the
+/// The schema-2 op table. Each op names its byte inputs by index into the
 /// call's inputs, and every op that reads a package takes the caller's limits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", content = "args")]
@@ -59,7 +59,8 @@ pub enum Op {
     /// The op table, its media types and the call and reply JSON schemas.
     #[serde(rename = "contract.describe")]
     Describe,
-    /// The top-level blocks of a DOCX, with the ids a revision addresses.
+    /// The body blocks and native non-body stories of a DOCX. Story block
+    /// ids are local to their explicit story scope.
     #[serde(rename = "docx.read")]
     DocxRead(DocxReadArgs),
     /// One tracked Word revision transaction, written as Word's own marks.
@@ -407,7 +408,7 @@ pub enum AssetMedia {
 }
 
 /// Where a held asset came from. A generated image carries adapter receipts
-/// the engine keeps; schema 1 has no door for them.
+/// the engine keeps; schema 2 has no door for them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetOrigin {
@@ -437,6 +438,7 @@ pub enum Reply {
     Described(Description),
     DocxBlocks {
         blocks: Vec<DocxBlock>,
+        stories: Vec<DocxStory>,
     },
     DocxRevised {
         /// The transaction as applied, its revision date pinned: a settlement
@@ -904,7 +906,7 @@ const OPS: &[OpSpec] = &[
     },
     OpSpec {
         name: "docx.read",
-        summary: "The top-level blocks of a DOCX: ids, kinds, roles, text, table cells and locks.",
+        summary: "The DOCX body blocks and scoped header, footer, footnote, endnote and comment stories.",
         inputs: &[("document", DOCX, false)],
         outputs: &[],
         port: None,
@@ -1020,7 +1022,7 @@ pub fn reply_schema() -> Value {
     schema_value::<Reply>()
 }
 
-/// The schema-1 op table, as `contract.describe` answers it.
+/// The schema-2 op table, as `contract.describe` answers it.
 #[must_use]
 pub fn describe() -> Description {
     Description {
