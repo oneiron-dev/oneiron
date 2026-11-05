@@ -81,3 +81,11 @@ fn query_bytes(query: &MediaQuery) -> u64 {
                 .saturating_mul(std::mem::size_of::<InputKind>() as u64),
         )
 }
+
+impl super::builder::PipelineBuilder<'_> {
+    /// Account for copied media queries on the host's existing memory line.
+    pub fn media_query_memory(mut self, memory: &MachineMemory) -> Self {
+        self.media_search.bind_memory(memory);
+        self
+    }
+}
