@@ -78,14 +78,16 @@ impl Vault {
 
     /// Uploads under the host's existing memory admission. The callback admits
     /// the header copy, then the actual decoder's peak before its raster is
-    /// allocated. The host keeps that admission through this call's return.
+    /// allocated. The second argument names the encoded header copy now
+    /// allocated: materialize that reservation before growing for the raster.
+    /// The host keeps that admission through this call's return.
     pub fn upload_esign_signature_image_admitted_as(
         &self,
         token: &EsignCapability,
         bytes: &[u8],
         caller: super::SigningCaller,
         verified_actor: Option<EntityId>,
-        admit: &mut dyn FnMut(SignatureImagePlan) -> std::result::Result<(), MemoryRefusal>,
+        admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
     ) -> Result<String> {
         self.upload_esign_signature_image_admitted_within(
             token,
@@ -129,7 +131,7 @@ impl Vault {
         caller: super::SigningCaller,
         verified_actor: Option<EntityId>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
-        admit: &mut dyn FnMut(SignatureImagePlan) -> std::result::Result<(), MemoryRefusal>,
+        admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
     ) -> Result<String> {
         let now = self.now_recorded_at();
         // Authenticate before attacker-controlled image decode. Count the
@@ -166,7 +168,7 @@ impl Vault {
         if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
             return Err(invalid("signature image format"));
         }
-        admit(SignatureImagePlan::header(format)).map_err(memory::refused)?;
+        admit(SignatureImagePlan::header(format), 0).map_err(memory::refused)?;
         let decoded = self.decode_signature_image(bytes, format, admit, &mut crossings)?;
         if !decoded.to_rgba8().pixels().any(|p| p.0[3] != 0) {
             return Err(invalid("signature image has no visible pixels"));
@@ -282,7 +284,7 @@ impl Vault {
         &self,
         bytes: &[u8],
         format: image::ImageFormat,
-        admit: &mut dyn FnMut(SignatureImagePlan) -> std::result::Result<(), MemoryRefusal>,
+        admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
         crossings: &mut Vec<LimitCrossing>,
     ) -> Result<image::DynamicImage> {
         use image::ImageDecoder;
@@ -304,12 +306,19 @@ impl Vault {
             | image::ColorType::Rgba16 => WIDE_PIXEL_BYTES,
             _ => PIXEL_BYTES,
         };
-        admit(SignatureImagePlan::decoded(
-            width,
-            height,
-            pixel_bytes,
-            format == image::ImageFormat::Jpeg,
-        ))
+        admit(
+            SignatureImagePlan::decoded(
+                width,
+                height,
+                pixel_bytes,
+                format == image::ImageFormat::Jpeg,
+            ),
+            if format == image::ImageFormat::Jpeg {
+                bytes.len() as u64
+            } else {
+                0
+            },
+        )
         .map_err(memory::refused)?;
         crossings.extend(self.signature_crossing(
             EngineLimit::EsignSignatureImageDimensionPx,

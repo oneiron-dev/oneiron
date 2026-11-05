@@ -1,9 +1,14 @@
 pub(super) fn native_admission(
     input: u64,
-) -> impl FnMut(super::SignatureImagePlan) -> std::result::Result<(), crate::host_memory::MemoryRefusal>
-{
+) -> impl FnMut(
+    super::SignatureImagePlan,
+    u64,
+) -> std::result::Result<(), crate::host_memory::MemoryRefusal> {
     let mut lease = crate::host_memory::MachineMemory::process().empty_lease();
-    move |plan: super::SignatureImagePlan| {
+    move |plan: super::SignatureImagePlan, header_allocated: u64| {
+        if header_allocated != 0 {
+            lease.materialized(header_allocated, header_allocated);
+        }
         let target = plan
             .peak_bytes(input)
             .unwrap_or(u64::MAX)
