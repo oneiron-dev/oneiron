@@ -83,16 +83,14 @@ impl ServerVerbAskCredentialCheck {
                 ceiling,
             } => {
                 let auth = kept_auth(&server, &call, None)?;
-                self.runtime
-                    .block_on(McpCallContext::resume_verb_ask(
-                        &server,
-                        auth,
-                        &connection,
-                        &ceiling,
-                        call,
-                        drain,
-                    ))
-                    .map(|ran| ran.map(|value| (value, None)))
+                self.runtime.block_on(McpCallContext::resume_verb_ask(
+                    &server,
+                    auth,
+                    &connection,
+                    &ceiling,
+                    call,
+                    drain,
+                ))
             }
             VerbAskDoor::McpOwner { connection } => {
                 // Only the attested owner comes back by his own stream.
@@ -103,15 +101,13 @@ impl ServerVerbAskCredentialCheck {
                     return Err(VerbAskRefusal::CredentialChanged);
                 }
                 let auth = kept_auth(&server, &call, None)?;
-                self.runtime
-                    .block_on(McpCallContext::resume_owner_verb_ask(
-                        &server,
-                        auth,
-                        &connection,
-                        call,
-                        drain,
-                    ))
-                    .map(|ran| ran.map(|value| (value, None)))
+                self.runtime.block_on(McpCallContext::resume_owner_verb_ask(
+                    &server,
+                    auth,
+                    &connection,
+                    call,
+                    drain,
+                ))
             }
         }
     }

@@ -200,8 +200,10 @@ impl McpCallContext {
         ceiling: &[u8; 32],
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        oneiron::memory::MemoryResult<(Value, Option<bool>)>,
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         // Only a generated tool-first row is a door a connector's call
         // comes back by.
@@ -268,8 +270,10 @@ impl McpCallContext {
         connection: &str,
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        oneiron::memory::MemoryResult<(Value, Option<bool>)>,
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         if !matches!(
             try_registered_surface(McpSurfaceMode::ToolFirst)
@@ -308,7 +312,10 @@ async fn rerun_saved_call(
     server: &Arc<SyncServer>,
     context: &McpCallContext,
     call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
-) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal> {
+) -> Result<
+    oneiron::memory::MemoryResult<(Value, Option<bool>)>,
+    oneiron::runtime_hooks::verb::VerbAskRefusal,
+> {
     use oneiron::runtime_hooks::verb::VerbAskRefusal;
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
@@ -327,7 +334,7 @@ async fn rerun_saved_call(
     .await;
     match ran {
         Err(error) => Ok(Err(mcp_saved_error(error))),
-        Ok((output, ..)) => {
+        Ok((output, _, _, _, hook_notice)) => {
             // A board read answers the settlement here: the receipt its hook
             // rows owe is recorded and their blocks spent as the answer
             // returns (OF-579).
@@ -337,7 +344,7 @@ async fn rerun_saved_call(
                 }
                 hooks.spend(server);
             }
-            Ok(Ok(output))
+            Ok(Ok((output, hook_notice.is_some().then_some(true))))
         }
     }
 }
