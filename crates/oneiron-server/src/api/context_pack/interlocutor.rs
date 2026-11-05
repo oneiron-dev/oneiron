@@ -6,6 +6,7 @@ use super::controls::{
 };
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use oneiron::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the effective interlocutor set for a core context-pack request
@@ -32,7 +33,7 @@ pub(crate) fn resolve_core_interlocutor_set(
     read: &oneiron::claim::ScopedRead<'_>,
     controls: Option<&CoreInterlocutorControls>,
     room: Option<&RoomAudience>,
-    memory: Option<&crate::machine::MachineMemory>,
+    memory: Option<ClaimScopeReadMemory<'_>>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
     let room_reader = room.and_then(|room| room.reader);
     if controls.is_none() && room.is_none() && auth.is_owner_grade() {
@@ -130,7 +131,9 @@ pub(crate) fn resolve_core_interlocutor_set(
                     Some(memory) => {
                         vault.get_counterparty_contact_with_memory(&principal_id, memory)
                     }
-                    None => vault.get_counterparty_contact(&principal_id),
+                    None => vault
+                        .get_counterparty_contact(&principal_id)
+                        .map_err(ClaimBodyReadError::from),
                 }
             } else {
                 Ok(None)
@@ -138,18 +141,14 @@ pub(crate) fn resolve_core_interlocutor_set(
             let party = match contact {
                 Ok(Some(_)) => oneiron::InterlocutorPartyInput::ContactRef(principal_id),
                 // Companion principals are person/persona ids, not contact rows.
-                Ok(None) | Err(oneiron::Error::InvalidEntityType(_)) => {
+                Ok(None) | Err(ClaimBodyReadError::Body(oneiron::Error::InvalidEntityType(_))) => {
                     oneiron::InterlocutorPartyInput::UnknownLabel {
                         label: principal_id.to_hex(),
                         claimed_owner: false,
                     }
                 }
                 Err(error) => {
-                    tracing::error!(
-                        error = %error,
-                        "core context-pack interlocutor principal lookup failed"
-                    );
-                    return Err(core_engine_error(
+                    return Err(contact_read_error(
                         "core context-pack interlocutor principal lookup failed",
                         error,
                     ));
@@ -186,10 +185,17 @@ pub(crate) fn resolve_core_interlocutor_set(
         None => vault.resolve_interlocutors_under(&input, read, read_rosters, memory),
     }
     .map(Some)
-    .map_err(|error| {
-        tracing::error!(error = %error, "core context-pack interlocutor resolution failed");
-        core_engine_error("core context-pack interlocutor resolution failed", error)
-    })
+    .map_err(|error| contact_read_error("core context-pack interlocutor resolution failed", error))
+}
+
+fn contact_read_error(message: &'static str, error: ClaimBodyReadError) -> ApiError {
+    match error {
+        ClaimBodyReadError::Body(error) => {
+            tracing::error!(error = %error, message = message);
+            core_engine_error(message, error)
+        }
+        ClaimBodyReadError::Refused(refusal) => ApiError::memory_refused(refusal),
+    }
 }
 
 /// A room read's audience: every member but the room's proven reader,

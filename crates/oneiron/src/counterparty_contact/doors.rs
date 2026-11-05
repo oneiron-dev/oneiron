@@ -5,7 +5,8 @@ use super::codec::{
     is_counterparty_contact_claim_predicate, normalize_counterparty,
 };
 use super::lifecycle::{
-    comm_fold_error, counterparty_contact_in_claims_in_txn, counterparty_contact_with_memory_in_claims_in_txn, live_counterparty_contact_heads_in_txn,
+    comm_fold_error, counterparty_contact_in_claims_in_txn,
+    counterparty_contact_with_memory_in_claims_in_txn, live_counterparty_contact_heads_in_txn,
     rematerialize_contact_cache_in_txn, rematerialize_party_contact_cache_in_txn,
     supersede_family_owned_claim_in_txn,
 };
@@ -26,6 +27,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
 
 impl Vault {
     /// Creates a per-(identity, counterparty) contact record.
@@ -318,15 +320,18 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
         self.get_counterparty_contact_with_memory_in_txn(rtxn, id, None)
+            .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
     pub(crate) fn get_counterparty_contact_with_memory_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
-        memory: Option<&crate::host_memory::MachineMemory>,
-    ) -> Result<Option<CounterpartyContactRecord>> {
-        if let Some(record) = counterparty_contact_with_memory_in_claims_in_txn(self, rtxn, id, memory)? {
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<Option<CounterpartyContactRecord>, ClaimBodyReadError> {
+        if let Some(record) =
+            counterparty_contact_with_memory_in_claims_in_txn(self, rtxn, id, memory)?
+        {
             return Ok(Some(record));
         }
         self.reject_non_contact_row_in_txn(rtxn, id)?;

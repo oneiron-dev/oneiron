@@ -41,7 +41,8 @@ use std::sync::Arc;
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or the vault's inference policy refuses a media query's ai.embed call.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), the rung's call failed, or an input memory wait ended before admission.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 507, description = "Input relationship storage does not fit this machine past its memory reserve.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 pub(crate) async fn core_context_pack(

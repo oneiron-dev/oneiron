@@ -130,6 +130,16 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "used");
             optional_string(&mut properties, "resetAt");
         }
+        ErrorCode::MemoryFloor => {
+            required.extend(["needed", "available"]);
+            properties.insert("needed".to_owned(), json!({ "type": "integer" }));
+            properties.insert("available".to_owned(), json!({ "type": "integer" }));
+        }
+        ErrorCode::MemoryWaitedOut => {
+            required.extend(["needed", "waitedMs"]);
+            properties.insert("needed".to_owned(), json!({ "type": "integer" }));
+            properties.insert("waitedMs".to_owned(), json!({ "type": "integer" }));
+        }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");
         }

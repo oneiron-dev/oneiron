@@ -5,6 +5,8 @@ use super::{
     InterlocutorResolutionInput, InterlocutorSet, Result, VOICE_ROSTER_UNRESOLVED_LABEL, Vault,
 };
 
+use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory};
+
 impl Vault {
     /// Resolves conversation party inputs into an `InterlocutorSet` per the
     /// pinned rules (design §4):
@@ -38,6 +40,7 @@ impl Vault {
     ) -> Result<InterlocutorSet> {
         let rtxn = self.store.env.read_txn()?;
         self.resolve_interlocutors_in(&rtxn, input, &|_| Ok(true), true, None, None)
+            .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
     /// [`Self::resolve_interlocutors`] for a voice session its host bound
@@ -53,6 +56,7 @@ impl Vault {
     ) -> Result<InterlocutorSet> {
         let rtxn = self.store.env.read_txn()?;
         self.resolve_interlocutors_in(&rtxn, input, &|_| Ok(true), true, Some(container), None)
+            .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
     /// [`Self::resolve_interlocutors`] for a caller that reads as `read`, in
@@ -69,10 +73,10 @@ impl Vault {
         input: &InterlocutorResolutionInput,
         read: &crate::claim::ScopedRead<'_>,
         read_rosters: bool,
-        memory: Option<&crate::host_memory::MachineMemory>,
-    ) -> Result<InterlocutorSet> {
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<InterlocutorSet, ClaimBodyReadError> {
         read.persist_grant_clock()?;
-        let rtxn = self.store.env.read_txn()?;
+        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         let policy = read.live_policy_manifest_in(&rtxn)?;
         self.resolve_interlocutors_in(
             &rtxn,
@@ -94,10 +98,10 @@ impl Vault {
         read: &crate::claim::ScopedRead<'_>,
         read_rosters: bool,
         room: EntityId,
-        memory: Option<&crate::host_memory::MachineMemory>,
-    ) -> Result<InterlocutorSet> {
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<InterlocutorSet, ClaimBodyReadError> {
         read.persist_grant_clock()?;
-        let rtxn = self.store.env.read_txn()?;
+        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         let policy = read.live_policy_manifest_in(&rtxn)?;
         self.resolve_interlocutors_in(
             &rtxn,
@@ -116,8 +120,8 @@ impl Vault {
         admit: &dyn Fn(&EntityId) -> Result<bool>,
         read_rosters: bool,
         container: Option<EntityId>,
-        memory: Option<&crate::host_memory::MachineMemory>,
-    ) -> Result<InterlocutorSet> {
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<InterlocutorSet, ClaimBodyReadError> {
         let mut non_owner: Vec<Interlocutor> = Vec::with_capacity(input.parties.len());
         let mut seen_contact_refs: HashSet<String> = HashSet::new();
 
@@ -125,7 +129,7 @@ impl Vault {
             let entry = match party {
                 InterlocutorPartyInput::ContactRef(id) => {
                     if !admit(id)? {
-                        return Err(Error::EntityNotFound);
+                        return Err(Error::EntityNotFound.into());
                     }
                     let record = self
                         .get_counterparty_contact_with_memory_in_txn(rtxn, id, memory)?

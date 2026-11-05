@@ -80,7 +80,12 @@ impl ContextInputWork {
                 read,
                 self.req.request.interlocutors.as_ref(),
                 room.as_ref(),
-                Some(&self.memory),
+                Some(
+                    oneiron::write_envelope::claim_body::ClaimScopeReadMemory::new(
+                        &self.memory,
+                        &|| answer.is_closed(),
+                    ),
+                ),
             )?;
             Ok::<_, ApiError>(Some((
                 optional_memory,

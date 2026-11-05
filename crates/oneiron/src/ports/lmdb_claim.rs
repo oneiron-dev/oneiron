@@ -149,9 +149,22 @@ impl Vault {
     }
 }
 
-impl ClaimStore for Vault {
-    fn port_claim_get(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<ClaimBody>> {
-        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+impl Vault {
+    pub(crate) fn claim_body_with_scope_memory_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        memory: Option<crate::write_envelope::claim_body::ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<
+        Option<crate::write_envelope::claim_body::ClaimBodyRead>,
+        crate::write_envelope::claim_body::ClaimBodyReadError,
+    > {
+        let Some(raw) = self
+            .store
+            .entities
+            .get(rtxn, id.as_bytes())
+            .map_err(Error::from)?
+        else {
             return Ok(None);
         };
         // History keeps every lifecycle status, never words a deletion withdrew
@@ -162,13 +175,27 @@ impl ClaimStore for Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM").into());
         }
-        crate::write_envelope::claim_body::decode_claim_body(
+        crate::write_envelope::claim_body::decode_claim_body_with_scope_memory(
             &raw[ENTITY_METADATA_HEADER_LEN..],
             true,
+            memory,
         )
         .map(Some)
+    }
+}
+
+impl ClaimStore for Vault {
+    fn port_claim_get(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<ClaimBody>> {
+        self.claim_body_with_scope_memory_in_txn(rtxn, id, None)
+            .map(|body| {
+                body.map(|body| {
+                    body.try_into_unbound_body()
+                        .unwrap_or_else(|_| unreachable!("unbound claim body has no lease"))
+                })
+            })
+            .map_err(crate::write_envelope::claim_body::ClaimBodyReadError::into_unbound_error)
     }
     fn port_claim_put(
         &self,

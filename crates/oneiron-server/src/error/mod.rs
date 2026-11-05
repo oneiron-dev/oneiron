@@ -62,6 +62,10 @@ pub enum ErrorCode {
     /// declaration is refused rather than queued for a writer that never comes.
     #[serde(rename = "SUMMARY_WRITER_UNAVAILABLE")]
     SummaryWriterUnavailable,
+    #[serde(rename = "MEMORY_FLOOR")]
+    MemoryFloor,
+    #[serde(rename = "MEMORY_WAITED_OUT")]
+    MemoryWaitedOut,
     /// ONE-1979: a request body field exceeded the cap its endpoint documents.
     /// The HTTP-level sibling of [`Self::CrdtFrameTooLarge`], which is a
     /// WebSocket close code and not reachable from an HTTP route.
@@ -117,6 +121,8 @@ impl ErrorCode {
         Self::DeepRetrievalUnavailable,
         Self::EmbedderUnavailable,
         Self::SummaryWriterUnavailable,
+        Self::MemoryFloor,
+        Self::MemoryWaitedOut,
         Self::PayloadTooLarge,
         Self::HostActionRequiresSupportGrant,
         Self::OwnerBindingRequired,
@@ -150,6 +156,8 @@ impl ErrorCode {
             Self::DeepRetrievalUnavailable => "DEEP_RETRIEVAL_UNAVAILABLE",
             Self::EmbedderUnavailable => "EMBEDDER_UNAVAILABLE",
             Self::SummaryWriterUnavailable => "SUMMARY_WRITER_UNAVAILABLE",
+            Self::MemoryFloor => "MEMORY_FLOOR",
+            Self::MemoryWaitedOut => "MEMORY_WAITED_OUT",
             Self::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
             Self::HostActionRequiresSupportGrant => {
                 oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
@@ -188,7 +196,9 @@ impl ErrorCode {
             Self::MirrorNotReady
             | Self::DeepRetrievalUnavailable
             | Self::EmbedderUnavailable
-            | Self::SummaryWriterUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            | Self::SummaryWriterUnavailable
+            | Self::MemoryWaitedOut => StatusCode::SERVICE_UNAVAILABLE,
+            Self::MemoryFloor => StatusCode::INSUFFICIENT_STORAGE,
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
@@ -272,6 +282,10 @@ pub enum ApiErrorDetails {
     EmbedderUnavailable,
     #[serde(rename = "SUMMARY_WRITER_UNAVAILABLE")]
     SummaryWriterUnavailable,
+    #[serde(rename = "MEMORY_FLOOR", rename_all = "camelCase")]
+    MemoryFloor { needed: u64, available: u64 },
+    #[serde(rename = "MEMORY_WAITED_OUT", rename_all = "camelCase")]
+    MemoryWaitedOut { needed: u64, waited_ms: u64 },
     #[serde(rename = "PAYLOAD_TOO_LARGE", rename_all = "camelCase")]
     PayloadTooLarge {
         field: String,
@@ -329,6 +343,8 @@ impl ApiErrorDetails {
             Self::DeepRetrievalUnavailable => ErrorCode::DeepRetrievalUnavailable,
             Self::EmbedderUnavailable => ErrorCode::EmbedderUnavailable,
             Self::SummaryWriterUnavailable => ErrorCode::SummaryWriterUnavailable,
+            Self::MemoryFloor { .. } => ErrorCode::MemoryFloor,
+            Self::MemoryWaitedOut { .. } => ErrorCode::MemoryWaitedOut,
             Self::PayloadTooLarge { .. } => ErrorCode::PayloadTooLarge,
             Self::HostActionRequiresSupportGrant { .. } => {
                 ErrorCode::HostActionRequiresSupportGrant
@@ -760,6 +776,7 @@ fn next_request_id() -> String {
     format!("req-{id:016x}")
 }
 
+mod memory_refusal;
 mod schema;
 mod typed_refusal;
 
