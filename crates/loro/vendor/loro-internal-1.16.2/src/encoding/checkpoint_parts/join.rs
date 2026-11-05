@@ -37,9 +37,11 @@ impl LoroDoc {
     ///
     /// Every slot must be either opened (in `available`) or listed in `erased`.
     /// An erased value becomes a map delete at its original op id and lamport;
-    /// an erased message becomes no message. The result is proven against the
-    /// skeleton before this returns; on any mismatch it returns
-    /// [`CheckpointError::Diverged`] and no bytes.
+    /// an erased message becomes no message; every op on an erased key becomes
+    /// a delete of that key's placeholder at its original op id and lamport, so
+    /// the key never comes back and nothing is written under it. The result is
+    /// proven against the skeleton before this returns; on any mismatch it
+    /// returns [`CheckpointError::Diverged`] and no bytes.
     pub fn join_root_map_checkpoint(
         skeleton: &Skeleton,
         available: &[Atom],
@@ -97,19 +99,25 @@ fn validate(skeleton: &Skeleton) -> Result<(), CheckpointError> {
             .get(id as usize)
             .is_some_and(|slot| slot.kind == kind),
     };
+    // A placeholder names a key slot; nothing else may be spelled as one.
+    let key_ok = |key: &str| match placeholder_atom(key) {
+        None => true,
+        Some(atom) => atom.is_some() && slot_is(atom, SlotKind::Key),
+    };
     let winners_ok = |winners: &[Winner]| {
-        winners
-            .iter()
-            .all(|winner| (winner.root as usize) < roots && slot_is(winner.value, SlotKind::Value))
+        winners.iter().all(|winner| {
+            (winner.root as usize) < roots
+                && slot_is(winner.value, SlotKind::Value)
+                && key_ok(&winner.key)
+        })
     };
     let maps_ok = |maps: &[u32]| maps.iter().all(|&map| (map as usize) < roots);
     let changes_ok = skeleton.changes.iter().all(|change| {
         !change.ops.is_empty()
             && slot_is(change.message, SlotKind::Message)
-            && change
-                .ops
-                .iter()
-                .all(|op| (op.root as usize) < roots && slot_is(op.value, SlotKind::Value))
+            && change.ops.iter().all(|op| {
+                (op.root as usize) < roots && slot_is(op.value, SlotKind::Value) && key_ok(&op.key)
+            })
     });
     let shallow_ok = skeleton.shallow.as_ref().map_or(true, |root| {
         winners_ok(&root.winners) && maps_ok(&root.maps) && !root.vv.is_empty()
@@ -185,12 +193,11 @@ fn open_slots<'a>(
     let mut opened = vec![None; len];
     for atom in available {
         let i = index(atom.id)?;
-        let kind = match atom.payload {
-            Payload::Value(_) => SlotKind::Value,
-            Payload::Message(_) => SlotKind::Message,
-        };
-        if covered[i] || skeleton.slots[i].kind != kind {
+        if covered[i] || skeleton.slots[i].kind != atom.payload.kind() {
             return Err(malformed("an atom is repeated or of the wrong kind"));
+        }
+        if matches!(&atom.payload, Payload::Key(key) if key.starts_with(KEY_PLACEHOLDER_PREFIX)) {
+            return Err(malformed("a withheld key is spelled as a placeholder"));
         }
         covered[i] = true;
         opened[i] = Some(&atom.payload);
@@ -225,6 +232,35 @@ fn opened_message(opened: &[Option<&Payload>], atom: Option<AtomId>) -> Option<S
     }
 }
 
+/// A skeleton key as the joined document writes it, and whether it opened: a
+/// plain key as it is; a withheld key as itself when its atom opened, else as
+/// its placeholder, which no op may write a value under.
+fn opened_key(opened: &[Option<&Payload>], key: &str) -> (String, bool) {
+    match placeholder_atom(key) {
+        None => (key.to_string(), true),
+        Some(atom) => match atom.and_then(|id| opened[id as usize]) {
+            Some(Payload::Key(key)) => (key.clone(), true),
+            _ => (key.to_string(), false),
+        },
+    }
+}
+
+/// One map write as the joined document holds it: its key, and its value
+/// when both its key and its value opened.
+fn opened_entry(
+    opened: &[Option<&Payload>],
+    key: &str,
+    value: Option<AtomId>,
+) -> (String, Option<LoroValue>) {
+    let (key, open) = opened_key(opened, key);
+    let value = if open {
+        opened_value(opened, value)
+    } else {
+        None
+    };
+    (key, value)
+}
+
 /// The retained history with opened payloads. An erased value is a delete at
 /// the same op id; an erased message is no message.
 fn history_json(skeleton: &Skeleton, opened: &[Option<&Payload>]) -> JsonSchema {
@@ -246,14 +282,9 @@ fn history_json(skeleton: &Skeleton, opened: &[Option<&Payload>]) -> JsonSchema 
                 .iter()
                 .enumerate()
                 .map(|(i, op)| JsonOp {
-                    content: JsonOpContent::Map(match opened_value(opened, op.value) {
-                        Some(value) => MapOp::Insert {
-                            key: op.key.clone(),
-                            value,
-                        },
-                        None => MapOp::Delete {
-                            key: op.key.clone(),
-                        },
+                    content: JsonOpContent::Map(match opened_entry(opened, &op.key, op.value) {
+                        (key, Some(value)) => MapOp::Insert { key, value },
+                        (key, None) => MapOp::Delete { key },
                     }),
                     container: root_cid(skeleton, op.root),
                     counter: change.counter + i as Counter,
@@ -314,8 +345,9 @@ fn shallow_snapshot(
             let cid = root_cid(skeleton, winner.root);
             state.store.ensure_container(&cid);
             let idx = state.arena.register_container(&cid);
+            let (key, value) = opened_entry(opened, &winner.key, winner.value);
             let entry = MapValue {
-                value: opened_value(opened, winner.value),
+                value,
                 lamp: winner.lamport,
                 peer: winner.peer,
             };
@@ -324,7 +356,7 @@ fn shallow_snapshot(
                 .get_container_mut(idx)
                 .and_then(|container| container.as_map_state_mut())
                 .ok_or_else(|| malformed("a shallow-root container is not a map"))?;
-            map.insert(winner.key.as_str().into(), entry);
+            map.insert(key.as_str().into(), entry);
         }
         state.store.flush();
         let kv = state.store.get_kv_clone();
@@ -383,16 +415,10 @@ fn winner_entries(skeleton: &Skeleton, winners: &[Winner], opened: &[Option<&Pay
     winners
         .iter()
         .map(|winner| {
+            let (key, value) = opened_entry(opened, &winner.key, winner.value);
             (
-                (
-                    skeleton.roots[winner.root as usize].clone(),
-                    winner.key.clone(),
-                ),
-                (
-                    winner.peer,
-                    winner.lamport,
-                    opened_value(opened, winner.value),
-                ),
+                (skeleton.roots[winner.root as usize].clone(), key),
+                (winner.peer, winner.lamport, value),
             )
         })
         .collect()
@@ -487,6 +513,7 @@ fn skeleton_rows(skeleton: &Skeleton, opened: &[Option<&Payload>]) -> Vec<Row> {
         for (i, op) in change.ops.iter().enumerate() {
             let offset = i as Counter;
             let counter = change.counter + offset;
+            let (key, value) = opened_entry(opened, &op.key, op.value);
             rows.push(Row {
                 id: (change.peer, counter),
                 lamport: change.lamport + i as Lamport,
@@ -494,8 +521,8 @@ fn skeleton_rows(skeleton: &Skeleton, opened: &[Option<&Payload>]) -> Vec<Row> {
                 deps: op_deps(change.peer, offset, counter, &change.deps),
                 message: message.clone(),
                 root: skeleton.roots[op.root as usize].clone(),
-                key: op.key.clone(),
-                value: opened_value(opened, op.value),
+                key,
+                value,
             });
         }
     }

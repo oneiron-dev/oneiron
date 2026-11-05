@@ -30,6 +30,24 @@ impl SyncClient {
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // A world the owner keeps on one other machine left this one and never
+        // lands here again (FIX 14534): its frames read as nothing, but for
+        // the home's version vector, which carries no content and tells the
+        // eviction what the home holds of the window. Nothing is answered.
+        if let Some(world) = key.world()
+            && crate::sync::residence::world_placed_elsewhere(&self.vault, world)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
+        {
+            if matches!(
+                sub_tag,
+                window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE
+            ) {
+                let home = VersionVector::decode(payload)
+                    .map_err(|_| TransportError::VersionVectorDecode)?;
+                self.note_home_window_vv(window_key, home)?;
+            }
+            return Ok(Vec::new());
+        }
         // A window the server stopped pushing to this socket changed. An owner-lane device that
         // follows it asks for it again, and the request subscribes it again; anything else reads
         // the notice as nothing, since the server may not know what this device follows. A world
@@ -203,7 +221,7 @@ impl SyncClient {
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
-                self.server_vvs.insert(window_key.to_string(), server_vv);
+                self.note_home_window_vv(window_key, server_vv)?;
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
@@ -299,14 +317,31 @@ impl SyncClient {
                     &delta,
                     Some(&window.doc),
                 )?;
-                self.server_vvs.insert(window_key.to_string(), server_vv);
+                self.note_home_window_vv(window_key, server_vv)?;
                 Ok(responses)
             }
             _ => Ok(Vec::new()),
         }
     }
 
-    fn staged_entity_evidence(
+    /// Records `home`, the home's version vector of `window_key`, as this
+    /// connection's convergence witness, and keeps a world window's beside
+    /// the window (FIX 14534), so an eviction after a restart or a tightening
+    /// still knows what the home holds of it.
+    fn note_home_window_vv(
+        &mut self,
+        window_key: &str,
+        home: VersionVector,
+    ) -> std::result::Result<(), TransportError> {
+        if WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some()) {
+            crate::sync::residence::put_home_window_vv(&self.vault, window_key, &home)
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
+        }
+        self.server_vvs.insert(window_key.to_string(), home);
+        Ok(())
+    }
+
+    pub(in crate::sync::client) fn staged_entity_evidence(
         &self,
     ) -> std::result::Result<
         std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,

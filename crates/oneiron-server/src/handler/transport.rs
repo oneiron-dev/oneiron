@@ -300,6 +300,11 @@ where
         self.peer_codecs = codecs;
     }
 
+    /// The codecs and optional frame kinds the peer's hello listed.
+    pub(super) fn peer_codecs(&self) -> WireCodecs {
+        self.peer_codecs
+    }
+
     /// The inbound frame this transport refused, once it has: a protocol
     /// refusal its carrier receipts and closes with, never a disconnect.
     pub(super) fn refusal(&self) -> Option<ProtocolRefusal> {

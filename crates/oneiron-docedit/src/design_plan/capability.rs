@@ -207,15 +207,21 @@ impl Metrics {
         let mut lines = 1;
         let mut used = 0;
         let mut width = first.max(1);
-        for word in words(text) {
+        for (word, separator) in words(text) {
             let need = self.advance(word);
-            let gap = if used == 0 { 0 } else { space };
+            let gap = if used == 0 || separator.is_empty() {
+                0
+            } else if separator.bytes().all(|byte| byte == b' ') {
+                self.advance(separator)
+            } else {
+                space
+            };
             if used > 0 && used + gap + need > width {
                 lines += 1;
                 used = 0;
                 width = rest.max(1);
             }
-            let gap = if used == 0 { 0 } else { space };
+            let gap = if used == 0 { 0 } else { gap };
             used += gap + need;
             while used > width {
                 lines += 1;
@@ -242,7 +248,11 @@ impl Metrics {
             return None;
         }
         let mut height = top + bottom;
-        for (index, paragraph) in paragraphs.iter().enumerate() {
+        for (index, paragraph) in paragraphs
+            .iter()
+            .flat_map(|paragraph| paragraph.split('\n'))
+            .enumerate()
+        {
             if index > 0 {
                 height += self.spaced(self.before);
             }
@@ -254,9 +264,13 @@ impl Metrics {
 }
 
 /// Break opportunities: runs of non-space text, with every wide character
-/// a word of its own.
-fn words(text: &str) -> impl Iterator<Item = &str> {
-    text.split_whitespace().flat_map(|word| {
+/// a word of its own, carrying the original separator before each word.
+fn words(text: &str) -> impl Iterator<Item = (&str, &str)> {
+    let mut remaining = text;
+    text.split_whitespace().flat_map(move |word| {
+        let trimmed = remaining.trim_start_matches(char::is_whitespace);
+        let separator = &remaining[..remaining.len() - trimmed.len()];
+        remaining = &trimmed[word.len()..];
         let mut pieces = Vec::new();
         let mut start = 0;
         for (at, ch) in word.char_indices() {
@@ -272,6 +286,9 @@ fn words(text: &str) -> impl Iterator<Item = &str> {
             pieces.push(&word[start..]);
         }
         pieces
+            .into_iter()
+            .enumerate()
+            .map(move |(index, piece)| (piece, if index == 0 { separator } else { "" }))
     })
 }
 

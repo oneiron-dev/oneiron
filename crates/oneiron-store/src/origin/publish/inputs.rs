@@ -35,4 +35,3 @@ pub struct OriginPublishReviewRequest {
     pub page: u64,
     pub code_repo: Option<EntityId>,
 }
-

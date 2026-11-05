@@ -124,4 +124,3 @@ pub fn inherited_path() -> String {
         .to_string_lossy()
         .into_owned()
 }
-

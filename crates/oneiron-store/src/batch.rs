@@ -9,4 +9,3 @@ pub mod row_put;
 pub mod secret_scan;
 pub mod shared_vault_write;
 pub mod types;
-pub mod vad_postcommit;

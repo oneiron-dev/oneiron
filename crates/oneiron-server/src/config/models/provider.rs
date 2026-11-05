@@ -1,5 +1,6 @@
 //! One provider entry: how to reach a model server, as data.
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
@@ -239,6 +240,17 @@ const CREDENTIAL_HEADERS: [&str; 5] = [
     "proxy-authorization",
 ];
 
+/// A local Sign in with ChatGPT registration. This is a locator, never a
+/// token or an account-identity assertion. Hosted use needs the existing P4
+/// vendor approval, absent unless the operator actually supplies it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SiwcProvider {
+    pub credential_file: PathBuf,
+    #[serde(default)]
+    pub openai_hosted_plan_approved: bool,
+}
+
 /// `[models.providers.<name>]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,6 +259,7 @@ pub(super) struct ProviderFile {
     base_url: Option<String>,
     key_env: Option<String>,
     key_secret: Option<String>,
+    siwc: Option<SiwcProvider>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
     timeout_secs: Option<u64>,
@@ -254,6 +267,8 @@ pub(super) struct ProviderFile {
     max_output_tokens: Option<u64>,
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
+    chat_path: Option<String>,
+    prefill_wire: Option<String>,
     embed_shape: Option<EmbedShape>,
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
@@ -283,6 +298,8 @@ pub struct ProviderConfig {
     /// call reads it at the custody door and hands it, with that one request,
     /// to the credential broker `[models.broker]` names, which sends it.
     pub key_secret: Option<String>,
+    /// Local SIWC credentials for Responses only; no key enters this config.
+    pub siwc: Option<SiwcProvider>,
     /// Extra non-credential headers sent on every call.
     pub headers: BTreeMap<String, String>,
     pub timeout_secs: u64,
@@ -294,6 +311,12 @@ pub struct ProviderConfig {
     pub output_limit_field: OutputLimitField,
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
+    /// `unversioned` selects `/chat/completions` on the default chat path.
+    /// Other values leave the configured path unchanged.
+    pub chat_path: Option<String>,
+    /// `prefix` sends the trailing assistant's prefix flag when the selected
+    /// model declares `AssistantPrefill`. Other values have no effect.
+    pub prefill_wire: Option<String>,
     /// The shape the provider's embedding endpoint speaks (FIX 866):
     /// `vllm_chat`, `infinity`, `jina` or `cohere`. Unset, it is vLLM's
     /// chat form.
@@ -360,6 +383,25 @@ impl ProviderFile {
             .filter(|url| !url.is_empty())
             .ok_or_else(|| anyhow::anyhow!("models.providers.{name}.base_url is required"))?;
         validate_base_url(name, kind, &base_url)?;
+        if self.siwc.is_some() {
+            anyhow::ensure!(
+                kind == ProviderKind::OpenaiCompat
+                    && base_url == oneiron::dispatch_byoa::SIWC_RESPONSES_BASE_URL
+                    && self.key_env.is_none()
+                    && self.key_secret.is_none()
+                    && self
+                        .locality
+                        .is_none_or(|value| value == ModelLocality::ThirdParty),
+                "models.providers.{name}.siwc requires the official Responses base URL, no other key source and third_party locality"
+            );
+            anyhow::ensure!(
+                matches!(
+                    self.responses_socket,
+                    None | Some(ResponsesSocketFile::Switch(false))
+                ),
+                "models.providers.{name}.siwc uses Responses HTTP, not responses_socket"
+            );
+        }
         if let Some(key_env) = &self.key_env
             && !is_env_name(key_env)
         {
@@ -443,13 +485,17 @@ impl ProviderFile {
                 );
             }
         }
-        let responses_socket = responses_socket(
-            name,
-            kind,
-            &base_url,
-            self.key_secret.is_some(),
-            self.responses_socket,
-        )?;
+        let responses_socket = if self.siwc.is_some() {
+            None
+        } else {
+            responses_socket(
+                name,
+                kind,
+                &base_url,
+                self.key_secret.is_some(),
+                self.responses_socket,
+            )?
+        };
         let request_compression = request_compression(
             name,
             kind,
@@ -458,7 +504,9 @@ impl ProviderFile {
             self.request_compression,
         )?;
         let payer = self.payer.unwrap_or_else(|| {
-            if self.key_env.is_some() || self.key_secret.is_some() {
+            if self.siwc.is_some() {
+                Payer::CustomerSeat
+            } else if self.key_env.is_some() || self.key_secret.is_some() {
                 Payer::CustomerKey
             } else {
                 Payer::Local
@@ -476,12 +524,15 @@ impl ProviderFile {
             base_url,
             key_env: self.key_env,
             key_secret: self.key_secret,
+            siwc: self.siwc,
             headers: self.headers,
             timeout_secs,
             context_tokens,
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
             response_format: self.response_format.unwrap_or_default(),
+            chat_path: self.chat_path,
+            prefill_wire: self.prefill_wire,
             embed_shape: self.embed_shape.unwrap_or_default(),
             capabilities,
             model_capabilities: self.model_capabilities,
