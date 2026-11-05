@@ -67,9 +67,17 @@ the strings or vector data they borrow. A local lease starts before the view is
 built and ends after the view drops, including errors and deadline-detached
 native work. The original query-vector owners keep their separate charges.
 
-Other input copies, temporary seed vectors, model weights, GPU memory, provider
-scratch, other recall allocations and a full working-set bound remain outside
-this slice.
+On the server recall media path, a private owner also records the returned
+`Vec<MediaSeed>` backing allocation once, using its actual capacity and element
+size. The caller drains that original buffer and pushes each seed's fields into
+the final media vector. The source buffer stays with its lease until its empty
+vector drops, before the lease. This charge excludes the seed's inner allocations;
+the existing output charge records those after transfer. The destination's actual
+capacity is still measured, not assumed to match the previous extension method.
+
+Other input copies, provider-internal and non-recall seed vectors, model weights,
+GPU memory, provider scratch, other recall allocations and a full working-set bound
+remain outside this slice.
 It does not establish queue fairness, pre-growth admission, provider cancellation, runtime
 performance or a machine-derived embedding-width floor. The separate semantic
 search request/probe owners are unchanged.

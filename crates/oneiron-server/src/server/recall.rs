@@ -39,7 +39,7 @@ use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::core::SyncServer;
-use crate::api::DecodedMediaQuery;
+use crate::api::{DecodedMediaQuery, MediaSeed};
 use crate::embedder::EmbedQueryRefusal;
 
 /// Whether a light recall (call mode included) embeds a request's `media`
@@ -71,6 +71,11 @@ impl RecallRequestInput {
 
 struct RecallMediaInput {
     media: DecodedMediaQuery,
+    _memory: MemoryLease,
+}
+
+struct RecallMediaSeeds {
+    seeds: Vec<MediaSeed>,
     _memory: MemoryLease,
 }
 
@@ -167,8 +172,12 @@ impl SyncServer {
             let retained = query_vector_bytes(&vectors);
             query_memory.materialized(0, retained);
             if let Some(media) = media {
-                let seeds = self.recall_media_vectors(media, payer)?;
-                vectors.media.extend(seeds);
+                let mut seeds = self.recall_media_vectors(media, payer)?;
+                for seed in seeds.seeds.drain(..) {
+                    vectors
+                        .media
+                        .push((seed.space, seed.kind, seed.vector, seed.kinds));
+                }
                 query_memory.materialized(0, query_vector_bytes(&vectors).saturating_sub(retained));
             }
             Ok(vectors)
@@ -181,7 +190,7 @@ impl SyncServer {
         &self,
         media: RecallMediaInput,
         payer: Option<&PayerPerson>,
-    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>, Vec<InputKind>)>> {
+    ) -> MemoryResult<RecallMediaSeeds> {
         let Ok(runtime) = self.recall_embed_runtime() else {
             return Err(MemoryError::new(
                 MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -197,10 +206,15 @@ impl SyncServer {
                 payer,
             ))
             .map_err(media_refusal)?;
-        Ok(seeds
-            .into_iter()
-            .map(|seed| (seed.space, seed.kind, seed.vector, seed.kinds))
-            .collect())
+        let mut seeds = RecallMediaSeeds {
+            seeds,
+            _memory: self.memory.empty_lease(),
+        };
+        seeds._memory.materialized(
+            0,
+            (seeds.seeds.capacity() as u64).saturating_mul(std::mem::size_of::<MediaSeed>() as u64),
+        );
+        Ok(seeds)
     }
 
     /// The query embedder recall runs with. Light is pure retrieval with no
