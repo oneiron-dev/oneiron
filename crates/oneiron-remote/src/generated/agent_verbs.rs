@@ -1033,6 +1033,9 @@ impl OneironClient {
                 "vault.shared.propose_remove_owner" => remote_agent_verb_output::<
                     oneiron::federation::PendingAuthorityAct,
                 >(client, verb, &input),
+                "vault.shared.propose_add_owner" => remote_agent_verb_output::<
+                    oneiron::federation::PendingAuthorityAct,
+                >(client, verb, &input),
                 "vault.shared.execute" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::SharedActExecuted>,
                 >(client, verb, &input),
@@ -1123,6 +1126,12 @@ impl OneironClient {
                 "vault.shared.policy.changes" => remote_agent_verb_output::<
                     Vec<oneiron::federation::SharedActPolicyChange>,
                 >(client, verb, &input),
+                "vault.shared.owner_change_wait.set" => {
+                    remote_agent_verb_output::<Option<u64>>(client, verb, &input)
+                }
+                "vault.shared.owner_change_wait.get" => {
+                    remote_agent_verb_output::<Option<u64>>(client, verb, &input)
+                }
                 "vault.federation.coreference.link" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CoreferenceLinkReceipt,
                 >(client, verb, &input),
@@ -7908,6 +7917,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.shared.propose_remove_owner", value)
     }
+    pub fn vault_shared_propose_add_owner(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedAddOwnerRequest,
+    ) -> Result<oneiron::federation::PendingAuthorityAct, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.propose_add_owner", value)
+    }
     pub fn vault_shared_execute(
         &self,
         input: &oneiron::task_verb::sdk::SharedActRequest,
@@ -8270,6 +8291,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shared.policy.changes", value)
+    }
+    pub fn vault_shared_owner_change_wait_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedOwnerChangeWaitSetRequest,
+    ) -> Result<Option<u64>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.owner_change_wait.set", value)
+    }
+    pub fn vault_shared_owner_change_wait_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Option<u64>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.owner_change_wait.get", value)
     }
     pub fn vault_federation_coreference_link(
         &self,

@@ -360,6 +360,7 @@ vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
 vaultSharedProposeRemoveOwner(input: unknown): unknown
+vaultSharedProposeAddOwner(input: unknown): unknown
 vaultSharedExecute(input: unknown): unknown
 vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
@@ -390,6 +391,8 @@ vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
 vaultSharedPolicyChanges(input: unknown): unknown
+vaultSharedOwnerChangeWaitSet(input: unknown): unknown
+vaultSharedOwnerChangeWaitGet(input: unknown): unknown
 vaultFederationCoreferenceLink(input: unknown): unknown
 vaultFederationCoreferenceConfirm(input: unknown): unknown
 vaultFederationCoreferenceShareConsent(input: unknown): unknown

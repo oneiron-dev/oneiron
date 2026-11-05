@@ -474,6 +474,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.shared.propose_delete" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_transfer" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_remove_owner" => a.spec.clone().ok_or_else(invalid),
+        "vault.shared.propose_add_owner" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.execute" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.outcomes" => a.spec.clone().ok_or_else(invalid),
@@ -504,6 +505,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.shared.policy.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.change" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.changes" => a.spec.clone().ok_or_else(invalid),
+        "vault.shared.owner_change_wait.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.shared.owner_change_wait.get" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.coreference.link" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.coreference.confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.coreference.share_consent" => a.spec.clone().ok_or_else(invalid),
@@ -2552,6 +2555,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.shared.propose_remove_owner" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.shared.propose_add_owner" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.shared.execute" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2638,6 +2644,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shared.policy.changes" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shared.owner_change_wait.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shared.owner_change_wait.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.federation.coreference.link" => {
@@ -11130,6 +11142,24 @@ async fn execute_agent_verb_row_on(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.shared.propose_add_owner" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shared.propose_add_owner", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedAddOwnerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_propose_add_owner(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.shared.execute" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.shared.execute", &input)
@@ -11653,6 +11683,46 @@ async fn execute_agent_verb_row_on(
             ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shared.owner_change_wait.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shared.owner_change_wait.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedOwnerChangeWaitSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_owner_change_wait_set(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shared.owner_change_wait.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shared.owner_change_wait.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_owner_change_wait_get(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.federation.coreference.link" => {
