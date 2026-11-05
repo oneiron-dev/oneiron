@@ -307,8 +307,10 @@ pub struct AgentHealthCard {
     pub measured: i64,
     pub dial: i64,
     /// The exact native dial and measured values, frozen from the newest
-    /// finding (`long_wait` share, `cost_spike` ratio). `None` for other
-    /// signals or when the raw pair was not finite.
+    /// finding. Units are signal-specific: `long_wait` share, `cost_spike`
+    /// ratio, `silent` minutes for the dial; `long_wait` share, `cost_spike`
+    /// ratio, `silent` quiet seconds for the measured. `None` for other
+    /// signals or when the raw pair was unknown.
     pub exact_dial: Option<f64>,
     pub exact_measured: Option<f64>,
     pub counter_evidence: Vec<AgentHealthCounter>,
@@ -394,9 +396,11 @@ pub(super) struct Finding {
     pub(super) dial: i64,
     /// The number the card shows; it may move while the evidence holds.
     pub(super) measured: i64,
-    /// The exact native dial and measured values (`long_wait` share,
-    /// `cost_spike` ratio), frozen at detection. `Some` only when both are
-    /// finite; otherwise `None` (unknown), never backfilled.
+    /// The exact native dial and measured values, frozen at detection. Units
+    /// are signal-specific: `long_wait` share, `cost_spike` ratio, `silent`
+    /// minutes for the dial; `long_wait` share, `cost_spike` ratio, `silent`
+    /// quiet seconds for the measured. `Some` only when both were captured;
+    /// otherwise `None` (unknown), never backfilled.
     pub(super) exact_dial: Option<f64>,
     pub(super) exact_measured: Option<f64>,
     pub(super) counter: Vec<AgentHealthCounter>,
