@@ -89,7 +89,7 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
             (
                 self.clipboard_retention_in_txn(&txn)?,
-                self.clipboard_metadata_in_txn(&txn)?,
+                self.clipboard_metadata_in_txn(&txn, false)?,
                 self.now_recorded_at(),
             )
         };

@@ -48,7 +48,7 @@ impl Vault {
                     }
                 }
                 ClipboardErase::Range { from, before } => self
-                    .clipboard_metadata_in_txn(&txn)?
+                    .clipboard_metadata_in_txn(&txn, false)?
                     .into_iter()
                     .filter(|row| row.copied_at >= from && row.copied_at < before)
                     .map(|row| (row.clip, Some(row.copied_at)))
