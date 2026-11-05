@@ -2021,7 +2021,7 @@
      "path": "src/anchored_annotation/reanchor.rs",
      "purpose": "Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -83135,7 +83135,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 2,
       "re-export": 1
      }
@@ -83161,6 +83161,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/history.rs",
+     "purpose": "Reads retained revisions from their original generic or common document",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -83181,7 +83191,7 @@
      "path": "src/vault/entity_revision/storage/retained.rs",
      "purpose": "The revisions a row retains, read for a TURN's text revision search",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -91975,7 +91985,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92075,7 +92085,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6426,
+   "source_files": 6427,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93516,7 +93526,7 @@
      "purpose": "Request boundary limits and pure validators",
      "surface": {
       "const": 13,
-      "fn": 13
+      "fn": 12
      }
     },
     {
@@ -115084,7 +115094,7 @@
      "path": "src/api/memory_reason.rs",
      "purpose": "ONE-207: `POST /v1/companion/memory/reason`",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
