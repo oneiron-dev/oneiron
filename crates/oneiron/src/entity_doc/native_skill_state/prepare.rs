@@ -33,29 +33,21 @@ pub(super) fn prepare_in_txn(
     let document_id = EntityId::from_hex(&head.document)?;
     let before = document.doc.oplog_vv();
     let previous = read_fact(&document)?;
-    let next =
+    let (next, actor_stamp) =
         SkillStateFact::from_post_gate(admitted, txn, document_id, &document, previous.as_ref())?;
     document
         .doc
         .set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| Error::CorruptedIndex("native SKILL state writing peer"))?;
-    let actor_stamp = match admitted.actor() {
-        Some(actor) => {
-            super::super::forks::bind_actor(
-                admitted.vault(),
-                txn,
-                &document,
-                actor,
-                admitted.recorded_at(),
-            )?;
-            Some(crate::provenance::actor_stamp_in_txn(
-                admitted.vault(),
-                txn,
-                actor,
-            )?)
-        }
-        None => None,
-    };
+    if let Some(actor) = admitted.actor() {
+        super::super::forks::bind_actor(
+            admitted.vault(),
+            txn,
+            &document,
+            actor,
+            admitted.recorded_at(),
+        )?;
+    }
     document
         .doc
         .get_map(ROOT)
@@ -73,6 +65,10 @@ pub(super) fn prepare_in_txn(
                 .timestamp(timestamp),
         );
     }
+    // The Binary witness also retains this opaque token when its commit
+    // message later falls below a shallow floor. Keep its ordinary hold use
+    // in this writer, without resolving the token or asserting permission.
+    crate::provenance::record_actor_stamp_uses_in_txn(store, txn, &entity, next.writer_token()?)?;
     Ok(PreparedSkillState {
         head,
         document,

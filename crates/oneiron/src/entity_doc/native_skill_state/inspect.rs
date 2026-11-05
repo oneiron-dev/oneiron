@@ -1,6 +1,10 @@
 //! Raw native-map inputs, before source admission or native ordering.
 
+use std::collections::BTreeSet;
+
 use loro::{ContainerID, ContainerType, ID, JsonMapOp, JsonOpContent, VersionVector};
+
+use crate::EntityId;
 
 use super::super::EntityDoc;
 use super::codec::SkillStateFact;
@@ -33,6 +37,28 @@ pub(super) struct NativeMapInventory {
     pub(super) current: Option<SkillStateFact>,
     pub(super) floor: Option<NativeMapFloor>,
     pub(super) mutations: Vec<NativeMapMutation>,
+}
+
+impl NativeMapInventory {
+    /// Opaque provenance references in this same inventory, not acceptance of
+    /// its writes. Admission must precede recording their retained uses.
+    pub(super) fn writer_tokens(&self) -> Result<BTreeSet<EntityId>> {
+        let mut tokens = BTreeSet::new();
+        if let Some(current) = &self.current {
+            tokens.extend(current.writer_token()?);
+        }
+        if let Some(floor) = &self.floor
+            && let Some(fact) = &floor.fact
+        {
+            tokens.extend(fact.writer_token()?);
+        }
+        for mutation in &self.mutations {
+            if let NativeMapWrite::Insert(fact) = &mutation.write {
+                tokens.extend(fact.writer_token()?);
+            }
+        }
+        Ok(tokens)
+    }
 }
 
 fn malformed() -> Error {

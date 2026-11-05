@@ -12,6 +12,7 @@ use crate::EntityId;
 use crate::authority::{AuthorityEntryHash, NativeSkillCarrier};
 use crate::claim::ClaimApprovalStatus;
 use crate::error::{Error, Result, SecretError};
+use crate::provenance::ActorStamp;
 use crate::skill::{SkillLifecycle, SkillRecord};
 
 const FORMAT: u8 = 1;
@@ -52,6 +53,16 @@ enum Door {
     },
 }
 
+/// The original writer's erasable stamp and carried causal input. Resolving
+/// its token now is neither historical authorization nor recipient admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OriginalWriter {
+    token: [u8; 16],
+    class: u8,
+    authority_frontier: Option<AuthorityEntryHash>,
+}
+
 /// The source coordinates at admission. The frontier and CORE fingerprint are
 /// historical evidence, not the current local incarnation or a restore key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +80,7 @@ struct Operation {
     prior: State,
     state: State,
     door: Door,
+    writer: Option<OriginalWriter>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,11 +118,11 @@ impl SkillStateFact {
     #[cfg(feature = "sync")]
     pub(super) fn from_post_gate(
         admitted: &crate::batch::NativeSkillPostGate<'_>,
-        txn: &heed::RoTxn<'_>,
+        txn: &mut heed::RwTxn<'_>,
         document: EntityId,
         source: &super::super::EntityDoc,
         previous: Option<&Self>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, Option<ActorStamp>)> {
         admitted.recheck_in_txn(txn)?;
         let entity = admitted.entity();
         let birth = source.birth();
@@ -132,6 +144,16 @@ impl SkillStateFact {
                     "native SKILL state ordinal overflow",
                 ))
         })?;
+        // Mint only from the actual applying writer, in its transaction.
+        // Return this same stamp for the document commit; a later cache lookup
+        // need not return the same token when the writer carries a frontier.
+        let writer = admitted
+            .actor()
+            .map(|actor| {
+                crate::provenance::actor_stamp_in_txn(admitted.vault(), txn, actor)
+                    .map(|stamp| (stamp, actor.authority_frontier()))
+            })
+            .transpose()?;
         let mut fact = Self {
             format: FORMAT,
             operation: Operation {
@@ -157,6 +179,11 @@ impl SkillStateFact {
                             .map(|(id, frontier)| (*id.as_bytes(), frontier.to_vec())),
                     },
                 },
+                writer: writer.map(|(stamp, authority_frontier)| OriginalWriter {
+                    token: *stamp.token.as_bytes(),
+                    class: stamp.class as u8,
+                    authority_frontier,
+                }),
             },
             attestation: None,
         };
@@ -187,7 +214,7 @@ impl SkillStateFact {
             let signature = key.sign(&fact.transcript()?).to_bytes().to_vec();
             fact.attestation.as_mut().ok_or_else(malformed)?.signature = signature;
         }
-        Ok(fact)
+        Ok((fact, writer.map(|(stamp, _)| stamp)))
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
@@ -229,6 +256,10 @@ impl SkillStateFact {
                     super::super::document::decode_frontier(frontier)?;
                 }
             }
+        }
+        if let Some(writer) = &fact.operation.writer {
+            EntityId::from_bytes(writer.token)?;
+            crate::edge::EdgeActorClass::try_from_u8(writer.class).ok_or_else(malformed)?;
         }
         if let Some(attestation) = &fact.attestation {
             EntityId::from_bytes(attestation.carrier.machine)?;
@@ -298,6 +329,16 @@ impl SkillStateFact {
     pub(super) fn names_birth(&self, birth: &super::super::Birth) -> bool {
         birth.entity == crate::entity_id::bytes_to_hex_lower(&self.operation.entity)
             && birth.at == self.operation.birth_at
+    }
+
+    /// A provenance-use coordinate only. A missing token claim must never
+    /// make the historical writer absent or invent fresh authority for it.
+    pub(super) fn writer_token(&self) -> Result<Option<EntityId>> {
+        self.operation
+            .writer
+            .as_ref()
+            .map(|writer| EntityId::from_bytes(writer.token))
+            .transpose()
     }
 
     pub(super) fn state(&self) -> Result<(SkillLifecycle, ClaimApprovalStatus)> {
