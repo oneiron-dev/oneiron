@@ -58,9 +58,10 @@ pub use self::lifecycle::{
 pub use self::meter::{
     ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
-    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudgetCharge, EffectorBudgetDebit,
-    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId,
-    EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
+    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudgetApproval, EffectorBudgetCharge,
+    EffectorBudgetDebit, EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead,
+    EffectorBudgetRowId, EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
+    EffectorSpendReservationRow,
 };
 pub use self::qualification_kit::{ConnectorIssuerRerunOutcome, ConnectorIssuerRerunStage};
 pub use self::record::{

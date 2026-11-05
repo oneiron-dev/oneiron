@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::types::{IntentId, IntentLedgerRecord, IntentLedgerResult, IntentState};
 use crate::Vault;
 use crate::connector_key::{
-    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorBudgetLocation,
+    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorSpendReservationRow,
 };
 use crate::side_table::{self, Named, SideTable};
 
@@ -149,7 +149,7 @@ pub struct BudgetReservation {
     /// Every preauthorizing Spend row the send met, priced or not: where a
     /// reported actual cost is reconciled (FIX 11662).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spend_rows: Vec<EffectorBudgetLocation>,
+    pub spend_rows: Vec<EffectorSpendReservationRow>,
 }
 
 /// One intent's row in [`SETTLEMENT`].
@@ -223,7 +223,7 @@ pub(crate) fn reserve_budget_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &IntentId,
     debits: Vec<EffectorBudgetDebit>,
-    spend: Option<(ConnectorSpendBasis, Vec<EffectorBudgetLocation>)>,
+    spend: Option<(ConnectorSpendBasis, Vec<EffectorSpendReservationRow>)>,
 ) -> IntentLedgerResult<()> {
     if debits.is_empty() && spend.is_none() {
         return Ok(());

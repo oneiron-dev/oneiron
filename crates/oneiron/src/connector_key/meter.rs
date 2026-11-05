@@ -29,8 +29,10 @@ pub(crate) use self::charge::{
     shares_budget_pool,
 };
 pub(crate) use self::rate_window::{BudgetBlock, budget_block_pooled};
-pub use self::reservation::EffectorBudgetDebit;
 pub(crate) use self::reservation::release_effector_debits_in_txn;
+pub use self::reservation::{
+    EffectorBudgetApproval, EffectorBudgetDebit, EffectorSpendReservationRow,
+};
 pub(crate) use self::row::EFFECTOR_BUDGET_ROW_KEY_LEN;
 pub(crate) use self::row::budget_exhausted_reason;
 use self::row::row_ordinal;

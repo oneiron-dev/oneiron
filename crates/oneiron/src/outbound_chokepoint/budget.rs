@@ -13,8 +13,8 @@ use super::types::OutboundEffectResult;
 use crate::Vault;
 use crate::connector_key::{
     self, ConnectorKeyStatus, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetCharge,
-    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetLocation,
-    EffectorBudgetOnExhaust, SpendReserve,
+    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetOnExhaust,
+    EffectorSpendReservationRow, SpendReserve,
 };
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
@@ -143,7 +143,7 @@ pub(super) fn spend_price_in_txn(
 pub(super) type ReservedSpend = (
     Vec<EffectorBudgetDebit>,
     ConnectorSpendBasis,
-    Vec<EffectorBudgetLocation>,
+    Vec<EffectorSpendReservationRow>,
 );
 
 /// FIX 8689: what the primary key's preauthorizing Spend rows, and its
