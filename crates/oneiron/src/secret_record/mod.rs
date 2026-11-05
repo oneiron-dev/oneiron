@@ -9,7 +9,6 @@ pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 pub(crate) use self::types::SECRET_CUSTODY_STORED_SCHEMA_VERSION;
-pub use self::types::*;
 pub(crate) use self::write_records::{ArchiveSameId, CustodyWrite, FoundNote, StoredValue};
 pub use self::write_records::{CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled};
 pub(crate) use self::write_records::{RepoFileKeys, RepoFileOriginal};
