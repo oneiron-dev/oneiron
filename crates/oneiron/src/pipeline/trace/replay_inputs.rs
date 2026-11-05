@@ -166,12 +166,50 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 "min_salience": authority.min_salience,
                 "deny_all": authority.deny_all,
             },
-            "world_authority": world_authority.map(|world| json!({
-                "active_base": world.active_set.include_base(),
-                "active_worlds": world.active_set.worlds().iter().map(crate::EntityId::to_hex).collect::<Vec<_>>(),
-                "allowed_claim_ids": world.allowed_claim_ids.iter().map(crate::EntityId::to_hex).collect::<Vec<_>>(),
-                "default_claim_id": world.default_claim_id.map(|id| id.to_hex()),
-            })),
+            "world_authority": world_authority.map(|world| {
+                let mut world_memory = builder
+                    .media_search
+                    .memory()
+                    .map(crate::host_memory::MachineMemory::empty_lease);
+                json!({
+                    "active_base": world.active_set.include_base(),
+                    "active_worlds": ({
+                        let ids = world.active_set.worlds().iter().map(crate::EntityId::to_hex).collect::<Vec<_>>();
+                        if let Some(memory) = world_memory.as_mut() {
+                            memory.materialized(
+                                0,
+                                ids.iter().fold(
+                                    (ids.capacity() as u64)
+                                        .saturating_mul(std::mem::size_of::<String>() as u64),
+                                    |bytes, id| bytes.saturating_add(id.capacity() as u64),
+                                ),
+                            );
+                        }
+                        ids
+                    }),
+                    "allowed_claim_ids": ({
+                        let ids = world.allowed_claim_ids.iter().map(crate::EntityId::to_hex).collect::<Vec<_>>();
+                        if let Some(memory) = world_memory.as_mut() {
+                            memory.materialized(
+                                0,
+                                ids.iter().fold(
+                                    (ids.capacity() as u64)
+                                        .saturating_mul(std::mem::size_of::<String>() as u64),
+                                    |bytes, id| bytes.saturating_add(id.capacity() as u64),
+                                ),
+                            );
+                        }
+                        ids
+                    }),
+                    "default_claim_id": world.default_claim_id.map(|id| {
+                        let id = id.to_hex();
+                        if let Some(memory) = world_memory.as_mut() {
+                            memory.materialized(0, id.capacity() as u64);
+                        }
+                        id
+                    }),
+                })
+            }),
             "rerank": builder.rerank.as_ref().map(|(reranker, options)| json!({
                 "scorer": reranker.id(), "top_n": options.top_n,
                 "query_override_present": options.query.is_some(),
