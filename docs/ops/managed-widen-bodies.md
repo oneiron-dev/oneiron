@@ -55,6 +55,11 @@ error shape with a raw-spool allocation message, not `disk_capacity`. A cancelle
 wait keeps the body-not-whole response. Custody's disk-specific message and all
 existing disk and idle rules stay unchanged.
 
+The same stop flag is set before an observed input failure or existing idle expiry
+is queued to the worker. A full feed channel therefore cannot hide that terminal
+event from the waiting admission. Successful data and clean EOF do not set it.
+Other transfers keep their existing feed helpers and behavior.
+
 Before the large accept or reject decoder constructs its text writer or JSON
 reader, its dedicated transfer worker admits both existing 64 KiB I/O buffers
 on the process's shared memory line. One lease covers both, and each buffer's
