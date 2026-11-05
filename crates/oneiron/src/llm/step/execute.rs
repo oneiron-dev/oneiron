@@ -16,7 +16,7 @@ use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
-    DurableStepResult, ReplyCheck, StepOutcome, StepProgression,
+    DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, StepTerminal, current_legibility};
 use crate::error::Error;
