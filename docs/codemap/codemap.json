@@ -2021,7 +2021,7 @@
      "path": "src/anchored_annotation/reanchor.rs",
      "purpose": "Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -9401,7 +9401,7 @@
      "path": "src/blob_artifact/holders.rs",
      "purpose": "Which records hold one record's bytes, read for a delete's impact preview",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -14771,6 +14771,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/commitment_reminder_wording.rs",
+     "purpose": "Source admission for attempt-filed reminder wording (FIX 4997)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -14951,7 +14962,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 5,
       "re-export": 1
      }
@@ -19859,7 +19870,7 @@
      "path": "src/commitment_wake/mod.rs",
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -19874,7 +19885,7 @@
      "purpose": "Served reminder delivery for commitment wakes (OF-187): the owner's reminder route, the planner the server…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 2
      }
@@ -19892,10 +19903,47 @@
      "purpose": "Reminder wording by a model or a persona (FIX 12000)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
+      "re-export": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment_wake/reminder_wording/attempt.rs",
+     "purpose": "Filing the output of one exact leased reminder-wording attempt",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment_wake/reminder_wording/output.rs",
+     "purpose": "The source a filed reminder wording quotes (FIX 4997)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommitmentReminderWordingRead",
+      "CommitmentReminderWordingSource"
+     ],
+     "path": "src/commitment_wake/reminder_wording/source.rs",
+     "purpose": "The exact native reminder source each model destination may receive",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -50616,7 +50664,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 48,
       "re-export": 19
      }
     },
@@ -51234,7 +51282,7 @@
      "path": "src/note/reads.rs",
      "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4,
       "struct": 9
@@ -56266,7 +56314,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/pack.rs",
@@ -65455,7 +65503,7 @@
      "path": "src/settings/device_local.rs",
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 10
      }
     },
@@ -70191,7 +70239,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 34
      }
     },
     {
@@ -70202,6 +70250,16 @@
      "purpose": "A body finished under its reader's pin (FIX 5399b)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store/finish_scanned.rs",
+     "purpose": "Scans a completed sink using its existing inline bytes or finished spill",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74294,7 +74352,7 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 11,
       "re-export": 1,
@@ -81562,7 +81620,7 @@
      "path": "src/task_verb/symbol_lease.rs",
      "purpose": "Node-local time-held symbol declarations and atomic queue ordering",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 4,
       "re-export": 1,
@@ -83087,7 +83145,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 2,
       "re-export": 1
      }
@@ -83113,6 +83171,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/history.rs",
+     "purpose": "Reads retained revisions from their original generic or common document",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -83133,7 +83201,7 @@
      "path": "src/vault/entity_revision/storage/retained.rs",
      "purpose": "The revisions a row retains, read for a TURN's text revision search",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -90667,7 +90735,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90786,7 +90854,7 @@
      "purpose": "Commitment schedule evaluation and durable projection (CMT-2, ONE-1539)"
     },
     "commitment_wake": {
-     "files": 8,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91787,7 +91855,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 487,
+     "files": 488,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91927,7 +91995,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92025,9 +92093,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 142,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6422,
+   "source_files": 6428,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93468,7 +93536,7 @@
      "purpose": "Request boundary limits and pure validators",
      "surface": {
       "const": 13,
-      "fn": 13
+      "fn": 12
      }
     },
     {
@@ -109813,6 +109881,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/commitment_reminder_wording.rs",
+     "purpose": "Native model wording for the durable commitment-reminder queue",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
@@ -115026,7 +115104,7 @@
      "path": "src/api/memory_reason.rs",
      "purpose": "ONE-207: `POST /v1/companion/memory/reason`",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -119236,7 +119314,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -127650,7 +127728,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 106,
+     "files": 107,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -128163,7 +128241,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1535,
+   "source_files": 1536,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

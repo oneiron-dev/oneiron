@@ -10870,6 +10870,12 @@ pub struct RetrievalRunRecord {
     pub replay_inputs: Option<RetrievalReplayInputs>,
     #[serde(rename = "turn", default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<RetrievalTurn>,
+    #[serde(
+        rename = "query_expander_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_expander_id: Option<String>,
     #[serde(rename = "signals")]
     pub signals: Vec<RetrievalSignal>,
     #[serde(rename = "result_ids")]
