@@ -29360,7 +29360,7 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 6,
       "trait": 1
      }
@@ -29384,7 +29384,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/candidate_run.rs",
      "purpose": "Candidate results and the native origin each replay carries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -29431,6 +29431,21 @@
       "fn": 3,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherCandidateInput",
+      "PublisherCandidateRef"
+     ],
+     "path": "src/dreamer_runner/maintenance/code_fix/publisher_refs.rs",
+     "purpose": "Local references to occurrences in the host's actual publisher inputs",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -89894,7 +89909,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 200,
+     "files": 201,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90960,7 +90975,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6368,
+   "source_files": 6369,
    "test_files": 895
   },
   "oneiron-android": {
