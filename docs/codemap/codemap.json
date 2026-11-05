@@ -3470,7 +3470,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointUnresolved",
@@ -3536,7 +3536,7 @@
      "path": "src/authority/checkpoint_policy_choice.rs",
      "purpose": "The owner's checkpoint root policy door (mesh PR2c, §A 06, K06): he selects which roots attest his authority…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -93138,7 +93138,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 147,
+   "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6517,
    "test_files": 895
