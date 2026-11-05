@@ -101,7 +101,9 @@ impl WeaveItemTarget {
             WeaveItem::Link { .. }
             | WeaveItem::DreamProgress { .. }
             | WeaveItem::AgentHealth { .. } => None,
-            WeaveItem::LoopDecision { id, .. } => Some(Self::LoopDecision { decision: *id }),
+            WeaveItem::LoopDecision { decision_id, .. } => Some(Self::LoopDecision {
+                decision: *decision_id,
+            }),
         }
     }
 
