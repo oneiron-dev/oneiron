@@ -233,14 +233,20 @@ fn material_valid(
     // cert-only DSS, evidence about an irrelevant issuer, or evidence
     // authenticated by a same-subject/different-key shadow fails here —
     // never AbsentAllowed.
-    let covered_ok = covered.iter().all(|c| {
-        if anchors.iter().any(|a| a.der == c.der) {
-            return true;
+    for cert in covered {
+        if anchors.iter().any(|anchor| anchor.der == cert.der) {
+            continue;
         }
-        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der.as_slice())
-    });
-    if !covered_ok {
-        return Ok(false);
+        let mut crl_covered = false;
+        for issuer in &crl_issuers {
+            if issued_by(cert, issuer, memory)? {
+                crl_covered = true;
+                break;
+            }
+        }
+        if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
