@@ -67,7 +67,8 @@ pub use owner_args::{
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
     RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
-    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    RecoveryKitRecoverAuthorityArgs, RecoveryKitRestoreArgs, RecoveryKitRootsArgs,
+    RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
 pub use secret_control_args::{
