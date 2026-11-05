@@ -56,3 +56,18 @@ edge-weight factor, and confidence factor. A proposal is a request for review,
 not a factual verdict from those five questions.
 
 Canon: ARCH-0026, “Curate own output” and “Observe and attribute”.
+
+## Owner-supplied evaluation input
+
+`POST /v1/owner/dreamer/maintenance/harness-evaluation` accepts
+`{"artifact":"<32 hex>","version":1,"score":0.8}` through the existing owner
+credential door. The engine revalidates the actual owner and credential in the
+same writer that validates the artifact, immutable version and finite `[0, 1]`
+score and queues the maintenance attempt. The response's `attempt` is the actual
+new or existing attempt, not a finding or proof that evaluation has completed.
+The ordinary native host scheduling API remains available.
+
+This is an owner-supplied observation, not an engine-verified evaluator result.
+It does not select, run or attest an extraction-gold or BEAM evaluator. Those
+external score producers still need their own integration. The scheduled run
+uses the existing baseline, regression and retune-finding rules above.

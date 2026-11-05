@@ -241,7 +241,7 @@ impl SyncSecretProjection {
 
     /// The marked source `id` is or stands in place for.
     fn source_for(&self, id: &EntityId) -> EntityId {
-        if self.sources.contains_key(id) {
+        if self.has_source(id) {
             return *id;
         }
         self.source_of_copy(id).unwrap_or(*id)
@@ -254,7 +254,7 @@ impl SyncSecretProjection {
         };
         for part in key.split(':') {
             if let Ok(id) = EntityId::from_hex(part)
-                && self.sources.contains_key(&id)
+                && self.has_source(&id)
             {
                 sources.insert(id);
             }
@@ -284,7 +284,7 @@ impl SyncSecretProjection {
     fn payload_carries_marked(&self, content: &JsonOpContent) -> bool {
         let marked = |bytes: &[u8]| {
             let hash = blake3::hash(bytes);
-            self.blobs.contains_key(hash.as_bytes()) || self.unread.contains_key(hash.as_bytes())
+            self.blob(hash.as_bytes()).is_some() || self.is_unread(hash.as_bytes())
         };
         let values_marked = |values: &[LoroValue]| {
             values
