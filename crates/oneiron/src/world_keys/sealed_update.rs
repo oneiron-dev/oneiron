@@ -229,13 +229,19 @@ pub(crate) fn seal_world_message(
 /// # Errors
 /// A refusal when the bytes are no sealed part, or when the key the hint
 /// names does not open them, or opens a body that disagrees with that key.
+/// Envelope parsing's working-memory allocation fault.
 pub(crate) fn open_world_update(
     vault_id: &[u8; 32],
     keys: &[WorldKey],
     sealed: &[u8],
 ) -> Result<Option<OpenedWorldUpdate>> {
     let malformed = || refused("not a sealed world update");
-    let envelope = Envelope::parse(sealed).map_err(|_| malformed())?;
+    let envelope = Envelope::parse(sealed).map_err(|error| match error {
+        oneiron_crypto::Error::OutOfMemory => {
+            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+        }
+        _ => malformed(),
+    })?;
     let header = envelope.header();
     if header.purpose != Purpose::SealedWorldUpdate
         || header.recipient != RECIPIENT
