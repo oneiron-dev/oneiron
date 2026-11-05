@@ -170,3 +170,22 @@ story paragraph import, three story ops, typed read, fork review entries and
 export of every changed paragraph as its full `SetStoryRuns`, reusing the native
 story verbs above with no native change. It works once this chain integrates;
 story structure/table ops and story ask pinning remain unbuilt.
+
+The story table-cell change (2026-11-05, FIX 594) adds the native
+`edit_story_cell` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, new `src/edit/verbs/story_cells.rs`) and opens the wrapper
+`DocxChange::SetStoryCell` arm (`docx_body.rs`, `docx_body/projection.rs`). One
+strict wire op with a tagged scope object (the same shape as `DocxStoryScope`)
+serves all five story families; the existing body cell core is factored onto
+`&mut BlockNode` unchanged and reused, so the logical-grid, vMerge, effective
+structural status with same-transaction own-insert, opaque, no-op, revision and
+Direct law is identical for body and story cells. The op rewrites the cell's
+FIRST paragraph only (the body law, `apply_set_cell_text_in_place`); any later
+cell paragraphs are untouched, and a shared import caller must not treat the
+read view's joined multi-paragraph cell text as that first paragraph. Header,
+footer, and note cells land tracked; comment cells land as Normal annotation
+text in both outer modes via a text-only settle of the target paragraph only,
+with the note/comment whole-story hash recomputed. Story structure
+insert/delete stays unbuilt; no whole-594 claim. No contract schema bump, no
+new error, format, default, cap, or Loro change. No Word-runtime comparison is
+claimed.

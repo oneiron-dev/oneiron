@@ -59,6 +59,7 @@ use crate::edit::verbs::numbering::NumberingChange;
 use crate::edit::verbs::page_setup::{
     ColumnLayout, PageMargins, PageSetupPatch, PageSize, SectionTarget,
 };
+use crate::edit::verbs::story_cells::StoryCellAddress;
 use crate::edit::verbs::table_ops::{TableInsertPosition, TableOp};
 use crate::edit::{
     BlockSpec, CellFormattingPatch, ContentFragment, DataBinding, EditStep, EditTransaction,
@@ -933,6 +934,26 @@ pub enum Op {
         #[serde(default)]
         rationale: Option<String>,
     },
+    /// Edit one table cell's FIRST-paragraph text within a header/footer,
+    /// footnote/endnote, or comment story. Mirrors
+    /// `EditStep::EditStoryCell`. `scope` names the actual story (the same
+    /// object shape as the wrapper `DocxStoryScope`: header/footer with
+    /// `part_name` plus `band`, footnote/endnote/comment with `id`);
+    /// `target` is the story-local table id (never a body id — story `tbl_n`
+    /// ids collide with body `tbl_n` and cross-story); `row_index`/`col_index`
+    /// are the logical grid address; `text` is the plain replacement for the
+    /// cell's FIRST paragraph (any later cell paragraphs are untouched).
+    EditStoryCell {
+        scope: StoryCellScopeWire,
+        target: NodeId,
+        row_index: usize,
+        col_index: usize,
+        text: String,
+        #[serde(default)]
+        semantic_hash: Option<String>,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
     /// Insert a footnote or endnote (§17.11). Mirrors `EditStep::InsertNote`.
     /// `note_kind` is the wire string `"footnote"` | `"endnote"` (validated and
     /// mapped to `NoteKind`; an unknown value is refused, never defaulted).
@@ -1498,6 +1519,27 @@ pub enum TableOpWire {
         col_index: usize,
         text: String,
     },
+}
+
+/// Wire form of a story-cell scope (`Op::EditStoryCell.scope`). Tagged by
+/// `kind`; the same object shape as the wrapper `DocxStoryScope`, so the
+/// projection forwards its scope verbatim. `band` is the
+/// `"default"` | `"first"` | `"even"` token, refused at translate when unknown
+/// (never defaulted); `part_name`/`id` must be non-empty (refused in
+/// `validate_schema`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoryCellScopeWire {
+    /// A header story: part name plus the exact band it must carry.
+    Header { part_name: String, band: String },
+    /// A footer story: part name plus the exact band it must carry.
+    Footer { part_name: String, band: String },
+    /// A footnote story by `w:id`.
+    Footnote { id: String },
+    /// An endnote story by `w:id`.
+    Endnote { id: String },
+    /// A comment story by `w:id`.
+    Comment { id: String },
 }
 
 fn default_after() -> String {
@@ -2432,6 +2474,18 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
             "target",
             "expect",
             "content",
+            "semantic_hash",
+            "rationale",
+        ],
+    ),
+    (
+        "edit_story_cell",
+        &[
+            "scope",
+            "target",
+            "row_index",
+            "col_index",
+            "text",
             "semantic_hash",
             "rationale",
         ],
@@ -3727,6 +3781,32 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                     return Err(SchemaError::CommentMissingId { op_index });
                 }
             }
+            // `text` needs no emptiness gate (an empty cell text is a valid
+            // clearing edit, as on the body cell path); `row_index`/`col_index`
+            // are validated against the live table in the verb. The `band`
+            // token is refused when unknown at translate, the same edge as the
+            // header/footer kind tokens.
+            Op::EditStoryCell { scope, .. } => match scope {
+                StoryCellScopeWire::Header { part_name, .. }
+                | StoryCellScopeWire::Footer { part_name, .. } => {
+                    if part_name.trim().is_empty() {
+                        return Err(SchemaError::HeaderFooterEmptyField {
+                            op_index,
+                            field: "scope.part_name",
+                        });
+                    }
+                }
+                StoryCellScopeWire::Footnote { id } | StoryCellScopeWire::Endnote { id } => {
+                    if id.trim().is_empty() {
+                        return Err(SchemaError::NoteMissingId { op_index });
+                    }
+                }
+                StoryCellScopeWire::Comment { id } => {
+                    if id.trim().is_empty() {
+                        return Err(SchemaError::CommentMissingId { op_index });
+                    }
+                }
+            },
             Op::InsertNote { expect, body, .. } => {
                 if expect.trim().is_empty() {
                     return Err(SchemaError::NoteEmptyExpect { op_index });
@@ -5168,6 +5248,44 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
             rationale,
         }),
+        Op::EditStoryCell {
+            scope,
+            target,
+            row_index,
+            col_index,
+            text,
+            semantic_hash,
+            rationale,
+        } => {
+            let story = match scope {
+                StoryCellScopeWire::Header { part_name, band } => StoryCellAddress::HeaderFooter {
+                    story: StoryRef::Header(part_name),
+                    band: parse_header_footer_kind(op_index, &band)?,
+                },
+                StoryCellScopeWire::Footer { part_name, band } => StoryCellAddress::HeaderFooter {
+                    story: StoryRef::Footer(part_name),
+                    band: parse_header_footer_kind(op_index, &band)?,
+                },
+                StoryCellScopeWire::Footnote { id } => StoryCellAddress::Note {
+                    kind: NoteKind::Footnote,
+                    id,
+                },
+                StoryCellScopeWire::Endnote { id } => StoryCellAddress::Note {
+                    kind: NoteKind::Endnote,
+                    id,
+                },
+                StoryCellScopeWire::Comment { id } => StoryCellAddress::Comment { id },
+            };
+            Ok(EditStep::EditStoryCell {
+                story,
+                block_id: target,
+                row_index,
+                col_index,
+                text,
+                semantic_hash,
+                rationale,
+            })
+        }
         Op::InsertNote {
             target,
             expect,

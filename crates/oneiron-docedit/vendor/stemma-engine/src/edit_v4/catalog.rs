@@ -62,7 +62,8 @@ fn group_of(op: &str) -> &'static str {
         "replace" | "insert" | "delete" | "move" | "blocks_to_table" => "content",
         "set_attr" | "set_format" | "set_para_format" | "apply_style" | "create_style"
         | "modify_style" | "set_doc_defaults" => "formatting_and_styles",
-        "set_cell_format" | "set_row_format" | "set_table_format" | "table_op" => "tables",
+        "set_cell_format" | "set_row_format" | "set_table_format" | "table_op"
+        | "edit_story_cell" => "tables",
         "insert_cross_ref" | "insert_bookmark" | "rename_bookmark" | "remove_bookmark" => {
             "references"
         }
@@ -218,6 +219,9 @@ fn cue_of(op: &str) -> &'static str {
         "create_style" | "modify_style" => "Create or modify one named Word style.",
         "set_doc_defaults" => "Change inherited document-default font settings once.",
         "table_op" => "Structural table edits; insert_row carries cell text in the same op.",
+        "edit_story_cell" => {
+            "Edit one story table cell's first-paragraph text, addressed by story scope and table id."
+        }
         _ => GENERIC_CUE,
     }
 }
@@ -282,6 +286,12 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
         ],
         // Delete a note and its body-side reference run, by `note_id`.
         "delete_note" => &[r#"{"op":"delete_note","note_id":"<note_id>","note_kind":"footnote"}"#],
+        // A story table cell is addressed by scope plus the story-local table
+        // id; the header shape shows the band the story must carry.
+        "edit_story_cell" => &[
+            r#"{"op":"edit_story_cell","scope":{"kind":"comment","id":"<comment_id>"},"target":"<table_id>","row_index":0,"col_index":0,"text":"<new text>"}"#,
+            r#"{"op":"edit_story_cell","scope":{"kind":"header","part_name":"header1.xml","band":"default"},"target":"<table_id>","row_index":0,"col_index":0,"text":"<new text>"}"#,
+        ],
         "set_format" => &[
             r#"{"op":"set_format","target":"<block_id>","expect":"<exact unique text>","marks":{"bold":true}}"#,
         ],

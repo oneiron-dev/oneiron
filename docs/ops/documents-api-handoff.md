@@ -56,7 +56,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: body `blocks` (id, kind, role, text, runs, cells, lock) and scoped `stories` | none | `read_docx_body` |
 | `docx.revise` | `document` | `transaction` (stemma tracked-change grammar), `limits` | `docx_revised`: the transaction with its date pinned, notes | `document` | `prepare_revision_transaction`, `revise_with_notes` |
 | `docx.validate` | `document` | optional `transaction`, `limits` | `checked` | none | `validate_revision_transaction`, `validate_blocking_with_limits` |
-| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs for header/footer/footnote/endnote/comment stories with an explicit scope; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, note and comment runs land paragraph-scoped the same way, comments as Normal annotation text), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
+| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs and set_story_cell for header/footer/footnote/endnote/comment stories with an explicit scope; set_story_cell replaces only the addressed cell's first paragraph; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, note and comment runs land paragraph-scoped the same way, comments as Normal annotation text), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
 | `xlsx.read` | `workbook` | `limits` (package) | `xlsx_book`: sheets, cells, names, styles, locks | none | `read_xlsx_cells` |
 | `xlsx.project` | `source` | `changes` (cell, set_name, delete_name, conditional_formats: a range, a cell-value or formula rule, and the differential look written to `dxfs`), `limits`, optional `location` (directory, file_name: an external link naming it is the workbook's own and follows a sheet rename or deletion) | `written` | `workbook` | `project_xlsx` |
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
@@ -69,7 +69,8 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 
 `docx.read` returns authored header/footer parts, footnotes, endnotes and comment stories
 beside the main body. Each story carries its native scope and its own ordered local blocks;
-`p_1` in a header is not the body's `p_1`. Header/footer scopes include the source band
+Story paragraph ids such as `story_p1` are local to their story; table ids such as `tbl_1`
+can also occur in the body and in other stories. Header/footer scopes include the source band
 (default, first or even). Synthetic render-time blank bands are not authored package parts
 and are not listed. Story roles are absent: body role tokens cannot be looked up by colliding
 story-local ids. The same text/run/cell/lock projection is used for both.
@@ -79,8 +80,8 @@ transaction: `set_story_text` covers authored headers/footers plus footnote/endn
 bodies plus one paragraph within a comment story, `set_story_runs` covers authored
 headers/footers plus one paragraph within a footnote/endnote story plus one paragraph
 within a comment story. Each change names its
-explicit story scope and its story-local block id; a header's `p_1` never addresses
-the body's `p_1`. Header/footer runs land as one whole-paragraph tracked
+explicit story scope and its story-local block id; a story's local id never addresses
+the body or another story. Header/footer runs land as one whole-paragraph tracked
 redline with exactly the requested six text marks, including empty mark sets and
 same-text edits. Absent marks are explicitly off on new runs, including the
 complex-script bold/italic slots; script selectors, source deletion history and
@@ -95,11 +96,22 @@ way and land as Normal annotation text with exactly the requested six marks,
 later comment paragraphs included; one op serves both comment text and runs.
 Author/date, paragraph `para_id`, threading/resolve metadata, all other blocks,
 and body anchors stay intact; the edited comment's full content hash is recomputed.
-Story move/insert/delete/table ops do not exist. Shared-Loro story paragraph
-import, scoped text/splice/mark ops, read, fork review and export (each changed
-paragraph as its full runs) are implemented on this chain and work once it
-integrates; story structure/table ops and story ask pinning remain unbuilt
-engineering scope. Filling an
+`set_story_cell` projects through the native `edit_story_cell` op, naming the
+actual story scope, its local table id and a logical row/column. Like the body
+cell writer, it replaces only the cell's first paragraph; later cell paragraphs,
+table geometry and other cells stay intact. Header/footer and note cell text
+lands tracked; comment cell text lands as Normal annotation text in both outer
+modes, without accepting other cells' history. The native story table guard
+pins the table in the same transaction base as sibling steps. There is no bare
+story-to-body table-id fallback.
+
+Story move/insert/delete ops do not exist. Shared-Loro story paragraph import,
+scoped text/splice/mark ops, read, fork review and export (each changed paragraph
+as its full runs) are implemented on this chain and work once it integrates.
+Shared-Loro story tables remain unmodeled: their joined read text is not the
+first paragraph the native cell writer replaces. A faithful mutable table model
+needs independently addressed paragraphs, not a flat joined-cell import. Story
+structure and story ask pinning also remain unbuilt engineering scope. Filling an
 empty header/footer paragraph supplies its actual semantic guard with an empty
 `expect`. Native expectations are substring matches; a blank expectation without
 a guard retains its prior refusal.
