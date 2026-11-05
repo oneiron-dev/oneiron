@@ -244,6 +244,13 @@ impl MergeQueue<'_> {
                     Err(error) => return Err(error.into()),
                 };
                 let composed = match written.get_mut(file.path.as_str()) {
+                    // A repeat whose whole preimage is the staged bytes (a
+                    // proposal made on an earlier one's result) writes whole,
+                    // as before; the path composes no further.
+                    Some(composition) if file.expects(actual.as_deref()) => {
+                        *composition = None;
+                        None
+                    }
                     Some(composition) => Some(compose_staged(
                         composition.as_mut(),
                         file,
