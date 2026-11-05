@@ -5,6 +5,7 @@ mod credential;
 mod identity;
 mod login;
 mod record;
+mod refresh;
 
 pub(crate) use credential::CredentialSource;
 pub(crate) use login::{LoginOptions, login};

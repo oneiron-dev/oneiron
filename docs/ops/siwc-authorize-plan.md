@@ -51,7 +51,7 @@ and dry-seat policies are unchanged.
 
 The separate [`oneiron seat siwc-login` command](siwc-local-login.md) implements
 the local callback, code exchange, ID-token verification and protected record.
-That runbook also describes the configured Responses model consumer. Rotating
-refresh and sign-out remain unbuilt. An authorize plan alone must not be presented
+That runbook also describes the configured Responses model consumer and rotating
+refresh. Sign-out and registration revocation remain unbuilt. An authorize plan alone must not be presented
 as any of those operations, or as a working authenticated inference session.
 No existing executor or dispatcher is replaced by the URL-plan command.

@@ -9,10 +9,33 @@ pub(super) struct Identity {
     azp: Option<String>,
     pub sub: String,
     pub email: Option<String>,
-    pub nonce: String,
+    nonce: Option<String>,
 }
 
 pub(super) fn verify(token: &str, client: &str, nonce: &str) -> anyhow::Result<Identity> {
+    let identity = verify_token(token, client)?;
+    anyhow::ensure!(
+        identity.nonce.as_deref() == Some(nonce),
+        "SIWC ID token nonce mismatch"
+    );
+    Ok(identity)
+}
+
+pub(super) fn verify_refresh(
+    token: &str,
+    client: &str,
+    subject: &str,
+    nonce: &str,
+) -> anyhow::Result<Identity> {
+    let identity = verify_token(token, client)?;
+    anyhow::ensure!(
+        identity.sub == subject && identity.nonce.as_deref().is_none_or(|value| value == nonce),
+        "SIWC refresh identity or nonce mismatch"
+    );
+    Ok(identity)
+}
+
+fn verify_token(token: &str, client: &str) -> anyhow::Result<Identity> {
     let invalid = || anyhow::anyhow!("SIWC ID token validation failed");
     let header = decode_header(token).map_err(|_| invalid())?;
     anyhow::ensure!(
@@ -38,10 +61,7 @@ pub(super) fn verify(token: &str, client: &str, nonce: &str) -> anyhow::Result<I
     let identity = decode::<Identity>(token, &key, &validation)
         .map_err(|_| invalid())?
         .claims;
-    anyhow::ensure!(
-        !identity.sub.is_empty() && identity.nonce == nonce,
-        "SIWC ID token identity or nonce mismatch"
-    );
+    anyhow::ensure!(!identity.sub.is_empty(), "SIWC ID token subject is empty");
     let multiple_audiences = identity.aud.as_array().is_some_and(|aud| aud.len() > 1);
     anyhow::ensure!(
         identity.azp.as_deref().is_none_or(|party| party == client)

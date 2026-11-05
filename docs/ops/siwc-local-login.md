@@ -45,8 +45,8 @@ expected issuer, issued-client audience, expiry, nonce and authorized party.
 The local record is replaced only after verification succeeds. A failed or
 cancelled attempt leaves the previous credentials unchanged.
 
-The record keeps the issued client ID, verified identity, host and registered
-callback, access/refresh/ID tokens, returned scopes and expiry data. Files use the
+The record keeps the issued client ID, verified identity, original nonce, host and
+registered callback, access/refresh/ID tokens, returned scopes and expiry data. Files use the
 existing protected-credential writer (owner-only mode and native ACL checks,
 atomic replacement). Tokens are not printed or placed in a vault, control-plane
 record, or environment by this command. Ctrl-C cancels a pending callback,
@@ -106,11 +106,30 @@ reasoning replay. Audio this codec cannot represent is refused without sending;
 existing non-SIWC chat/audio providers are unchanged. Reranking, embedding and
 media ports do not consume this new credential selection.
 
-This command and backend do not yet refresh credentials or revoke a registration.
-Sign in again when the access token expires. Do not configure the saved token as
-an environment key or vault secret to work around that gap. The configured
-Responses model path is connected; full official-seat Dreamer execution remains
-separate engineering work.
+Before opening a Responses call, the backend refreshes an expired access token
+using the saved issued client ID and refresh token at the official token endpoint.
+Same-backend callers share a refresh; the per-record lock also serializes it with
+local sign-in. Another process holding that lock can make an expired-token call
+fail; a later call rereads the record. A returned rotating refresh token replaces
+the old one atomically with the access token. If the response omits a refresh token
+or unchanged scopes, the previous values remain. An explicitly returned empty
+scope does not keep the old direct-plan permission.
+
+A returned ID token must verify its signature, issuer, issued-client audience,
+expiry and authorized party, and keep the same account subject. Its nonce, when
+present, must match the original sign-in nonce. No ID token in a refresh response
+means the prior verified identity remains; it is not a new identity assertion.
+`earliest_refresh_at` stays opaque vendor data: this backend does not guess its
+units or use it to schedule early refreshes.
+
+Cancellation drops the pending refresh and cannot publish from a detached
+verifier. A failed or cancelled exchange may still have rotated the remote grant;
+there is no automatic retry or claim that the vendor rolled it back. Sign in again
+if that grant is no longer valid. Do not configure a saved token as an environment
+key or vault secret to work around a failed refresh.
+
+Registration revocation and full official-seat Dreamer execution remain separate
+engineering work.
 
 The vendor contract is documented at
 <https://developers.openai.com/siwc/token-sharing-open-source/sign-in>.
