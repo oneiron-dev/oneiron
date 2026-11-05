@@ -594,7 +594,16 @@ impl DecisionLadder<'_> {
                 None
             } else {
                 weighed = true;
-                in_band = answer.probability.is_some_and(|p| row.band.contains(p));
+                in_band = answer
+                    .probability
+                    .is_some_and(|p| match &question.contract {
+                        AnswerContract::Noul => row.band.contains(p),
+                        // Only Noul has a confident negative below the lower bound.
+                        AnswerContract::Choice { .. }
+                        | AnswerContract::Score { .. }
+                        | AnswerContract::Box
+                        | AnswerContract::Point => p < row.band.high,
+                    });
                 step_cause(&answer, in_band, row.mode, think_row)
             };
             prior = Some(answer);
