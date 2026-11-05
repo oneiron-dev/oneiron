@@ -55,7 +55,8 @@ pub use weave_lens::{
 };
 pub(crate) use weave_lens::{
     weave_lens_answer_plan, weave_lens_attempt_input, weave_lens_attempt_period,
-    weave_lens_model_input, weave_lens_plan_schema, weave_lens_repair_text,
+    weave_lens_attempt_revision, weave_lens_model_input, weave_lens_plan_schema,
+    weave_lens_repair_text,
 };
 mod weave_report;
 mod weave_serve;
