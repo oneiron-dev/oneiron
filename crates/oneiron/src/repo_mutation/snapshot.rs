@@ -317,7 +317,7 @@ pub(super) fn restore_repo_snapshot(
             &utf8_trimmed(head, "git HEAD must be UTF-8")?,
         )?);
     }
-    let removed_links: Vec<_> = linked_paths.difference(&desired).cloned().collect();
+    let mut residual_paths = BTreeSet::new();
     collect_restore_inventory(
         repo_root,
         repo_root,
@@ -325,7 +325,64 @@ pub(super) fn restore_repo_snapshot(
         &linked_paths,
         &mut current,
         &mut dirs,
+        &mut residual_paths,
     )?;
+    // P1#2 (FIX 5365 R2): `reset_restored_index` can reintroduce a gitlink
+    // from `snapshot_head` (staged deletion: HEAD A holds `s`, entries omit
+    // `s`, current C deleted it; update-ref to A plus reset revives `G`).
+    // AFTER inventory (working-tree opacity stays R1: a snapshot-head-only
+    // file replacement is NOT an opaque dir), extend with the snapshot
+    // HEAD links so `removed_links` (absent from DESIRED all entries)
+    // covers post-reset revivals. Desired file/symlink paths stay OUT
+    // (desired is ALL entries), preserving R1case4; their index overwrite
+    // stages later via `linked_paths.contains` below.
+    if let Some(head) = &snapshot_head {
+        linked_paths.extend(gitlink_paths_at(repo_root, head)?);
+    }
+    let removed_links: Vec<_> = linked_paths.difference(&desired).cloned().collect();
+    // P1#1 (FIX 5365 R2): residual checkouts the inventory skipped via a
+    // `.git` marker are NOT in `linked_paths` (no HEAD/index gitlink), yet
+    // replacing one (or an ancestor dir) with a file/symlink would
+    // recursively delete private checkout data (ruled Engine 15:01: never
+    // recurse into or delete a linked checkout). Refuse BEFORE any
+    // deletion; equality AND ancestor matter, not only strict descendants.
+    // R1 HEAD-only captures (no marker, ordinary working file) are NOT in
+    // `residual_paths`, so they still stage via `linked_paths` above.
+    for entry in &snapshot.entries {
+        if entry.kind == StoredRepoSnapshotEntryKind::Gitlink {
+            continue;
+        }
+        if entry.kind == StoredRepoSnapshotEntryKind::Withheld {
+            continue;
+        }
+        if lifted.contains(&entry.path) {
+            continue;
+        }
+        for repo in &residual_paths {
+            if entry
+                .path
+                .strip_prefix(repo.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+            {
+                return Err(Error::InvalidClaimBody(
+                    "a snapshot cannot enter a linked repository",
+                ));
+            }
+            if entry.path == *repo {
+                return Err(Error::InvalidClaimBody(
+                    "a snapshot cannot replace a linked repository",
+                ));
+            }
+            if repo
+                .strip_prefix(entry.path.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+            {
+                return Err(Error::InvalidClaimBody(
+                    "a snapshot cannot replace a linked repository",
+                ));
+            }
+        }
+    }
 
     // The paths this restore changes: only their index entries are reset.
     let mut changed: BTreeSet<String> = current.difference(&desired).cloned().collect();
@@ -564,6 +621,7 @@ fn collect_restore_inventory(
     linked_paths: &BTreeSet<String>,
     files: &mut BTreeSet<String>,
     dirs: &mut Vec<PathBuf>,
+    residual: &mut BTreeSet<String>,
 ) -> Result<()> {
     let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
     children.sort_by_key(std::fs::DirEntry::file_name);
@@ -578,11 +636,27 @@ fn collect_restore_inventory(
         }
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
-            if linked_paths.contains(&relative) || nested_repository(&path)? {
+            // P1#1 (FIX 5365 R2): carry the actual marker-discovered
+            // boundary (symlink_metadata only, no follow/read) into the
+            // overlap guards; the caller refuses file/symlink replacement
+            // of this dir or any ancestor BEFORE any deletion.
+            if nested_repository(&path)? {
+                residual.insert(relative);
+                continue;
+            }
+            if linked_paths.contains(&relative) {
                 continue;
             }
             dirs.push(path.clone());
-            collect_restore_inventory(repo_root, &path, opaque_paths, linked_paths, files, dirs)?;
+            collect_restore_inventory(
+                repo_root,
+                &path,
+                opaque_paths,
+                linked_paths,
+                files,
+                dirs,
+                residual,
+            )?;
         } else if metadata.file_type().is_file() || metadata.file_type().is_symlink() {
             files.insert(relative);
         } else {
