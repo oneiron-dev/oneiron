@@ -154,7 +154,7 @@ pub(super) fn fetch(
             url: url.to_string(),
             status: 200,
             headers: vec![("content-type".into(), mime.into())],
-            body: bytes,
+            body: bytes.into(),
         })
     })())
 }
