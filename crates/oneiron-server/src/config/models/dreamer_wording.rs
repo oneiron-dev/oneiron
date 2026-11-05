@@ -8,6 +8,8 @@
 //!   confession (OF-544). The engine still lists the objectives first and
 //!   parses the answer; a wording that asks for no `oneiron-confession` block
 //!   is answered with none, and none is recorded.
+//! * `project_detection_prompt` / `project_detection_prompt_file`: the house
+//!   mind's project question, with its typed answer and budget unchanged.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,12 +26,16 @@ const DEFAULT_CONFESSION_INSTRUCTION: &str = "When your result is complete, end 
      objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
      confession never costs the score. Nothing follows the closing fence.";
 
+const DEFAULT_PROJECT_DETECTION: &str = include_str!("../../../prompts/project-detection.md");
+
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DreamerWordingFile {
     confession_prompt: Option<String>,
     confession_prompt_file: Option<PathBuf>,
+    project_detection_prompt: Option<String>,
+    project_detection_prompt_file: Option<PathBuf>,
     commitment_reminder_prompt: Option<String>,
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
@@ -48,6 +54,13 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_CONFESSION_INSTRUCTION.to_owned());
+        let project_detection = super::levels::prompt_text(
+            "models.dreamer.wording.project_detection_prompt",
+            self.project_detection_prompt,
+            self.project_detection_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_PROJECT_DETECTION.to_owned());
         let reminder_instruction = super::levels::prompt_text(
             "models.dreamer.wording.commitment_reminder_prompt",
             self.commitment_reminder_prompt,
@@ -57,6 +70,7 @@ impl DreamerWordingFile {
         .unwrap_or_else(default_reminder_instruction);
         Ok(DreamerWording {
             confession,
+            project_detection,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
         })
@@ -67,6 +81,7 @@ impl DreamerWordingFile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerWording {
     confession: String,
+    project_detection: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
 }
@@ -77,6 +92,12 @@ impl DreamerWording {
     #[must_use]
     pub fn confession(&self) -> &str {
         &self.confession
+    }
+
+    /// The house mind's project question, with its typed answer supplied separately.
+    #[must_use]
+    pub fn project_detection(&self) -> &str {
+        &self.project_detection
     }
 
     /// The instruction used to word commitment reminders, not to send them.
@@ -97,6 +118,7 @@ impl Default for DreamerWording {
     fn default() -> Self {
         Self {
             confession: DEFAULT_CONFESSION_INSTRUCTION.to_owned(),
+            project_detection: DEFAULT_PROJECT_DETECTION.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
         }
