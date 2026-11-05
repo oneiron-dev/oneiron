@@ -75,6 +75,8 @@ mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};
 mod handle_labels;
+mod handle_purpose;
+pub use self::handle_purpose::{SecretHandlePurposeSet, SecretPurposeQuestion};
 pub(crate) mod holder_export;
 mod known_values;
 mod leaf_delivery;
@@ -135,6 +137,7 @@ pub use self::found_keys::{
     FoundKeyCursor, FoundKeyNotice, FoundKeyNoticePage, FoundKeySettled,
     NOTIFICATION_PRODUCER_FOUND_KEY,
 };
+pub(crate) use self::found_keys::purpose_questions_in_txn;
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
     found_key_notices_due_in_txn, kept_as_text_in_txn, move_side_row_custody_in_txn,
