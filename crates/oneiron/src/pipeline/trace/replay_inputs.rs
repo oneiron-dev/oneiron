@@ -175,12 +175,17 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
     inputs.config["affect_retrieval"] = affect_retrieval;
     inputs.config["claim_aging_profiles"] = json!(builder.claim_aging_profiles);
-    inputs.config["media_search"] = json!(
-        builder
+    {
+        let media_memory = builder.media_search.memory();
+        let mut media_trace_memory =
+            media_memory.map(crate::host_memory::MachineMemory::empty_lease);
+        let media_trace = builder
             .media_search
             .iter()
             .zip(&replay_identity.media_spaces)
             .map(|(query, identity)| {
+                let mut kind_memory =
+                    media_memory.map(crate::host_memory::MachineMemory::empty_lease);
                 let kind_overrides = identity
                     .kind_overrides
                     .iter()
@@ -188,6 +193,13 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                         json!({"entity_type": kind, "floor": floors.floor, "strong": floors.strong})
                     })
                     .collect::<Vec<_>>();
+                if let Some(memory) = kind_memory.as_mut() {
+                    memory.materialized(
+                        0,
+                        (kind_overrides.capacity() as u64)
+                            .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
+                    );
+                }
                 json!({
                     "space": query.space_id,
                     "query_kind": query.query_kind,
@@ -202,8 +214,16 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                     "declared_evidence": identity.space.evidence,
                 })
             })
-            .collect::<Vec<_>>()
-    );
+            .collect::<Vec<_>>();
+        if let Some(memory) = media_trace_memory.as_mut() {
+            memory.materialized(
+                0,
+                (media_trace.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
+            );
+        }
+        inputs.config["media_search"] = json!(media_trace);
+    }
     inputs.config["model_revisions"] = json!({
         "text_embedding_space": builder.vault.config.embedding_model.as_deref(),
         "text_embedding_transform": builder.vault.config.embedding_transform.as_deref(),
