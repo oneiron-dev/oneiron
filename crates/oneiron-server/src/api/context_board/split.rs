@@ -124,3 +124,110 @@ fn part_sources(
     }
     sources
 }
+
+/// The state part a live chat turn of `auth` in `conversation` would render
+/// now (I1 = C): the read the turn's own board makes
+/// ([`super::chat_turn_board`]) less its retrieval, and less everything a
+/// served board records: no cursor moves, no changed line is acknowledged,
+/// no hook block is delivered, no row is observed. A candidate for the next
+/// turn's prepared tail, never served as a board; the turn renders its own,
+/// and only an identical beginning of its tokens reuses this one. `None`
+/// when the read is refused or fails.
+pub(crate) async fn next_state_part(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    auth: &crate::auth::CoreAuth,
+    conversation: Option<oneiron::EntityId>,
+) -> Option<String> {
+    use oneiron::context_board::PeopleView;
+    auth.require(crate::auth::CoreScope::Read).ok()?;
+    auth.require_unrestricted_record_scope().ok()?;
+    let room = conversation.map(|id| id.to_hex());
+    let targets = super::board::board_targets(auth, None, room.as_deref(), None, None).ok()?;
+    let (standing, _) = super::standing::standing_prefix(server, auth, None, targets.room_id())
+        .await
+        .ok()?;
+    let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    let read = super::super::scoped_read_for_core_auth(&server.vault, auth).ok()?;
+    let hook_pins = server.vault.board_hook_pins("", None).ok()?;
+    let mut installed_packs: Vec<(String, String)> = Vec::new();
+    for row in server.vault.installed_packs().ok()? {
+        let Ok(source) = oneiron::EntityId::from_hex(&row.source_id) else {
+            continue;
+        };
+        if read.is_entity_readable(&source).ok()? {
+            installed_packs.push((row.pack_name, row.content_hash));
+        }
+    }
+    let session_id = super::resolved_session_id(server, caller, None)
+        .await
+        .ok()?;
+    let own = auth
+        .principal_ref()
+        .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
+    // The changed line as the next board would read it, from a copy of the
+    // session's read set: the copy is never acknowledged or observed.
+    let reads = super::session_read_set(server, caller, session_id.as_deref())
+        .await
+        .ok()?
+        .as_deref()
+        .cloned()
+        .unwrap_or_default();
+    let mut changed = reads.refresh(&read, 16).ok()?;
+    let installs = reads.pack_changes(
+        &installed_packs,
+        16_usize.saturating_sub(changed.rows.len()),
+    );
+    changed.rows.extend(installs.rows);
+    changed.overflow += installs.overflow;
+    reads
+        .fold_own_changes(&read, own, auth.locality(), &mut changed, 16)
+        .ok()?;
+    let (people, resident) = super::board::board_people(server, auth, &read, None)
+        .await
+        .ok()?;
+    let mut parts = super::board::board_parts(
+        server,
+        auth,
+        &read,
+        &targets,
+        None,
+        &[],
+        &reads,
+        &PeopleView::new(&people, &resident),
+        &hook_pins,
+    )
+    .ok()?;
+    if let Some((section, _)) =
+        super::served_readers(server, auth, &PeopleView::new(&people, &resident))
+    {
+        parts.sections.push(section);
+    }
+    let split = split_board(
+        &SplitFrame {
+            header: &BoardBlockHeader {
+                // The epoch rides the query part alone.
+                epoch: 0,
+                scope: parts.scope.clone(),
+            },
+            sections: &parts.sections,
+            you: parts.you.as_deref(),
+            changes: &changed,
+            budget: BoardBudgetRequest {
+                harness_default_tok: standing
+                    .as_ref()
+                    .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
+                        prefix.other_context_tokens
+                    }),
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        },
+        &SplitInputs {
+            memories: None,
+            hits: &[],
+            reads: &reads,
+        },
+    )
+    .ok()?;
+    Some(split.render.state)
+}
