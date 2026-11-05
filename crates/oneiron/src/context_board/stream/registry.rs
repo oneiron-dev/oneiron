@@ -57,6 +57,7 @@ pub struct BoardStreamRegistry {
     pub(super) connections: HashMap<StreamConnectionId, StreamConnectionState>,
     pub(super) published_tasks: super::publish::PublishedTasks,
     pub(super) published_reviews: super::review::PublishedReviews,
+    pub(super) published_room_wakes: super::room_wake::PublishedRoomWakes,
     attached: Arc<Notify>,
 }
 
@@ -83,8 +84,9 @@ impl BoardStreamRegistry {
             BoardRenderMode::Resident => allowed.clone(),
         };
         // Re-attaching over a live connection replaces its state and queue,
-        // so the reviews queued for it are owed again.
+        // so the reviews and room wakes queued for it are owed again.
         self.published_reviews.forget(&c);
+        self.published_room_wakes.forget(&c);
         self.connections.insert(
             c,
             StreamConnectionState {
@@ -112,6 +114,7 @@ impl BoardStreamRegistry {
     pub fn detach(&mut self, c: &StreamConnectionId) {
         self.connections.remove(c);
         self.published_reviews.forget(c);
+        self.published_room_wakes.forget(c);
     }
 
     fn change(

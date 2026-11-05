@@ -196,16 +196,15 @@ impl SyncServer {
                 return;
             }
         };
-        let mut settle = read.spent;
-        if !read.pending.is_empty() {
-            let handed = self
-                .mcp_registry
-                .lock()
-                .await
-                .streams_mut()
-                .publish_room_wakes(read.pending);
-            settle.extend(handed);
-        }
+        // A live wake stays staged however many queues it reached, so a
+        // connection that attaches later (the bridge's own instance) still
+        // hears it; only a wake no longer live is settled (FIX 15647).
+        let settle = read.spent;
+        self.mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .publish_room_wakes(read.pending);
         if settle.is_empty() {
             return;
         }

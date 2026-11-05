@@ -8,11 +8,14 @@
 //! [`PendingRoomWake::read_all`], outside any lock, and hands the live ones
 //! to [`BoardStreamRegistry::publish_room_wakes`]. That queues one WAKE per
 //! wake on each connection of its agent that subscribes to
-//! [`SubscriptionScope::RoomTurns`](super::SubscriptionScope::RoomTurns).
-//! A wake queued on a connection is handed over, and the host settles its
-//! staged row; a wake no longer live is settled unsent; one whose agent has
-//! no such connection yet waits for one to attach. A settled resident's
-//! wakes are its inbox pass's, never this half's.
+//! [`SubscriptionScope::RoomTurns`](super::SubscriptionScope::RoomTurns)
+//! and has not had it yet, as review wakes are offered. Queuing settles
+//! nothing: a queue may never be drained (a credential's own connection
+//! beside the bridge instance that polls), so the staged row stays while
+//! the wake is live and each connection that attaches later is offered it
+//! too. The host settles a staged row only once the wake is no longer live:
+//! its turn claimed or answered, or its agent gone from the room. A settled
+//! resident's wakes are its inbox pass's, never this half's.
 //!
 //! The wake names the room, the turn and the agent, and nothing else: no
 //! speaker, no words, and it grants no read. The harness reads the room
@@ -21,7 +24,10 @@
 //! and drops a wake that is no longer live. Nothing here runs inside the
 //! write that minted the turn, so a wake that does not go out never fails it.
 
-use super::events::BoardEvent;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::events::{BoardEvent, RouteObservation, SubscriptionScope};
+use super::frames::StreamConnectionId;
 use super::provenance::VerifiedRoomWakeEvent;
 use super::registry::BoardStreamRegistry;
 use crate::attempt_queue::AttemptId;
@@ -108,29 +114,77 @@ impl PendingRoomWake {
     }
 }
 
+/// Which connections each live room wake was queued on, so a pass offers
+/// it once per connection and a connection that attaches later still hears
+/// it.
+#[derive(Debug, Default)]
+pub(super) struct PublishedRoomWakes {
+    offered: BTreeMap<String, BTreeSet<StreamConnectionId>>,
+}
+
+impl PublishedRoomWakes {
+    /// Forgets what was queued for `connection` once its queue is gone, so
+    /// a connection attached again under the same id hears each wake anew.
+    pub(super) fn forget(&mut self, connection: &StreamConnectionId) {
+        self.offered.retain(|_, offered| {
+            offered.remove(connection);
+            !offered.is_empty()
+        });
+    }
+}
+
 impl BoardStreamRegistry {
     /// Queues a WAKE for each pending room wake on every connection of its
-    /// agent that subscribes to room turns, and answers the staged rows it
-    /// queued on at least one connection: those are handed over, and the host
-    /// settles them. A wake whose agent has no such connection stays staged
-    /// until one attaches.
-    pub fn publish_room_wakes(&mut self, pending: Vec<PendingRoomWake>) -> Vec<AttemptId> {
-        let mut handed = Vec::new();
+    /// agent that subscribes to room turns and has not had it yet. `pending`
+    /// is the whole live set, read after a commit or an attach: a wake it no
+    /// longer holds is forgotten here. Queuing settles no staged row.
+    pub fn publish_room_wakes(&mut self, pending: Vec<PendingRoomWake>) -> RouteObservation {
+        let mut observed = RouteObservation::default();
+        let live: BTreeSet<String> = pending
+            .iter()
+            .map(|pending| PendingRoomWake::wake_ref(pending.wake.agent, pending.wake.turn))
+            .collect();
+        self.published_room_wakes
+            .offered
+            .retain(|event_ref, _| live.contains(event_ref));
         for pending in pending {
             let wake = pending.wake;
-            let routed = self.route_event(BoardEvent::RoomTurnAddressed {
-                event: VerifiedRoomWakeEvent {
-                    agent_ref: wake.agent.to_hex(),
-                    room_ref: wake.room.to_hex(),
-                    turn_ref: wake.turn.to_hex(),
-                    event_ref: PendingRoomWake::wake_ref(wake.agent, wake.turn),
-                },
-                line: ROOM_WAKE_LINE.to_owned(),
-            });
-            if routed.wake_enqueued > 0 {
-                handed.push(pending.attempt);
+            let event_ref = PendingRoomWake::wake_ref(wake.agent, wake.turn);
+            let agent_ref = wake.agent.to_hex();
+            let fresh: BTreeSet<StreamConnectionId> = {
+                let offered = self.published_room_wakes.offered.get(&event_ref);
+                self.connections
+                    .iter()
+                    .filter(|(connection, state)| {
+                        state.actor_ref == agent_ref
+                            && state.subscribed.contains(&SubscriptionScope::RoomTurns)
+                            && !offered.is_some_and(|offered| offered.contains(*connection))
+                    })
+                    .map(|(connection, _)| connection.clone())
+                    .collect()
+            };
+            if fresh.is_empty() {
+                continue;
             }
+            let routed = self.route_event_where(
+                BoardEvent::RoomTurnAddressed {
+                    event: VerifiedRoomWakeEvent {
+                        agent_ref,
+                        room_ref: wake.room.to_hex(),
+                        turn_ref: wake.turn.to_hex(),
+                        event_ref: event_ref.clone(),
+                    },
+                    line: ROOM_WAKE_LINE.to_owned(),
+                },
+                |connection, _| fresh.contains(connection),
+            );
+            observed.wake_enqueued += routed.wake_enqueued;
+            self.published_room_wakes
+                .offered
+                .entry(event_ref)
+                .or_default()
+                .extend(fresh);
         }
-        handed
+        observed
     }
 }

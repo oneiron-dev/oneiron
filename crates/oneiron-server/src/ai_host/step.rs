@@ -259,6 +259,7 @@ impl StepRunner {
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
         continuation: Option<WorkflowToolContinuation>,
+        woken: Option<TurnWake>,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
         // The step and the claim load door that reads its requester craft are
@@ -348,12 +349,12 @@ impl StepRunner {
         if let Some(left_out) = selected.omission_notice() {
             messages.push(message(LlmMessageRole::System, left_out));
         }
-        // FIX 15648: a leaf whose attempt realizes a TASK was started by
-        // that event (ARCH-0067: "a session born from an event opens with
-        // the wake variant"), so the protocol is stated beside its
-        // instructions and the wake opener closes its request below.
-        // Planner calls on the shared generator stay untagged.
-        let woken = step.attempt.task_ref.is_some().then_some(TurnWake::Task);
+        // FIX 15648: a leaf of a workflow a TASK started (`woken`, read from
+        // the workflow's own binding) was started by that event (ARCH-0067:
+        // "a session born from an event opens with the wake variant"), so
+        // the protocol is stated beside its instructions and the wake opener
+        // closes its request below. Planner calls on the shared generator
+        // stay untagged.
         if woken.is_some() {
             messages.push(message(
                 LlmMessageRole::System,
