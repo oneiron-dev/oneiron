@@ -14,7 +14,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
-use crate::embed::binding_move::PendingEmbedderBinding;
+use crate::embed::PendingEmbedderBinding;
 use crate::{EntityId, Error, Result, Vault};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
