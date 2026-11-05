@@ -3,6 +3,7 @@
 use super::types::EngineExecutorResult;
 use crate::code_run::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
+    ExecutorWireRepairs,
 };
 use crate::{ContentPart, Error, FinishReason, LlmResponse};
 
@@ -10,27 +11,6 @@ use crate::{ContentPart, Error, FinishReason, LlmResponse};
 /// inert packaging metadata: `ts`, `typescript`, `js`, `javascript`,
 /// `readscript`, and arbitrary tags all follow the same path.
 const CODE_FENCE: &str = "```";
-
-/// What ONE-1929 had to remove from one model reply to reach a bare program.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct ExecutorWireRepairs {
-    pub trimmed_transport_whitespace: bool,
-    pub stripped_code_fence: bool,
-    pub stripped_exec_wrapper: bool,
-    pub discarded_console_blocks: u32,
-}
-
-impl ExecutorWireRepairs {
-    /// Whether this turn needed ANY healing. One healed turn counts once, no
-    /// matter how many of these repairs it took.
-    #[must_use]
-    pub(crate) const fn healed(self) -> bool {
-        self.trimmed_transport_whitespace
-            || self.stripped_code_fence
-            || self.stripped_exec_wrapper
-            || self.discarded_console_blocks != 0
-    }
-}
 
 /// One model reply, normalized onto the strict bare wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,17 +74,25 @@ pub(super) fn heal_executor_reply(
 /// the post-hook view a step heals, with no copy of the reply made for it
 /// (FIX 448).
 pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecutorReply> {
+    heal_executor_text_tracking_repairs(text, &mut ExecutorWireRepairs::default())
+}
+
+/// [`heal_executor_text`], writing each repair into `repairs` as it is made.
+/// A reply the normalization refuses leaves the repairs made before the
+/// refusal in `repairs`, for its correction record (FIX 4412).
+pub(super) fn heal_executor_text_tracking_repairs(
+    text: &str,
+    repairs: &mut ExecutorWireRepairs,
+) -> EngineExecutorResult<HealedExecutorReply> {
+    *repairs = ExecutorWireRepairs::default();
     let (candidate, trailing) = partition_reply(text);
     let (cleaned_trailing, trailing_discards) =
         partition_top_level_console_blocks(trailing, ConsoleRegion::Trailing)?;
     let trailing_speak = cleaned_trailing.trim();
 
     let trimmed = candidate.trim();
-    let mut repairs = ExecutorWireRepairs {
-        trimmed_transport_whitespace: trimmed.len() != candidate.len(),
-        discarded_console_blocks: trailing_discards,
-        ..ExecutorWireRepairs::default()
-    };
+    repairs.trimmed_transport_whitespace = trimmed.len() != candidate.len();
+    repairs.discarded_console_blocks = trailing_discards;
 
     let unfenced = match strip_one_whole_fence(trimmed)? {
         Some(interior) => {
@@ -146,7 +134,7 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
     Ok(HealedExecutorReply {
         code: code.to_owned(),
         trailing_speak: (!trailing_speak.is_empty()).then(|| trailing_speak.to_owned()),
-        repairs,
+        repairs: *repairs,
     })
 }
 

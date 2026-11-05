@@ -2,6 +2,7 @@
 
 mod compaction;
 mod continuation;
+mod corrections;
 mod folds;
 mod lift;
 mod model_seat;

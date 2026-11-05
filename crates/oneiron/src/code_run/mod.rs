@@ -23,6 +23,9 @@ mod compaction_home;
 mod consent_wait;
 mod contribution;
 mod coordination_codec;
+// CODE-RUNTIME-02 slice 1 (FIX 4411, 4412, 4413): one durable record per
+// model response the live REPL normalized, and the policy it ran under.
+mod correction;
 mod dispatcher;
 pub mod model_call;
 mod payload;
@@ -93,6 +96,12 @@ pub use self::contribution::{
     ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,
     ContributionReplayUnavailable, ForkMismatch, ForkScoring, ForkScoringIdentity, ForkTreatment,
     ReplayAnchor, ScoredFork, contribution_fork_receipts, run_contribution_forks,
+};
+pub(crate) use self::correction::CodeRunCorrectionDraft;
+pub use self::correction::{
+    CODE_RUN_CORRECTION_POLICY, CODE_RUN_CORRECTION_SCHEMA, CodeRunCorrection,
+    CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy,
+    ExecutorWireRepairs,
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
