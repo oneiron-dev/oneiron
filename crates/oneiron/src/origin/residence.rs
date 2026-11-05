@@ -357,9 +357,20 @@ impl Vault {
             && row.writer != ORIGIN_ERASED_WRITER
             && host.is_some_and(|host| row.writer == host.to_hex()))
     }
+    /// The authority row of repository `repo_id` in the caller's snapshot:
+    /// a carried repo manifest is judged against it in the transaction that
+    /// would store it (FIX 12765).
+    #[cfg(feature = "sync")]
+    pub(in crate::origin) fn origin_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        repo_id: EntityId,
+    ) -> Result<Option<OriginAuthority>> {
+        AUTHORITY.get(&self.store, txn, &repo_id)
+    }
     /// The authority key of a served repository: its object store's identity,
     /// as admission reads it before any commit is pinned.
-    fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
+    pub(in crate::origin) fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
         let identity = GitWire::new(self)?.repository_identity(repo_root)?;
         crate::origin::lfs::lfs_repo_id(&identity.as_hex())
     }

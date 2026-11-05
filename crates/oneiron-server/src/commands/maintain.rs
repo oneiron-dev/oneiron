@@ -27,6 +27,8 @@ struct MaintainReport {
     /// The lift sweep's state after the pass, when the owner queued a run.
     #[serde(skip_serializing_if = "Option::is_none")]
     secret_lift: Option<SecretLiftStatus>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    training_inputs: Vec<crate::ai_host::training_pack::TrainingInputCleanup>,
 }
 
 /// What each repair the owner named did; a repair not named is absent.
@@ -130,6 +132,11 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         vault_config,
         "or ask it: `oneiron api raw POST /v1/owner/maintain`",
     )?;
+    let training_inputs = cleanup_training_inputs(
+        &vault,
+        config.models.as_ref().map(|models| &models.training),
+        &args.cleanup_training_inputs,
+    )?;
     let repairs = repair(&vault, &args)?;
     if args.lift_secrets {
         let owner = crate::owner::local_owner(&vault)?;
@@ -145,12 +152,28 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         housekeeping,
         repairs,
         secret_lift,
+        training_inputs,
     })?;
     anyhow::ensure!(
         failed == 0,
         "{failed} housekeeping sweep(s) failed; the report names them, and the next pass retries them"
     );
     Ok(())
+}
+
+fn cleanup_training_inputs(
+    vault: &oneiron::Vault,
+    settings: Option<&crate::config::models::TrainingSettings>,
+    ids: &[String],
+) -> anyhow::Result<Vec<crate::ai_host::training_pack::TrainingInputCleanup>> {
+    ids.iter()
+        .map(|hex| {
+            let id = oneiron::EntityId::from_hex(hex).map_err(|_| {
+                anyhow::anyhow!("--cleanup-training-inputs {hex} is not a 32-hex run id")
+            })?;
+            crate::ai_host::training_pack::cleanup_training_job_inputs(vault, settings, &id)
+        })
+        .collect()
 }
 
 fn repair(vault: &oneiron::Vault, args: &MaintainArgs) -> anyhow::Result<Repairs> {

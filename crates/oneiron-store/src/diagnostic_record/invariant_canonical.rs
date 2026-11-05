@@ -26,4 +26,3 @@ pub struct InvariantBudget {
     /// grammar allows.
     pub earlier_only: bool,
 }
-

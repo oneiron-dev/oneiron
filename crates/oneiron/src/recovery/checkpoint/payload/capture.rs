@@ -15,7 +15,8 @@ use super::Deferred;
 #[cfg(feature = "sync")]
 use super::SyncCarriers;
 use super::{
-    Compartment, ImageFilter, PayloadStreams, Projected, Projection, db_name, project, structure,
+    Compartment, ImageFilter, PayloadStreams, Projected, Projection, WindowCarrierRecord, db_name,
+    project, structure,
 };
 use crate::Vault;
 use crate::error::Result;
@@ -32,6 +33,8 @@ pub(in crate::recovery::checkpoint) struct CapturedPayload {
     pub(in crate::recovery::checkpoint) not_compartmented: BTreeMap<String, u64>,
     /// Each registry gap the capture rode past, one line each (KS7-6).
     pub(in crate::recovery::checkpoint) registry_gaps: Vec<String>,
+    /// Each split window's carrier, which the image keeps (FIX 10277).
+    pub(in crate::recovery::checkpoint) window_carriers: Vec<WindowCarrierRecord>,
 }
 
 /// Where the rows of the image `txn` reads go (KS7-2b), through `filter`,
@@ -136,6 +139,7 @@ pub(in crate::recovery::checkpoint) fn seal_image(
             .iter()
             .map(ToString::to_string)
             .collect(),
+        window_carriers: projected.window_carriers.clone(),
     }))
 }
 

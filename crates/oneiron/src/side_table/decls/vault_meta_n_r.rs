@@ -1,59 +1,7 @@
-// Declared `vault_meta` tables whose prefix starts with `m` to `r`, in prefix order.
+// Declared `vault_meta` tables whose prefix starts with `n` to `r`, in prefix order.
 
 side_tables! {
-    VAULT_META_M_R;
-    /// Engine-stamped monotonic causality sequence for identity-topology ledger events. Key: ().
-    IDENTITY_TOPOLOGY_SEQ: VaultMeta b"m:identity_topology_seq" Raw;
-    /// Conservative marker that a zero-head split has ever been recorded, gating an expensive ledger
-    /// fold. Key: ().
-    IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
-    /// Idle publication delay. Key: ().
-    ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
-    /// FIX 9970: a TURN whose landing could not record its program wake, and why, written in
-    /// that landing's commit and cleared when a later landing of the turn evaluates its wake.
-    /// Key: id16(turn).
-    MEMORY_TURN_WAKE_UNPERSISTED: VaultMeta b"memory:turn_wake_unpersisted:v1:" Named Engine;
-    /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
-    /// hex64(batch id).
-    MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_batch_accepts_masked];
-    /// One merge batch filed under a proposal, run work or run declaration it names, so a run's
-    /// enqueue, stage and observe read its own batches by key (FIX 7067). Key: hex(repo
-    /// identity) ":" kind ":" id ":" hex64(batch id).
-    MERGE_QUEUE_BATCH_INDEX: VaultMeta b"merge_queue:batch_index:v1:" Named Engine;
-    /// One object store's checked queue configuration: the approved baseline, the plan frozen
-    /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
-    MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_config_accepts_masked];
-    /// One requested queue init, check or diagnosis: its attempt, generation, status and
-    /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
-    MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored [accepts: crate::merge_queue::merge_queue_check_work_accepts_masked];
-    /// One checker receipt filed under its inputs digest and verdict, so a reused, bound or
-    /// sealed receipt is read by key (FIX 7349). Key: hex(repo identity) ":" inputs digest ":"
-    /// verdict ref (empty for none) ":" hex64(request digest).
-    MERGE_QUEUE_RECEIPT_INDEX: VaultMeta b"merge_queue:receipt_index:v1:" Named Engine;
-    /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
-    /// 8268). Key: (). FIX 8519: this entry's scrub takes an erased setter's id out of it.
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked]
-        => crate::merge_queue::erase_review_policy_actor_in_txn;
-    /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
-    /// identity).
-    MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
-    /// The reply assertions a MESSAGE born whole (not streamed) kept from its witness write
-    /// (FIX 10260): its turn, conversation and writer, and the ids and types its turn asserted.
-    /// Key: id16(message).
-    MESSAGE_REPLY_ASSERTIONS: VaultMeta b"message_reply_assertions:v1:" Named Engine;
-    /// In-flight streamed message recovery seed. Key: id16. FIX 10668: this entry's scrub takes
-    /// the signed slip out of a Retry seed's action its erased requester asked.
-    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named
-        => crate::memory::scrub_stream_seed_actor_in_txn;
-    /// Vault default message-streaming policy. Key: ().
-    MESSAGE_STREAM_POLICY: VaultMeta b"message_stream_policy:v1" Named;
-    /// Latest terminal stream receipt of a message. Key: id16.
-    MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
-    /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
-    MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored [accepts: crate::store::model_step_submission::model_step_submission_accepts_masked];
-    /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
-    /// Key: id16(stream).
-    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored [accepts: crate::store::model_stream_row::model_stream_accepts_masked];
+    VAULT_META_N_R;
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Native mail messages an inbox poll set aside after their own failure stopped it poll after
@@ -589,6 +537,11 @@ side_tables! {
     /// write-time stamps name; it outlives the row, so an erase of the owner retires every
     /// image's copy. Key: id16 (owner) + bytes16 (instance); value: the row's carrier.
     PROVENANCE_BODY_RESPONSE_OWNER: VaultMeta b"provenance:body_response_owner:v1:" Raw;
+    /// Each actual historical source of a body's owner, by the real vault instance that
+    /// published it; it outlives the live row, so a later erase of the source still finds
+    /// the bodies after ActorScrub. Ids only. Key: id16 (source) + id16 (body owner) +
+    /// bytes32 (BLAKE3) + bytes16 (instance); value: empty.
+    PROVENANCE_BODY_SOURCE: VaultMeta b"provenance:body_source:v1:" Raw;
     /// One row's immutable birth envelope (Rule A made_by); an erase of its process actor drops
     /// it (FIX 6074). Key: id16.
     PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named

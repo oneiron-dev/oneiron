@@ -62,9 +62,8 @@ pub(crate) fn blocked_capture_owners(key: &[u8], value: &[u8]) -> Vec<EntityId> 
 }
 
 /// Who owns a replay-source row's request, read with its witnesses (FIX 6734): the pure
-/// decoded owners plus every owner witnessed for the row's exact step key, sorted and
-/// deduped. A receipt row reads exactly as [`blocked_capture_owners`]: only step rows gain
-/// witnesses. A row keyed as neither kind still names none.
+/// decoded owners plus every owner witnessed for the row's exact receipt or step key,
+/// sorted and deduped. A row keyed as neither kind still names none.
 pub(crate) fn blocked_capture_owners_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -77,9 +76,16 @@ pub(crate) fn blocked_capture_owners_in_txn(
         .and_then(StepSourceKey::decode_key);
     if let Some(step) = step {
         owners.extend(super::ownership::owners_of_capture_in(store, txn, &step)?);
-        owners.sort_unstable();
-        owners.dedup();
+    } else if let Some(receipt) = key
+        .strip_prefix(SOURCE.decl().prefix)
+        .and_then(EntityId::decode_key)
+    {
+        owners.extend(super::ownership::owners_of_receipt_in(
+            store, txn, &receipt,
+        )?);
     }
+    owners.sort_unstable();
+    owners.dedup();
     Ok(owners)
 }
 
