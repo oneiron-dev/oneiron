@@ -681,6 +681,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.policy.relay.decide" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.approve_once" => a.spec.clone().ok_or_else(invalid),
         "vault.connectors.calls.approve_once" => a.spec.clone().ok_or_else(invalid),
+        "vault.connectors.replies.retry_failed" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.deny" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.create_standing_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.create_auto_weave_grant" => a.spec.clone().ok_or_else(invalid),
@@ -3151,6 +3152,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.connectors.calls.approve_once" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.connectors.replies.retry_failed" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.deny" => {
@@ -14759,6 +14763,29 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_calls_approve_once(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.connectors.replies.retry_failed" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.connectors.replies.retry_failed",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectorReplyRetryRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_connectors_replies_retry_failed(
                     server, auth, input,
                 ),
             )

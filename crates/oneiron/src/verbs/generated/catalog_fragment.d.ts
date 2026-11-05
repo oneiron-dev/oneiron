@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1283 code-mode rows (1243 host rows, 40 run rows), 4544 declarations.
-// Replies: 1097 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1284 code-mode rows (1244 host rows, 40 run rows), 4546 declarations.
+// Replies: 1098 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -2092,6 +2092,8 @@ declare namespace Sdk {
   type ApproveOnceRequest = { effect_digest: string };
   type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
   type ConnectorCallApproveOnceRequest = { call_ref: string; approval_digest: string };
+  type ConnectorReplyRetryRequest = { attempt_ref: string };
+  type ConnectorReplyRetryView = { predecessor_ref: string; successor_ref: string };
   type DenyConsentRequest = { effect_digest: string };
   type ActionEnvelopeRequest = { project: string; audience: string[]; budget?: number | null };
   type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
@@ -5846,6 +5848,10 @@ declare const vault: Sdk.VaultHost & {
       grant(input: Sdk.ConnectorWitnessReadGrantRequest): Promise<Sdk.ConnectorWitnessReadGranted | StoredResult>;
       /** The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing. */
       revoke(input: Sdk.ConnectorWitnessReadGrantRevokeRequest): Promise<Sdk.ConnectorWitnessReadGrantRevoked | StoredResult>;
+    };
+    replies: {
+      /** The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history. */
+      retry_failed(input: Sdk.ConnectorReplyRetryRequest): Promise<Sdk.ConnectorReplyRetryView | StoredResult>;
     };
     slates: {
       /** The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again. */

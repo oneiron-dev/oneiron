@@ -539,6 +539,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
 - `vault.connectors.calls.approve_once`
+- `vault.connectors.replies.retry_failed`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.create_auto_weave_grant`
