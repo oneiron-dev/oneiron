@@ -10722,6 +10722,7 @@ class SourceTrustRow(TypedDict):
     actor_ref: NotRequired[str | None]
     max_auto_sensitivity: NotRequired[SensitivityBand | None]
     auto: NotRequired[bool | None]
+    auto_checker: NotRequired[str | None]
     receipted: NotRequired[bool]
     warned: NotRequired[bool]
 SourceTrust = SourceTrustRow | list[SourceTrustRow] | bool | SensitivityBand

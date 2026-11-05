@@ -293,6 +293,10 @@ pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
 /// FIX 12000). Parts: the reminder's content ref.
 pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminder-wording:v1:";
 
+/// The native e-sign seal producer, distinct from capability-upload actors.
+/// No parts: policy binds this one engine writer.
+pub const ESIGN_SEAL_ACTOR: &[u8] = b"oneiron.esign.seal.actor.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 57] = [
