@@ -127,6 +127,32 @@ impl Memory<'_> {
         self.in_room_turn(self.actor_read_key()?)
     }
 
+    /// Share-only rendering keeps its credential for the renderer, but its
+    /// hooks receive no record-read authority, including on ask re-entry.
+    pub(crate) fn verb_hook_read_key(&self, verb: &str) -> MemoryResult<ScopedReadActorKey> {
+        let Some(proof) = self.read_proof.as_ref().filter(|proof| {
+            let claims = proof.claims();
+            claims.share_ref.is_some()
+                && matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+                && proof.allows_verb(verb)
+                && claims.holder_ref == self.actor.to_hex()
+                && claims.actor_class.as_deref() == Some(self.actor_class.gate_actor_class())
+        }) else {
+            return self.read_key();
+        };
+        if !self.vault.capability_slip_is_live(proof)? {
+            return self.read_key();
+        }
+        let key = ScopedReadActorKey::read_nothing(
+            self.actor.to_hex(),
+            self.actor_class.gate_actor_class(),
+        )
+        .ok_or_else(|| {
+            MemoryError::bad_request("bound actor cannot be used as a scoped read key")
+        })?;
+        self.in_room_turn(key.for_destination(&self.destination))
+    }
+
     /// The bound actor's own read, without a bound room turn's ceiling: what
     /// its grants alone admit. A room read checks it beside membership; it
     /// never serves a row inside a turn.
