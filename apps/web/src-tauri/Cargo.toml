@@ -1,0 +1,20 @@
+[package]
+name = "oneiron-desktop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSApplication", "NSAppearance", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSArray", "NSBundle", "NSData", "NSProcessInfo", "NSString"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
