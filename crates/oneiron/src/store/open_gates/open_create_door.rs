@@ -74,6 +74,7 @@ impl Store {
             super::create_env::create_env(path, config, lease)?;
         let (db_open_guard, wtxn, dbs, vault_meta_view) =
             super::create_dbs::create_dbs(&env, is_new_vault, storage_abi_version)?;
+        let clock = config.store_clock.for_store();
         let raw = super::create_commit::create_commit(
             wtxn,
             db_open_guard,
@@ -82,6 +83,8 @@ impl Store {
             &registered_path,
             is_new_vault,
             seed_mode,
+            hooks.gate_hooks,
+            &clock,
             &mut torn_creation_cleanup,
         )?;
         super::create_preflight::create_preflight(
@@ -91,6 +94,7 @@ impl Store {
             config,
             seed_mode,
             hooks,
+            clock,
         )
     }
 }

@@ -112,7 +112,15 @@ impl ResponseCensus {
         {
             return Ok(noted);
         }
-        let Some((carriage, opaque)) = family.scan(key, value).carriage() else {
+        let Some((carriage, opaque)) = family
+            .scan(
+                store.attempt_operations,
+                store.voice_bank_response,
+                key,
+                value,
+            )
+            .carriage()
+        else {
             return Ok(Noted::Not);
         };
         let carrier = response_carrier(db, key);
@@ -235,7 +243,15 @@ pub(super) fn bind_in_txn(
     let Some(family) = ResponseFamily::of_row(db, key, &value) else {
         return Ok(Vec::new());
     };
-    let Some((carriage, opaque)) = family.scan(key, &value).carriage() else {
+    let Some((carriage, opaque)) = family
+        .scan(
+            store.attempt_operations,
+            store.voice_bank_response,
+            key,
+            &value,
+        )
+        .carriage()
+    else {
         return Ok(Vec::new());
     };
     let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
@@ -299,7 +315,16 @@ pub(super) fn release_stale_in_txn(
             None => match carrier_row(carrier) {
                 Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
                     ResponseFamily::of_row(db, key, &value)
-                        .and_then(|family| family.scan(key, &value).carriage())
+                        .and_then(|family| {
+                            family
+                                .scan(
+                                    store.attempt_operations,
+                                    store.voice_bank_response,
+                                    key,
+                                    &value,
+                                )
+                                .carriage()
+                        })
                         .is_some()
                 }),
                 None => false,

@@ -68,6 +68,23 @@ worker) and its `reason`:
 | `os_too_old` | warn | the Mac's release is older than the row's `min_os`, or unreadable |
 | `identity_mismatch:protocol` | warn | the row names a wire this engine does not speak |
 
+## Owner-facing status
+
+`GET /v1/ai/status` includes `models.tagger.runtimes`, read from the
+slot without probing or changing workers. It has one row for `mlx` and
+one for `coreml`, in that order. Each row carries its actual worker
+`state` when a worker exists, plus the last recorded `reason` when one
+exists. An absent platform reports its reason without a worker state.
+A row with neither state nor reason has no recorded attempt; it does not
+mean the worker is down. A load error is `reason = "load_failed"` with
+the error text in `detail`; other recorded reasons pass through unchanged.
+
+These rows describe individual platform workers, not the whole slot's
+health. `models.tagger.state` remains historical: `served` or
+`never_ready`. A previous card or serving choice does not prove current
+readiness. The extraction-encoder seat keeps its existing state and
+points to the tagger row when no generating rung serves it.
+
 ## Loading and fallback
 
 The engine starts the row's own program inside the verified extraction:
