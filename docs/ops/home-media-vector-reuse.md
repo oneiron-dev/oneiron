@@ -7,12 +7,16 @@ The private residence RPC is `residence.media_vectors`; it is not an SDK verb.
 
 ## What this slice carries
 
-- Text rows for CLAIMs, strictly decoded epoch SUMMARYs and TURNs in a declared
-  media embedding space. A TURN uses its visible MESSAGE text in native message
-  order. The space keeps its complete `model@revision@where` identity.
+- Text rows for CLAIMs, strictly decoded epoch SUMMARYs, TURNs and text ASSETs
+  in a declared media embedding space. A TURN uses its visible MESSAGE text in
+  native message order. A text ASSET uses its current native projected blob text.
+  The space keeps its complete `model@revision@where` identity.
 - The row's native text hash, stored vector bytes and optional device/runtime
   provenance, with the complete native source-ID set and full source-carrier
-  digests. A carrier digest is not a claim about the model's runtime.
+  digests. ASSET text includes both its metadata row and the referenced blob's
+  own row. A file-backed source is measured as its original metadata header and
+  checked full body, not its storage manifest; an inline source keeps its bytes.
+  A carrier digest is not release permission or a claim about the model's runtime.
 - One entity per RPC on the existing authenticated, actor-bound residence lane.
   Both ends require a currently proven own machine. Existing RPC budgets apply.
 
@@ -41,8 +45,8 @@ setup-only. The media-row storage format, room MediaVector operations and
 checkpoint getter are unchanged. This slice adds no setting, timeout or numeric
 limit, and requires no migration.
 
-ASSET/blob text, image/audio rows, default text index vectors, other machine
-directions and devices without the live opened home-query path remain outside
-this slice. Matching device and home engine/server versions are needed to use
-the new private RPC; existing backfill still works
-when the home does not answer it. This is not runtime or full-sync proof.
+Image/audio rows, default text index vectors, other machine directions and
+devices without the live opened home-query path remain outside this slice.
+Matching device and home engine/server versions are needed to use the new private
+RPC; existing backfill still works when the home does not answer it. This is not
+runtime or full-sync proof.

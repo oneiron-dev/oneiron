@@ -636,14 +636,25 @@ pub(crate) fn text_vector_sources_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<([u8; 32], Vec<EntityId>)>> {
-    Ok(
-        text_row_in(vault, &vault.store, txn, id)?.map(|(text, _, mut rows)| {
-            rows.push(*id);
-            rows.sort_unstable();
-            rows.dedup();
-            (text_hash(&text), rows)
-        }),
-    )
+    let Some((text, _, mut rows)) = text_row_in(vault, &vault.store, txn, id)? else {
+        return Ok(None);
+    };
+    if let Some(row) = vault.store.port_entity_record(txn, id)?
+        && row.entity_type == ENTITY_TYPE_ASSET
+    {
+        let filed =
+            super::repo_projection::repo_file_body_in(vault, &vault.store, txn, id, &row.body)?;
+        let Some(blob) =
+            crate::memory::asset_blob_entity_id(filed.as_deref().unwrap_or(&row.body))?
+        else {
+            return Ok(None);
+        };
+        rows.push(blob);
+    }
+    rows.push(*id);
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some((text_hash(&text), rows)))
 }
 
 /// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
