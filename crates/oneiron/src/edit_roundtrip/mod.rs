@@ -65,6 +65,9 @@
 //! then stages under the original whole-ask deadline. A later intake floor
 //! travels as [`ArtifactAskRun::deferred_floor`]: callers retain paid answers
 //! and the next-row cursor before returning the typed refusal, without staging.
+//! A later non-timeout native ask error travels beside the Clone run in
+//! [`SheetRowsAskOutcome`]. Callers retain the paid prefix and failing-row cursor,
+//! then return that original error outside the successful retention transaction.
 //! Fresh, standing and wake asks do this before their byte attempt. See `docs/ops/artifact-ask-staging.md`
 //! for native caller order, retry and the existing Keep action.
 //!
@@ -112,7 +115,8 @@ use oneiron_docedit::opc_xml as xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub use self::artifact_question::{
-    ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+    ArtifactAsk, ArtifactAskRun, SheetRowsAskOutcome, UnitAbstention, UnitCall, UnitDecider,
+    UnitRefusal,
 };
 pub use self::deck::{
     DeckEditContext, DeckRender, DeckRenderSide, DeckSettleEvidence, run_deck_transaction,

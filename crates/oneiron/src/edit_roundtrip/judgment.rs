@@ -6,7 +6,8 @@
 //! copy and carries their receipts through Keep.
 
 use super::artifact_question::{
-    ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, answer_cell, cell_text,
+    ArtifactAsk, ArtifactAskRun, SheetRowsAskOutcome, UnitAbstention, UnitRefusal, answer_cell,
+    cell_text,
 };
 use super::judgment_cells::{named_sheet_cells_until, verify_sheet_answer_bytes};
 use super::{
@@ -303,7 +304,7 @@ impl Vault {
         &self,
         artifact: &EntityId,
         request: &SheetRowsAsk<'_>,
-    ) -> Result<ArtifactAskRun> {
+    ) -> Result<SheetRowsAskOutcome> {
         request.ask.validate()?;
         let rows = request.rows;
         let answer_col = request.answer_col;
@@ -334,7 +335,7 @@ impl Vault {
             next_sheet_row: row_iter.next(),
         };
         if run.next_sheet_row.is_none() {
-            return Ok(run);
+            return Ok(run.into());
         }
         // Traverse within the answer share; staging keeps the whole-ask deadline.
         let started = Instant::now();
@@ -349,7 +350,7 @@ impl Vault {
         };
         let resources = crate::office_body::document_resources_until(Some(work_until));
         if sheet_ask_checkpoint(&resources, work_until).is_err() {
-            return Ok(run);
+            return Ok(run.into());
         }
         let cap = {
             let rtxn = self.store.env.read_txn()?;
@@ -362,13 +363,13 @@ impl Vault {
         // Live reads and byte acquisition retain their existing source pins.
         let live = self.live_head_cells(artifact, request.sheet)?;
         if sheet_ask_checkpoint(&resources, work_until).is_err() {
-            return Ok(run);
+            return Ok(run.into());
         }
         let base_live = live.as_ref().map(|(pin, _)| pin.clone());
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
         run.read_rows = read_rows;
         if sheet_ask_checkpoint(&resources, work_until).is_err() {
-            return Ok(run);
+            return Ok(run.into());
         }
         let frontier = *blake3::hash(&bytes).as_bytes();
         let in_rows = |row: u32| {
@@ -389,7 +390,7 @@ impl Vault {
             work_until,
         ) {
             Ok(cells) => cells,
-            Err(error) if sheet_ask_timed_out(&error) => return Ok(run),
+            Err(error) if sheet_ask_timed_out(&error) => return Ok(run.into()),
             Err(error) => return Err(error),
         };
         let cells = &loaded.cells;
@@ -401,7 +402,7 @@ impl Vault {
         for (cell, value) in shown {
             if let Err(refusal) = sheet_ask_checkpoint(&resources, work_until) {
                 if refusal == ResourceRefusal::Deadline {
-                    return Ok(run);
+                    return Ok(run.into());
                 }
                 return Err(crate::office_body::machine_memory_refused(refusal));
             }
@@ -415,7 +416,7 @@ impl Vault {
                 ) {
                     let error = crate::office_body::machine_memory_refused(refusal);
                     if sheet_ask_timed_out(&error) {
-                        return Ok(run);
+                        return Ok(run.into());
                     }
                     return Err(error);
                 }
@@ -429,7 +430,7 @@ impl Vault {
         let headers = match header_row {
             Some(row) => match sheet_row_state(&by_row, row, &resources, work_until) {
                 Ok(headers) => headers,
-                Err(ResourceRefusal::Deadline) => return Ok(run),
+                Err(ResourceRefusal::Deadline) => return Ok(run.into()),
                 Err(refusal) => return Err(crate::office_body::machine_memory_refused(refusal)),
             },
             None => SheetRowState {
@@ -445,6 +446,7 @@ impl Vault {
         let mut abstention_memory = resources.allocation();
         let mut refusal_memory = resources.allocation();
         let mut answers = Vec::new();
+        let mut deferred_error = None;
         while let Some(row) = run.next_sheet_row {
             if Instant::now() >= work_until
                 || cap.is_some_and(|cap| u64::try_from(answers.len()).unwrap_or(u64::MAX) >= cap)
@@ -525,6 +527,12 @@ impl Vault {
                     return Err(crate::office_body::machine_memory_refused(refusal));
                 }
                 Err(SheetRowFailure::Ask(error)) if sheet_ask_timed_out(&error) => break,
+                Err(SheetRowFailure::Ask(error))
+                    if answers.iter().any(|answer| answer.value.is_some()) =>
+                {
+                    deferred_error = Some(error);
+                    break;
+                }
                 Err(SheetRowFailure::Ask(error)) => return Err(error),
             }
         }
@@ -567,7 +575,10 @@ impl Vault {
                 run.next_sheet_row,
             ));
         }
-        Ok(run)
+        Ok(SheetRowsAskOutcome {
+            run,
+            deferred_error,
+        })
     }
 
     /// Stage decided answers through the in-process cell writer on the exact

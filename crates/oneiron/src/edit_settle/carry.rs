@@ -1111,7 +1111,10 @@ impl Vault {
         }
         // Staging is after the cohort, log and woken prefix committed. A byte
         // failure never re-asks those paid units or writes a second failed log.
-        committed.and_then(|(proposed, deadline, deferred_floor)| {
+        committed.and_then(|(proposed, deadline, deferred_floor, deferred_error)| {
+            if let Some(error) = deferred_error {
+                return Err(error);
+            }
             if let Some(refusal) = deferred_floor {
                 return Err(crate::office_body::machine_memory_refused(refusal));
             }
@@ -1143,6 +1146,7 @@ impl Vault {
         Option<PendingProposalView>,
         Option<Instant>,
         Option<oneiron_docedit::resource::ResourceRefusal>,
+        Option<Error>,
     )> {
         let (
             asked,
@@ -1153,9 +1157,30 @@ impl Vault {
             retire,
             next_sheet_row,
             deferred_floor,
+            deferred_error,
         ) = match reasked {
-            Reasked::Nothing => (false, None, None, Vec::new(), Vec::new(), true, None, None),
-            Reasked::Replay => (false, None, None, Vec::new(), Vec::new(), false, None, None),
+            Reasked::Nothing => (
+                false,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                true,
+                None,
+                None,
+                None,
+            ),
+            Reasked::Replay => (
+                false,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                false,
+                None,
+                None,
+                None,
+            ),
             Reasked::Asked {
                 proposal,
                 sheet_answers,
@@ -1163,6 +1188,7 @@ impl Vault {
                 read_rows,
                 next_sheet_row,
                 deferred_floor,
+                deferred_error,
             } => (
                 true,
                 proposal,
@@ -1172,6 +1198,7 @@ impl Vault {
                 false,
                 next_sheet_row,
                 deferred_floor,
+                deferred_error,
             ),
         };
         // The carried envelope is admitted through the principal's own read,
@@ -1235,8 +1262,11 @@ impl Vault {
                     wtxn,
                     &standing_reask(wake, read, &unit_receipts, now, next_sheet_row),
                     proposed.as_ref().map(|_| reask_ref),
-                    deferred_floor
-                        .map(|refusal| crate::office_body::machine_memory_refused(refusal).kind()),
+                    deferred_error.as_ref().map(Error::kind).or_else(|| {
+                        deferred_floor.map(|refusal| {
+                            crate::office_body::machine_memory_refused(refusal).kind()
+                        })
+                    }),
                 )?;
             }
             let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
@@ -1264,6 +1294,9 @@ impl Vault {
             row.retry_at = None;
             WITHDRAWALS.put(&self.store, wtxn, key, &row)?;
             Ok((proposed, deadline, deferred_floor))
+        })
+        .map(|(proposed, deadline, deferred_floor)| {
+            (proposed, deadline, deferred_floor, deferred_error)
         })
     }
 
@@ -1355,6 +1388,7 @@ impl Vault {
             return Ok((Reasked::Nothing, reask_ref));
         }
         let mut deferred_floor = None;
+        let mut deferred_error = None;
         let (proposal, sheet_answers, units, read_rows, next_sheet_row) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
@@ -1375,7 +1409,7 @@ impl Vault {
                     return Ok((Reasked::Nothing, reask_ref));
                 };
                 let selected: SheetRowSelection = rows.iter().copied().collect();
-                let run = self.ask_blob_artifact_sheet_rows(
+                let outcome = self.ask_blob_artifact_sheet_rows(
                     &wake.artifact,
                     &SheetRowsAsk {
                         ask,
@@ -1396,6 +1430,8 @@ impl Vault {
                         only_rows: Some(&selected),
                     },
                 )?;
+                let run = outcome.run;
+                deferred_error = outcome.deferred_error;
                 deferred_floor = run.deferred_floor;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
                 (
@@ -1581,6 +1617,7 @@ impl Vault {
                 read_rows,
                 next_sheet_row,
                 deferred_floor,
+                deferred_error,
             },
             reask_ref,
         ))
@@ -1659,6 +1696,7 @@ enum Reasked {
         read_rows: Vec<EntityId>,
         next_sheet_row: Option<u32>,
         deferred_floor: Option<oneiron_docedit::resource::ResourceRefusal>,
+        deferred_error: Option<Error>,
     },
 }
 
