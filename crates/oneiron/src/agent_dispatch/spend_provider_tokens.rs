@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{AgentDispatcher, SpendScopeId};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::run_admission::{RunEvent, RunReceipt};
-use crate::llm::{ProviderTokenMeasurement, ProviderTokenSnapshot};
+use crate::llm::{ObservedInferenceSlot, ProviderTokenMeasurement, ProviderTokenSnapshot};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result};
 
@@ -62,6 +62,10 @@ pub struct ProviderLeaseTokenSettlement {
     /// missing components. These can be partial, and are never summed here.
     /// An empty list is not a measured zero or proof that no request ran.
     pub reports: Vec<ProviderTokenMeasurement>,
+    /// The same native capture's publisher slots, including slots that recorded
+    /// nothing. Slot identity is local to this instance and lease. These are
+    /// separate from merged reports and do not certify complete coverage.
+    pub observed_slots: Vec<ObservedInferenceSlot>,
 }
 
 impl ProviderLeaseTokenObservation {
@@ -94,6 +98,7 @@ impl ProviderLeaseTokenObservation {
                 dispatched,
                 usage,
                 inference_calls,
+                observed_slots,
                 ..
             } => {
                 observation.lease.clone_from(lease);
@@ -109,6 +114,7 @@ impl ProviderLeaseTokenObservation {
                             output: report.output_tokens,
                         })
                         .collect(),
+                    observed_slots: observed_slots.clone(),
                 });
             }
             _ => return None,

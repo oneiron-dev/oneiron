@@ -15,7 +15,9 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::InferenceCallReceipt;
+use serde::{Deserialize, Serialize};
+
+use super::{InferenceCallReceipt, ProviderTokenMeasurement};
 
 /// One physical request's observation on the lease that began it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,6 +59,22 @@ impl InferenceCallObservation {
     pub fn is_final(&self) -> bool {
         matches!(self, Self::Final(_))
     }
+}
+
+/// One publisher slot at a native lease capture. The slot is local to that
+/// lease; an empty observation means no report was recorded, not zero usage.
+/// Neither the slot list nor all-final reports prove complete source coverage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedInferenceSlot {
+    pub slot: usize,
+    pub observation: Option<ObservedInferenceTokens>,
+}
+
+/// Only the measured token components and the native publisher's report stage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedInferenceTokens {
+    pub final_observed: bool,
+    pub tokens: ProviderTokenMeasurement,
 }
 
 /// One lease's observations, in the order their requests began; a slot stays empty
@@ -106,5 +124,10 @@ impl InferenceObservations {
 
     pub(crate) fn snapshot(&self) -> Vec<InferenceCallObservation> {
         self.calls().iter().flatten().cloned().collect()
+    }
+
+    /// Captures every registered slot under one lock, including empty slots.
+    pub(crate) fn snapshot_indexed(&self) -> Vec<(usize, Option<InferenceCallObservation>)> {
+        self.calls().iter().cloned().enumerate().collect()
     }
 }

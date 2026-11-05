@@ -4,7 +4,7 @@
 //! reported or its lease observed (FIX 9065).
 use super::super::{
     BudgetSettlement, InferenceCallObservation, InferenceCallReceipt, LlmUsage,
-    ProviderTokenMeasurement, answered_units_wide,
+    ObservedInferenceSlot, ObservedInferenceTokens, ProviderTokenMeasurement, answered_units_wide,
 };
 use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
@@ -152,8 +152,25 @@ impl RunInner {
             _ => Vec::new(),
         };
         reported.extend(provided);
-        let inference_calls =
-            settled_inference_calls(reported, permit.lease.inference_observations());
+        let observed_capture = permit.lease.indexed_inference_observations();
+        let observed = observed_capture
+            .iter()
+            .filter_map(|(_, observation)| observation.clone())
+            .collect();
+        let inference_calls = settled_inference_calls(reported, observed);
+        let observed_slots = observed_capture
+            .into_iter()
+            .map(|(slot, observation)| ObservedInferenceSlot {
+                slot,
+                observation: observation.map(|observation| ObservedInferenceTokens {
+                    final_observed: observation.is_final(),
+                    tokens: ProviderTokenMeasurement {
+                        input: observation.receipt().logical_prompt_tokens,
+                        output: observation.receipt().output_tokens,
+                    },
+                }),
+            })
+            .collect();
         if matches!(outcome, CallOutcome::Failed) {
             let reports = inference_calls
                 .iter()
@@ -187,6 +204,7 @@ impl RunInner {
                 },
                 stream,
                 inference_calls,
+                observed_slots,
                 overage,
                 units: charged,
                 unit: line_unit.clone(),

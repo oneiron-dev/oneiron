@@ -113,6 +113,7 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             service_quantity,
             stream,
             inference_calls,
+            observed_slots: _,
             overage,
         } => json!({
             "event": "settled",

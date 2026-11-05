@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4587 declarations.
+// Census: 1299 code-mode rows (1259 host rows, 40 run rows), 4589 declarations.
 // Replies: 1113 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -1932,7 +1932,9 @@ declare namespace Sdk {
   type RsiBudgetRead = { limit: number; spent: number; reserved: number; suspended: boolean };
   type RsiExplorationRead = { exposure_limit: number; spent_exposure: number; reserved_exposure: number; suspended: boolean };
   type ResearchProviderTokenMeasurementWire = { input?: number | null; output?: number | null };
-  type ResearchProviderLeaseTokenSettlementWire = { dispatched: boolean; answer?: ResearchProviderTokenMeasurementWire | null; reports: ResearchProviderTokenMeasurementWire[] };
+  type ResearchObservedInferenceTokensWire = { final_observed: boolean; tokens: ResearchProviderTokenMeasurementWire };
+  type ResearchObservedInferenceSlotWire = { slot: number; observation?: ResearchObservedInferenceTokensWire | null };
+  type ResearchProviderLeaseTokenSettlementWire = { dispatched: boolean; answer?: ResearchProviderTokenMeasurementWire | null; reports: ResearchProviderTokenMeasurementWire[]; observed_slots: ResearchObservedInferenceSlotWire[] };
   type ResearchProviderLeaseTokenObservationWire = { instance: string; lease: string; admitted_receipt: boolean; dispatched_receipt: boolean; answered?: boolean | null; settlement?: ResearchProviderLeaseTokenSettlementWire | null };
   type ResearchProviderRunTokenObservationWire = { instance: string; entry_recorded: boolean; model_future_returned: boolean };
   type ResearchProviderTokenSnapshotWire = { generation: string; observation_id: string; dispatched_calls: number; unsettled_calls: number; input?: number | null; output?: number | null; failed_call_reports: ResearchProviderTokenMeasurementWire[]; leases: ResearchProviderLeaseTokenObservationWire[]; run_observations: ResearchProviderRunTokenObservationWire[] };

@@ -277,6 +277,13 @@ impl BudgetLease {
         self.observations.snapshot()
     }
 
+    /// One capture of every native publisher slot, including those without a
+    /// report. Indices identify slots only on this lease, not all call sources.
+    #[must_use]
+    pub fn indexed_inference_observations(&self) -> Vec<(usize, Option<InferenceCallObservation>)> {
+        self.observations.snapshot_indexed()
+    }
+
     /// The effective context attached after this call's dispatch opened.
     #[must_use]
     pub fn work_context(&self) -> Option<WorkContext> {

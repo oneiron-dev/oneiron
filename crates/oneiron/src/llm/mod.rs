@@ -124,7 +124,8 @@ pub use oneiron_model::llm::{
 };
 // FIX 9065: what each physical request measured, published on its lease while it runs.
 pub use oneiron_model::llm::{
-    InferenceCallObservation, InferenceObservationId, InferencePublisher,
+    InferenceCallObservation, InferenceObservationId, InferencePublisher, ObservedInferenceSlot,
+    ObservedInferenceTokens,
 };
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};

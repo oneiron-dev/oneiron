@@ -76,6 +76,24 @@ pub struct ResearchProviderLeaseTokenSettlementWire {
     /// Native inference receipts can be partial. No physical-request finality
     /// or complete call total is inferred from the list or its presence.
     pub reports: Vec<ResearchProviderTokenMeasurementWire>,
+    /// Every slot registered on this native lease at its settlement capture,
+    /// including empty slots. No full-source or scope completeness implied.
+    pub observed_slots: Vec<ResearchObservedInferenceSlotWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResearchObservedInferenceSlotWire {
+    /// Native index within this actual run instance and lease, not a global id.
+    pub slot: usize,
+    /// None means the publisher recorded nothing, not zero usage or no request.
+    pub observation: Option<ResearchObservedInferenceTokensWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResearchObservedInferenceTokensWire {
+    /// Only the native publisher's Partial/Final tag supplies this status.
+    pub final_observed: bool,
+    pub tokens: ResearchProviderTokenMeasurementWire,
 }
 
 pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopeProviderTokensWire>> {
@@ -130,6 +148,19 @@ pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopePr
                                                         .reports
                                                         .into_iter()
                                                         .map(Into::into)
+                                                        .collect(),
+                                                    observed_slots: settlement
+                                                        .observed_slots
+                                                        .into_iter()
+                                                        .map(|slot| ResearchObservedInferenceSlotWire {
+                                                            slot: slot.slot,
+                                                            observation: slot.observation.map(|observation| {
+                                                                ResearchObservedInferenceTokensWire {
+                                                                    final_observed: observation.final_observed,
+                                                                    tokens: observation.tokens.into(),
+                                                                }
+                                                            }),
+                                                        })
                                                         .collect(),
                                                 }
                                             }),
