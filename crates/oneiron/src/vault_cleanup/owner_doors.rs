@@ -9,7 +9,9 @@
 
 use super::attempt_retention::{keep_attempt_in_txn, restore_archived_attempt_in_txn};
 use super::marks::keep_record_in_txn;
-use super::proposal_review::{Decided, decide_cleanup_proposal_in_txn};
+use super::proposal_review::{
+    Decided, decide_cleanup_proposal_in_txn, decide_cleanup_proposal_sourced_in_txn,
+};
 use super::proposals_archive::{accept_cleanup_proposal_in_txn, reject_cleanup_proposal_in_txn};
 use super::retention::set_task_retention_days_in_txn;
 use super::run_revert::revert_cleanup_run_in_txn;
@@ -84,6 +86,27 @@ impl Vault {
             decide_cleanup_proposal_in_txn(self, txn, input)
         });
         Decided::answer(decided, &input.proposal)
+    }
+
+    /// [`Self::decide_cleanup_proposal_as`] beside the decision's additive
+    /// attempt sources (FIX 10494): the union of genuine known gated source
+    /// rows over its accepted completed-attempt slots, from that same
+    /// writer. The vector is additive named release evidence only, never a
+    /// complete whole-response assertion.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::decide_cleanup_proposal_as`].
+    pub fn decide_cleanup_proposal_sourced_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &CleanupDecideRequest,
+    ) -> MemoryResult<(CleanupDecideView, Vec<EntityId>)> {
+        let decided = self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            decide_cleanup_proposal_sourced_in_txn(self, txn, input)
+        });
+        Decided::answer_sourced(decided, &input.proposal)
     }
 
     /// [`set_cleanup_posture`](super::set_cleanup_posture), as `owner`. The
