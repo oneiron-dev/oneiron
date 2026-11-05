@@ -93,35 +93,22 @@ Off-record encrypted spill remains governed by its own exact-session order
 scope. The additional live-session source bank below is a published-body slice,
 not whole written-session preservation or a usable deployed floor.
 
-## Live-session source bank
+## Gate-ledger supplier floor
 
-A live target uses the actual physical vault id, the exact registry reference
-and the 16-byte overlay shell minted once at entry. It is not a gate decision
-or an entry timestamp. A new order registers under the same entry lock that
-publishes closing. An admitted exact standing may reconnect to its retained
-closing source. The per-vault private registry keeps public recipient and order
-metadata, not source bytes or private keys. A disconnected attempt is not an
-order release. Explicit release ends only that order generation; its native
-receipt does not claim that HOST keys or clone content were destroyed.
+This slice installs only gate-ledger capture. The matching HOST consumer is
+implemented separately in Hypnos. Its actual native dependency pins and lock
+must move together to a merged, compiled supplier floor before deployment.
 
-`Pending` means registered without a source pin. `Accepted` is emitted only
-when the close-side supplier lends its sealed, drained overlay snapshot and
-existing spill directory. The borrowed getter uses actual native file rows and
-body-key decoding. Only digest and length from an output reference are body
-facts; its placeholder path, kind and completion fields are not occurrence
-metadata. No body key or wrap leaves the supplier.
+The shared framing and crypto vocabulary also names live-session sources so
+the matching HOST client can compile against one contract. This gate-only
+collector rejects a live-session request before emitting Pending or Accepted,
+registering an order, or changing any off-record close path. It makes no claim
+that a live session has been preserved. The HOST must record that attempt as
+failed, not captured. An unsupported live request cannot block ordinary close.
 
-The stream binds a typed source family and the exact whole request digest in
-all content, descriptor and summary AEAD roles. The encrypted completion
-manifest states its actual extent. `PublishedLiveSessionBodies` is not a claim
-that an in-progress written temporary file was captured. This bank therefore
-keeps the exact covered close pending after a published-only extent ACK. An
-empty published-row set is not proof that no written spill exists. Full
-writer-aware temporary-spill coverage and definitive no-written-source proof
-remain integration work; this bank must not be activated as whole-session
-preservation or used to wipe an unqualified extent.
-
-Managed stop wakes queued capture waiters and shuts all registered stream
-clones before the existing all-socket shutdown and all-worker join. A capture
-already borrowing source must return before its worker can finish. Service
-stop is not authority release, a complete clone or permission to wipe.
+The full native LIVE source bank is kept separately for the admission-time
+source retainer, final written-spill capture and definitive no-written-source
+proof. Published bodies alone are not the whole written extent. That work must
+join its real HOST consumer before live-session capture is enabled. No ordinary
+host/customer hold, encrypted spill, erase or cleanup behavior is removed by
+this supplier-floor slice.

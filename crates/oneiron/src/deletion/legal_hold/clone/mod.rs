@@ -4,10 +4,8 @@
 
 mod auth;
 mod collector;
-mod live;
 
 pub use auth::{HostLegalChannel, HostLegalConnection};
-pub(crate) use live::HostLegalCaptures;
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +14,8 @@ use std::time::Duration;
 use oneiron_crypto::HybridPublicKey;
 use oneiron_crypto::legal_clone::SourceComponent;
 use oneiron_vault_contract::host_legal::{
-    CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, HostLegalRequest, SourceHello,
+    CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, FrameHeader, FrameKind,
+    HostLegalRequest, ReleaseLiveOrder, SourceHello,
 };
 
 use crate::error::Result;
@@ -26,9 +25,9 @@ use crate::{EntityId, Vault};
 use collector::Collector;
 
 impl HostLegalConnection {
-    /// Run on the managed blocking executor. Teardown cancels the private live
-    /// registry, shuts ALL accepted streams and joins ALL workers before Vault
-    /// close. A successful stream ACK covers only its declared source extent.
+    /// Run on the managed blocking executor. Teardown shuts ALL accepted
+    /// streams and joins ALL workers before Vault close. This supplier floor
+    /// captures only gate-ledger sources, never live-session spill.
     pub fn run(mut self, vault: &Vault, cancelled: &AtomicBool) -> Result<()> {
         self.stream.set_nonblocking(false)?;
         SourceHello {
@@ -38,7 +37,7 @@ impl HostLegalConnection {
         self.stream.flush()?;
         let request = match HostLegalRequest::read_from(&mut self.stream)? {
             HostLegalRequest::ReleaseLiveOrder(release) => {
-                return self.release_live(vault, release);
+                return self.release_order(vault, release);
             }
             HostLegalRequest::Capture(request) => request,
         };
@@ -66,11 +65,15 @@ impl HostLegalConnection {
         self.stream.set_read_timeout(deadline)?;
         self.stream.set_write_timeout(deadline)?;
         if matches!(&request.scope, CaptureScope::LiveSession(_)) {
-            return self.run_live(vault, request, public);
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "live-session capture is not enabled by this supplier floor",
+            )
+            .into());
         }
         let check = || check(vault, &request, cancelled);
-        // Gate custody BEFORE its source writer. Neither guard is reused for
-        // LIVE: K lends its final overlay/spill source at the close boundary.
+        // Gate custody BEFORE its source writer. The live-session source
+        // bank has a different lifetime and is not enabled by this floor.
         let _custody = vault.store.gate_custody_read_guard()?;
         let txn = vault.store.env.write_txn()?;
         check()?;
@@ -118,6 +121,33 @@ impl HostLegalConnection {
         collector.finish(decisions, 0, CaptureExtent::GateDecisions, check)?;
         // Read-only abort, after the exact durable HOST acknowledgement.
         drop(txn);
+        Ok(())
+    }
+
+    fn release_order(mut self, vault: &Vault, release: ReleaseLiveOrder) -> Result<()> {
+        EntityId::from_bytes(release.order)?;
+        if release.source_vault != *vault.vault_id().as_bytes() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "legal release source identity",
+            )
+            .into());
+        }
+        // Gate capture is one-shot. HOST has already cancelled and joined its
+        // exact capture before sending this receipt request. There is no live
+        // order registry or future-capture permission in this supplier floor.
+        let digest = release.digest()?;
+        self.stream.write_all(
+            &FrameHeader {
+                kind: FrameKind::Released,
+                member: 0,
+                part: 0,
+                len: digest.len() as u64,
+            }
+            .bytes(),
+        )?;
+        self.stream.write_all(&digest)?;
+        self.stream.flush()?;
         Ok(())
     }
 }

@@ -39,7 +39,8 @@ whole-family capture is claim-free, while explicit native decision-key selection
 can also open claim-bound rows under their actual native custody. Neither path
 exports or retains an ordinary claim key. Live-session body and metadata use
 tags 6 and 7. The metadata member encrypts the actual raw file row separately
-from the body; descriptor metadata alone is not that member. Published live
+from the body; descriptor metadata alone is not that member. The separate native live-session source bank produces these members; the
+gate-ledger supplier floor does not enable live-session capture. Published live
 bodies are only the consumer's stated capture extent, not proof that an active
 writer or a partial file has no written bytes.
 
