@@ -57,7 +57,7 @@ use zeroize::Zeroizing;
 
 use super::failure::{EngineErrorKind, cause, failure};
 use crate::commands::{OpenedServedVault, open_served_vault_anchored};
-use crate::config::{ServeArgs, ServeConfig};
+use crate::config::{EmbeddedHolderOverrides, ServeConfig};
 use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
 
@@ -105,17 +105,19 @@ pub fn embedded_serve_config(
     dimensions: Option<usize>,
     config_file: Option<&Path>,
 ) -> anyhow::Result<ServeConfig> {
-    let mut config = crate::config::resolve_serve_config(&ServeArgs {
-        config: config_file.map(Path::to_path_buf),
-        vault_path: Some(vault_path.to_path_buf()),
+    let overrides = EmbeddedHolderOverrides {
+        vault_path: vault_path.to_path_buf(),
         dimensions,
-        ..ServeArgs::default()
-    })
+    };
+    let mut config = crate::config::resolve_serve_config(
+        &overrides.serve_args(config_file.map(Path::to_path_buf)),
+    )
     .context(cause(
         EngineErrorKind::Config,
         "the embedded engine's serve config did not resolve",
     ))?;
     config.config_path = config_file.map(Path::to_path_buf);
+    config.embedded_holder_overrides = Some(overrides);
     Ok(config)
 }
 

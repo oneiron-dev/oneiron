@@ -1,9 +1,10 @@
 //! One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly). The
-//! spans a night spends group by thing: its world, its facet, the private
-//! thread its turns are of, and the entity a span's reading bound, else the
+//! spans a night spends group by thing: its world, its facet, its private
+//! audience identity, and the entity a span's reading bound, else the
 //! structural topic. No conversation is in the key, so a thing may span
-//! conversations; every exposure boundary stays in it, and a private
-//! thread's turns share a thing only with turns of that same thread.
+//! conversations. Private threads whose whole current audiences name the
+//! same live PERSON share a thing; unresolved or group audiences stay per
+//! thread. Every actual reader and exposure boundary stays per part.
 //!
 //! Each spent span is its OWN bound entity's (FIX 8723): a TURN whose spans
 //! bind several entities lands in each of their things, so no entity loses
@@ -21,10 +22,11 @@ use std::collections::BTreeMap;
 
 use super::exposure::Exposure;
 use crate::dreamer_consolidation::{
-    ConsolidationBranchPlan, ConsolidationPartitionKey, ConsolidationPartitionPlan, PartitionThing,
-    WorkingSetTurn,
+    ConsolidationBranchPlan, ConsolidationPartitionKey, ConsolidationPartitionPlan,
+    PartitionAudience, PartitionThing, WorkingSetTurn,
 };
 use crate::dreamer_wake::sieve::SieveSpan;
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EntityId, Result, Vault};
 
 mod slices;
@@ -34,8 +36,9 @@ mod slices;
 pub(super) struct NightlyThingKey {
     pub(super) world: Option<EntityId>,
     pub(super) facet: Option<EntityId>,
-    /// The private thread its turns are of; `None` off any private thread.
-    pub(super) audience: Option<EntityId>,
+    /// One PERSON named by the whole private audience, else its thread;
+    /// `None` off any private thread. Never a reader set or a grant.
+    pub(super) audience: Option<PartitionAudience>,
     /// The entity a spent span's reading bound. `None` is the structural
     /// topic: the TURNs none of whose spent spans is bound.
     pub(super) entity: Option<EntityId>,
@@ -77,30 +80,31 @@ enum Thread {
     Trunk,
     Of {
         root: EntityId,
+        room: EntityId,
         names_audience: bool,
     },
     Unread,
 }
 
-/// Each planned TURN's private thread: the root of the room-thread binding
-/// its body carries (`workspace_roster::thread_binding`, the binding the
-/// private-thread walk reads) when the root's binding names an audience.
-/// `None` on the trunk or a public thread. A TURN whose binding does not
-/// read is its own audience, and a thread whose root does not read is
-/// private: either stays apart, never dropped.
+/// Each planned TURN's private grouping identity. A private thread's whole
+/// current audience may name one live PERSON, directly or through native
+/// pen subject anchors; otherwise its root keeps it separate. Public turns
+/// keep no private identity. Unread bindings stay separate by TURN as before.
 pub(super) fn audiences_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     partitions: &[ConsolidationPartitionPlan],
-) -> Result<BTreeMap<EntityId, Option<EntityId>>> {
+) -> Result<BTreeMap<EntityId, Option<PartitionAudience>>> {
     let mut roots = BTreeMap::new();
+    let mut people = BTreeMap::new();
     let mut audiences = BTreeMap::new();
     for turn in partitions.iter().flat_map(|partition| &partition.turns) {
         let audience = match thread_in(vault, txn, &turn.turn_id)? {
             Thread::Trunk => None,
-            Thread::Unread => Some(turn.turn_id),
+            Thread::Unread => Some(PartitionAudience::Thread(turn.turn_id)),
             Thread::Of {
                 root,
+                room,
                 names_audience,
             } => {
                 let private = if root == turn.turn_id {
@@ -108,12 +112,67 @@ pub(super) fn audiences_in_txn(
                 } else {
                     root_private_in(vault, txn, root, &mut roots)?
                 };
-                private.then_some(root)
+                if private {
+                    let person = people.entry(root).or_insert_with(|| {
+                        audience_person_in(vault, txn, room, root).unwrap_or_default()
+                    });
+                    Some(
+                        (*person)
+                            .map_or(PartitionAudience::Thread(root), PartitionAudience::Person),
+                    )
+                } else {
+                    None
+                }
             }
         };
         audiences.insert(turn.turn_id, audience);
     }
     Ok(audiences)
+}
+
+/// A grouping key only: failure leaves the existing thread identity intact.
+/// Actual CONTENT eligibility and reader equality stay in `exposure`/`slices`.
+fn audience_person_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    root: EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(audience) = crate::workspace_roster::thread_audience_now_in(vault, txn, room, root)?
+    else {
+        return Ok(None);
+    };
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    let mut person = None;
+    for member in audience {
+        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &member)?.is_live() {
+            return Ok(None);
+        }
+        let subject = match vault.get_entity_type_in_txn(txn, &member)? {
+            Some(ENTITY_TYPE_PERSON) => member,
+            Some(ENTITY_TYPE_AGENT_DEF) => {
+                let Some(anchor) =
+                    crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &member, at)?
+                else {
+                    return Ok(None);
+                };
+                if anchor.subject_kind != crate::write_envelope::subject_record::SubjectKind::Person
+                {
+                    return Ok(None);
+                }
+                anchor.subject_ref
+            }
+            _ => return Ok(None),
+        };
+        if vault.get_entity_type_in_txn(txn, &subject)? != Some(ENTITY_TYPE_PERSON)
+            || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &subject)?.is_live()
+            || person.is_some_and(|prior| prior != subject)
+        {
+            return Ok(None);
+        }
+        person = Some(subject);
+    }
+    Ok(person)
 }
 
 /// Whether the thread rooted at `root` names an audience, read once.
@@ -148,6 +207,7 @@ fn thread_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Thre
         Ok(None) => Thread::Trunk,
         Ok(Some(binding)) => Thread::Of {
             root: binding.root,
+            room: binding.room,
             names_audience: binding.audience.is_some(),
         },
         Err(_) => Thread::Unread,
@@ -162,7 +222,7 @@ fn thread_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Thre
 pub(super) fn plan_things(
     partitions: &[ConsolidationPartitionPlan],
     spans: &[SieveSpan],
-    audiences: &BTreeMap<EntityId, Option<EntityId>>,
+    audiences: &BTreeMap<EntityId, Option<PartitionAudience>>,
     exposures: &BTreeMap<EntityId, Option<Exposure>>,
 ) -> Vec<NightlyThingPlan> {
     let homes = turn_homes(partitions, spans);
@@ -206,7 +266,7 @@ pub(super) fn plan_things(
 
 fn thing_key(
     partition: &ConsolidationPartitionKey,
-    audience: Option<EntityId>,
+    audience: Option<PartitionAudience>,
     entity: Option<EntityId>,
 ) -> NightlyThingKey {
     NightlyThingKey {
