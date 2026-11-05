@@ -117,6 +117,9 @@ fn rewrite(
                 smart_http::ReceivePackRefStatus::Uncertified => {
                     Some("ref needs objects its earlier publication never certified")
                 }
+                smart_http::ReceivePackRefStatus::AppliedUnpublished => {
+                    Some("ref applied; its pusher was erased, so nothing was published")
+                }
                 smart_http::ReceivePackRefStatus::Published if refused.is_some() => {
                     Some("backend refused ref update")
                 }
