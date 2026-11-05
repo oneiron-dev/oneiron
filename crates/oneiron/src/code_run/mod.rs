@@ -101,7 +101,9 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
-pub(crate) use self::model_call::erase_model_call_actor_in_txn;
+pub(crate) use self::model_call::{
+    erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
+};
 pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
@@ -297,6 +299,8 @@ pub(crate) use self::storage::code_run_continuation_accepts_masked;
 pub(crate) use self::storage::code_run_reader_job_accepts_masked;
 pub(crate) use self::storage::code_run_reader_wait_accepts_masked;
 pub(crate) use self::storage::code_run_replay_capsule_accepts_masked;
+pub(crate) use self::storage::code_run_replay_record_accepts_masked;
+pub(crate) use self::storage::code_run_summary_memo_accepts_masked;
 pub(crate) use self::storage::code_run_type_diagnostics_accepts_masked;
 
 pub use self::dispatcher::{
