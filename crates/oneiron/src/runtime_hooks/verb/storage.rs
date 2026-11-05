@@ -711,11 +711,43 @@ impl Vault {
         check: VerbArgsCheck<'_>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let VerbHookStorage::Session(hooks) = storage else {
-            return chain::pre(self, storage, call, args, check, None, turn);
+        self.pre_verb_hooks_in_with_saved(storage, call, args, check, turn, false)
+    }
+
+    /// A caller-only retained retry on the original storage. A missing
+    /// saved call or an unread chain never passes through as a fresh call.
+    pub(crate) fn pre_verb_hooks_retained_in(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        turn: Option<Arc<TaskWorkTurn>>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_in_with_saved(storage, call, args, check, turn, true)
+    }
+
+    fn pre_verb_hooks_in_with_saved(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        turn: Option<Arc<TaskWorkTurn>>,
+        require_saved: bool,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        let pre = |call, args| {
+            if require_saved {
+                chain::pre_retained(self, storage, call, args, check, turn)
+            } else {
+                chain::pre(self, storage, call, args, check, None, turn)
+            }
         };
-        let own = hooks.answers_unread.then(|| (call.clone(), args.clone()));
-        let ended = match chain::pre(self, storage, call, args, check, None, turn) {
+        let VerbHookStorage::Session(hooks) = storage else {
+            return pre(call, args);
+        };
+        let own = (hooks.answers_unread && !require_saved).then(|| (call.clone(), args.clone()));
+        let ended = match pre(call, args) {
             Ok(ended) => ended,
             Err(error) => {
                 let (Some((call, args)), Some(note)) =
