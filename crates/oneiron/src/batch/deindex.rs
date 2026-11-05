@@ -212,6 +212,13 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::store::base_agent::guard_actor_delete(id)?;
     store.delete_guards.guard_goal_delete(store, wtxn, *id)?;
     store.delete_guards.reject_ruling_delete(store, wtxn, id)?;
+    // FIX 8740: a grant row's rulings keep the admission it gave them
+    // before its bytes leave.
+    if let Some(row) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, id)? {
+        store
+            .record_hooks
+            .witness_grant_rulings_in_txn(store, wtxn, id, &row)?;
+    }
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
     // A carried history read no longer stands for a deleted control (FIX 4296).
     crate::claim::history_seal::scatter_index_seal_for_delete(store, wtxn, id)?;
