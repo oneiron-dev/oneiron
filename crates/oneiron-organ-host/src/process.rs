@@ -640,13 +640,18 @@ impl OrganProcess {
         answer: &ToOrgan,
         fds: &[BorrowedFd<'_>],
         clock: Clock<'_>,
+        fixed_deadline: bool,
         room: &CallRoom,
         grant: Grant<'_>,
     ) -> Result<Option<u64>, FrameError> {
         let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
+        let stopped = || dropped() || (fixed_deadline && clock.passed());
         // Room for the frame first, before it waits for the writer.
-        let _frame = match self.book(answer, room, clock, &dropped) {
+        let _frame = match self.book(answer, room, clock, &stopped) {
             Ok(frame) => frame,
+            Err(FrameError::Withdrawn) if !dropped() && fixed_deadline && clock.passed() => {
+                return Err(FrameError::Late);
+            }
             Err(FrameError::Withdrawn) => return Ok(None),
             Err(err) => return Err(err),
         };
@@ -881,7 +886,15 @@ impl OrganProcess {
                             let held: Vec<BorrowedFd<'_>> =
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
-                            let sent = self.send_answer(id, &answer, &held, clock, room, grant);
+                            let sent = self.send_answer(
+                                id,
+                                &answer,
+                                &held,
+                                clock,
+                                fixed_deadline,
+                                room,
+                                grant,
+                            );
                             if !matches!(sent, Ok(Some(_))) {
                                 asks.unsent();
                             }
