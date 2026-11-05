@@ -22,6 +22,7 @@
 
 mod intent;
 mod learning;
+pub(crate) use learning::seat_model_rates_in_txn;
 mod root_plan;
 mod team_launch;
 mod width_outcomes;
@@ -206,7 +207,7 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
-        let request = &request.with_owner_choices(self.vault, project)?;
+        let (request, _) = request.with_owner_choices(self.vault, project)?;
         let evidence = self.planner_evidence_for(
             project,
             Some(live.id),
@@ -235,16 +236,19 @@ impl AgentDispatcher<'_> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
         let project = attempt_project(&live);
-        let request = &request.with_owner_choices(self.vault, project)?;
+        let (request, owner_choices) = request.with_owner_choices(self.vault, project)?;
         let evidence =
             self.planner_evidence_for(project, Some(live.id), None, &request.need, seats, at)?;
         // The answering rung's workflow skill loads through the same door,
         // so its revision is on the manifest and its executors on the receipt.
-        self.plan_over_evidence(request, team_shape, &evidence, |skill| {
-            let live = self.live_planner_lease(leased)?;
-            self.vault
-                .load_leased_callable_skill_pack(&live, skill, request.executor, at)
-        })
+        let (mut receipt, quotes) =
+            self.plan_over_evidence(&request, team_shape, &evidence, |skill| {
+                let live = self.live_planner_lease(leased)?;
+                self.vault
+                    .load_leased_callable_skill_pack(&live, skill, request.executor, at)
+            })?;
+        receipt.owner_choices = owner_choices;
+        Ok((receipt, quotes))
     }
 
     /// The plan over gathered evidence and a loaded team-shape pack: the
