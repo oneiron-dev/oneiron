@@ -21549,7 +21549,7 @@
      "path": "src/consent/contact_clearance/engine_offer.rs",
      "purpose": "The engine's own contact-disclosure offer for a PERSON's first entry into a room (OF-365 P5, FIX 2288): an…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -21929,6 +21929,7 @@
      "path": "src/consent/widen/offers.rs",
      "purpose": "Owner-scoped pages of the existing open contact-disclosure offers",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -23614,7 +23615,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
