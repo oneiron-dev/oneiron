@@ -3,12 +3,7 @@
 pub mod diagnostics;
 pub use crate::config::bm25::Bm25Config;
 pub use crate::config::bm25::FieldLengthPolicy;
-pub use codec::read_total_docs;
 pub use diagnostics::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
-pub use index::{
-    AnalyzedText, analyze_text, check_indexed_text_bytes, deindex_text, index_analyzed_text,
-    index_text,
-};
 
 // === Layout constants ===
 

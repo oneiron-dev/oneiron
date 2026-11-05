@@ -1,5 +1,4 @@
 //! Portable source files and typed bundle facets. These are not entity kinds.
-use crate::batch::export::archive_types::ExportEntity;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
