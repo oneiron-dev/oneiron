@@ -368,9 +368,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
 | `src/api/facade/host_doors/diary.rs` | src | s | 3 crate-vis | — | The caller's own diary query door (`self.memory.diary.query`), and the sealed-pad doors on a person's own… |
-| `src/api/facade/host_doors/media.rs` | src | m | 31 crate-vis | — | The `ai.*` media doors past text: options, image, speech, transcription, embedding and video |
+| `src/api/facade/host_doors/media.rs` | src | m | 32 crate-vis | — | The `ai.*` media doors past text: options, image, speech, transcription, embedding and video |
 | `src/api/facade/host_doors/packs.rs` | src | m | 26 crate-vis | — | The owner's pack, connector subscription, lens and pack setup doors |
-| `src/api/facade/host_doors/support.rs` | src | m | 32 crate-vis | — | The host doors' shared vocabulary: listings, refusals, proofs, the calling origin and askers |
+| `src/api/facade/host_doors/support.rs` | src | m | 33 crate-vis | — | The host doors' shared vocabulary: listings, refusals, proofs, the calling origin and askers |
 | `src/api/facade/host_doors/support/owner_action.rs` | src | s | 1 crate-vis | — | The owner-act `as_owner` the channel, code, codebase, code view, merge queue and origin doors share (FIX… |
 | `src/api/facade/host_doors/support/owner_listing.rs` | src | s | 1 crate-vis | — | The owner-listing `as_owner` shared by the artifact, commitment, code wait and hook regen doors |
 | `src/api/facade/host_doors/verdict_hooks.rs` | src | s | 7 crate-vis | — | `ai.verdict` through the host's decision ladder, and the owner's `vault.hooks.replay` |
@@ -1402,7 +1402,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/asked_jobs.rs` | src | s | 2 crate-vis | — | The video jobs an agent asked for under the owner's `ai.video` Grant (FIX 3208) |
 | `src/models/media/bindings.rs` | src | s | 7 fn · 10 crate-vis | — | Media voice bindings, clone queries and retry hints |
 | `src/models/media/booked.rs` | src | s | 1 crate-vis | — | A media rung's backend with its replies' bytes held (FIX 8615): each of its calls (an answer, a job's… |
-| `src/models/media/calls.rs` | src | m | 6 fn · 6 crate-vis | — | Media calls, public job operations and runtime cleanup |
+| `src/models/media/calls.rs` | src | m | 6 fn · 7 crate-vis | — | Media calls, public job operations and runtime cleanup |
 | `src/models/media/construction.rs` | src | s | 4 crate-vis | — | Media runtime construction and transport adapters |
 | `src/models/media/fit.rs` | src | s | 1 crate-vis | — | Whether a media rung takes a call (FIX 8612, FIX 8614, FIX 8627): its row serves the call's operation and… |
 | `src/models/media/job_lifecycle.rs` | src | s | 3 crate-vis | — | A kept job's end and its delete, in one order (FIX 9511, FIX 9513) |
@@ -1635,7 +1635,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/message_stream.rs` | src | s | 2 crate-vis | — | Host-owned stream timer and local presence relay |
 | `src/server/message_stream/scoped.rs` | src | s | 5 crate-vis | — | The trusted scope of each message partial in the presence hub (FIX 9537), kept apart from what clients write… |
 | `src/server/mirror_pushes.rs` | src | s | 1 crate-vis | — | The host's half of the origin mirror pushes (ARCH-0068 RA8; FIX 6866) |
-| `src/server/mod.rs` | src | s | 5 re-export · 23 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 5 re-export · 24 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/model_setup.rs` | src | s | 8 crate-vis | — | Live first-run model slots and the workers a setup attaches after startup |
 | `src/server/note_editors.rs` | src | s | 6 crate-vis | — | Explicit NOTE editor handles, owned by the principal that opened them |
 | `src/server/organs.rs` | src | s | 5 crate-vis | — | The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of… |
@@ -1662,9 +1662,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/resident_pump/execution.rs` | src | m | 2 crate-vis | — | Execution of a leased agent run, including its model and planner seats |
 | `src/server/resident_pump/pattern_launch.rs` | src | m | 3 crate-vis | — | A leased agent's own pattern runs, and its planned leader's frozen pack (DOOR-111 S4c-4, S4c-5) |
 | `src/server/resident_pump/settlement.rs` | src | m | 1 crate-vis | — | Completion, failure, and durable parking of leased agent runs |
-| `src/server/run_host_door.rs` | src | m | 10 crate-vis | — | A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own… |
+| `src/server/run_host_door.rs` | src | L | 14 crate-vis | — | A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own… |
 | `src/server/run_host_door/board_carrier.rs` | src | s | 1 crate-vis | — | The run's board carrier (FIX 2135): the frame its own board connection queued rides each successful answer… |
 | `src/server/run_host_door/host_rows.rs` | src | m | 1 crate-vis | — | Host-served verb rows for an agent run and its model options |
+| `src/server/run_host_door/media_step.rs` | src | s | 5 crate-vis | — | The resident entry's dispatcher-owned context for a durable media call |
 | `src/server/run_host_door/resident_rows.rs` | src | s | 2 crate-vis | — | The rows a pumped run's door answers from the run's own seats (FIX 2086): `describe(self)`, the run's own… |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
 | `src/server/space_move.rs` | src | m | 6 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
