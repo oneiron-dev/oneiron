@@ -263,7 +263,7 @@ mod rogue {
                     } else {
                         block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions))
                     };
-                    let mut bytes = sealed.map_err(bad)?.bytes;
+                    let mut bytes = sealed.map_err(bad)?.bytes.to_vec();
                     match self.0 {
                         Mode::AlterPrefix => bytes[pdf.len() / 2] ^= 0x01,
                         Mode::AppendUpdate => bytes.extend_from_slice(

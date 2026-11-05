@@ -19,6 +19,8 @@ use super::types::{
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 
+pub use crate::store::checkout_lease::CheckoutAttemptBinding;
+
 /// The lease-row key the binding is stored under.
 pub(super) const BOUND_ATTEMPT_KEY: &str = "bound_attempt";
 
@@ -30,17 +32,6 @@ pub(crate) const CHECKOUT_BINDING_SHARED: &str =
     "another attempt already holds this checkout epoch";
 /// The binding names another attempt or epoch.
 pub(crate) const CHECKOUT_BINDING_MISMATCH: &str = "the checkout epoch is bound to another attempt";
-
-/// The attempt that holds one checkout epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CheckoutAttemptBinding {
-    /// The attempt dispatched against the epoch.
-    pub attempt: AttemptId,
-    /// The epoch it holds: always the lease's current one.
-    pub epoch: u64,
-    /// The attempt generation that started executing on it, once one did.
-    pub generation: Option<u32>,
-}
 
 /// The binding's lease-row value.
 pub(super) fn encode_bound_attempt(binding: &CheckoutAttemptBinding) -> Value {

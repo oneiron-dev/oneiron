@@ -446,6 +446,10 @@ pub(super) async fn drive(inner: Arc<Inner>) {
         inner.finish_or_restart(Phase::Stopped);
         return;
     };
+    if !inner.wait_for_predecessors().await {
+        inner.finish_or_restart(Phase::Stopped);
+        return;
+    }
     let worker = inner.spec.worker_id.clone();
     let mut attempt = 0_usize;
     'install: loop {
