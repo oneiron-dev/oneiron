@@ -1491,6 +1491,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 24 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/records/admitted.rs` | src | s | 4 crate-vis | — | A run's reply bodies masked at write (FIX 5718 part 3, Engine rulings 3 and 4) |
 | `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 31 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
+| `src/code_run/storage/records/bodies/context.rs` | src | s | 1 crate-vis | — | One code-run output body for a heal's recorded cause (FIX 7275): the context-safe read of a raw output… |
 | `src/code_run/storage/records/bodies/host_occurrence.rs` | src | s | 2 crate-vis | — | A host parent run's record and whose it is (FIX 9019) |
 | `src/code_run/storage/records/bodies/reader.rs` | src | s | 2 crate-vis | — | A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 6 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
@@ -5293,7 +5294,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/event.rs` | src | s | 1 re-export · 1 crate-vis | — | Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds |
 | `src/self_heal/heal_context.rs` | src | m | 3 struct · 2 enum · 2 fn · 1 crate-vis | HealContextPolicy, HealContextSeed, HealEvidenceContext, HealLink, HealUnavailable | What a heal reads about a failure's recorded cause (OF-418 L2, L10; ARCH-0066 §4, §6) |
 | `src/self_heal/heal_context/admitted.rs` | src | m | 4 crate-vis | — | The reader's admission of a heal context's recorded trace (FIX 10093) |
-| `src/self_heal/heal_context/records.rs` | src | s | 3 crate-vis | — | How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's… |
+| `src/self_heal/heal_context/records.rs` | src | s | 4 crate-vis | — | How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's… |
 | `src/self_heal/healer_host.rs` | src | m | 5 struct · 2 enum · 10 fn · 7 crate-vis | HealerDeployment, HealerProposalRecord, HealerRegistration, HealerRunReceipt, PatchPullRequest, ProposalBurstCheck, ProposalState | External healer capability, durable propose receipts, and human-only PR release |
 | `src/self_heal/healer_host_tests.rs` | test | m | — | — | — |
 | `src/self_heal/invariant_canonical.rs` | src | s | 1 crate-vis | — | Canonicalization of invariant field values for stable comparison |
