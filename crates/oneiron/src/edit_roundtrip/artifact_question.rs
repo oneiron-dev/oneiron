@@ -322,6 +322,8 @@ pub use crate::blob_artifact::unit_refusal::UnitRefusal;
 #[derive(Debug, Clone)]
 pub struct ArtifactAskRun {
     pub proposal: Option<super::EditProposal>,
+    /// Completed sheet decisions whose owning caller must retain before staging.
+    pub sheet_answers: Option<super::SheetAnswerWork>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
     /// The rows the ask's own reads picked (FIX 5455): each version it read,
