@@ -37,6 +37,9 @@ pub(super) enum RoutedAttempt {
 enum AlternativeRoute {
     /// Never admitted, or stopped definitely unsent.
     Open,
+    /// Never admitted while the interrupt's own admitted send is unresolved:
+    /// the interrupt goes again alone.
+    InterruptAlone,
     /// Delivered, or accepted as a remote task.
     Went,
     /// Admitted and not settled.
@@ -49,6 +52,8 @@ enum AlternativeRoute {
 /// What the interrupt's receipt says of an alternative that went on an
 /// earlier attempt.
 const ALTERNATIVE_WENT_EARLIER: &str = "went_earlier";
+/// The interrupt receipt field naming the alternative's ledger identity.
+const ALTERNATIVE_LEDGER_REF_FIELD: &str = "alternative_ledger_ref";
 /// What it says of one that stopped with its delivery unknown.
 const ALTERNATIVE_STOPPED_UNKNOWN: &str = "stopped_delivery_unknown";
 /// The child receipt fields an interrupt's settlement reads its retry edge
@@ -61,14 +66,17 @@ const CARRIED_CHILD_FIELDS: [&str; 4] = [
 ];
 
 /// Routes one claimed attempt of `task` by its bound alternative's ledger
-/// row before its interrupt `request` is dispatched.
+/// row before its interrupt `request` is dispatched. An interrupt whose own
+/// admitted send is unresolved, with no alternative admitted, goes with no
+/// alternative bound: should its window degrade it again, no first
+/// alternative goes beside a send that may have gone.
 pub(super) fn route_bound_alternative<S: OutboundExecutionSink>(
     vault: &Vault,
     sink: &mut S,
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
     task: &ConnectorSendTask,
-    request: &OutboundDispatchRequest,
+    request: &mut OutboundDispatchRequest,
     now: u64,
 ) -> Result<RoutedAttempt, ConnectorTaskExecutorError> {
     let Some(alternative) = request.ambient_alternative.as_deref() else {
@@ -99,12 +107,16 @@ pub(super) fn route_bound_alternative<S: OutboundExecutionSink>(
             AlternativeRoute::Uncertain => {
                 settle_ambiguous_alternative_task_in_txn(vault, wtxn, attempt, task, unknown, now)?;
             }
-            AlternativeRoute::Open | AlternativeRoute::Live => {}
+            AlternativeRoute::Open | AlternativeRoute::InterruptAlone | AlternativeRoute::Live => {}
         }
         Ok(route)
     })?;
     match route {
         AlternativeRoute::Open => Ok(RoutedAttempt::Interrupt),
+        AlternativeRoute::InterruptAlone => {
+            request.ambient_alternative = None;
+            Ok(RoutedAttempt::Interrupt)
+        }
         AlternativeRoute::Went => Ok(RoutedAttempt::Went),
         AlternativeRoute::Uncertain => Ok(RoutedAttempt::Settled),
         AlternativeRoute::Live => {
@@ -167,7 +179,7 @@ fn alternative_route_in_txn(
         }) if reason != IntentEscalationReason::RemoteTaskFailed => AlternativeRoute::Open,
         Some(IntentResolution::Stopped { .. }) => AlternativeRoute::Uncertain,
     };
-    if !matches!(route, AlternativeRoute::Live) {
+    if !matches!(route, AlternativeRoute::Live | AlternativeRoute::Open) {
         return Ok(route);
     }
     let interrupt_ref = connector_logical_send_intent_ref(task);
@@ -191,12 +203,17 @@ fn alternative_route_in_txn(
         now,
     )
     .map_err(|_| Error::InvariantViolation("connector TASK frozen ledger binding mismatch"))?;
-    Ok(match interrupt {
+    let unresolved = matches!(
+        interrupt,
         Some(IntentResolution::Pending {
             delivery: UnconfirmedDelivery::Unresolved,
             ..
-        }) => AlternativeRoute::Uncertain,
-        _ => AlternativeRoute::Live,
+        })
+    );
+    Ok(match (route, unresolved) {
+        (AlternativeRoute::Live, true) => AlternativeRoute::Uncertain,
+        (AlternativeRoute::Open, true) => AlternativeRoute::InterruptAlone,
+        (route, _) => route,
     })
 }
 
@@ -274,8 +291,44 @@ fn send_live_alternative<S: OutboundExecutionSink>(
     let parked = parked_on_child(child, request, task, alternative, now);
     match outcome {
         OutboundDispatchOutcome::DeliveredToChannel | OutboundDispatchOutcome::Deferred => {
-            complete_degraded_connector_task(vault, attempt, task, parked.receipt, now)?;
-            Ok(RoutedAttempt::Went)
+            // Settled on what the alternative's row says in the settling
+            // writer: an accepted remote task may have failed since.
+            let receipt = parked.receipt;
+            let route = vault.with_write_txn_grouped(|wtxn| {
+                let route = alternative_route_in_txn(vault, wtxn, task, alternative, now)?;
+                match route {
+                    AlternativeRoute::Went => {
+                        complete_degraded_connector_task_in_txn(
+                            vault, wtxn, attempt, task, receipt, now,
+                        )?;
+                    }
+                    AlternativeRoute::Uncertain => {
+                        settle_ambiguous_alternative_task_in_txn(
+                            vault, wtxn, attempt, task, receipt, now,
+                        )?;
+                    }
+                    AlternativeRoute::Open
+                    | AlternativeRoute::InterruptAlone
+                    | AlternativeRoute::Live => {}
+                }
+                Ok(route)
+            })?;
+            match route {
+                AlternativeRoute::Went => Ok(RoutedAttempt::Went),
+                AlternativeRoute::Uncertain => Ok(RoutedAttempt::Settled),
+                AlternativeRoute::Open
+                | AlternativeRoute::InterruptAlone
+                | AlternativeRoute::Live => {
+                    retry_connector_task_attempt(
+                        queue,
+                        attempt,
+                        now,
+                        "ambient_alternative_unsettled",
+                        None,
+                    )?;
+                    Ok(RoutedAttempt::Settled)
+                }
+            }
         }
         OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
             settle_held_connector_task(vault, queue, attempt, task.task_ref, task, parked, now)?;
@@ -360,5 +413,14 @@ fn interrupt_receipt(
         OutboundDispatchOutcome::Degraded.as_str(),
     );
     name_ambient_alternative(&mut receipt, request, alternative, outcome, child_receipt);
+    // The alternative's ledger row, by the identity it derives from the
+    // TASK's logical send: named even when its receipt is not at hand.
+    receipt.fields.insert(
+        ALTERNATIVE_LEDGER_REF_FIELD.to_owned(),
+        ambient_alternative_ref(
+            &connector_logical_send_intent_ref(task),
+            &alternative.surface,
+        ),
+    );
     receipt
 }
