@@ -115,6 +115,15 @@ pub(super) fn configure(
     // tracing runs, so one that fails is logged (FIX 6876).
     super::container_dirs::bind_container_cli_env(managed);
     let settled = settle(settings, &mut config)?;
+    // Settings may replace the whole models section. Apply the supervisor's
+    // already-validated broker binding last, including when no file exists.
+    if let Some(broker) = &managed.broker {
+        let models = match &mut config.models {
+            Some(models) => models,
+            slot @ None => slot.insert(crate::config::ModelsConfig::from_toml("", None)?),
+        };
+        models.broker = broker.clone();
+    }
     Ok((config, settled))
 }
 
@@ -155,8 +164,9 @@ pub(super) fn prepare(
     let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
     // The supervisor's leaves are refused first: an argv-only binding the
     // schema has no key for (the training outbox, OF-420; a guest's
-    // container CLI, the organ directory and the mesh) reads as the
-    // supervisor's, never as unknown.
+    // container CLI, the organ directory, the container CLI's HOME and
+    // runtime directory, and the mesh) reads as the supervisor's, never as
+    // unknown.
     visit(&table, &mut Vec::new(), &mut |field, _| {
         if matches_any(field, SUPERVISOR_OWNED) {
             return Err(refused(field, SettingsRefusal::SupervisorOwned, None));

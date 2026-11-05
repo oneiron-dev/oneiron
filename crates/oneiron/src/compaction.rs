@@ -499,7 +499,7 @@ const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 /// pass. The compaction door does exactly that
 /// ([`crate::error::CompactionPacketError::SessionMembershipNotRecorded`]).
 pub(crate) fn turn_session_membership_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -558,3 +558,6 @@ const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 mod tests;
 
 pub mod host_request;
+
+/// The most turns one transcript page returns.
+pub const MAX_TRANSCRIPT_PAGE_TURNS: usize = 200;

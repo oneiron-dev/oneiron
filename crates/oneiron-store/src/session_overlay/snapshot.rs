@@ -1,3 +1,6 @@
+//! Overlay snapshots: staged-row views merged over durable state for one read.
+//! Entry [`OverlaySnapshot`]; built from `journal` rows for `overlay_db::merge`.
+//! Owned by `session_overlay`; a snapshot never writes, it only stages.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -58,6 +61,24 @@ pub struct SnapshotMergePlan {
 }
 
 impl OverlaySnapshot {
+    fn retain(&self) -> Result<Self> {
+        Ok(Self {
+            state: Arc::clone(&self.state),
+            lease: self.lease.retain()?,
+        })
+    }
+
+    /// Borrows a row this snapshot stages, without copying its body or reading base.
+    pub fn staged_value(&self, keyspace: OverlayKeyspace, key: &[u8]) -> Option<&[u8]> {
+        match self.state.keyspaces[keyspace.slot()].as_ref() {
+            KeyspaceState::Single { rows, .. } => match rows.get(key) {
+                Some(OverlayValue::Present(value)) => Some(value.as_slice()),
+                _ => None,
+            },
+            KeyspaceState::DupSort { .. } => None,
+        }
+    }
+
     pub fn lookup_single(&self, keyspace: OverlayKeyspace, key: &[u8]) -> SnapshotLookup {
         match self.state.keyspaces[keyspace.slot()].as_ref() {
             KeyspaceState::Single { clear_base, rows } => match rows.get(key) {
@@ -390,6 +411,7 @@ impl OverlaySnapshot {
             turn,
             conversation,
             appends,
+            source_snapshot: self.retain()?,
             charge: None,
         };
         // The copies are the room's memory while the promotion runs.

@@ -221,7 +221,7 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         as_of: Option<u64>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of)?;
+        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of, None)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,
@@ -234,7 +234,7 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_vector_revisioned(query, limit, requested)?;
+        let result = self.search_vector_revisioned(query, limit, requested, None)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,
@@ -298,7 +298,7 @@ impl ScopedRead<'_> {
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One held authority for every hit's checks in this txn (FIX 7462).
-        let held = HeldAuthority::default();
+        let held = HeldAuthority::for_request(requested);
         // A withheld row counts only inside the key's own ceiling under both
         // snapshots: a request or pinned projection excluded it. A row the
         // key's baseline authority denies stays opaque (FIX 8670).
@@ -389,10 +389,11 @@ impl ScopedRead<'_> {
 
     /// How many candidates a caller that filters this reader's rows after
     /// its own read fetches for `requested`: the request when no grant,
-    /// audience or peer read narrows the reader, otherwise the whole
-    /// [`crate::memory::caps::MAX_SEARCH_LIMIT`] window. Never past it,
-    /// however many rows the vault holds; the page is short when the window
-    /// holds fewer readable rows.
+    /// audience or peer read narrows the reader, otherwise the request over
+    /// the [`crate::memory::caps::MAX_SEARCH_LIMIT`] floor
+    /// ([`crate::request_limits::narrowed_candidate_window`]). Never the
+    /// index's population; the page is short when the window holds fewer
+    /// readable rows.
     pub fn search_candidate_limit(&self, requested: usize) -> Result<usize> {
         if requested == 0 {
             return Ok(0);
@@ -406,7 +407,7 @@ impl ScopedRead<'_> {
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
-            return Ok(requested.min(crate::request_limits::MAX_SEARCH_LIMIT));
+            return Ok(requested);
         }
         Ok(crate::request_limits::narrowed_candidate_window(requested))
     }

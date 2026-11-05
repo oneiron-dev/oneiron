@@ -41,7 +41,6 @@ use loro::{LoroDoc, LoroMap};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::store::base_agent::is_base_agent_actor;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -52,6 +51,7 @@ use crate::ports::{
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
+use crate::store::base_agent::is_base_agent_actor;
 use crate::store::loro_document::{doc_from_snapshot, import_doc, map_contains_binary};
 use crate::store::loro_tombstones::TombstoneIndex;
 use crate::store::replica_edge_key::format_edge_key;
@@ -72,11 +72,13 @@ const PENDING_DOCUMENT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> =
 const PENDING_NOTE_REQUESTS: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QN_E);
 
-/// Authority, grant, policy, key, consent, receipt and identity-ledger kinds,
-/// plus the machine, world and agent-definition rows they govern.
+/// Authority, grant, policy, claim-class vocabulary, key, consent, receipt and
+/// identity-ledger kinds, plus the machine, world and agent-definition rows
+/// they govern.
 const KEPT_KINDS: &[u8] = &[
     registry::ENTITY_TYPE_AUTHORITY_LOG,
     registry::ENTITY_TYPE_POLICY_MANIFEST,
+    registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
     registry::ENTITY_TYPE_FEDERATION_GRANT,
     registry::ENTITY_TYPE_ACCESS_GRANT,
     registry::ENTITY_TYPE_SECRET_CUSTODY,
@@ -346,12 +348,16 @@ impl<'a> Census<'a> {
         let kind = header.entity_type;
         let reason = if self.keep.kinds.contains(&kind) {
             KeepReason::Kind(kind)
-        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
-            || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+        } else if crate::store::legal_hold::legal_hold_held_in_txn(self.store, txn, id.as_bytes())?
+            || crate::world_keys::legal_hold_pad_world_in_txn(self.store, txn, raw)?
         {
             // A pad whose world or sealed claim is held stays too, whatever
             // kinds the caller keeps (OF-470).
             KeepReason::LegalHold
+        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
+            || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+        {
+            KeepReason::Guarded
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id) {

@@ -63,6 +63,7 @@ pub(super) fn apply_put_arm(
         entity_type,
         replicated,
         (state.birth_mask, sources),
+        &data,
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()
@@ -126,6 +127,10 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    put_options.decision.pending_auto_probe = preflight_decision_id
+        .and_then(|decision| state.pending_auto_probes.get(&decision))
+        .copied()
+        .filter(|probe| probe.matches(&id, preflight_decision_id));
     let pending_prompt = super::pending_prompt_for(&state.births, &id);
     // A TURN or MESSAGE written again may change its words under a
     // temporal key the sieve has passed: its turn is owed a new

@@ -73,6 +73,7 @@ impl std::fmt::Debug for CapabilitySlip {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedSlip {
     claims: SlipClaims,
+    explicit_revocation_ancestry: Vec<[u8; 32]>,
     pact: Option<(
         crate::EntityId,
         oneiron_authority::federation::FederationDirectionScope,
@@ -103,6 +104,12 @@ impl VerifiedSlip {
         self.claims.scope = super::current_scope::clamp_scope(&self.claims.scope, current);
         self
     }
+    /// Meets an authenticated effective view with all six current membership
+    /// axes. The mint's signed claims and caveat provenance stay unchanged.
+    pub(in crate::authority) fn meet_scope(mut self, current: &Scope) -> Self {
+        self.claims.scope = self.claims.scope.meet(current);
+        self
+    }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
@@ -113,6 +120,9 @@ impl VerifiedSlip {
     #[must_use]
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
+    }
+    pub(super) fn explicit_revocation_ancestry(&self) -> &[[u8; 32]] {
+        &self.explicit_revocation_ancestry
     }
     /// Whether the slip is its mint, with no caveat narrowing it (a scope,
     /// a pact bound, a shorter lifetime, another key).
@@ -148,6 +158,63 @@ impl VerifiedSlip {
     #[must_use]
     pub fn allows_verb(&self, verb: &str) -> bool {
         self.claims.scope.verbs.contains(&verb.to_owned())
+    }
+}
+
+/// Which verifier purpose a slip's authority check serves (FIX 4325): the
+/// general one, which never admits a contact-bound slip, or the contact one,
+/// which admits only a contact-bound slip. One shared algorithm; the purpose
+/// is the only branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlipPurpose {
+    General,
+    TrustedContact,
+}
+
+/// A verified trusted-contact presentation (FIX 4325): the opaque purpose
+/// proof a contact-bound slip's own verifier mints. The inner verified view
+/// is private and never escapes: no `Deref`, no `claims()`, no conversion to
+/// [`VerifiedSlip`]. Only the contact's own native doors take it.
+#[derive(Debug, Clone)]
+pub struct TrustedContactCredential {
+    inner: VerifiedSlip,
+}
+
+impl TrustedContactCredential {
+    /// The namer PERSON the binding names.
+    #[must_use]
+    pub fn person(&self) -> crate::EntityId {
+        self.inner
+            .claims
+            .trusted_contact
+            .as_ref()
+            .expect("a verified contact credential carries its binding")
+            .person
+    }
+    /// The exact relation version bound.
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.inner
+            .claims
+            .trusted_contact
+            .as_ref()
+            .expect("a verified contact credential carries its binding")
+            .version
+    }
+    /// The holder (contact) the claims name, as hex.
+    #[must_use]
+    pub fn holder_ref(&self) -> &str {
+        &self.inner.claims.holder_ref
+    }
+    /// The slip id, for liveness and revocation reads.
+    #[must_use]
+    pub fn slip_id(&self) -> [u8; 32] {
+        self.inner.claims.slip_id
+    }
+    /// The claims, for the vault's own liveness and relation reads. Claims
+    /// alone carry no authority; only this credential's own doors take them.
+    pub(crate) fn claims(&self) -> &SlipClaims {
+        &self.inner.claims
     }
 }
 
@@ -272,9 +339,47 @@ impl CapabilitySlip {
         challenge: &[u8],
         holder_signature: &[u8],
     ) -> EngineResult<VerifiedSlip> {
-        let verified = self.verify_authority_with(host_public_key, fold, signed_at, true)?;
+        let verified = self.verify_authority_with(
+            host_public_key,
+            fold,
+            signed_at,
+            true,
+            SlipPurpose::General,
+        )?;
         self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
+    }
+    /// Checks a contact-bound slip's host and caveat signatures, authority
+    /// ancestry and holder possession (FIX 4325): the same algorithm,
+    /// transcripts and holder proof as [`Self::verify`], but admitting only
+    /// a contact-bound slip and minting only the opaque
+    /// [`TrustedContactCredential`]. `challenge` is supplied by the receiving
+    /// door, never taken from the slip.
+    pub(super) fn verify_trusted_contact(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> EngineResult<TrustedContactCredential> {
+        let verified = self.verify_trusted_contact_authority(host_public_key, fold, now)?;
+        self.verify_holder(challenge, holder_signature)?;
+        Ok(TrustedContactCredential { inner: verified })
+    }
+    fn verify_trusted_contact_authority(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+    ) -> EngineResult<VerifiedSlip> {
+        self.verify_authority_with(
+            host_public_key,
+            fold,
+            now,
+            false,
+            SlipPurpose::TrustedContact,
+        )
     }
     /// Checks what a proof's bytes fix for good: the mint's claims equal this
     /// slip's, the host signed them, every caveat transfer is signed by the
@@ -288,6 +393,11 @@ impl CapabilitySlip {
         holder_signature: &[u8],
     ) -> EngineResult<()> {
         self.claims.validate()?;
+        // FIX 4325: a contact-bound slip never stands as a general origin;
+        // its own verifier is the only one that admits it.
+        if self.claims.trusted_contact.is_some() {
+            return Err(invalid_authority());
+        }
         if self.version != 2
             || self.caveats.len() > MAX_CAVEATS
             || canonical(self)?.len() > MAX_WIRE_BYTES
@@ -338,13 +448,28 @@ impl CapabilitySlip {
         key.verify_strict(&self.binding_transcript(challenge)?, &signature)
             .map_err(|_| invalid_authority())
     }
+    /// Checks a just-logged mint under its own purpose, without proving a
+    /// holder presentation or returning a generally usable credential.
+    pub(super) fn verify_mint_authority(
+        &self,
+        host_public_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+    ) -> EngineResult<()> {
+        if self.claims.trusted_contact.is_some() {
+            self.verify_trusted_contact_authority(host_public_key, fold, now)
+                .map(drop)
+        } else {
+            self.verify_authority(host_public_key, fold, now).map(drop)
+        }
+    }
     pub(super) fn verify_authority(
         &self,
         host_public_key: &super::AuthorityKey,
         fold: &AuthorityFold,
         now: u64,
     ) -> EngineResult<VerifiedSlip> {
-        self.verify_authority_with(host_public_key, fold, now, false)
+        self.verify_authority_with(host_public_key, fold, now, false, SlipPurpose::General)
     }
     fn verify_authority_with(
         &self,
@@ -352,8 +477,21 @@ impl CapabilitySlip {
         fold: &AuthorityFold,
         now: u64,
         history: bool,
+        purpose: SlipPurpose,
     ) -> EngineResult<VerifiedSlip> {
         self.claims.validate()?;
+        // FIX 4325: one shared algorithm, one purpose branch. General
+        // verification never admits a contact-bound slip; contact
+        // verification admits only one. Old `None` slips are unaffected.
+        match purpose {
+            SlipPurpose::General if self.claims.trusted_contact.is_some() => {
+                return Err(invalid_authority());
+            }
+            SlipPurpose::TrustedContact if self.claims.trusted_contact.is_none() => {
+                return Err(invalid_authority());
+            }
+            _ => {}
+        }
         if self.version != 2
             || self.caveats.len() > MAX_CAVEATS
             || canonical(self)?.len() > MAX_WIRE_BYTES
@@ -425,6 +563,9 @@ impl CapabilitySlip {
         effective.binding_key = binding_key;
         let verified = VerifiedSlip {
             claims: effective,
+            explicit_revocation_ancestry: fold
+                .slips
+                .explicit_revocation_ancestry(&self.claims.slip_id),
             pact,
             unattenuated: self.caveats.is_empty(),
             transferred: binding_key != self.claims.binding_key,

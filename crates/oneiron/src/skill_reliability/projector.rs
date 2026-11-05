@@ -1,5 +1,8 @@
 //! Project attributed skill outcomes into the shared learning.reliability cells.
 
+mod actor_displacement;
+pub(crate) use actor_displacement::reconcile_displaced_actor_credit_in_txn;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Vault;
@@ -901,19 +904,7 @@ pub(super) fn project_in_txn(
         TimeRange { start: at, end: at },
         at,
     )?;
-    if let Some(estimate) = estimate {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let outcomes = estimate.runs as u32;
-        super::floor::floor_check_in_txn(
-            vault,
-            txn,
-            skill,
-            Some(executor),
-            posterior,
-            outcomes,
-            at,
-        )?;
-    }
+    super::floor::check_floor_cells_in_txn(vault, txn, skill, Some(executor), at)?;
     Ok(posterior)
 }
 

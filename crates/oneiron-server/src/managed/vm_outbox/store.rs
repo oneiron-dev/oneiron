@@ -356,6 +356,34 @@ pub(super) fn read_backup_label(dir: &File) -> anyhow::Result<Option<BackupLabel
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
 
+/// The member records in the store `dir`'s existing `members/`, by kind and
+/// member, or `None` when there is no such directory. It opens, reads, and
+/// parses only: it creates, writes, repairs, prunes, or retires nothing, and
+/// any eligible record that does not read or parse is an error, never a
+/// skipped healthy gap. Hidden and non-JSON names are skipped as `Store::open`
+/// skips them.
+pub(super) fn read_member_records(
+    dir: &File,
+) -> anyhow::Result<Option<BTreeMap<(VmOutboxKind, String), MemberRecord>>> {
+    let members = match super::local::open_dir_at(dir, MEMBERS) {
+        Ok(members) => members,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut records = BTreeMap::new();
+    for entry in rustix::fs::Dir::read_from(&members)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !name.ends_with(".json") {
+            continue;
+        }
+        let bytes = read_small(&members, &name)?;
+        let stored: Stored = serde_json::from_slice(&bytes)?;
+        records.insert((stored.kind, stored.member), stored.record);
+    }
+    Ok(Some(records))
+}
+
 /// A small file in `dir`, read without following a link.
 fn read_small(dir: &File, name: &str) -> std::io::Result<Vec<u8>> {
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;

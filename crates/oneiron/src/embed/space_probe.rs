@@ -243,7 +243,7 @@ impl Vault {
             }
         }
         if let Some(media) = probe.query_media
-            && media_query_in(&self.store, &wtxn, media)?.is_none()
+            && media_query_in(self, &self.store, &wtxn, media)?.is_none()
         {
             return Err(Error::InvalidConfig(
                 "a space probe's media query is a stored ASSET holding inline image or audio"
@@ -336,6 +336,7 @@ impl Vault {
             tracing::warn!(error = %error, "probe evaluation copies stay pending");
         }
         let documents = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let gate = egress
                 .map(|egress| MediaEgressGate::read(self, &rtxn, egress, &destination))
@@ -593,11 +594,13 @@ fn family_targets_in(
 /// The image or audio document a media query names, as `store` reads it; `None` when it is
 /// gone or holds neither.
 pub(super) fn media_query_in(
+    vault: &Vault,
     store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<PendingMedia>> {
     asset_document_in(
+        vault,
         store,
         txn,
         id,
