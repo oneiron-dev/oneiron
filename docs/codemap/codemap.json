@@ -49648,19 +49648,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostWriteOrigin",
-      "Memory"
+      "Memory",
+      "SigningRequestTransport"
      ],
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 11,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
-      "struct": 2,
+      "struct": 3,
       "type": 1
      }
     },
@@ -49682,8 +49683,8 @@
      "path": "src/memory/support/builders.rs",
      "purpose": "Handle binders: the `with_*` methods and the accessors that read back what a binder set",
      "surface": {
-      "crate-vis": 14,
-      "fn": 22
+      "crate-vis": 15,
+      "fn": 23
      }
     },
     {
@@ -113655,7 +113656,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
