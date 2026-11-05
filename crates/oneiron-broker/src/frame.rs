@@ -28,11 +28,15 @@ use crate::send::push_wiped;
 use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
 /// The frame protocol's version.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The largest ordinary body sent as one segment, including buffered replies.
 /// Larger ordinary requests use chunks.
 pub const MAX_BODY: usize = 16 << 20;
+
+/// The existing bound for a Responses create and its admitted whole turn.
+/// Ordinary chunked requests and streamed replies have no cumulative bound.
+pub const MAX_STREAM: usize = 512 << 20;
 
 /// The largest chunk of a streamed reply or a chunked call body.
 pub(crate) const STREAM_CHUNK: usize = 1 << 20;
@@ -114,6 +118,29 @@ pub(crate) async fn write_call<W: AsyncWrite + Unpin>(
     body: &[u8],
     secret: &[u8],
 ) -> io::Result<()> {
+    write_call_parts(writer, header, body, None, secret).await
+}
+
+/// Writes a Responses call: its header, planned create body, the whole turn
+/// used for admission and a possible full retry, then the key. The whole turn
+/// travels as its own raw segment, never inside the size-capped JSON header.
+pub(crate) async fn write_call_with_whole<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+    secret: &[u8],
+) -> io::Result<()> {
+    write_call_parts(writer, header, body, Some(whole), secret).await
+}
+
+async fn write_call_parts<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &CallHeader,
+    body: &[u8],
+    whole: Option<&[u8]>,
+    secret: &[u8],
+) -> io::Result<()> {
     let header = serde_json::to_vec(header).map_err(io::Error::other)?;
     write_segment(writer, &header).await?;
     if body.len() <= MAX_BODY {
@@ -125,6 +152,9 @@ pub(crate) async fn write_call<W: AsyncWrite + Unpin>(
         }
         write_segment(writer, &[]).await?;
     }
+    if let Some(whole) = whole {
+        write_segment(writer, whole).await?;
+    }
     write_segment(writer, secret).await?;
     writer.flush().await
 }
@@ -133,6 +163,8 @@ pub(crate) async fn write_call<W: AsyncWrite + Unpin>(
 pub(crate) struct ReadCall {
     pub(crate) header: CallHeader,
     pub(crate) body: Zeroizing<Vec<u8>>,
+    /// The whole Responses turn for a same-socket full retry; absent for HTTP shapes.
+    pub(crate) whole: Option<Zeroizing<Vec<u8>>>,
     pub(crate) secret: Zeroizing<Vec<u8>>,
 }
 
@@ -141,12 +173,22 @@ pub(crate) struct ReadCall {
 pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<ReadCall, Refusal> {
     let header = read_call_header(reader).await?;
     let body = read_body(reader).await.map_err(|_| Refusal::Frame)?;
+    let whole = if header.shape == crate::Shape::OpenAiResponses {
+        Some(
+            read_segment(reader, MAX_STREAM)
+                .await
+                .map_err(|_| Refusal::Frame)?,
+        )
+    } else {
+        None
+    };
     let secret = read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
     Ok(ReadCall {
         header,
         body,
+        whole,
         secret,
     })
 }
@@ -158,6 +200,12 @@ pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Re
 pub(crate) async fn skip_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<CallHeader, Refusal> {
     let header = read_call_header(reader).await?;
     skip_body(reader).await.map_err(|_| Refusal::Frame)?;
+    if header.shape == crate::Shape::OpenAiResponses {
+        let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
+        skip_sized(reader, len, MAX_STREAM)
+            .await
+            .map_err(|_| Refusal::Frame)?;
+    }
     read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
