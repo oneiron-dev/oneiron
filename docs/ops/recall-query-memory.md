@@ -1,4 +1,4 @@
-# Recall query-vector and text-slot input memory
+# Recall query-vector and input memory
 
 Server recalls record the backing storage of returned query vectors on the same
 machine-memory line used by the server's other work. The charge uses actual
@@ -28,12 +28,20 @@ local lease starts before the copy, records the actual `Vec<u8>` capacity before
 embedding, and stays through the blocking runtime call. The bytes become the
 embedding part's text string without copying its backing allocation. That
 original buffer drops inside the call, including width retries, errors and
-unwinding. The provider receives deep copies; those are separate allocations, not part
-of this input charge. The input buffer and returned vectors have separate leases.
+unwinding. The provider receives deep copies; those are separate allocations,
+not part of this input charge. The input buffer and returned vectors have separate leases.
 
-Decoded-media input storage, other input copies, temporary seed vectors, the
-borrowed `media_seeds` view vector, model weights, GPU memory, provider scratch,
-other recall allocations and a full working-set bound remain outside this slice.
+Decoded media also carries a private owner for its original decoded byte vector
+and MIME string. It records their actual capacities after validation, before
+embedding consumes them. The async door moves the entire owner into its blocking
+work, so answering at a deadline cannot release that work's input charge. Unused
+media drops before its lease. Space and stored-kind fields move into returned
+vectors, so the input charge excludes them; the existing output charge records
+them.
+
+Other input copies, temporary seed vectors, the borrowed `media_seeds` view vector,
+model weights, GPU memory, provider scratch, other recall allocations and a full
+working-set bound remain outside this slice.
 It does not establish queue fairness, pre-growth admission, cancellation, runtime
 performance or a machine-derived embedding-width floor. The separate semantic
 search request/probe owners are unchanged.
