@@ -97,7 +97,7 @@ fn pending_history_of(
     txn: &heed::RoTxn<'_>,
     staged: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Result<Option<PendingAuthorityHistory>> {
-    if super::super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?.is_none() {
+    if super::super::checkpoint_adopt::adopted_checkpoint_id_in_txn(store, txn)?.is_none() {
         return Ok(None);
     }
     let mut arriving = BTreeMap::new();

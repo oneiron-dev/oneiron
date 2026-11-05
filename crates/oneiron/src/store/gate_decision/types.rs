@@ -156,6 +156,9 @@ pub(super) struct PendingDeletionGateDecisionRecord {
     pub(super) target: [u8; 16],
     pub(super) tombstone_reason: u8,
     pub(super) decision: GateDecisionRecord,
+    /// The original completed act, captured only by the local claimed-delete
+    /// door. A remote tombstone cannot supply this binding.
+    pub(super) authority_act: Option<[u8; 16]>,
 }
 
 /// Receipt-family ABI-pin rule: changing this requires a
@@ -167,7 +170,7 @@ pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 /// ABI-pinned const above is unchanged and existing v0 bytes still round-trip.
 pub(in crate::store) const GATE_DECISION_LEDGER_VERSION_REDACTED: u8 = 1;
 
-pub(super) const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 0;
+pub(super) const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 1;
 
 pub(in crate::store) const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 
