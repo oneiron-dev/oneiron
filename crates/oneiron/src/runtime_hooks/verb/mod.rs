@@ -172,9 +172,17 @@ pub struct VerbHookPre {
     /// performed the consume carries its token so a storage failure later
     /// in the run can re-open it. `None` for a fresh call.
     resumed_ask: Option<ask::AskToken>,
+    read_capture: Option<crate::memory::read_capture::ReadCapture>,
 }
 
 impl VerbHookPre {
+    pub(crate) fn with_read_capture(
+        &mut self,
+        capture: Option<crate::memory::read_capture::ReadCapture>,
+    ) {
+        self.read_capture = capture;
+    }
+
     #[must_use]
     pub fn call(&self) -> &VerbCall {
         &self.call

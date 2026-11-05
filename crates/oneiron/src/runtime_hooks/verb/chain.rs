@@ -208,6 +208,7 @@ pub(super) fn pre(
             landing: None,
             session: None,
             resumed_ask: None,
+            read_capture: None,
         }));
     }
     // A resumed call with no sandbox runs no hook after the asking one, as a
@@ -237,6 +238,7 @@ pub(super) fn pre(
         landing,
         session: None,
         resumed_ask,
+        read_capture: None,
     }))
 }
 
@@ -249,7 +251,11 @@ pub(super) fn post(
     result: Value,
 ) -> Result<Stopped<Value>> {
     let VerbHookPre {
-        call, args, carry, ..
+        call,
+        args,
+        carry,
+        read_capture,
+        ..
     } = pre;
     let state = &vault.verb_hook_state;
     let Some(carry) = carry else {
@@ -271,7 +277,7 @@ pub(super) fn post(
         return Ok(Ok(result));
     };
     let _depth = HookDepth::enter();
-    let ended = Chain::new(
+    let mut chain = Chain::new(
         vault,
         storage,
         &call,
@@ -279,8 +285,9 @@ pub(super) fn post(
         runtime,
         carry.now,
         None,
-    )
-    .post(&hooks, &args, result);
+    );
+    chain.read_capture = read_capture;
+    let ended = chain.post(&hooks, &args, result);
     // A nested boundary of this invocation passes through until here.
     drop(carry.mark);
     ended
@@ -294,6 +301,7 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
         landing: None,
         session: None,
         resumed_ask: None,
+        read_capture: None,
     }))
 }
 
@@ -367,6 +375,7 @@ struct Chain<'c> {
     /// Set on a recorded call's pre chain its retry runs as new, after the
     /// drain's pass forgot the ask it named: each receipt says so (FIX 5693).
     expired: bool,
+    read_capture: Option<crate::memory::read_capture::ReadCapture>,
 }
 
 impl<'c> Chain<'c> {
@@ -402,6 +411,7 @@ impl<'c> Chain<'c> {
             turn,
             landing: None,
             expired: false,
+            read_capture: None,
         }
     }
 
@@ -563,6 +573,9 @@ impl<'c> Chain<'c> {
             }
             match self.run(id, binding, args, Some(&view), None)? {
                 Some(HookOutcome::Redact { paths }) => {
+                    if let Some(capture) = &self.read_capture {
+                        capture.changed();
+                    }
                     for path in &paths {
                         redact::hide(&mut view, path);
                     }
@@ -570,6 +583,9 @@ impl<'c> Chain<'c> {
                 Some(_) => {}
                 None if binding.selector.blocking => {
                     if self.call.domain == VerbDomain::Read {
+                        if let Some(capture) = &self.read_capture {
+                            capture.changed();
+                        }
                         hidden = Some(self.hide(binding));
                         break;
                     }

@@ -731,6 +731,7 @@ impl Vault {
                     landing: None,
                     session: Some(hooks.carry()),
                     resumed_ask: None,
+                    read_capture: None,
                 }));
             }
         };
