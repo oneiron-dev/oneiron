@@ -5,7 +5,12 @@ use crate::store::ppr_cache_invalidation as ppr;
 /// Applies one op of the edge family and invalidates the PPR caches of both
 /// endpoints when it changes an edge. Returns whether the graph changed: every
 /// edge op changes it except a delete of an edge that is not stored.
-pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) -> Result<bool> {
+pub(super) fn apply_edge_op(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    op: BatchOp,
+) -> Result<bool> {
+    let store = write.store;
     match op {
         BatchOp::Edge {
             src,
@@ -129,7 +134,7 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
                 // at this door and at the sync bridge's, which applies a
                 // peer's removal here.
                 if kind == crate::edge::EdgeKind::DerivedFrom {
-                    crate::ports::withdraw_from_lost_source_in_txn(store, wtxn, &src, &tgt)?;
+                    crate::ports::withdraw_from_lost_source_in_txn(write, wtxn, &src, &tgt)?;
                 }
             }
             Ok(deleted)
