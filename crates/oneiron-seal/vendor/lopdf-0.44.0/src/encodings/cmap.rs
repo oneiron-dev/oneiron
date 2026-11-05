@@ -65,7 +65,7 @@ impl ToUnicodeCMap {
                     }
                 }
                 CMapSection::BfRange(range_mappings) => {
-                    for ((start, end, code_len), dst_vec) in range_mappings {
+                    for ((start, end, code_len), mut dst_vec) in range_mappings {
                         if end < start {
                             return Err(UnicodeCMapError::InvalidCodeRange);
                         }
@@ -78,9 +78,14 @@ impl ToUnicodeCMap {
                                     offset: u32::wrapping_sub(dst_vec[0][0] as u32, start),
                                 },
                             ),
-                            1 => cmap.put(start, end, code_len, BfRangeTarget::HexString(dst_vec[0].clone())),
+                            1 => cmap.put(
+                                start,
+                                end,
+                                code_len,
+                                BfRangeTarget::HexString(std::mem::take(&mut dst_vec[0])),
+                            ),
                             0 => return Err(UnicodeCMapError::InvalidCodeRange),
-                            _ => cmap.put(start, end, code_len, BfRangeTarget::ArrayOfHexStrings(dst_vec.clone())),
+                            _ => cmap.put(start, end, code_len, BfRangeTarget::ArrayOfHexStrings(dst_vec)),
                         }
                     }
                 }

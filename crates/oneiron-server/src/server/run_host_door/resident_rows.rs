@@ -70,8 +70,7 @@ pub(super) fn weave_lens_as_agent(
             sections: request.sections,
         };
         let caller = WeaveLensCaller::Run {
-            actor: actor.entity_ref(),
-            class: actor.actor_class(),
+            actor,
             run,
             line: line.cloned(),
         };

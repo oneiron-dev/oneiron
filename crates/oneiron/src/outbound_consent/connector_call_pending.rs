@@ -112,6 +112,19 @@ impl Vault {
             row.settled = Some(settled.clone());
             let withdrawn = self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row);
             PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
+            // The actual expired outcome settles the code consent wait the
+            // actual row names in this same writer (FIX 4518): no second
+            // settlement, and no reply bytes inferred from the receipt.
+            if let Some(wait_id) = row.code_consent_wait {
+                let outcome = settled.outcome();
+                crate::code_run::settle_code_consent_wait_listing_in_txn(
+                    self,
+                    txn,
+                    wait_id,
+                    &outcome,
+                    row.source_rows.as_deref(),
+                )?;
+            }
             Ok((Some(settled), withdrawn))
         })?;
         self.signal_withdrawn_call_asks(&withdrawn);

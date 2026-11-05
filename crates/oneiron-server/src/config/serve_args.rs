@@ -144,6 +144,17 @@ pub struct ServeArgs {
     #[arg(long = "vsock-guest")]
     pub vsock_guest: bool,
 
+    /// A vault VM's outbox companion admission, which only the image's
+    /// `oneiron-vm-init` passes, only beside a companion it admitted: presence
+    /// is the proof the engine parks around idle. Hidden bootstrap plumbing,
+    /// never operator policy.
+    #[arg(
+        long = "vm-outbox-companion-admitted",
+        hide = true,
+        requires_all = ["vsock_guest", "managed_by_hypnos"]
+    )]
+    pub vm_outbox_companion_admitted: bool,
+
     /// A vault VM's cold restore handoff (FIX 6584), which only the image's
     /// `oneiron-vm-init` passes: the revision of the restore channel its
     /// host answered on, beside `--restore` and the two pipes the bootstrap
@@ -242,6 +253,16 @@ pub struct ServeArgs {
     /// trusts beside the system's. Repeat for each file; not for a separate user.
     #[arg(long = "broker-extra-roots", requires = "managed_by_hypnos")]
     pub broker_extra_roots: Option<Vec<PathBuf>>,
+
+    /// Managed mode: the explicit host memory allocation in bytes, as the
+    /// operator sized it. Absent is unbounded; no capacity is inferred.
+    #[arg(long = "host-memory-bytes", requires = "managed_by_hypnos")]
+    pub host_memory_bytes: Option<u64>,
+
+    /// Managed mode: the explicit host CPU share in CPU milliseconds per
+    /// second. Absent is unbounded. Advisory, not an OS-enforced quota.
+    #[arg(long = "host-cpu-millis", requires = "managed_by_hypnos")]
+    pub host_cpu_millis: Option<u32>,
 
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand

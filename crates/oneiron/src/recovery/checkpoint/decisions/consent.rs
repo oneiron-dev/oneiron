@@ -428,7 +428,12 @@ impl Decision for CalendarInviteConsent {
         let mut pages = false;
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
-            parties.extend(crate::comm::comm_party_keys_in_txn(&vault.store, &txn)?);
+            parties.extend(
+                vault
+                    .store
+                    .record_hooks
+                    .comm_party_keys_in_txn(&vault.store, &txn)?,
+            );
             for id in vault
                 .store
                 .port_entity_ids_by_type(&txn, ENTITY_TYPE_OUTBOUND_GRANT, None)?

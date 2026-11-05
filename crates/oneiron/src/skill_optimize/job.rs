@@ -20,7 +20,7 @@ use super::brief::{
     optimize_brief, optimize_brief_bound_at,
 };
 use super::dials::{invalid, validate_text};
-use super::gate::SkillEditCycle;
+use super::gate::{SKILL_EDIT_CYCLE_MAX_BYTES, SkillEditCycle};
 use super::selection::{affirm_candidates, optimize_candidates};
 use super::tier::{SkillTierVerdict, tier_verdict_in_txn};
 use super::{GOAL_ID_KEY, SkillGoalId};
@@ -592,7 +592,8 @@ fn affirm_healthy_skill(
 ///
 /// | queue row | label |
 /// |---|---|
-/// | present, names a run | [`SKILL_EDIT_CYCLE_RUN_PREFIX`]`<id>` |
+/// | present, names a fitting run | [`SKILL_EDIT_CYCLE_RUN_PREFIX`]`<id>` |
+/// | present, names a longer run | `run-hash:<BLAKE3 of the full id>` |
 /// | present, no run | `attempt:<hex>` |
 /// | ABSENT (pruned, or never enqueued) | typed error, no label |
 ///
@@ -609,12 +610,11 @@ fn affirm_healthy_skill(
 /// reason: a cap that quietly degrades when the queue cannot be read is a cap
 /// that stops binding exactly when it is most needed.
 ///
-/// Every label this can build FITS: the queue's own run-id bound is
-/// [`SKILL_EDIT_CYCLE_MAX_BYTES`] minus [`SKILL_EDIT_CYCLE_RUN_PREFIX`]
-/// (`crate::attempt_queue::validate`), so a run id the queue admitted always
-/// has room for the prefix, and the attempt spelling is a fixed 40 bytes. A
-/// producer that could enqueue a run nobody could name a cycle for would have
-/// stranded every proposal that run drafted — after the author had been paid.
+/// Every label fits [`SKILL_EDIT_CYCLE_MAX_BYTES`]: a run id that fits
+/// after [`SKILL_EDIT_CYCLE_RUN_PREFIX`] keeps its literal spelling; longer
+/// ids use the full id's BLAKE3 digest in the distinct `run-hash:` namespace.
+/// The hashed label is 73 bytes and the run-less attempt label is 40 bytes.
+/// Run identifiers themselves have no byte cap, and no id is truncated.
 ///
 /// # Errors
 ///
@@ -636,7 +636,15 @@ fn proven_cycle_in_txn(
         ));
     };
     match record.run_id {
-        Some(run_id) => SkillEditCycle::new(format!("{SKILL_EDIT_CYCLE_RUN_PREFIX}{run_id}")),
+        Some(run_id) => {
+            let label =
+                if run_id.len() <= SKILL_EDIT_CYCLE_MAX_BYTES - SKILL_EDIT_CYCLE_RUN_PREFIX.len() {
+                    format!("{SKILL_EDIT_CYCLE_RUN_PREFIX}{run_id}")
+                } else {
+                    format!("run-hash:{}", blake3::hash(run_id.as_bytes()).to_hex())
+                };
+            SkillEditCycle::new(label)
+        }
         None => SkillEditCycle::new(format!(
             "attempt:{}",
             bytes_to_hex_lower(attempt.as_bytes())

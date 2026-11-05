@@ -1,7 +1,9 @@
 //! The handoff of an owner-named residual speaker into a PERSON membership
 //! window (FIX 3634). A speaker the vault could not place entered a room as
 //! an entry fact, its history cut, and the owner named it a contact on the
-//! revision it entered under. The handoff joins the PERSON that contact is
+//! revision it entered under. An initially placed entry with no original
+//! answer may instead use its frozen first late answer. The handoff joins
+//! the PERSON that contact is
 //! as a member, under the membership authority a caller may already grant,
 //! with no new approval step. Its proofs: the entry, the owner's identity
 //! answer on it, and the contact's unique link to that PERSON.
@@ -61,7 +63,7 @@ impl Vault {
     /// Moves the owner-named residual speaker `request.entry_ref` names into
     /// a membership window of `request.person`, in one write transaction.
     /// Refused, typed, for an entry that is no speaker's, a speaker the owner
-    /// named no contact on its entry revision, a PERSON that contact is not
+    /// named no contact through that entry, a PERSON that contact is not
     /// uniquely linked to, a PERSON already a member, or an actor the
     /// membership door does not admit.
     pub fn hand_off_speaker_entry(
@@ -71,19 +73,10 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let fact = crate::task_verb::read_attendee_entry_in(self, txn, request.entry_ref)?
                 .ok_or(Error::EntityNotFound)?;
-            let ContainerAttendee::Speaker {
-                session_key,
-                speaker_key,
-            } = &fact.attendee
-            else {
+            let ContainerAttendee::Speaker { .. } = &fact.attendee else {
                 return Err(state("only a speaker's entry is handed to a PERSON"));
             };
-            let contact = match self.attendee_identity_in_txn(
-                txn,
-                session_key,
-                speaker_key,
-                fact.roster_revision,
-            )? {
+            let contact = match self.attendee_entry_identity_in_txn(txn, &fact)? {
                 Some(AttendeeIdentityChoice::Contact(contact)) => contact,
                 _ => return Err(state("the owner named this speaker no contact")),
             };

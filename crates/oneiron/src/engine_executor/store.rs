@@ -262,6 +262,7 @@ impl StreamedOutputs {
     pub(super) fn write(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        exec_run: EntityId,
         stream: JsCodeModeStream<'_>,
         frame: &[u8],
     ) -> Result<()> {
@@ -284,7 +285,7 @@ impl StreamedOutputs {
                     Some(at) => at,
                     None => {
                         self.files
-                            .push((path.to_owned(), storage.code_run_output_sink()?));
+                            .push((path.to_owned(), storage.code_run_output_sink_for(exec_run)?));
                         self.files.len() - 1
                     }
                 };
@@ -292,7 +293,7 @@ impl StreamedOutputs {
             }
         };
         if sink.is_none() {
-            *sink = Some(storage.code_run_output_sink()?);
+            *sink = Some(storage.code_run_output_sink_for(exec_run)?);
         }
         match sink {
             Some(sink) => sink.write(frame),
@@ -313,6 +314,7 @@ impl StreamedOutputs {
     pub(super) fn into_step_bodies(
         self,
         storage: &ExecutorStorage<'_>,
+        exec_run: EntityId,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
         let (observation, console) = if outcome.done {
@@ -322,12 +324,12 @@ impl StreamedOutputs {
         };
         let mut observation = match observation {
             Some(sink) => sink,
-            None => storage.code_run_output_sink()?,
+            None => storage.code_run_output_sink_for(exec_run)?,
         };
         observation.write(outcome.observation.as_bytes())?;
         let mut files = self.files;
         for output in &outcome.outputs {
-            let mut sink = storage.code_run_output_sink()?;
+            let mut sink = storage.code_run_output_sink_for(exec_run)?;
             sink.write(&output.bytes)?;
             files.push((output.path.clone(), sink));
         }

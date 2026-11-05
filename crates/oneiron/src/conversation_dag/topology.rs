@@ -124,7 +124,11 @@ fn reject<T>(reason: &'static str) -> Fact<T> {
     Fact::Reject(DagRejection(reason))
 }
 
-fn owner(store: &Store, txn: &heed::RoTxn<'_>, turn: EntityId) -> Result<Fact<EntityId>> {
+fn owner(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+) -> Result<Fact<EntityId>> {
     match live_entity_row_in_txn(store, txn, &turn)? {
         LiveEntityRow::Absent => return Ok(Fact::Wait(Dependency::Entity(turn))),
         LiveEntityRow::Live {
@@ -156,7 +160,7 @@ fn owner(store: &Store, txn: &heed::RoTxn<'_>, turn: EntityId) -> Result<Fact<En
 /// Strict writer and reader can turn Wait into a typed refusal; receive keeps
 /// the exact dependency. A declared anchor without SpawnedBy is never ordinary.
 pub(crate) fn classify_session(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     session: EntityId,
     conversation: EntityId,

@@ -143,7 +143,7 @@ impl SyncServer {
             .admit_for_request(&purpose)
             .inspect_err(|denied| {
                 self.vault
-                    .budget_denied_hooks(denied, &meter, &run_id, Some(actor));
+                    .budget_denied_hooks(denied, &meter, &run_id, Some(actor), None);
             })
             .and_then(|admission| meter.abort(&admission.lease).map(|_| admission.lease))
             .map_err(spent)?;

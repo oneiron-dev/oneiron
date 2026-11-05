@@ -215,15 +215,7 @@ pub fn register_pattern_skill(
                     tree_version,
                 },
             );
-            let prior = Prior {
-                origin: PriorOrigin::Model,
-                value: EstimateValue::Beta {
-                    alpha: WORKS_WELL_FOR_PRIOR_MEAN,
-                    beta: 1.0 - WORKS_WELL_FOR_PRIOR_MEAN,
-                },
-                weight_runs: WORKS_WELL_FOR_PRIOR_RUNS,
-                from: Some(format!("works well for: {}", binding.works_well_for)),
-            };
+            let prior = works_well_for_prior(binding);
             put_cell_prior(vault, &cell, &prior, now)?;
         }
     }
@@ -268,6 +260,51 @@ pub(crate) fn bind_pattern_skill_in_txn(
     Ok(())
 }
 
+/// Typed metadata carried beside a hub skill's instructions.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HubPatternFile {
+    pattern: TeamPattern,
+    default_axis: TeamAxis,
+    works_well_for: String,
+    works_well_for_types: Vec<String>,
+}
+
+const HUB_PATTERN_FILE: &str = "pattern.json";
+
+/// Binds an imported package's optional pattern metadata in its writer.
+/// Existing bindings stay local. Invalid metadata leaves the skill unbound
+/// without refusing the import; no executor priors are written.
+pub(crate) fn bind_hub_pattern_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    files: &[crate::skill_hub::HubFile],
+    learned_at: u64,
+) -> Result<()> {
+    if pattern_skill_in_txn(vault, wtxn, skill)?.is_some() {
+        return Ok(());
+    }
+    let Some(file) = files.iter().find(|file| file.path == HUB_PATTERN_FILE) else {
+        return Ok(());
+    };
+    let Ok(parsed) = serde_json::from_slice::<HubPatternFile>(&file.content) else {
+        return Ok(());
+    };
+    let binding = PatternSkill {
+        skill: *skill,
+        pattern: parsed.pattern,
+        default_axis: parsed.default_axis,
+        works_well_for: parsed.works_well_for,
+        works_well_for_types: parsed.works_well_for_types,
+        at: learned_at,
+    };
+    match bind_pattern_skill_in_txn(vault, wtxn, &binding, crate::task_type::SEEDED_TREE_VERSION) {
+        Err(Error::InvalidClaimBody(_)) => Ok(()),
+        result => result,
+    }
+}
+
 /// The pattern binding of `skill`, if it teaches one.
 ///
 /// # Errors
@@ -285,6 +322,54 @@ pub(super) fn pattern_skill_in_txn(
     skill: &EntityId,
 ) -> Result<Option<PatternSkill>> {
     PATTERN_SKILL.get(&vault.store, txn, skill)
+}
+
+/// A bound pattern's weak default for the exact task node a payoff cell
+/// asks about. It names no measured executor or ancestor result.
+pub(crate) fn works_well_for_prior_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    form: crate::learning::EstimateForm,
+) -> Result<Option<Prior>> {
+    if form != crate::learning::EstimateForm::Beta
+        || cell.predicate != LearningPredicate::Reliability
+        || cell.axis.as_deref() != Some(PAYOFF_AXIS)
+        || cell.executor.is_none()
+        || cell.consent_scope.is_some()
+        || cell.setting_key.is_some()
+    {
+        return Ok(None);
+    }
+    let Some(type_ref) = &cell.type_ref else {
+        return Ok(None);
+    };
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &cell.subject)?,
+        crate::vault::LiveEntityRow::Live { entity_type, .. }
+            if entity_type == crate::registry::ENTITY_TYPE_SKILL
+    ) {
+        return Ok(None);
+    }
+    let Some(binding) = pattern_skill_in_txn(vault, txn, &cell.subject)? else {
+        return Ok(None);
+    };
+    Ok(binding
+        .works_well_for_types
+        .contains(&type_ref.node_id)
+        .then(|| works_well_for_prior(&binding)))
+}
+
+fn works_well_for_prior(binding: &PatternSkill) -> Prior {
+    Prior {
+        origin: PriorOrigin::Model,
+        value: EstimateValue::Beta {
+            alpha: WORKS_WELL_FOR_PRIOR_MEAN,
+            beta: 1.0 - WORKS_WELL_FOR_PRIOR_MEAN,
+        },
+        weight_runs: WORKS_WELL_FOR_PRIOR_RUNS,
+        from: Some(format!("works well for: {}", binding.works_well_for)),
+    }
 }
 
 /// Every bound pattern skill.

@@ -234,12 +234,14 @@ fn next_wake(entries: &[WakeEntry]) -> Option<SystemTime> {
 /// vault exactly as SIGTERM does on a node, and is heard while the vault is
 /// parked too (FIX 9548): a Stop, or the channel lost for good, ends the
 /// park at once and starts the drain, with no resume reported and the
-/// companion left to the drain.
+/// companion left to the drain. `outbox_admitted` is the bootstrap's
+/// immutable admission, not the live probe, which can be down mid-bracket.
 pub(super) fn spawn_lifecycle(
     link: GuestLink,
     state: Arc<ManagedState>,
     server: Arc<SyncServer>,
     shutdown: ManagedShutdown,
+    outbox_admitted: bool,
 ) {
     tokio::spawn(async move {
         loop {
@@ -256,12 +258,12 @@ pub(super) fn spawn_lifecycle(
                             None
                         }
                     };
-                    let snapshot_ok = !server.vault().has_open_off_record_session();
-                    let companion = state.vm_outbox_revision().is_some();
+                    let companion = outbox_admitted;
                     let parked = async {
                         if companion {
                             super::vm_outbox::park_companion().await;
                         }
+                        let snapshot_ok = !server.vault().has_open_off_record_session();
                         link.idle(wake, snapshot_ok).await
                     };
                     tokio::select! {
@@ -276,7 +278,13 @@ pub(super) fn spawn_lifecycle(
                         }
                     }
                     if companion {
-                        super::vm_outbox::resume_companion().await;
+                        tokio::select! {
+                            () = link.stop_requested() => {
+                                shutdown.trigger();
+                                return;
+                            }
+                            () = super::vm_outbox::resume_companion() => {}
+                        }
                     }
                 }
             }

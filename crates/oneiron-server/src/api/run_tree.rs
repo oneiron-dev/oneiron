@@ -38,8 +38,6 @@ mod scoped;
 
 pub(crate) use self::keyed::intervene_idempotency;
 
-pub(crate) const CORE_RUN_TREE_RUN_ID_MAX_BYTES: usize = 128;
-
 /// Query parameters for the runtime run-tree projection.
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -587,12 +585,6 @@ pub(crate) fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<
     if run_id.is_empty() {
         return Err(ApiError::bad_request(
             "run_id must not be empty",
-            Some("run_id"),
-        ));
-    }
-    if run_id.len() > CORE_RUN_TREE_RUN_ID_MAX_BYTES {
-        return Err(ApiError::bad_request(
-            "run_id exceeds 128 bytes",
             Some("run_id"),
         ));
     }

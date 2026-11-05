@@ -41,7 +41,7 @@ use crate::context_projection::{
 };
 use crate::error::{Error, Result};
 use crate::runtime_hooks::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
 };
 use crate::task_type::TaskTypeRef;
 use crate::task_verb::{TaskAskStatus, TaskAskWait};
@@ -146,7 +146,7 @@ impl HostSelfDispatcher<'_> {
         let scope = read_as
             .as_ref()
             .and_then(ScopedReadActorKey::room_turn)
-            .map(|turn| format!("room:{}", turn.room.to_hex()));
+            .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex())));
         let hook_call = VerbCall {
             verb: effect.as_str().to_owned(),
             invocation,

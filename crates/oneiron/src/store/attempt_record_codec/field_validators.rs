@@ -1,6 +1,6 @@
 //! The attempt record's field validators and their length caps and error
-//! literals: every check the strict reader runs on a stored row's fields,
-//! and the run-id bound derived from the skill edit cycle label. The attempt
+//! literals: every check the strict reader runs on a stored row's fields.
+//! Run identifiers have no byte cap. The attempt
 //! queue (`attempt_queue::validate`) runs the same checks on its doors and
 //! keeps the lease and reserve validators and the record mutators.
 use crate::error::{ArtifactError, Error, Result};
@@ -19,11 +19,8 @@ pub const SKILL_EDIT_CYCLE_MAX_BYTES: usize = 128;
 
 /// The label prefix [`proven_cycle`] names a RUN-proven cycle with.
 ///
-/// Pinned here because two modules have to agree on it: this one BUILDS the
-/// label, and the attempt queue's run-id validator
-/// (`crate::attempt_queue::validate`) sizes its own bound by subtracting this
-/// prefix from [`SKILL_EDIT_CYCLE_MAX_BYTES`]. Spelling it twice is how a run
-/// id the queue accepted became a cycle label nobody could name.
+/// Shared with the cycle resolver: a run id that fits after this prefix
+/// keeps its literal label; a longer one gets a fixed-size hash label.
 pub(crate) const SKILL_EDIT_CYCLE_RUN_PREFIX: &str = "run:";
 
 const MAX_KIND_LEN: usize = 128;
@@ -31,18 +28,6 @@ const MAX_KIND_LEN: usize = 128;
 const MAX_DEDUPE_KEY_LEN: usize = 512;
 
 pub(crate) const MAX_FAILURE_REASON_LEN: usize = 2048;
-
-/// Longest run id the queue admits, and deliberately not a round number.
-///
-/// A run id is not only a queue key: `skill_optimize::proven_cycle` turns it
-/// into the Dreamer CYCLE label the per-cycle skill-edit accept cap is counted
-/// against, by writing `skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX` in front
-/// of it. So the budget is the cycle bound MINUS that prefix, DERIVED from both
-/// rather than restated — a run id this door accepted but no cycle could name
-/// was a run whose every drafted proposal died at the gate, after the author
-/// had already been paid for it.
-pub(crate) const MAX_RUN_ID_LEN: usize =
-    SKILL_EDIT_CYCLE_MAX_BYTES - SKILL_EDIT_CYCLE_RUN_PREFIX.len();
 
 pub(crate) const MAX_MANIFEST_REFERENCE_LEN: usize = 512;
 
@@ -68,9 +53,6 @@ pub(crate) const ERR_FAILURE_REASON_EMPTY: &str = "failure reason must not be em
 const ERR_FAILURE_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
 
 const ERR_RUN_ID_EMPTY: &str = "run id must not be empty";
-
-pub(crate) const ERR_RUN_ID_TOO_LONG: &str =
-    "run id exceeds 124 bytes; the cycle label needs the rest";
 
 const ERR_INTERVENTION_ACTOR_EMPTY: &str = "intervention actor must not be empty";
 
@@ -289,11 +271,6 @@ pub(crate) fn validate_optional_run_id(run_id: Option<&str>) -> Result<()> {
         if run_id.is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_RUN_ID_EMPTY,
-            )));
-        }
-        if run_id.len() > MAX_RUN_ID_LEN {
-            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-                ERR_RUN_ID_TOO_LONG,
             )));
         }
     }

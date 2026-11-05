@@ -281,6 +281,7 @@ impl ActionRegistry {
                 effect: call.effect(),
                 error: error.to_string(),
                 code: None,
+                disk_floor: None,
             }),
         };
         // A refused row's own words ride on its record, so a retry under the

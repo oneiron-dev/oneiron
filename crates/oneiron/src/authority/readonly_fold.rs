@@ -78,9 +78,14 @@ impl AuthorityView {
     /// This view with each agent-carried setting or export act held back
     /// whose Grant `txn` holds refused (contract §4, FIX 4624, FIX 5660;
     /// [`super::carried_act`]). With none, the view as it was.
-    fn with_agent_grant_standing(self, store: &Store, txn: &heed::RoTxn<'_>) -> Self {
+    fn with_agent_grant_standing(
+        self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        use_past_standing: bool,
+    ) -> Self {
         let refused =
-            super::carried_act::grant_refused_agent_acts(store, txn, &self.fold.agent_carried_acts);
+            super::carried_act::grant_refused_agent_acts(store, txn, &self.fold, use_past_standing);
         if refused.is_empty() {
             return self;
         }
@@ -362,8 +367,14 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     }
     // A miss resumes from the last committed generation's fold where it can.
     let continuation = resumable_continuation(store, key.generation);
-    let (view, next_deadline_secs, continuation) =
-        fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
+    let (view, next_deadline_secs, continuation) = fold_view_for_key(
+        store,
+        posture,
+        txn,
+        key,
+        continuation.as_deref(),
+        posture == store.privacy_posture,
+    )?;
     cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
     Ok(view)
 }
@@ -407,7 +418,8 @@ pub(super) fn authority_view_under_pin_for_store_in_txn(
         pin,
         ..authority_cache_key(store, posture, txn)?
     };
-    Ok(fold_view_for_key(store, posture, txn, key, None)?.0)
+    // Causal grant points use the installed pin, not this proposed pin.
+    Ok(fold_view_for_key(store, posture, txn, key, None, false)?.0)
 }
 
 /// The full fold behind `key`, resumed past `baseline` where it can be, the
@@ -422,6 +434,7 @@ fn fold_view_for_key(
     txn: &heed::RoTxn<'_>,
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
+    use_past_standing: bool,
 ) -> Result<(AuthorityView, Option<u64>, Option<AuthorityContinuation>)> {
     match fold_authority_checkpoint_tail_in_txn(
         store,
@@ -437,7 +450,7 @@ fn fold_view_for_key(
             next_deadline_secs,
             continuation,
         } => Ok((
-            view.with_agent_grant_standing(store, txn),
+            view.with_agent_grant_standing(store, txn, use_past_standing),
             next_deadline_secs,
             continuation,
         )),

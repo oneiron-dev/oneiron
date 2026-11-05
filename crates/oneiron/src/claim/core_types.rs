@@ -178,7 +178,9 @@ pub(crate) fn validate_claim_body_and_decode_in_txn(
     allow_reserved_predicate: bool,
 ) -> Result<ClaimBody> {
     let body = validate_claim_body_and_decode(data, allow_reserved_predicate)?;
-    crate::comm::check_claim_against_descriptor_in_txn(store, txn, &body)?;
+    store
+        .record_hooks
+        .check_claim_against_descriptor_in_txn(store, txn, &body)?;
     Ok(body)
 }
 

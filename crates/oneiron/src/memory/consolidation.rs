@@ -1,6 +1,8 @@
 //! Typed promotion and evidence observation over the existing Dreamer writer.
 //! The owner invokes the writer; the queued Dreamer, not request JSON, supplies
 //! its author, run and source. This door neither completes jobs nor sends effects.
+use std::collections::BTreeSet;
+
 use super::{ClaimScope, Memory, MemoryError, MemoryResult};
 use crate::claim::{
     ClaimReadStatus, PointRead, ScopedReadResult, claim_consolidatable, claim_evidence_taint,
@@ -94,6 +96,18 @@ pub struct ConsolidationEvidenceHop {
     pub actor_ref: Option<String>,
 }
 
+/// One locally recorded delivery image, not current authority or proof that
+/// the source's current bytes still match the recorded row hash.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsolidationDeliveryOrigin {
+    pub source_ref: String,
+    pub delivering_pact: String,
+    pub consent_epoch: u64,
+    pub grant_ref: String,
+    pub source_vault: String,
+    pub delivered_row_hash: String,
+}
+
 /// Source facts and the engine's separate read-admission axes. Effector
 /// evidence eligibility is not permission to perform any outbound action.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -118,6 +132,9 @@ pub struct ConsolidationEvidenceSource {
     pub source_meet: Option<String>,
     pub chain: Vec<ConsolidationEvidenceHop>,
     pub locators: Vec<ConsolidationEvidenceLocator>,
+    /// Local receipt facts for readable sources. None means unavailable;
+    /// an empty list means no matching facts were found, not complete history.
+    pub delivery_history: Option<Vec<ConsolidationDeliveryOrigin>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -179,6 +196,7 @@ impl Memory<'_> {
             None,
             Vec::with_capacity(refs.len()),
             |txn, _, rows, evidence| {
+                let first = evidence.len();
                 for row in rows {
                     let row = row.filter(|row| row.body.is_some()).ok_or_else(|| {
                         MemoryError::not_found("no readable evidence has that ref")
@@ -204,6 +222,7 @@ impl Memory<'_> {
                         source_meet: None,
                         chain: Vec::new(),
                         locators: Vec::new(),
+                        delivery_history: None,
                     };
                     if row.entity_type == ENTITY_TYPE_CLAIM {
                         let body = crate::claim::decode_claim_body(
@@ -323,6 +342,39 @@ impl Memory<'_> {
                             && view.source.as_deref() != Some("imported");
                     }
                     evidence.push(view);
+                }
+                let sources = evidence[first..]
+                    .iter()
+                    .flat_map(delivery_history_sources)
+                    .collect();
+                // Unavailable optional history does not withhold readable content.
+                if let Ok(history) = crate::federation::delivery_record::delivery_history_in_txn(
+                    &self.vault.store,
+                    txn,
+                    &sources,
+                ) {
+                    for view in &mut evidence[first..] {
+                        view.delivery_history = Some(
+                            delivery_history_sources(view)
+                                .into_iter()
+                                .flat_map(|source| history.get(&source).into_iter().flatten())
+                                .map(|record| ConsolidationDeliveryOrigin {
+                                    source_ref: record.source_ref.to_hex(),
+                                    delivering_pact: crate::entity_id::bytes_to_hex_lower(
+                                        &record.delivering_pact,
+                                    ),
+                                    consent_epoch: record.consent_epoch,
+                                    grant_ref: record.grant_ref.to_hex(),
+                                    source_vault: crate::entity_id::bytes_to_hex_lower(
+                                        &record.source_vault,
+                                    ),
+                                    delivered_row_hash: crate::entity_id::bytes_to_hex_lower(
+                                        &record.delivered_row_hash,
+                                    ),
+                                })
+                                .collect(),
+                        );
+                    }
                 }
                 Ok::<_, MemoryError>(())
             },
@@ -533,6 +585,14 @@ impl Memory<'_> {
             output_evidence,
         })
     }
+}
+
+fn delivery_history_sources(view: &ConsolidationEvidenceSource) -> BTreeSet<EntityId> {
+    std::iter::once(&view.source_ref)
+        .chain(&view.source_refs)
+        .chain(view.evidence_refs.iter().map(|reference| &reference.entity))
+        .filter_map(|source| EntityId::from_hex(source).ok())
+        .collect()
 }
 
 fn candidate_evidence(value: &rmpv::Value) -> Option<&rmpv::Value> {
