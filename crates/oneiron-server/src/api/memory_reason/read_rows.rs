@@ -1,6 +1,6 @@
 //! Raw scoped-read rows and bodies on the request's memory line.
 
-use oneiron::claim::ReadRow;
+use oneiron::claim::{PointRead, ReadRow};
 use oneiron::host_memory::{MachineMemory, MemoryLease};
 
 pub(super) struct ReadRows {
@@ -35,5 +35,28 @@ impl ReadRows {
 
     pub(super) fn drain(&mut self) -> std::vec::Drain<'_, Option<ReadRow>> {
         self.rows.drain(..)
+    }
+}
+
+pub(super) struct ReadRequests<'r> {
+    // The request vector drops before its memory charge.
+    reads: Vec<PointRead<'r>>,
+    memory: MemoryLease,
+}
+
+impl<'r> ReadRequests<'r> {
+    pub(super) fn new(memory: &MachineMemory, reads: Vec<PointRead<'r>>) -> Self {
+        let mut requests = Self {
+            reads,
+            memory: memory.empty_lease(),
+        };
+        let backing = (requests.reads.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<PointRead<'r>>() as u64);
+        requests.memory.materialized(0, backing);
+        requests
+    }
+
+    pub(super) fn as_slice(&self) -> &[PointRead<'r>] {
+        &self.reads
     }
 }
