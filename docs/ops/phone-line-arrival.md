@@ -98,8 +98,14 @@ read, and the existing non-owner Tier-A and live-source rules still apply. Gener
 Unknown and room disclosure behavior is unchanged. The assembly and narrowing receipts
 still describe the actual anonymous audience.
 
-Complete tool/notice source accounting, explicit no-recognition execution and the actual
-answering lifecycle remain open. These native read and output-check ports are not a
+Before a phone-bound safeguard notice enters history or the control stream, its
+original prepared generation, consent scope and anonymous audience are checked with
+both the turn's sources and the additional row named by the notice. Ordinary sessions
+still deliver their notices as before. This is the immediate notice-body send check,
+not a claim that every control event or saved journal page is phone-bound.
+
+Complete tool/control and saved-notice replay source accounting, explicit no-recognition
+execution and the actual answering lifecycle remain open. These native read and output-check ports are not a
 claim that a phone call can be answered.
 
 ## HTTP doors
