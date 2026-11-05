@@ -144,6 +144,16 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
     }
 
+    fn spoke_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        subject: &EntityId,
+        turn: &EntityId,
+    ) -> Result<bool> {
+        crate::affect::state_inputs::spoke_in(vault, txn, subject, turn)
+    }
+
     fn repair_saved_queries_after_pack_move_in_txn(
         &self,
         vault: &crate::Vault,

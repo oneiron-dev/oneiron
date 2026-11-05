@@ -138,6 +138,15 @@ pub trait StoreRecordHooks: Send + Sync {
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
 
+    /// The engine's `affect::state_inputs::spoke_in`.
+    fn spoke_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        subject: &EntityId,
+        turn: &EntityId,
+    ) -> Result<bool>;
+
     /// The engine's `saved_query::repair_saved_queries_after_pack_move_in_txn`.
     /// The install door drops the per-query resolutions, so this reports only
     /// success.
