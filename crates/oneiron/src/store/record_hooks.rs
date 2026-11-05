@@ -146,4 +146,31 @@ pub trait StoreRecordHooks: Send + Sync {
         subject: &EntityId,
         turn: &EntityId,
     ) -> Result<bool>;
+
+    /// The engine's `campaign::claims::do_not_contact_subjects_in_txn`.
+    fn do_not_contact_subjects_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        counterparty: &str,
+    ) -> Result<Vec<EntityId>>;
+
+    /// The engine's `campaign::claims::subjects_do_not_contact_in_txn`.
+    fn subjects_do_not_contact_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        subjects: &[EntityId],
+        channel: Option<&str>,
+        scope: &str,
+    ) -> Result<bool>;
+
+    /// The engine's `campaign::send_hygiene::apply_suppression_in_txn`.
+    fn apply_suppression_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        cause: crate::write_envelope::cohort_claims::suppression::SuppressionCause,
+        input: &crate::write_envelope::cohort_claims::suppression::SuppressionInput,
+    ) -> Result<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>;
 }

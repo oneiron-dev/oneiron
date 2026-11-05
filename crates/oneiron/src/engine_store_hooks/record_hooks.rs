@@ -153,4 +153,36 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<bool> {
         crate::affect::state_inputs::spoke_in(vault, txn, subject, turn)
     }
+
+    fn do_not_contact_subjects_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        counterparty: &str,
+    ) -> Result<Vec<EntityId>> {
+        crate::campaign::claims::do_not_contact_subjects_in_txn(store, txn, counterparty)
+    }
+
+    fn subjects_do_not_contact_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        subjects: &[EntityId],
+        channel: Option<&str>,
+        scope: &str,
+    ) -> Result<bool> {
+        crate::campaign::claims::subjects_do_not_contact_in_txn(
+            store, txn, subjects, channel, scope,
+        )
+    }
+
+    fn apply_suppression_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        cause: crate::write_envelope::cohort_claims::suppression::SuppressionCause,
+        input: &crate::write_envelope::cohort_claims::suppression::SuppressionInput,
+    ) -> Result<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt> {
+        crate::campaign::send_hygiene::apply_suppression_in_txn(vault, wtxn, cause, input)
+    }
 }
