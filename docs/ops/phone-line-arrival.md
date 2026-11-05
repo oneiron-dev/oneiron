@@ -111,6 +111,11 @@ with the native lifecycle, approval and enabled predicate before its instruction
 actual model list leave the read lane. There is no default-agent or empty-list substitute.
 This getter does not activate an answering session.
 
+A phone-bound host refuses speaker matching and roster departures before accessing
+any roster. Ordinary voice hosts keep their existing matching and departure behavior.
+This guard does not create an anonymous session or activate an enrollment path; the
+actual phone factory and its no-enrollment execution remain open.
+
 Complete tool/control and saved-notice replay source accounting, explicit no-recognition
 execution and the actual answering lifecycle remain open. These native read and output-check ports are not a
 claim that a phone call can be answered.
