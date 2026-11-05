@@ -270,6 +270,7 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
+            self.gated_write.observe_consumed_code_replies(&record)?;
             let recoverable = self.observation_refs(&record)?;
             let mut host = RecordingJsHost::new(
                 self.gated_write,
