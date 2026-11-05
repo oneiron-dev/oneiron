@@ -77,6 +77,8 @@ pub(super) struct PendingRow {
     /// back as false and keep today's behavior.
     #[serde(default)]
     explicit_fork: bool,
+    /// The selected suffix begins here; byte staging does not consume it.
+    next_sheet_row: Option<u32>,
     new_bytes: Vec<u8>,
     body: PendingBody,
     /// The rows its producer read beside its base and its made_by: each
@@ -825,6 +827,7 @@ fn edit_pending_row(
         base_version: proposal.base_version,
         base_content_hash: Some(proposal.base_content_hash),
         explicit_fork: false,
+        next_sheet_row: None,
         new_bytes: proposal.new_bytes.clone(),
         read_rows: {
             let mut rows = read_rows.to_vec();

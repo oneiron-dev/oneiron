@@ -22,6 +22,16 @@ and completed unit marks. Their byte attempt runs only after that commit.
 A later staging failure does not roll back those records or ask completed
 units again.
 
+If a later row's intake hits the machine memory floor after paid answers have
+completed, `ArtifactAskRun.deferred_floor` carries the original typed refusal.
+Retain the completed cohort before returning `machine_memory_refused(refusal)`;
+do not attempt staging on that path. `SheetAnswerWork.next_sheet_row` persists
+with the pending record and appears in its summary, including after staging.
+Standing asks also commit their remaining selection and failed-kind history;
+wakes mark only the completed prefix. None of these paths repeats a paid call
+or replaces the original deadline. A floor before any paid value and unrelated
+errors keep their ordinary error path.
+
 ## Pending state and retry
 
 The existing pending record carries either the paid answer bundle or the

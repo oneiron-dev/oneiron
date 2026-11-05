@@ -215,6 +215,7 @@ impl Vault {
         };
         Ok(ArtifactAskRun {
             proposal: None,
+            deferred_floor: None,
             sheet_answers: bundle
                 .answers
                 .iter()
@@ -225,6 +226,7 @@ impl Vault {
                     version,
                     frontier,
                     request.ask.deadline,
+                    None,
                 )),
             abstained,
             refused,

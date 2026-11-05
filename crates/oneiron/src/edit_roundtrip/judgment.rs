@@ -18,6 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionQuestion, EvidenceVersion, TypedDecision};
+use oneiron_docedit::resource::ResourceRefusal;
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_cells};
 use serde::{Deserialize, Serialize};
@@ -90,6 +91,8 @@ pub struct SheetAnswerWork {
     pub base_content_hash: [u8; 32],
     /// The original whole-ask clock, never renewed by staging.
     pub deadline: Instant,
+    /// First selected row not included in this paid cohort.
+    pub next_sheet_row: Option<u32>,
 }
 
 struct RetainedSheetAnswers {
@@ -112,6 +115,7 @@ impl SheetAnswerWork {
         base_version: u64,
         base_content_hash: [u8; 32],
         deadline: Instant,
+        next_sheet_row: Option<u32>,
     ) -> Self {
         Self {
             answers: std::sync::Arc::new(RetainedSheetAnswers {
@@ -121,6 +125,7 @@ impl SheetAnswerWork {
             base_version,
             base_content_hash,
             deadline,
+            next_sheet_row,
         }
     }
 
@@ -322,6 +327,7 @@ impl Vault {
         let mut run = ArtifactAskRun {
             proposal: None,
             sheet_answers: None,
+            deferred_floor: None,
             abstained: Vec::new(),
             refused: Vec::new(),
             read_rows: Vec::new(),
@@ -393,11 +399,11 @@ impl Vault {
         let mut index_memory = resources.allocation();
         let mut by_row = BTreeMap::new();
         for (cell, value) in shown {
-            if let Err(error) = sheet_ask_checkpoint(&resources, work_until) {
-                if sheet_ask_timed_out(&error) {
+            if let Err(refusal) = sheet_ask_checkpoint(&resources, work_until) {
+                if refusal == ResourceRefusal::Deadline {
                     return Ok(run);
                 }
-                return Err(error);
+                return Err(crate::office_body::machine_memory_refused(refusal));
             }
             if cell.col != answer_col
                 && (rows.start.col..=rows.end.col).contains(&cell.col)
@@ -423,8 +429,8 @@ impl Vault {
         let headers = match header_row {
             Some(row) => match sheet_row_state(&by_row, row, &resources, work_until) {
                 Ok(headers) => headers,
-                Err(error) if sheet_ask_timed_out(&error) => return Ok(run),
-                Err(error) => return Err(error),
+                Err(ResourceRefusal::Deadline) => return Ok(run),
+                Err(refusal) => return Err(crate::office_body::machine_memory_refused(refusal)),
             },
             None => SheetRowState {
                 values: Map::new(),
@@ -445,7 +451,7 @@ impl Vault {
             {
                 break;
             }
-            let prepared = (|| -> Result<()> {
+            let prepared = (|| -> std::result::Result<(), SheetRowFailure> {
                 sheet_ask_checkpoint(&resources, work_until)?;
                 // Prepare each possible outcome slot before asking a model;
                 // never lose a completed decision to a later vector grow.
@@ -508,8 +514,18 @@ impl Vault {
             })();
             match prepared {
                 Ok(()) => run.next_sheet_row = row_iter.next(),
-                Err(error) if sheet_ask_timed_out(&error) => break,
-                Err(error) => return Err(error),
+                Err(SheetRowFailure::Resource(ResourceRefusal::Deadline)) => break,
+                Err(SheetRowFailure::Resource(refusal @ ResourceRefusal::MemoryFloor { .. }))
+                    if answers.iter().any(|answer| answer.value.is_some()) =>
+                {
+                    run.deferred_floor = Some(refusal);
+                    break;
+                }
+                Err(SheetRowFailure::Resource(refusal)) => {
+                    return Err(crate::office_body::machine_memory_refused(refusal));
+                }
+                Err(SheetRowFailure::Ask(error)) if sheet_ask_timed_out(&error) => break,
+                Err(SheetRowFailure::Ask(error)) => return Err(error),
             }
         }
         let bundle = SheetAnswerBundle {
@@ -548,6 +564,7 @@ impl Vault {
                 version,
                 frontier,
                 request.ask.deadline,
+                run.next_sheet_row,
             ));
         }
         Ok(run)
@@ -700,18 +717,22 @@ fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
 
+#[derive(Debug, thiserror::Error)]
+enum SheetRowFailure {
+    #[error(transparent)]
+    Resource(#[from] ResourceRefusal),
+    #[error(transparent)]
+    Ask(#[from] Error),
+}
+
 fn sheet_ask_checkpoint(
     resources: &oneiron_docedit::resource::Resources,
     deadline: Instant,
-) -> Result<()> {
+) -> std::result::Result<(), ResourceRefusal> {
     if Instant::now() >= deadline {
-        return Err(crate::office_body::document_refused(
-            oneiron_docedit::resource::ResourceRefusal::Deadline,
-        ));
+        return Err(ResourceRefusal::Deadline);
     }
-    resources
-        .checkpoint()
-        .map_err(crate::office_body::machine_memory_refused)
+    resources.checkpoint()
 }
 
 fn sheet_ask_timed_out(error: &Error) -> bool {
@@ -730,7 +751,7 @@ fn sheet_row_state(
     row: u32,
     resources: &oneiron_docedit::resource::Resources,
     deadline: Instant,
-) -> Result<SheetRowState> {
+) -> std::result::Result<SheetRowState, ResourceRefusal> {
     let mut memory = resources.allocation();
     let mut values = Map::new();
     let mut live_bytes: u64 = 0;
@@ -748,9 +769,7 @@ fn sheet_row_state(
         }
         let (bytes, measured) = text_bytes(value);
         let node = oneiron_docedit::resource::bytes_of::<(String, Value)>(3);
-        memory
-            .grow(bytes.saturating_add(node), measured)
-            .map_err(crate::office_body::machine_memory_refused)?;
+        memory.grow(bytes.saturating_add(node), measured)?;
         if let Some(text) = cell_text(value) {
             let key = super::address::column_to_letters(*col);
             live_bytes = live_bytes
@@ -772,18 +791,16 @@ fn sheet_row_state(
 fn sheet_outcome_slot<T>(
     values: &mut Vec<T>,
     memory: &mut dyn oneiron_docedit::resource::ResourceAllocation,
-) -> Result<()> {
+) -> std::result::Result<(), ResourceRefusal> {
     if values.len() == values.capacity() {
         let capacity = values
             .len()
             .saturating_add(1)
             .max(values.capacity().saturating_mul(2));
-        memory
-            .grow(
-                oneiron_docedit::resource::bytes_of::<T>(capacity - values.capacity()),
-                0,
-            )
-            .map_err(crate::office_body::machine_memory_refused)?;
+        memory.grow(
+            oneiron_docedit::resource::bytes_of::<T>(capacity - values.capacity()),
+            0,
+        )?;
         values.reserve_exact(capacity - values.len());
         memory.materialized(oneiron_docedit::resource::bytes_of::<T>(values.capacity()));
     }

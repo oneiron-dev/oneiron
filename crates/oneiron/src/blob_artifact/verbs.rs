@@ -980,6 +980,7 @@ impl Memory<'_> {
                     crate::edit_roundtrip::ArtifactAskRun {
                         proposal: None,
                         sheet_answers: None,
+                        deferred_floor: None,
                         abstained: Vec::new(),
                         refused: Vec::new(),
                         read_rows: Vec::new(),
@@ -1022,6 +1023,9 @@ impl Memory<'_> {
                 (actor, at),
                 &read,
             )?;
+            if let Some(refusal) = run.deferred_floor {
+                return Err(crate::office_body::machine_memory_refused(refusal).into());
+            }
             Some(vault.finish_pending_sheet_answers(&artifact, &input.run_ref, work.deadline)?)
         } else {
             match &run.proposal {
