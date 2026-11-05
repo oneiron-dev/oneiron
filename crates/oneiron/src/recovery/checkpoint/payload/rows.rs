@@ -746,15 +746,14 @@ pub(super) fn class_for_row(database: &str, key: &[u8], value: &[u8], declared: 
         _ => false,
     };
     let response = mixed
-        && ResponseDb::of_name(database)
-            .and_then(|db| ResponseFamily::of_row(db, key, value))
-            .is_some_and(|family| {
-                family.placed_as_response(
-                    crate::engine_store_hooks::ENGINE_STORE_HOOKS.attempt_operations,
-                    key,
-                    value,
-                )
-            });
+        && ResponseDb::of_name(database).is_some_and(|db| {
+            ResponseFamily::mixed_response_placed_as_response(
+                crate::engine_store_hooks::ENGINE_STORE_HOOKS.attempt_operations,
+                db,
+                key,
+                value,
+            )
+        });
     if response {
         Class::Other(Client::Dispatch(OtherClient::Response))
     } else {
