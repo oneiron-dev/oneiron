@@ -75,9 +75,10 @@ impl AnthropicMessagesTransport for AnthropicHttp {
             // A reply without usage (or with a null one) gets one carrying
             // only the served model; the adapter reads its absent counts as
             // zero, as it would anyway.
+            // A failed HTTP response can still name work the worker measured.
+            inference.record(reply.body.get_mut("usage"));
             if (200..300).contains(&reply.status) {
                 carry_served_model(&mut reply.body);
-                inference.record(reply.body.get_mut("usage"));
                 inference.finish();
             }
             Ok(AnthropicMessagesHttpResponse {
@@ -112,7 +113,10 @@ impl AnthropicMessagesTransport for AnthropicHttp {
                 }
             };
             match item {
-                SseItem::Status(reply) => {
+                SseItem::Status(mut reply) => {
+                    if !closed {
+                        inference.record(reply.body.get_mut("usage"));
+                    }
                     closed = true;
                     Ok(AnthropicMessagesStreamFrame::Status(
                         AnthropicMessagesHttpResponse {
@@ -146,7 +150,10 @@ impl AnthropicMessagesTransport for AnthropicHttp {
                                 inference.finish();
                                 closed = true;
                             }
-                            Some("error") => closed = true,
+                            Some("error") => {
+                                inference.record(data.get_mut("usage"));
+                                closed = true;
+                            }
                             _ => {}
                         }
                     }
