@@ -16,7 +16,7 @@ use oneiron::sync::{EphemeralStore, WindowManager};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::api::DeepRetrievalHost;
-use crate::config::SyncServerConfig;
+use crate::config::{ServeConfig, SyncServerConfig};
 use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
 use crate::oneironer::TaggerSlot;
@@ -25,8 +25,8 @@ use crate::usage::{RetrievalMeterBuffer, UsageLedger};
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 use super::{
-    ArtifactPreviews, LiveRuns, NoteEditors, ReaderRunner, desktop_seats, message_stream, presence,
-    read_shape, windows,
+    ArtifactPreviews, LiveRuns, ModelSetupConfig, ModelSetupRuntime, ModelSlots, NoteEditors,
+    ReaderRunner, SharedModelSlots, desktop_seats, message_stream, presence, read_shape, windows,
 };
 
 mod construction;
@@ -91,6 +91,8 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: std::sync::Mutex<HashSet<LifecycleJobKey>>,
     /// Housekeeping passes in flight, scheduled or asked for by the owner.
     pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
+    /// Wakes work waiting for another attempt's generation reservation.
+    pub(crate) residence_work_changed: tokio::sync::Notify,
     /// Whether this server's merge queue checker ran a pass yet: its first
     /// asks again for a check that needed host configuration (FIX 7310).
     pub(crate) queue_driver_started: std::sync::atomic::AtomicBool,
@@ -207,16 +209,21 @@ pub struct SyncServer {
     /// `DEEP_RETRIEVAL_UNAVAILABLE` rather than quietly served at standard
     /// effort, so "deep" never names a read that was not deep.
     pub(crate) deep_retrieval: Option<Arc<DeepRetrievalHost>>,
-    /// ONE-1979: the embedder slot, `None` at rung 0.
-    ///
-    /// Holds the resolved `[embedder]` section and, once the provider is
-    /// serving, the provider itself. A slot is attached by the serve path after
-    /// construction, the same way the deep-retrieval host is: `Self::new` pins
-    /// no model and downloads nothing.
-    pub(crate) embedder: Option<Arc<EmbedderSlot>>,
-    /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
-    /// Attached by the serve path after construction, like the embedder.
-    pub(crate) tagger: Option<TaggerSlot>,
+    /// The embedder and tagger slots as one atomic pair, both `None` at rung 0.
+    /// Startup attaches its pair here; first-run owner setup can later fill an
+    /// empty pair without replacing a serving model.
+    /// The live slot pair behind one shared atomic: late setup stores into
+    /// the same pair seat factories read, so runs created after attach see
+    /// the serving embedder without a rebind.
+    pub(crate) model_slots: Arc<SharedModelSlots>,
+    /// The nonsecret file/vault facts an open-vault first-run setup must match.
+    pub(crate) model_setup: Option<ModelSetupConfig>,
+    /// Plain/embedded worker admission and late-worker handles, installed before
+    /// the owner router starts. Managed serve has no file-backed setup entry.
+    pub(crate) model_setup_runtime: std::sync::OnceLock<Arc<ModelSetupRuntime>>,
+    /// The startup GPU pool, retained even with no embedder so a late attach
+    /// reuses it instead of starting a duplicate health poller.
+    pub(crate) gpu_pool: std::sync::OnceLock<crate::runtime::GpuPool>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
     /// The house model's decision read the owner probes at
@@ -568,21 +575,103 @@ impl SyncServer {
         self
     }
 
-    /// Attaches the embedder slot resolved from configuration.
-    ///
-    /// Separate from [`Self::new`] because an embedder is a model decision and
-    /// a possible download: a server built without one runs at rung 0 forever,
-    /// which is what every deployment did before this ticket.
-    pub(crate) fn with_embedder(mut self, embedder: Option<EmbedderSlot>) -> Self {
-        self.embedder = embedder.map(Arc::new);
+    /// Attaches the embedder slot resolved from configuration, before the
+    /// server is shared. First-run setup uses [`Self::attach_first_run_slots`]
+    /// once the server is live instead.
+    pub(crate) fn with_embedder(self, embedder: Option<EmbedderSlot>) -> Self {
+        let tagger = self.tagger_slot();
+        self.model_slots.store(Arc::new(ModelSlots {
+            embedder: embedder.map(Arc::new),
+            tagger,
+        }));
         self
     }
 
-    /// Attaches the tagger slot resolved from configuration. Its worker
-    /// drains the tagging markers every witnessed turn commits.
-    pub(crate) fn with_tagger(mut self, tagger: Option<TaggerSlot>) -> Self {
-        self.tagger = tagger;
+    /// Attaches the tagger slot resolved from configuration, before sharing.
+    pub(crate) fn with_tagger(self, tagger: Option<TaggerSlot>) -> Self {
+        let embedder = self.embedder_slot();
+        self.model_slots.store(Arc::new(ModelSlots {
+            embedder,
+            tagger: tagger.map(Arc::new),
+        }));
         self
+    }
+
+    /// The nonsecret startup facts an open-vault setup must preserve.
+    pub(crate) fn with_model_setup_config(
+        mut self,
+        config: &ServeConfig,
+        startup_args: &crate::config::ServeArgs,
+    ) -> Self {
+        self.model_setup = Some(ModelSetupConfig {
+            startup_args: startup_args.clone(),
+            config_path: config.config_path.clone(),
+            vault_path: config.vault_path.clone(),
+            dimensions: config.dimensions,
+            map_size: config.map_size,
+            gpu: config.gpu.clone(),
+        });
+        self
+    }
+
+    /// Retains the startup pool even when its embedder is absent at rung 0.
+    pub(crate) fn with_gpu_pool(self, pool: Option<crate::runtime::GpuPool>) -> Self {
+        if let Some(pool) = pool {
+            let _ = self.gpu_pool.set(pool);
+        }
+        self
+    }
+
+    pub(crate) fn embedder_slot(&self) -> Option<Arc<EmbedderSlot>> {
+        self.model_slots.load().embedder.clone()
+    }
+
+    pub(crate) fn tagger_slot(&self) -> Option<Arc<TaggerSlot>> {
+        self.model_slots.load().tagger.clone()
+    }
+
+    pub(crate) fn model_slots_unconfigured(&self) -> bool {
+        let slots = self.model_slots.load();
+        slots.embedder.is_none() && slots.tagger.is_none()
+    }
+
+    pub(crate) fn model_setup_config(&self) -> Option<ModelSetupConfig> {
+        self.model_setup.clone()
+    }
+
+    pub(crate) fn gpu_pool(&self) -> Option<crate::runtime::GpuPool> {
+        self.gpu_pool.get().cloned()
+    }
+
+    pub(crate) fn model_setup_runtime(&self) -> Option<Arc<ModelSetupRuntime>> {
+        self.model_setup_runtime.get().cloned()
+    }
+
+    pub(crate) fn install_model_setup_runtime(&self, runtime: Arc<ModelSetupRuntime>) -> bool {
+        self.model_setup_runtime.set(runtime).is_ok()
+    }
+
+    /// Fills an empty slot pair after first-run setup, never a Some→Some reload.
+    pub(crate) fn attach_first_run_slots(
+        &self,
+        embedder: Option<EmbedderSlot>,
+        tagger: Option<TaggerSlot>,
+        gpu_pool: Option<crate::runtime::GpuPool>,
+    ) -> Result<(), String> {
+        if !self.model_slots_unconfigured() {
+            return Err(
+                "model slots are already configured; live replacement is not first-run setup"
+                    .to_owned(),
+            );
+        }
+        if let Some(pool) = gpu_pool {
+            let _ = self.gpu_pool.set(pool);
+        }
+        self.model_slots.store(Arc::new(ModelSlots {
+            embedder: embedder.map(Arc::new),
+            tagger: tagger.map(Arc::new),
+        }));
+        Ok(())
     }
 
     /// Attaches the owner's backup host: its backups and rehearsals claim

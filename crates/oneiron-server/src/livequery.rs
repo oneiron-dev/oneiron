@@ -20,7 +20,9 @@ mod budget;
 mod error;
 mod history;
 mod residence;
-pub(crate) use residence::{ResidenceIndexCache, ResidenceTouchStage};
+pub(crate) use residence::{
+    ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
+};
 mod routing;
 mod rpc;
 pub(crate) use rpc::SocketCallContext;

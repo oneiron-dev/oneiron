@@ -8,11 +8,13 @@ use super::instruction_files::returned_instruction_files;
 use super::response_limits::{ContextPackResponseLimits, apply_context_pack_response_limits};
 use crate::error::ApiError;
 use crate::projection::View;
+use oneiron::context_board::MemorySource;
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use utoipa::ToSchema;
 
 /// Hydrated context edge.
@@ -268,7 +270,7 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     empty: Option<Value>,
-    /// The request's `limit` was past 1,000 and was served at 1,000.
+    /// Whether this door lowered the requested result count; always false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) limit_clamped: bool,
 }
@@ -335,8 +337,8 @@ pub(crate) async fn run_context_pack_builder(
         })?;
     apply_context_pack_response_limits(&mut pack, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
-    // Board provenance/snippets consume the same authorized snapshot, before
-    // the requested JSON profile removes source fields for the separate pack.
+    // Keep provenance from the authorized snapshot: the JSON profile can
+    // remove source and world fields needed for trust labels and fences.
     let projected_memories = memories
         .as_ref()
         .and_then(|request| {
@@ -363,6 +365,41 @@ pub(crate) async fn run_context_pack_builder(
         })?;
     let run_id = pack.run_id;
     let pack = pack.value;
+    let projected_memories = projected_memories.map(|mut section| {
+        let visible_rows: HashMap<_, _> = pack
+            .results
+            .iter()
+            .map(|entity| ((MemorySource::Result, entity.id.to_hex()), entity))
+            .chain(
+                pack.neighbors
+                    .iter()
+                    .map(|entity| ((MemorySource::Neighbor, entity.id.to_hex()), entity)),
+            )
+            .collect();
+        // Optional rows keep their authorized labels, but only the final
+        // projection supplies their presence and snippet bytes.
+        section.rows.retain_mut(|row| {
+            let Some(entity) = visible_rows.get(&(row.source, row.id.clone())) else {
+                return false;
+            };
+            if row.snippet.is_some() {
+                row.snippet = entity
+                    .fields
+                    .as_ref()
+                    .and_then(|fields| fields.get("val"))
+                    .map(|value| {
+                        let mut value = value.clone();
+                        oneiron::batch::export::redact_credentials(&mut value);
+                        value.to_string()
+                    });
+            }
+            true
+        });
+        for (index, row) in section.rows.iter_mut().enumerate() {
+            row.row_index = index;
+        }
+        section
+    });
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let mut pin_narrowing = Vec::new();

@@ -4,7 +4,9 @@
 //! output kept from model context (a secret, a taint) stays withheld here
 //! too. It reads replay, never a summary and never the home the call wore.
 
-use super::super::store::{load_context_output, observation_output_path, script_output_path};
+use super::super::store::{
+    load_context_output, load_script_context, observation_output_path, script_output_path,
+};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord, ExecutorStorage};
 use crate::{Error, Result};
 
@@ -27,7 +29,7 @@ impl ExecutorStorage<'_> {
         let mut text = String::new();
         for step in first..=last {
             let turn = CodeRunHistoryTurn {
-                code: load_context_output(self, record, &script_output_path(step))?,
+                code: load_script_context(self, record, &script_output_path(step), None)?,
                 console: load_context_output(self, record, &observation_output_path(step))?,
             };
             if !text.is_empty() {
