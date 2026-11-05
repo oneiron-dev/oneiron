@@ -30,8 +30,8 @@ lane, and the returned `repo`. The existing import writer still limits the
 snapshot, blobs, and symbol graph to paths the run's Grant reads. Before
 any write, it resolves the same selector again and checks the selected
 CODE, hit state, current Grant bounds, and run lease. A changed selection
-retries without writing rows. An absent or unknown id keeps the existing
-fallback behavior.
+returns a retryable error without writing rows. An absent or unknown id
+keeps the existing fallback behavior.
 
 These selectors do not change native Git, work, or view doors. Native repo
 admission checks the same typed selector against the existing EntityId
