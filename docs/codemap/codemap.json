@@ -119470,6 +119470,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "EmbeddedHolderOverrides",
       "IngressAuth",
       "ServeConfig",
       "SyncServerConfig"
@@ -119477,9 +119478,10 @@
      "path": "src/config/server_config.rs",
      "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "struct": 2
+      "struct": 3
      }
     },
     {
