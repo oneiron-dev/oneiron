@@ -155,6 +155,7 @@ impl RecordingJsHost<'_, '_> {
                 SelfDispatchOutcome::Failed(SelfFailedResult {
                     effect: SelfEffect::ReaderReport,
                     error: code.to_owned(),
+                    code: None,
                 }),
                 None,
             )
