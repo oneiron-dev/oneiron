@@ -389,39 +389,47 @@ fn operate(
                     .target
                     .lock()
                     .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-            } else if let Some(answer) = loopback::connect(state, *id, &socket, *target, waiting) {
-                // A loopback target: this session's listener, or a refusal.
-                reply = answer?;
             } else {
-                let mut peer = socket
-                    .stream
-                    .lock()
-                    .map_err(|_| io::Error::other("fence state poisoned"))?;
-                if peer.is_none() {
-                    return Err(io::Error::from_raw_os_error(libc::EISCONN));
-                }
-                if target.port() == 53 {
-                    state.relay.authorize_datagram(*target)?;
-                    let peer = peer
-                        .take()
-                        .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                    *socket
-                        .target
-                        .lock()
-                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    relay_dns(peer, *target, Arc::clone(state));
+                // One connect at a time on a stream socket, to a virtual
+                // listener or through the broker: another while one is in
+                // progress is EALREADY, as on Linux.
+                let Some(_connecting) = loopback::Connecting::begin(&socket) else {
+                    return Err(io::Error::from_raw_os_error(libc::EALREADY));
+                };
+                if let Some(answer) = loopback::connect(state, *id, &socket, *target, waiting) {
+                    // A loopback target: this session's listener, or a refusal.
+                    reply = answer?;
                 } else {
-                    let (stream, gated) = state.relay.connect_stream(*target)?;
-                    let peer = peer
-                        .take()
-                        .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                    *socket
-                        .target
+                    let mut peer = socket
+                        .stream
                         .lock()
-                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    relay_stream(peer, stream, *target, gated, Arc::clone(state));
+                        .map_err(|_| io::Error::other("fence state poisoned"))?;
+                    if peer.is_none() {
+                        return Err(io::Error::from_raw_os_error(libc::EISCONN));
+                    }
+                    if target.port() == 53 {
+                        state.relay.authorize_datagram(*target)?;
+                        let peer = peer
+                            .take()
+                            .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
+                        *socket
+                            .target
+                            .lock()
+                            .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
+                        relay_dns(peer, *target, Arc::clone(state));
+                    } else {
+                        let (stream, gated) = state.relay.connect_stream(*target)?;
+                        let peer = peer
+                            .take()
+                            .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
+                        *socket
+                            .target
+                            .lock()
+                            .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
+                        relay_stream(peer, stream, *target, gated, Arc::clone(state));
+                    }
+                    socket.release_control();
                 }
-                socket.release_control();
             }
         }
         Operation::Send {

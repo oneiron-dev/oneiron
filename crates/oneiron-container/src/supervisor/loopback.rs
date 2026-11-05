@@ -45,6 +45,7 @@ use std::time::Duration;
 
 // Connects that wait their turn for a slot (FIX 6785, FIX 8015).
 mod connect;
+pub(super) use connect::Connecting;
 // SO_ACCEPTCONN and IPV6_V6ONLY, kept by the fence (FIX 6784, FIX 6787).
 mod options;
 
@@ -508,9 +509,6 @@ pub(super) fn connect(
     if mapped(named) && socket.ipv6_only.load(Ordering::Acquire) {
         return Some(Err(errno(libc::ENETUNREACH)));
     }
-    let Some(_connecting) = connect::Connecting::begin(socket) else {
-        return Some(Err(errno(libc::EALREADY)));
-    };
     let found = state.loopback.lock().map(|mut registry| {
         let listener = registry
             .bound
