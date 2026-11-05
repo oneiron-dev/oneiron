@@ -206,6 +206,7 @@ async fn begin(
     stream: bool,
     segments: Option<&SegmentManifest>,
     context: WorkContext,
+    dispatch_lease: &BudgetLease,
 ) -> Result<Begun, OpenAiCompatTransportError> {
     // The ticket precedes demand; an early exit cancels it without touching
     // the worker. Foreground arrival yields only update-capable background
@@ -290,6 +291,7 @@ async fn begin(
         session,
         Some(&schedule),
         Some(&route.worker),
+        Some(dispatch_lease),
     )
     .await;
     let refused = matches!(
@@ -312,6 +314,7 @@ async fn begin(
             None,
             Some(&schedule),
             Some(&route.worker),
+            Some(dispatch_lease),
         )
         .await;
     }
@@ -357,6 +360,7 @@ async fn begin(
             }
         }
         Err(Start::NotSent(error) | Start::Cut(error)) => Err(error),
+        Err(Start::Release(error)) => Err(OpenAiCompatTransportError::DispatchRelease(error)),
     }
 }
 
@@ -380,7 +384,8 @@ async fn execute(
     // the wait below surfaces at the next wire event.
     let device_cancel = context.cancel.shared();
     let device_cancel_wake = context.cancel.shared_notify();
-    let mut sent = match begin(&route, &body, false, segments.as_deref(), context).await? {
+    let manifest = segments.as_deref();
+    let mut sent = match begin(&route, &body, false, manifest, context, lease).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
@@ -701,11 +706,12 @@ pub(super) async fn qualify(
         None,
         None,
         None,
+        None,
     )
     .await
     .map_err(|start| match start {
         Start::Refused(_) => WorkerFailure::InvalidReply,
-        Start::NotSent(_) | Start::Cut(_) => WorkerFailure::Unreachable,
+        Start::NotSent(_) | Start::Cut(_) | Start::Release(_) => WorkerFailure::Unreachable,
     })?;
     let last = loop {
         match call.next().await {
@@ -771,7 +777,8 @@ impl Streaming {
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(&route, &body, true, segments.as_deref(), context).await {
+                let manifest = segments.as_deref();
+                match begin(&route, &body, true, manifest, context, &lease).await {
                     Ok(Begun::Sent(sent)) => {
                         // One physical request, observed from its send (FIX 9297).
                         let publisher = InferencePublisher::begin(&lease);
