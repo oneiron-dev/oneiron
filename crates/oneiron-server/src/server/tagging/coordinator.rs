@@ -379,7 +379,9 @@ impl Coordinator {
         // Refilled at once, without waiting for older calls.
         self.dirty = true;
         let started = Instant::now();
-        let completion = self.tagger.submit(claim, window);
+        let completion = self
+            .tagger
+            .submit(claim, window, self.reconciler.call_context().cloned());
         self.calls.push(Box::pin(async move {
             let attempt = completion.answer().await;
             Box::new(Called {

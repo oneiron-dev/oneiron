@@ -194,6 +194,7 @@ pub fn budget_hit_as_owner(
             .map_err(|error| MemoryError::bad_request(error.to_string()))?,
         actor: memory.actor(),
         invocation,
+        scope: None,
     });
     Ok(HostBudgetHitResult {
         seat: input.seat,

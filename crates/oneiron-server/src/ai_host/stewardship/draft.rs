@@ -1,14 +1,10 @@
-//! One follow-up draft: its call over every eligible source and, when that
-//! fails, its rescue over the newest (FIX 7428). A failure is reported by the
-//! stage it happened at. The request is read again after any failure, so a
-//! source deleted since the page was read is never sent again: when a
-//! source or scheduling failure finds the request changed, evidence alone
-//! included, the current request is drafted whole at once, and the rescue
-//! always drafts from the request as it reads now. A failure over inputs
-//! that did not move leaves the reach-out pending for the next round.
+//! Follow-up drafting with destination-bound sources. A failed full call
+//! can fold smaller drafts before the existing newest-source rescue. Changed
+//! source or scheduling inputs are read again for the next full draft.
+mod fold;
+
 use std::collections::BTreeMap;
 
-use oneiron::dreamer_runner::maintenance::representation::PrematerializedDraft;
 use oneiron::dreamer_runner::maintenance::stewardship::{
     StewardshipDraftOutcome, StewardshipDraftRequest,
 };
@@ -18,8 +14,9 @@ use oneiron::{
 };
 
 use super::Drafter;
-use super::sources::{DraftSources, draft_messages};
+use super::sources::{DraftSources, SourcedDraft};
 use crate::models::ModelRuntime;
+use oneiron::dreamer_runner::maintenance::representation::DestinationContext;
 
 /// The purpose a draft's call is metered and routed under.
 const DRAFT_PURPOSE: &str = "stewardship_follow_up";
@@ -77,11 +74,9 @@ pub(super) enum DraftPass {
     Failed(DraftFailure, StewardshipDraftRequest),
 }
 
-/// [`draft_one`] over every eligible source of `draft` and, when that fails
-/// and the request as it reads now cites more than
-/// [`FALLBACK_DRAFT_EVIDENCE`] sources, once more over the newest of them,
-/// so a draft that was written before every source was fed is still
-/// written.
+/// Draft every eligible source first. A call failure with more than
+/// [`FALLBACK_DRAFT_EVIDENCE`] sources tries smaller drafts and synthesis;
+/// the existing newest-source rescue remains available if that fails.
 ///
 /// # Errors
 ///
@@ -92,11 +87,11 @@ pub(super) async fn draft_pass(
     drafter: Drafter,
     draft: &StewardshipDraftRequest,
 ) -> oneiron::Result<DraftPass> {
-    let failure = match draft_one(vault, runtime, drafter, draft).await {
+    let mut failure = match draft_one(vault, runtime, drafter, draft).await {
         Ok(outcome) => return Ok(DraftPass::Done(outcome)),
         Err(failure) => failure,
     };
-    let Some(current) = vault.stewardship_draft_request(draft.proposal)? else {
+    let Some(mut current) = vault.stewardship_draft_request(draft.proposal)? else {
         return Ok(DraftPass::Gone);
     };
     if failure.stage.inputs_may_move() && current != *draft {
@@ -104,6 +99,15 @@ pub(super) async fn draft_pass(
     }
     if current.request.evidence.len() <= FALLBACK_DRAFT_EVIDENCE {
         return Ok(DraftPass::Failed(failure, current));
+    }
+    if failure.stage == DraftStage::Call {
+        match fold::draft_fold(vault, runtime, drafter, &current).await? {
+            DraftPass::Failed(fold_failure, latest) => {
+                failure = fold_failure;
+                current = latest;
+            }
+            outcome => return Ok(outcome),
+        }
     }
     // By kind only: an engine error can quote the vault.
     tracing::info!(
@@ -145,6 +149,35 @@ async fn draft_one(
     drafter: Drafter,
     draft: &StewardshipDraftRequest,
 ) -> Result<StewardshipDraftOutcome, DraftFailure> {
+    let generated = generate_draft(vault, runtime, drafter, draft, &[]).await?;
+    let GeneratedDraft {
+        text,
+        served,
+        snapshot,
+    } = generated;
+    vault
+        .schedule_stewardship_draft(
+            &served,
+            &mut SourcedDraft::new(text, snapshot.context),
+            now(),
+        )
+        .map_err(at(DraftStage::Schedule))
+}
+
+/// One answer and the exact destination-bound inputs that produced it.
+pub(super) struct GeneratedDraft {
+    pub(super) text: String,
+    pub(super) served: StewardshipDraftRequest,
+    pub(super) snapshot: DestinationContext,
+}
+
+async fn generate_draft(
+    vault: &Vault,
+    runtime: &ModelRuntime,
+    drafter: Drafter,
+    draft: &StewardshipDraftRequest,
+    parts: &[GeneratedDraft],
+) -> Result<GeneratedDraft, DraftFailure> {
     use DraftStage::{Call, Schedule, Sources};
     // Read on this device, for the call's admission: no byte of it goes to
     // a model before its own destination's read (FIX 8714).
@@ -155,6 +188,7 @@ async fn draft_one(
         .seat(drafter.role)
         .ok_or_else(|| Error::InvalidConfig("no [models] rung drafts follow-ups".into()))
         .map_err(at(Call))?;
+    let sources = DraftSources::new(vault, draft, parts);
     let purpose = CallPurpose::Other {
         name: DRAFT_PURPOSE.to_owned(),
     };
@@ -170,7 +204,7 @@ async fn draft_one(
             locality: seat.locality,
             host_keyless: false,
         },
-        messages: draft_messages(draft, &context),
+        messages: sources.messages(&context),
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
@@ -196,7 +230,6 @@ async fn draft_one(
     let run = runtime.undeclared_run(run_id, guard);
     // Each offer the call reaches, the first included, is sent only what its
     // own destination may receive, read and kept before the send.
-    let sources = DraftSources::new(vault, draft);
     let response = call
         .ladder
         .generate_admitted(&run, call.request, None, &sources)
@@ -212,15 +245,19 @@ async fn draft_one(
             _ => None,
         })
         .collect();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    // Scheduled with the evidence and voice the offer that answered was sent.
-    let served = sources
+    let (served, snapshot) = sources
         .served()
         .ok_or_else(|| Error::InvalidConfig("stewardship draft was sent no sources".into()))
         .map_err(at(Schedule))?;
-    vault
-        .schedule_stewardship_draft(&served, &mut PrematerializedDraft { text }, now)
-        .map_err(at(Schedule))
+    Ok(GeneratedDraft {
+        text,
+        served,
+        snapshot,
+    })
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
