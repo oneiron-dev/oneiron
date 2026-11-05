@@ -385,19 +385,66 @@ impl SessionOverlay {
             let slot = slot.borrow();
             slot.as_ref().and_then(|segment| {
                 Arc::ptr_eq(&segment.overlay, self)
-                    .then(|| (segment.generation, segment.preview.clone()))
+                    .then(|| (segment.generation, segment.nonce, segment.preview.clone()))
             })
         });
 
-        if let Some((generation, preview)) = active {
+        if let Some((generation, nonce, preview)) = active {
             let mut lease = self.acquire_existing_lease(generation)?;
             let state = lease.hold_preview(preview);
-            return Ok(OverlaySnapshot { state, lease });
+            return Ok(OverlaySnapshot {
+                state,
+                lease,
+                segment: Some(nonce),
+            });
         }
 
         let mut lease = self.acquire_read_lease()?;
         let state = lease.hold_published();
-        Ok(OverlaySnapshot { state, lease })
+        Ok(OverlaySnapshot {
+            state,
+            lease,
+            segment: None,
+        })
+    }
+
+    /// The view a read through `captured` composes now (FIX 10004; ARCH-0052:
+    /// a writer reads its segment, then the snapshot, then base). A view
+    /// captured from this thread's active write segment reads that same
+    /// segment's current preview, so the writer reads every row it staged
+    /// since the capture; the preview grew from the captured one, so no row
+    /// the segment dropped comes back. Any other view reads as captured: a
+    /// read-only view keeps its isolation, and once the segment commits or
+    /// unwinds the view reads what it captured, as before.
+    ///
+    /// # Errors
+    /// The overlay's generation closed under the segment.
+    pub fn read_view(
+        self: &Arc<Self>,
+        captured: &Arc<OverlaySnapshot>,
+    ) -> Result<Arc<OverlaySnapshot>> {
+        let Some(nonce) = captured.segment else {
+            return Ok(Arc::clone(captured));
+        };
+        let moved = ACTIVE_SEGMENT.with(|slot| {
+            let slot = slot.borrow();
+            slot.as_ref().and_then(|segment| {
+                (Arc::ptr_eq(&segment.overlay, self)
+                    && segment.nonce == nonce
+                    && !Arc::ptr_eq(&segment.preview, &captured.state))
+                .then(|| (segment.generation, segment.preview.clone()))
+            })
+        });
+        let Some((generation, preview)) = moved else {
+            return Ok(Arc::clone(captured));
+        };
+        let mut lease = self.acquire_existing_lease(generation)?;
+        let state = lease.hold_preview(preview);
+        Ok(Arc::new(OverlaySnapshot {
+            state,
+            lease,
+            segment: Some(nonce),
+        }))
     }
 
     #[allow(
