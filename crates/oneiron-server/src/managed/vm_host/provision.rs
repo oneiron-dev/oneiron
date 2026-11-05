@@ -4,9 +4,9 @@
 //! ([`oneiron_vault_contract::vm_provision`]).
 
 use super::{VaultVm, VaultVmConfig};
-use oneiron_vault_contract::vm::{MAX_VM_FRAME, decode_vm_frame, encode_vm_frame};
 use oneiron_vault_contract::vm_provision::{
-    VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionReply,
+    MAX_VM_PROVISION_FRAME, VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionReply,
+    decode_vm_provision_frame, encode_vm_provision_frame,
 };
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::fs::FileExt;
@@ -35,16 +35,18 @@ impl VaultVm {
             binding: self.config.provision.clone(),
             checkpoint_host_holds_recipient: self.config.checkpoint_host_holds_recipient.clone(),
         };
-        stream.write_all(encode_vm_frame(&sent)?.as_bytes()).await?;
+        stream
+            .write_all(encode_vm_provision_frame(&sent)?.as_bytes())
+            .await?;
         stream.write_all(key.as_bytes()).await?;
         stream.shutdown().await?;
         let mut line = String::new();
-        let mut reader = BufReader::new(stream).take(MAX_VM_FRAME as u64 + 1);
+        let mut reader = BufReader::new(stream).take(MAX_VM_PROVISION_FRAME as u64 + 1);
         anyhow::ensure!(
             tokio::time::timeout(timeout, reader.read_line(&mut line)).await?? > 0,
             "vault VM closed its provision connection unanswered"
         );
-        match decode_vm_frame::<VmProvisionReply>(&line)? {
+        match decode_vm_provision_frame::<VmProvisionReply>(&line)? {
             VmProvisionReply::Provisioned {
                 revision,
                 vault,

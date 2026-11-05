@@ -40,7 +40,11 @@ Native host profiles require `checkpoint_host_holds_recipient`: either the
 same public object or `null`. The actual `VaultVmConfig` value goes in the
 provision prelude, before the unchanged 64-byte fscrypt key frame. Provision
 revision 2 requires that field in both the prelude and the guest's exact echo.
-No revision-1 reader is retained.
+No revision-1 reader is retained. Provision preludes, revision peeks and
+replies use their own frame budget: the original 1 KiB binding/reply allowance
+plus the fixed ONHB/base64, fingerprint and JSON-field geometry. Both readers
+and codecs use that budget; ordinary boot/lifecycle frames keep their 1 KiB
+bound. A valid recipient must not be rejected by that unrelated smaller bound.
 
 For both open and cold-restore starts, the bootstrap validates the public
 material, writes a private pipe without waiting for a child reader, closes

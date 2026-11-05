@@ -77,11 +77,11 @@ use self::profile::VmManagedProfile;
 use anyhow::Context as _;
 use oneiron_vault_contract::host_adapters::connect_blocking;
 use oneiron_vault_contract::vm::{
-    MAX_VM_FRAME, VM_BOOT_PORT, VM_GUEST_CONFIG_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR,
-    VM_HOST_CID, decode_vm_frame, encode_vm_frame,
+    VM_BOOT_PORT, VM_GUEST_CONFIG_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR, VM_HOST_CID,
 };
 use oneiron_vault_contract::vm_provision::{
-    VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
+    MAX_VM_PROVISION_FRAME, VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionFailure,
+    VmProvisionReply, decode_vm_provision_frame, encode_vm_provision_frame,
 };
 use oneiron_vault_contract::vm_restore::VmRestoreBoot;
 use oneiron_vault_contract::{CONTRACT_VERSION, hex};
@@ -217,7 +217,7 @@ fn run() -> anyhow::Result<ExitCode> {
         },
         Err(refusal) => VmProvisionReply::refused(refusal.code, &refusal.detail),
     };
-    let answered = encode_vm_frame(&reply)
+    let answered = encode_vm_provision_frame(&reply)
         .and_then(|line| channel.write_all(line.as_bytes()).map_err(Into::into))
         .context("answering the host's provision connection");
     drop(channel);
@@ -280,7 +280,10 @@ fn read_line(channel: &mut File) -> anyhow::Result<String> {
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
     while line.last() != Some(&b'\n') {
-        anyhow::ensure!(line.len() < MAX_VM_FRAME, "the frame is over its bound");
+        anyhow::ensure!(
+            line.len() < MAX_VM_PROVISION_FRAME,
+            "the frame is over its bound"
+        );
         channel.read_exact(&mut byte)?;
         line.push(byte[0]);
     }
@@ -313,7 +316,7 @@ fn provision(
     // The revision is read alone first, so a frame of another revision is
     // answered as one whatever fields it carries, before its key frame is
     // read (FIX 6630); this revision's frame takes no field it does not know.
-    let revision = decode_vm_frame::<ProvisionRevision>(&line)
+    let revision = decode_vm_provision_frame::<ProvisionRevision>(&line)
         .map_err(malformed)?
         .revision;
     if revision != VM_PROVISION_REVISION {
@@ -322,7 +325,7 @@ fn provision(
             "the provision frame is of another revision",
         ));
     }
-    let frame: VmProvision = decode_vm_frame(&line).map_err(malformed)?;
+    let frame: VmProvision = decode_vm_provision_frame(&line).map_err(malformed)?;
     let key = VmFscryptKey::read_from(&mut *channel).map_err(malformed)?;
     frame
         .validate()
