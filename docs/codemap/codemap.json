@@ -29359,7 +29359,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CandidateRun",
       "CodeFixDecisions",
       "CodeFixDraft",
       "CodeFixHost",
@@ -29374,8 +29373,8 @@
       "const": 1,
       "crate-vis": 2,
       "fn": 3,
-      "re-export": 1,
-      "struct": 7,
+      "re-export": 2,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -29387,6 +29386,19 @@
      "purpose": "The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704)",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CandidateRun"
+     ],
+     "path": "src/dreamer_runner/maintenance/code_fix/candidate_run.rs",
+     "purpose": "Candidate results and the native origin each replay carries",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -29406,7 +29418,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/instruction.rs",
      "purpose": "The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -91369,7 +91381,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92421,7 +92433,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6456,
+   "source_files": 6457,
    "test_files": 895
   },
   "oneiron-android": {
