@@ -369,7 +369,9 @@ fn on_basis(lineage: &LoroDoc, kind: u8, bytes: &[u8]) -> Result<Option<Staged>>
 /// The first home frame, the stream's basis: the home's copy as it stands.
 /// What the home and this device each changed since the marked blob's copy
 /// lands as concurrent edits of it; the device's own part goes back as its
-/// first release.
+/// first release. Only a home lineage with no operations at all is
+/// uninitialized: an empty body with history is the home's own edit (a clear
+/// at home), merged against the marked blob's copy like any other.
 fn first_basis(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -383,7 +385,7 @@ fn first_basis(
     }
     let home = doc.oplog_vv();
     let theirs = doc.get_text(BODY).to_string();
-    let submitted = if theirs.is_empty() || theirs == copy.copy {
+    let submitted = if home.is_empty() || theirs == copy.copy {
         copy.copy.clone()
     } else {
         let base = blob_copy_in_txn(vault, txn, source);
