@@ -358,3 +358,87 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
         }
     }
 }
+
+impl Lift<oneiron::task_verb::sdk::ConnectorSchemaReply> for crate::ConnectorSchemaReply {
+    fn lift(value: oneiron::task_verb::sdk::ConnectorSchemaReply) -> Result<Self, OneironError> {
+        let oneiron::task_verb::sdk::ConnectorSchemaReply {
+            source,
+            foreign,
+            input_schema,
+            destructive,
+            reasons,
+        } = value;
+        let input_schema = match input_schema {
+            None | Some(serde_json::Value::Null) => None,
+            Some(schema) => Some(WireJson::lift(schema)?),
+        };
+        Ok(Self {
+            source,
+            foreign,
+            input_schema,
+            destructive,
+            reasons: if reasons.is_empty() {
+                None
+            } else {
+                Some(reasons)
+            },
+        })
+    }
+}
+
+impl Lift<oneiron::task_verb::sdk::ConnectorCallStatus> for crate::ConnectorCallStatus {
+    fn lift(value: oneiron::task_verb::sdk::ConnectorCallStatus) -> Result<Self, OneironError> {
+        match value {
+            oneiron::task_verb::sdk::ConnectorCallStatus::Pending {
+                call_ref,
+                name,
+                tool,
+                held_at_ms,
+                reasons,
+                approval_digest,
+            } => Ok(Self::Pending {
+                call_ref,
+                name,
+                tool,
+                held_at_ms,
+                reasons: if reasons.is_empty() {
+                    None
+                } else {
+                    Some(reasons)
+                },
+                approval_digest,
+            }),
+            oneiron::task_verb::sdk::ConnectorCallStatus::Settled {
+                call_ref,
+                name,
+                tool,
+                reply,
+            } => Ok(Self::Settled {
+                call_ref,
+                name,
+                tool,
+                reply: crate::ConnectorCallReply::lift(reply)?,
+            }),
+            oneiron::task_verb::sdk::ConnectorCallStatus::AwaitingInput {
+                call_ref,
+                name,
+                tool,
+                generation,
+                asked,
+                uncertain,
+                reply,
+            } => {
+                let reply = crate::ConnectorCallReply::lift(reply)?;
+                Ok(Self::AwaitingInput {
+                    call_ref,
+                    name,
+                    tool,
+                    generation,
+                    asked: super::count("connector.call_status:asked", asked)?,
+                    uncertain: if uncertain { Some(true) } else { None },
+                    reply,
+                })
+            }
+        }
+    }
+}
