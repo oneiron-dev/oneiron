@@ -80,8 +80,8 @@ impl Vault {
         id: &EntityId,
         source: &[u8],
     ) -> Result<Option<SealedHomeClaimVector>> {
-        let _acceptance = self.device_only_acceptance();
         let (mut copy, vector, key, vault_id) = {
+            let _acceptance = self.device_only_acceptance();
             let txn = self.store.env.read_txn()?;
             let PeerMachine::Proven { machine, .. } = peer else {
                 return Ok(None);
