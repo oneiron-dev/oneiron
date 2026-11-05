@@ -658,7 +658,7 @@ fn media_backends(
 }
 
 /// `provider` as Cartesia takes it: every call names its API version.
-fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
+pub(super) fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
     let mut provider = provider.clone();
     if !provider
         .headers
