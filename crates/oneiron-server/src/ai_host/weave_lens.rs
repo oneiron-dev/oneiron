@@ -484,6 +484,7 @@ async fn prepare_live(
                 if let WeaveLensCaller::Run {
                     actor: run_actor, ..
                 } = &caller
+                    && *run_actor == actor
                     && let Some(attempt) = run_actor.run_attempt()
                 {
                     actor = actor.with_run_attempt(attempt);
