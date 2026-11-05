@@ -19,16 +19,15 @@ use super::super::residency::spent_or_deferred;
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
 use super::arc_chunks::{
-    MemberText, context_cells, halve, member_texts, observation_parts, opened_member, plan_groups,
-    ranges_cost, resume_members,
+    MemberText, context_cells, halve, member_texts, opened_member, plan_groups, ranges_cost,
+    resume_members,
 };
 use super::arc_compose::{owe, owe_bare};
 use super::arc_evidence::ArcView;
 use super::arc_output::arc_schema;
-use super::arc_reduce::{Landing, Observed, observations, part_observations};
+use super::arc_reduce::{Landing, Observed, observations};
 use super::arc_review::{
-    CallBuilder, CallShape, Called, KIND_COMPOSE, KIND_REVIEW, call_input, frame_tokens,
-    show_observation, store_exit,
+    CallBuilder, CallShape, Called, KIND_COMPOSE, KIND_REVIEW, call_input, frame_tokens, store_exit,
 };
 use super::arc_turns::{Opened, open_turns};
 use super::window::framed_tokens;
@@ -154,6 +153,7 @@ impl ArcRun<'_> {
         if let Some(reviewed) = reviewed {
             row.reviewed.truncate(reviewed);
             row.compose_opened.clear();
+            row.compose_parts = None;
             row.parts = 0;
         }
         row.composed.truncate(composed);
@@ -444,6 +444,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             let children = run.manifest.children.len() as u64;
             let child = position as u64 + 1;
+            let mut pieces = Vec::new();
             let (shape, shown) = match row.mode {
                 ChildMode::Single => {
                     let mut read = run.claims();
@@ -501,9 +502,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         observations(&memory, &row.reviewed)
                     };
                     let observed = match read {
-                        Ok(Observed::All(observed)) => {
-                            part_observations(observed, &run.members, &group, &row.opened)
-                        }
+                        Ok(Observed::All(observed)) => observed,
                         // A review that no longer reads back (FIX 8288) is
                         // asked again, with every compose step after it.
                         Ok(Observed::Unread(index)) => {
@@ -516,11 +515,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                             return Ok(ChildStep::Exit(run.charges.park_on_error(&error)));
                         }
                     };
-                    let rendered = observed
-                        .iter()
-                        .map(|observation| show_observation(run.view, observation))
-                        .collect::<Result<Vec<_>>>()?;
-                    let Some(parts) = observation_parts(&rendered, room)? else {
+                    let Some(parts) =
+                        super::arc_open_apply::compose_parts(run, row, &group, &observed, room)?
+                    else {
                         return self.split(run, ctx, position, row);
                     };
                     row.parts = parts.len() as u32;
@@ -534,7 +531,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     };
                     let chosen: Vec<_> = indices
                         .iter()
-                        .filter_map(|index| observed.get(*index))
+                        .filter_map(|index| observed.get(*index as usize))
                         .collect();
                     let mut call = CallBuilder::new(&run.members, run.view);
                     call.group(&group)?;
@@ -549,6 +546,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         part: part as u64 + 1,
                         parts: parts.len() as u64,
                     };
+                    pieces = parts;
                     (shape, call.finish()?)
                 }
             };
@@ -587,7 +585,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 ControlFlow::Continue(ask) => ask,
                 ControlFlow::Break(exit) => return Ok(ChildStep::Exit(exit)),
             };
-            if super::arc_open_apply::open_advised(run, ctx, row, &shape, &fields, &ask) {
+            let input = (&shape, &fields, pieces.as_slice());
+            if super::arc_open_apply::open_advised(run, ctx, row, input, &ask) {
                 if let Some(exit) = run.save(ctx, id, row, true) {
                     return Ok(ChildStep::Exit(exit));
                 }
@@ -619,6 +618,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     // Its observations grew: every compose part is asked again.
                     row.composed.clear();
                     row.compose_opened.clear();
+                    row.compose_parts = None;
                     row.parts = 0;
                 }
             } else if let Some(step) = compose_step {

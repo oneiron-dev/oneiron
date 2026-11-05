@@ -188,6 +188,8 @@ pub(crate) struct ArcChildRow {
     pub(crate) composed: Vec<ArcStepRef>,
     /// Optional TURN openings read whole by each zero-based compose piece.
     pub(crate) compose_opened: BTreeMap<u32, Vec<u32>>,
+    /// Original compose pieces, by indices into the ordered review observations.
+    pub(crate) compose_parts: Option<Vec<Vec<u32>>>,
     /// The parts its reviews compose in; 0 until counted.
     pub(crate) parts: u32,
     pub(crate) done: bool,
@@ -203,6 +205,7 @@ impl ArcChildRow {
             reviewed: Vec::new(),
             composed: Vec::new(),
             compose_opened: BTreeMap::new(),
+            compose_parts: None,
             parts: 0,
             done: false,
         }
@@ -423,7 +426,11 @@ pub(crate) fn child_terminal(row: &ArcChildRow, manifest: &ArcManifest) -> bool 
     });
     match row.mode {
         ChildMode::Single => {
-            opened && row.cells.is_empty() && row.compose_opened.is_empty() && row.parts == 1
+            opened
+                && row.cells.is_empty()
+                && row.compose_opened.is_empty()
+                && row.compose_parts.is_none()
+                && row.parts == 1
         }
         ChildMode::Review => {
             let read = |index: u32| {
@@ -432,7 +439,16 @@ pub(crate) fn child_terminal(row: &ArcChildRow, manifest: &ArcManifest) -> bool 
                     .get(index as usize)
                     .is_some_and(|member| cells_cover(&row.cells, index, member.len))
             };
+            let observations: usize = row.reviewed.iter().map(|step| step.lines.len()).sum();
             opened
+                && (row.compose_opened.is_empty() || row.compose_parts.is_some())
+                && row.compose_parts.as_ref().is_none_or(|parts| {
+                    parts.len() == row.parts as usize
+                        && parts
+                            .iter()
+                            .flatten()
+                            .all(|index| (*index as usize) < observations)
+                })
                 && row.compose_opened.iter().all(|(part, indices)| {
                     *part < row.parts
                         && indices.iter().all(|index| {

@@ -130,14 +130,14 @@ pub(super) fn observations(memory: &Memory<'_>, reviewed: &[ArcStepRef]) -> Resu
     Ok(Observed::All(observations))
 }
 
-/// Keeps a part's observations unless every cited TURN is known to
+/// Selects a part's observations unless every cited TURN is known to
 /// support only other members. Shared and unknown support stays (FIX 12358).
-pub(super) fn part_observations(
-    observed: Vec<Observation>,
+pub(super) fn part_observation_indices(
+    observed: &[Observation],
     members: &[MemberText],
     group: &[ArcRange],
     opened: &[u32],
-) -> Vec<Observation> {
+) -> Vec<u32> {
     let owned: BTreeSet<u32> = group
         .iter()
         .map(|range| range.member)
@@ -150,8 +150,9 @@ pub(super) fn part_observations(
         }
     }
     observed
-        .into_iter()
-        .filter(|observation| {
+        .iter()
+        .enumerate()
+        .filter(|(_, observation)| {
             observation.turn_refs.is_empty()
                 || observation.turn_refs.iter().any(|reference| {
                     let Ok(turn) = crate::EntityId::from_hex(reference) else {
@@ -160,6 +161,7 @@ pub(super) fn part_observations(
                     turns_in_part.get(&turn).is_none_or(|owned| *owned)
                 })
         })
+        .map(|(index, _)| index as u32)
         .collect()
 }
 
