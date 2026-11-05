@@ -809,6 +809,15 @@ class NativeCall:
         if live and req is not None:
             self.state.scheduler.cancel(req)
 
+    def _final_stats(self, req):
+        stats = req.final_stats
+        if stats is None:
+            return None
+        # This call settles in run's finally, after sending its terminal.
+        # Leave the scheduler's count and captured snapshot untouched.
+        queue = dict(stats["queue"], open_calls=stats["queue"]["open_calls"] - 1)
+        return dict(stats, queue=queue)
+
     def _ending(self, outcome, req, extra=None):
         body = {"outcome": outcome}
         if extra:
@@ -817,7 +826,7 @@ class NativeCall:
             if req.partial_usage is not None:
                 body["usage"] = req.partial_usage
             if req.final_stats is not None:
-                body["stats"] = req.final_stats
+                body["stats"] = self._final_stats(req)
             if req.scheduling is not None:
                 body["scheduling"] = req.scheduling
         return body
@@ -888,7 +897,7 @@ class NativeCall:
             final["usage"] = result["usage"]
             final["timings"] = result["timings"]
             if req.final_stats is not None:
-                final["stats"] = req.final_stats
+                final["stats"] = self._final_stats(req)
             if req.scheduling is not None:
                 final["scheduling"] = req.scheduling
             self.end("final", final)
