@@ -74,6 +74,80 @@ struct StoredWork<'a> {
     carried: Cow<'a, [EntityId]>,
 }
 
+impl<'a> StoredWork<'a> {
+    fn decode(value: &'a [u8]) -> Result<Self> {
+        let row: Self = postcard::from_bytes(value).map_err(|_| corrupt())?;
+        if WindowKey::try_new(row.window.as_ref()).is_none()
+            || row.payload.len() > MAX_DECODED_PAYLOAD_BYTES
+            || !row.rate_ratio.is_finite()
+            || row.rate_ratio < 0.0
+            || !row.streak_ratio.is_finite()
+            || row.streak_ratio < 0.0
+            || (row.kind == WorkKind::Selector && row.isolated_update.is_some())
+            || row.isolated_update.as_ref().is_some_and(|parts| {
+                parts.is_empty()
+                    || parts
+                        .iter()
+                        .any(|(window, _)| WindowKey::try_new(*window).is_none())
+            })
+        {
+            return Err(corrupt());
+        }
+        Ok(row)
+    }
+
+    fn validate_peer(&self, peer: &FederationPeer, key: &[u8]) -> Result<()> {
+        if work_key(&self.peer, &self.selector, &self.id).as_slice() != key {
+            return Err(corrupt());
+        }
+        let window = WindowKey::try_new(self.window.as_ref()).ok_or_else(corrupt)?;
+        let (expected_id, expected_selector) =
+            DeferredWork::identity(peer, &window, self.kind, self.payload)?;
+        if self.id != expected_id
+            || self.selector.as_ref() != expected_selector.as_slice()
+            || self.peer != peer.digest()
+        {
+            return Err(corrupt());
+        }
+        Ok(())
+    }
+}
+
+fn ended_state(
+    authority_digest: &[u8; 32],
+    deadline: u64,
+    current: &[u8; 32],
+    now: u64,
+) -> Option<FederationBurstWorkState> {
+    if authority_digest != current {
+        return Some(FederationBurstWorkState::StaleAuthority);
+    }
+    (deadline != 0 && deadline <= now).then_some(FederationBurstWorkState::Expired)
+}
+
+fn work_key(peer: &[u8; 32], selector: &[u8], id: &[u8; 32]) -> Vec<u8> {
+    let mut key = DEFERRED_PREFIX.to_vec();
+    key.extend_from_slice(peer);
+    key.extend_from_slice(blake3::hash(selector).as_bytes());
+    key.extend_from_slice(id);
+    key
+}
+
+fn remove_work_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    deadline: u64,
+    peer: &[u8; 32],
+    id: &[u8; 32],
+    carried: &[EntityId],
+) -> Result<()> {
+    store.sync_queue.delete(txn, key)?;
+    schedule::drop_deadline_in_txn(store, txn, QUEUE, deadline, key)?;
+    super::review_doors::scrub_in_txn(store, txn, peer, id)?;
+    erase::forget_in_txn(store, txn, carried, &erase::CarriedBy::Burst(key.to_vec()))
+}
+
 fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
     let mut prefix = DEFERRED_PREFIX.to_vec();
     prefix.extend_from_slice(&peer.digest());
@@ -126,11 +200,12 @@ impl DeferredWork {
         peer: &FederationPeer,
         now: u64,
     ) -> Result<Option<FederationBurstWorkState>> {
-        if self.authority_digest != peer.authority_digest_in_txn(vault, txn)? {
-            return Ok(Some(FederationBurstWorkState::StaleAuthority));
-        }
-        Ok((self.deadline != 0 && self.deadline <= now)
-            .then_some(FederationBurstWorkState::Expired))
+        Ok(ended_state(
+            &self.authority_digest,
+            self.deadline,
+            &peer.authority_digest_in_txn(vault, txn)?,
+            now,
+        ))
     }
 
     /// The retained request's identity and selector, without retaining its bytes.
@@ -175,11 +250,7 @@ impl DeferredWork {
     }
 
     pub(super) fn key(&self) -> Vec<u8> {
-        let mut key = DEFERRED_PREFIX.to_vec();
-        key.extend_from_slice(&self.peer);
-        key.extend_from_slice(blake3::hash(&self.selector).as_bytes());
-        key.extend_from_slice(&self.id);
-        key
+        work_key(&self.peer, &self.selector, &self.id)
     }
 
     fn completion_key(&self) -> Vec<u8> {
@@ -306,23 +377,7 @@ impl DeferredWork {
     }
 
     pub(super) fn decode(value: &[u8]) -> Result<Self> {
-        let row: StoredWork<'_> = postcard::from_bytes(value).map_err(|_| corrupt())?;
-        if WindowKey::try_new(row.window.as_ref()).is_none()
-            || row.payload.len() > MAX_DECODED_PAYLOAD_BYTES
-            || !row.rate_ratio.is_finite()
-            || row.rate_ratio < 0.0
-            || !row.streak_ratio.is_finite()
-            || row.streak_ratio < 0.0
-            || (row.kind == WorkKind::Selector && row.isolated_update.is_some())
-            || row.isolated_update.as_ref().is_some_and(|parts| {
-                parts.is_empty()
-                    || parts
-                        .iter()
-                        .any(|(window, _)| WindowKey::try_new(*window).is_none())
-            })
-        {
-            return Err(corrupt());
-        }
+        let row = StoredWork::decode(value)?;
         Ok(Self {
             id: row.id,
             authority_digest: row.authority_digest,
@@ -359,14 +414,14 @@ impl DeferredWork {
     /// Removes the retained batch: its row, its review copies and its
     /// carrier rows. Its receipt is the caller's to settle.
     pub(super) fn remove_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        store.sync_queue.delete(txn, &self.key())?;
-        schedule::drop_deadline_in_txn(store, txn, QUEUE, self.deadline, &self.key())?;
-        super::review_doors::scrub_in_txn(store, txn, &self.peer, &self.id)?;
-        erase::forget_in_txn(
+        remove_work_in_txn(
             store,
             txn,
+            &self.key(),
+            self.deadline,
+            &self.peer,
+            &self.id,
             &self.carried,
-            &erase::CarriedBy::Burst(self.key()),
         )
     }
 
@@ -471,7 +526,7 @@ impl DeferredWork {
         peer.revalidate(vault)?;
         let now = vault.now_recorded_at();
         let prefix = prefix(peer)?;
-        let (turns, stale) = {
+        let (turns, stale, selected) = {
             let txn = vault.store.env.read_txn()?;
             let current = peer.authority_digest_in_txn(vault, &txn)?;
             let rate_ready = observations::replay_ready_in_txn(vault, &txn, peer, now)?;
@@ -479,24 +534,13 @@ impl DeferredWork {
             let mut stale = Vec::new();
             for row in vault.store.sync_queue.prefix_iter(&txn, &prefix)? {
                 let (key, value) = row?;
-                let work = Self::decode(&value)?;
-                if work.key().as_slice() != key.as_ref() {
-                    return Err(corrupt());
-                }
-                let window = WindowKey::try_new(&work.window).ok_or_else(corrupt)?;
-                let (expected_id, expected_selector) =
-                    Self::identity(peer, &window, work.kind, &work.payload)?;
-                if work.id != expected_id
-                    || work.selector != expected_selector
-                    || work.peer != peer.digest()
-                {
-                    return Err(corrupt());
-                }
+                let work = StoredWork::decode(&value)?;
+                work.validate_peer(peer, key.as_ref())?;
                 if id.is_some_and(|id| work.id != *id) {
                     continue;
                 }
                 if work.authority_digest != current {
-                    stale.push(work);
+                    stale.push(key.into_owned());
                     continue;
                 }
                 let ready = work.kind != WorkKind::Selector
@@ -506,18 +550,58 @@ impl DeferredWork {
                     arrival: work.arrival,
                     deadline: work.deadline,
                     ready,
-                    item: work,
+                    item: key.into_owned(),
                 });
             }
-            (schedule::turns(waiting, None, now), stale)
+            let turns = schedule::turns(waiting, None, now);
+            let selected = turns
+                .due
+                .first()
+                .map(|(_, key)| {
+                    let value = vault.store.sync_queue.get(&txn, key)?.ok_or_else(corrupt)?;
+                    Self::decode(&value)
+                })
+                .transpose()?;
+            (turns, stale, selected)
         };
-        for work in stale {
-            work.retire(vault, peer, FederationBurstWorkState::StaleAuthority)?;
+        for key in stale {
+            Self::retire_key(vault, peer, &key, FederationBurstWorkState::StaleAuthority)?;
         }
-        for work in turns.expired {
-            work.retire(vault, peer, FederationBurstWorkState::Expired)?;
+        for key in turns.expired {
+            Self::retire_key(vault, peer, &key, FederationBurstWorkState::Expired)?;
         }
-        Ok(turns.due.into_iter().next().map(|(_, work)| work))
+        Ok(selected)
+    }
+
+    /// Rechecks an ended row in its writer without copying its payload.
+    fn retire_key(
+        vault: &Vault,
+        peer: &FederationPeer,
+        key: &[u8],
+        state: FederationBurstWorkState,
+    ) -> Result<()> {
+        vault.with_write_txn_grouped(|txn| {
+            let (id, row_peer, deadline, carried) = {
+                let Some(value) = vault.store.sync_queue.get(txn, key)? else {
+                    return Ok(());
+                };
+                let row = StoredWork::decode(&value)?;
+                row.validate_peer(peer, key)?;
+                let current = peer.authority_digest_in_txn(vault, txn)?;
+                let ended = ended_state(
+                    &row.authority_digest,
+                    row.deadline,
+                    &current,
+                    vault.now_recorded_at(),
+                );
+                if ended != Some(state) {
+                    return Ok(());
+                }
+                (row.id, row.peer, row.deadline, row.carried.into_owned())
+            };
+            remove_work_in_txn(&vault.store, txn, key, deadline, &row_peer, &id, &carried)?;
+            super::ledger::settle_in_txn(&vault.store, txn, &id, state)
+        })
     }
 }
 
