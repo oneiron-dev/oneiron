@@ -7,6 +7,20 @@ use super::{
 };
 use crate::{EntityId, Result, Vault};
 use sha2::{Digest, Sha256};
+/// A preview read's vault error or input-memory refusal. File-plane bytes
+/// reserve memory before the read; inline and record-head bytes lease it after.
+#[derive(Debug)]
+pub enum EsignLeasedReadError {
+    Vault(crate::Error),
+    Refused(crate::host_memory::MemoryRefusal),
+}
+
+impl From<crate::Error> for EsignLeasedReadError {
+    fn from(error: crate::Error) -> Self {
+        Self::Vault(error)
+    }
+}
+
 impl Vault {
     /// During signing this returns the pinned original, and after sealing the
     /// pinned, hash-checked output (verified at seal time). The HTTP carrier serves it as an attachment.
@@ -168,6 +182,34 @@ impl Vault {
         let pdf = self.pinned_pdf_in(&txn, token, item, ceiling)?;
         self.pinned_pdf_bytes_in(&txn, &pdf)
     }
+    /// Reads the pinned version with the caller's reader in the same snapshot.
+    /// Its guard remains held through the sealed-output hash check.
+    fn esign_pdf_after_admission_with<G, E>(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+        read: impl FnOnce(
+            &heed::RoTxn<'_>,
+            &EntityId,
+            u64,
+        ) -> std::result::Result<Option<(Vec<u8>, G)>, E>,
+    ) -> std::result::Result<(Vec<u8>, G), E>
+    where
+        E: From<crate::Error>,
+    {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let pdf = self.pinned_pdf_in(&txn, token, item, ceiling)?;
+        let pair = read(&txn, &pdf.artifact, pdf.version)?
+            .ok_or_else(|| E::from(invalid(pdf.missing())))?;
+        if let Some(sha256) = pdf.sealed_sha256
+            && <[u8; 32]>::from(Sha256::digest(&pair.0)) != sha256
+        {
+            return Err(E::from(invalid("sealed artifact hash mismatch")));
+        }
+        Ok(pair)
+    }
+
     /// The PDF version `token`'s item reads in `txn`: during signing the
     /// pinned original, after sealing the pinned output.
     fn pinned_pdf_in(
@@ -244,6 +286,79 @@ impl Vault {
             return Err(invalid("sealed artifact hash mismatch"));
         }
         Ok(bytes)
+    }
+
+    /// [`Self::esign_preview_for_capability_as`] with its PDF bytes leased
+    /// from this machine's memory: a file-plane body reserves its manifest
+    /// length before it reads, an inline or record-head body leases its read
+    /// length after, and the lease rides with the bytes through inspection.
+    pub fn esign_preview_for_capability_leased_as(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        ip: Option<String>,
+        user_agent: Option<String>,
+        memory: &crate::host_memory::MachineMemory,
+        deadline: std::time::Instant,
+    ) -> std::result::Result<
+        (super::SigningPage, Vec<u8>, crate::host_memory::MemoryLease),
+        EsignLeasedReadError,
+    > {
+        let super::SigningOutcome::Page(page) = self.execute_signing_action_as(
+            token,
+            &SigningAction::Load,
+            caller,
+            verified_actor,
+            ip,
+            user_agent,
+        )?
+        else {
+            return Err(EsignLeasedReadError::Vault(invalid(
+                "preview is unavailable",
+            )));
+        };
+        let pair = self.esign_pdf_after_admission_with(
+            token,
+            item,
+            &|_, _| Ok(true),
+            |txn, artifact, version| {
+                self.read_blob_artifact_version_in_txn_with(txn, artifact, version, |txn, hash| {
+                    let leased = self
+                        .blob_get_with_file_admission(txn, hash, |len| {
+                            memory
+                                .lease(len, deadline)
+                                .map(|lease| (lease, len))
+                                .map_err(EsignLeasedReadError::Refused)
+                        })
+                        .map_err(|error| match error {
+                            crate::ports::BodyReadError::Store(error) => {
+                                EsignLeasedReadError::Vault(error)
+                            }
+                            crate::ports::BodyReadError::Admission(error) => error,
+                        })?;
+                    match leased {
+                        Some(leased) => Ok(leased),
+                        None => Err(EsignLeasedReadError::Vault(crate::Error::EntityNotFound)),
+                    }
+                })
+            },
+        )?;
+        let actual = u64::try_from(pair.0.len()).unwrap_or(u64::MAX);
+        let (bytes, guard) = pair;
+        match guard {
+            Some((mut lease, reserved)) => {
+                lease.materialized(reserved, actual);
+                Ok((page, bytes, lease))
+            }
+            None => {
+                let lease = memory
+                    .lease(actual, deadline)
+                    .map_err(EsignLeasedReadError::Refused)?;
+                Ok((page, bytes, lease))
+            }
+        }
     }
 }
 
