@@ -56,7 +56,7 @@ pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
 pub(in crate::sync) use self::egress::{
-    export_scrubbed_window_snapshot, withdrawn_delete_carriers,
+    export_scrubbed_window_snapshot, withdrawn_delete_carriers, withhold_audience_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
