@@ -267,11 +267,47 @@ impl<'v> SessionWitnessContext<'v> {
             )?;
             keys.mask_json(&mut value);
         }
+        let serde_json::Value::String(text) = value else {
+            return Err(
+                Error::InvariantViolation("stream projection changed the text type").into(),
+            );
+        };
+        drop(txn);
+        let text = text.as_str();
+        let projected = if masked {
+            match self.caller.vault.known_source()? {
+                Some(source) => source.pass(|known| {
+                    let Some(known) = known else {
+                        return text.to_owned();
+                    };
+                    let data = text.as_bytes();
+                    let growing = known.growing(data);
+                    let mut limit = growing.opens.unwrap_or(data.len()).min(growing.held);
+                    while !text.is_char_boundary(limit) {
+                        limit -= 1;
+                    }
+                    let mut projected = Vec::new();
+                    let mut from = 0;
+                    for hit in known.spans(data) {
+                        if hit.span.start >= limit {
+                            break;
+                        }
+                        projected.extend_from_slice(&data[from..hit.span.start]);
+                        projected.extend_from_slice(
+                            crate::store::known_value_index::handle_text(hit.handle).as_bytes(),
+                        );
+                        from = hit.span.end;
+                    }
+                    projected.extend_from_slice(&data[from..from.max(limit)]);
+                    String::from_utf8_lossy(&projected).into_owned()
+                })?,
+                None => text.to_owned(),
+            }
+        } else {
+            text.to_owned()
+        };
         self.route.revalidate()?;
-        match value {
-            serde_json::Value::String(text) => Ok(text),
-            _ => Err(Error::InvariantViolation("stream projection changed the text type").into()),
-        }
+        Ok(projected)
     }
 
     pub(in crate::memory::witness) fn stream_terminal_receipt(

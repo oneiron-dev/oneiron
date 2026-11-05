@@ -65,9 +65,12 @@ is context, not authority. The caller's human identity never becomes the agent.
 The opaque, non-serializable `SessionMessageStream` shares the existing live
 registry, fair permit and idle pump. It buffers in RAM without ACTIVE rows,
 custody or partial broadcasts. `append`, `partial` and `flush` recheck the
-original caller and independent author; partial text projects known secrets
-through the caller's own sight. A write-only credential sees masked keys, not
-an extra requirement to read base records. Legacy actor-only stream handles
+original caller and independent author; partial text projects known custody values
+through the caller's own sight using a read-only index snapshot as well as any
+existing file marks. Potential secret suffixes stay withheld while the reply is
+growing. Complete matches in the released prefix are redacted without creating
+custody or marks. A write-only credential sees masked keys, not an extra
+requirement to read base records. Legacy actor-only stream handles
 cannot access a caller-private entry, even if they name the same agent.
 
 `finalize`, `finalize_model` and `cancel` keep their actual finality and model
@@ -88,6 +91,9 @@ read fails, the stream keeps the exact candidate and resolves it before acceptin
 more text or minting another MESSAGE. Only a successful absent lookup permits a
 fresh write. A found committed terminal closes the token before any new append.
 
+A wrong-Vault operation fails before changing the token. Its weak origin-registry
+binding is only an ownership check; the original caller, session and author
+admission still apply. Retirement and terminal removal use that origin runtime.
 A revoked caller or invalidated session retires private RAM state. An author
 policy refusal or storage error does not discard its accepted text. A terminal
 releases its fair permit and removes the resident entry. No private stream is

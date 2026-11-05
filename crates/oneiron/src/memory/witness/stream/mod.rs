@@ -45,7 +45,7 @@ pub use types::*;
 /// Registry lock never spans storage work. A per-handle lock serializes its
 /// append/finalize transaction; no storage callback acquires that lock.
 pub(crate) struct MessageStreamRuntime {
-    entries: Mutex<BTreeMap<EntityId, Resident>>,
+    entries: Arc<Mutex<BTreeMap<EntityId, Resident>>>,
     /// The fair line past the vault's message-stream row.
     line: crate::live_rows::LiveLine,
     /// The refusals the vault's last open met replaying surviving seeds
@@ -57,7 +57,7 @@ pub(crate) struct MessageStreamRuntime {
 impl Default for MessageStreamRuntime {
     fn default() -> Self {
         Self {
-            entries: Mutex::new(BTreeMap::new()),
+            entries: Arc::new(Mutex::new(BTreeMap::new())),
             line: crate::live_rows::LiveLine::new(crate::live_rows::LiveRow::MessageStreams),
             refused: Mutex::new(Vec::new()),
             #[cfg(feature = "sync")]

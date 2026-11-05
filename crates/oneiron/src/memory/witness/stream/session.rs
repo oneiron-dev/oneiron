@@ -21,7 +21,7 @@ use crate::session_lifecycle::SessionKey;
 use crate::{EntityId, Vault};
 use oneiron_model::llm::FinishReason;
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 /// Observable session partial: the token's own opaque text projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +91,7 @@ pub(super) struct SessionState {
     pub(super) stream_id: EntityId,
     generation: EntityId,
     binding: Arc<SessionWitnessBinding>,
+    origin: Weak<Mutex<BTreeMap<EntityId, Resident>>>,
     agent: EntityId,
     sitting: Option<SessionKey>,
     birth: WitnessTurn,
@@ -105,11 +106,13 @@ pub(super) struct SessionState {
 }
 
 impl SessionState {
-    fn handle(&self) -> MessageStreamHandle {
-        MessageStreamHandle {
-            message: self.stream_id,
-            generation: self.generation,
-        }
+    fn remove(&self) -> MessageStreamResult<()> {
+        let entries = self
+            .origin
+            .upgrade()
+            .ok_or(MessageStreamError::StreamNotFound)?;
+        lock(&entries)?.remove(&self.stream_id);
+        Ok(())
     }
     fn check(&self) -> MessageStreamResult<()> {
         if self.terminal {
@@ -307,6 +310,7 @@ impl SessionWitnessBinding {
             stream_id,
             generation,
             binding: Arc::new(self),
+            origin: Arc::downgrade(&vault.message_streams.entries),
             agent,
             sitting,
             birth: turn.clone(),
@@ -454,25 +458,31 @@ fn completion_for(
 }
 
 fn check_caller_locked(vault: &Vault, state: &mut SessionState) -> MessageStreamResult<()> {
+    let origin = state
+        .origin
+        .upgrade()
+        .ok_or(MessageStreamError::StreamNotFound)?;
+    if !Arc::ptr_eq(&origin, &vault.message_streams.entries) {
+        return Err(MessageStreamError::StreamNotFound);
+    }
     if let Err(error) = state.binding.check_stream_caller(vault) {
         // Only this caller-only check can retire a revoked/closed private stream.
         // Storage and corruption failures remain retryable, as for recorded streams.
         if error.code != MEMORY_CODE_INTERNAL {
-            retire_locked(vault, state)?;
+            retire_locked(state)?;
         }
         return Err(error.into());
     }
     Ok(())
 }
 
-fn retire_locked(vault: &Vault, state: &mut SessionState) -> MessageStreamResult<()> {
+fn retire_locked(state: &mut SessionState) -> MessageStreamResult<()> {
     state.terminal = true;
     state.completion = None;
     state.pending_receipt = None;
     state.permit.take();
     state.text.clear();
-    let handle = state.handle();
-    vault.message_streams.remove(handle)
+    state.remove()
 }
 
 #[expect(
@@ -510,7 +520,7 @@ fn finish_locked(
                     &["Cancel the stream; nothing was returned."],
                 ))));
             };
-            retained_locked(vault, state, receipt)
+            retained_locked(state, receipt)
         }
         Ok(SessionWitnessOutcome::Unretained) => {
             let end = SessionStreamEnd {
@@ -526,8 +536,7 @@ fn finish_locked(
             state.completion = Some(completion);
             state.permit.take();
             state.text.clear();
-            let handle = state.handle();
-            vault.message_streams.remove(handle)?;
+            state.remove()?;
             Ok(SessionStreamOutcome::Unretained(end))
         }
         Err(error) => {
@@ -536,7 +545,7 @@ fn finish_locked(
             };
             state.pending_receipt = Some(candidate.clone());
             match state.binding.stream_terminal_receipt(vault, &candidate) {
-                Ok(Some(found)) if found == candidate => retained_locked(vault, state, found),
+                Ok(Some(found)) if found == candidate => retained_locked(state, found),
                 Ok(None) => {
                     state.pending_receipt = None;
                     Err(error.into())
@@ -559,7 +568,7 @@ fn resolve_pending_locked(
     };
     match state.binding.stream_terminal_receipt(vault, &candidate)? {
         Some(found) if found == candidate => {
-            retained_locked(vault, state, found.clone())?;
+            retained_locked(state, found.clone())?;
             Ok(Some(found))
         }
         None => {
@@ -575,7 +584,6 @@ fn resolve_pending_locked(
 }
 
 fn retained_locked(
-    vault: &Vault,
     state: &mut SessionState,
     receipt: MessageStreamReceipt,
 ) -> MessageStreamResult<SessionStreamOutcome> {
@@ -588,6 +596,6 @@ fn retained_locked(
     state.pending_receipt = None;
     state.permit.take();
     state.text.clear();
-    vault.message_streams.remove(state.handle())?;
+    state.remove()?;
     Ok(SessionStreamOutcome::Retained(receipt))
 }
