@@ -247,6 +247,7 @@ pub fn fork_executor_run(
     child_template: &EngineExecutorConfig,
 ) -> Result<PreparedExecutorContinuation, ContinuationRefusal> {
     let _custody = vault.store.gate_custody_read_guard()?;
+    let _bodies = vault.pin_all_result_bodies();
     {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let row = continuation_row_in_txn(vault, &txn, leased_successor, child_template)?;
