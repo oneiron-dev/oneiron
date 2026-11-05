@@ -128,6 +128,7 @@ pub(super) fn start_workflows(
     WorkflowPump::spawn(
         Arc::clone(vault),
         StepRunner {
+            vault: Arc::clone(vault),
             models: Arc::clone(runtime),
             budget_units: models.workflows.step_budget_units,
             retry_backoff_secs: models.workflows.retry_backoff_secs,

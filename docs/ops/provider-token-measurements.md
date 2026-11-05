@@ -279,5 +279,26 @@ guard, payer, listed models and once-only booking ledger. A host that cannot
 construct a lease-aware backend still takes its original backend before any
 generation begins. This factory fallback is not a retry of a paid or captured
 call. The affordability probe constructs no observed model run, and unscoped
-starts keep their old path. Other workflow, compaction and speech sources are
-not covered by this port.
+starts keep their old path. Compaction and speech sources are not covered by
+this pattern-start port.
+
+## Scoped workflow captures
+
+Workflow steps and wave planners use the `StepRunner` vault cloned from the
+same native `Arc<Vault>` supplied to their pump. The runner derives its local
+vault borrows from that owned handle. When the attempt has a native spend scope,
+the existing funded run records observations with that scope and the actual
+`AttemptRecord.id`. Unscoped steps keep their original funded path. The guard,
+payer, request sources, work context and financial booking are unchanged.
+
+The plain model path records future return directly after its ladder future
+returns, whether it answered or failed. A secret-use conversation records return
+at that same point for each actual model future. A retained tool iteration,
+`HookPending`, a checkpoint-only save or a replayed saved answer does not create
+a new future-return marker. The saved-answer path also creates no model run.
+One run instance can span several tool rounds; a return marker never seals it.
+
+These are partial historical observations of the executed native workflow
+caller, not provider coverage, per-attempt token totals, child-scope closure or
+measured RSI settlement. Original receipt forwarding and warning-only capture
+handling stay in place. Other native suppliers still need their own real ports.

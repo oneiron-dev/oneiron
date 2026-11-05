@@ -1,4 +1,4 @@
-//! Provider observations on the actual meter of a scoped code-mode call.
+//! Provider observations on the actual meter of a scoped model call.
 
 use std::sync::Arc;
 
@@ -75,7 +75,7 @@ impl ModelRuntime {
     }
 }
 
-/// The scoped code-mode ladder future returned. This is not a run seal or
+/// A scoped model ladder future returned. This is not a run seal or
 /// a promise that no clone can admit more work or that all requests reported.
 pub(crate) fn record_scoped_model_return(
     vault: &Vault,

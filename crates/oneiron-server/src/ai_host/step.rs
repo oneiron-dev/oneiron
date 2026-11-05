@@ -67,6 +67,7 @@ const STEP_INPUT: ReadSetProducer = ReadSetProducer::WORKFLOW_STEP_INPUT;
 pub(super) type StepHost = Arc<OnceLock<Weak<SyncServer>>>;
 
 pub(super) struct StepRunner {
+    pub(super) vault: Arc<Vault>,
     /// Steps run on the generative role, admitted against the vault's live
     /// model policy like chat turns.
     pub(super) models: Arc<ModelRuntime>,
@@ -254,11 +255,11 @@ impl StepRunner {
     pub(super) fn run(
         &self,
         runtime: &tokio::runtime::Runtime,
-        vault: &Vault,
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
         continuation: Option<WorkflowToolContinuation>,
     ) -> Result<StepOutput, StepFault> {
+        let vault = self.vault.as_ref();
         let definition = &step.input.definition;
         // The step and the claim load door that reads its requester craft are
         // the producers its attempt's read set waits on: declared before any
@@ -285,7 +286,6 @@ impl StepRunner {
                 .then(|| known_sources.clone());
             let generated = self.generate_in(
                 runtime,
-                vault,
                 ModelStep {
                     definition,
                     attempt: &step.attempt,
@@ -406,7 +406,6 @@ impl StepRunner {
         let payer_required = requires_payer(vault, step.attempt.id, step.input.room.is_some())?;
         let generated = self.generate_in(
             runtime,
-            vault,
             ModelStep {
                 definition,
                 attempt: &step.attempt,
@@ -459,10 +458,9 @@ impl StepRunner {
     pub(super) fn generate(
         &self,
         runtime: &tokio::runtime::Runtime,
-        vault: &Vault,
         input: ModelStep<'_>,
     ) -> Result<GeneratedStep, StepFault> {
-        self.generate_in(runtime, vault, input, false, false, None, None, None)
+        self.generate_in(runtime, input, false, false, None, None, None)
     }
 
     /// [`Self::generate`] for a step that knows whether it must read its
@@ -473,7 +471,6 @@ impl StepRunner {
     fn generate_in(
         &self,
         runtime: &tokio::runtime::Runtime,
-        vault: &Vault,
         input: ModelStep<'_>,
         payer_required: bool,
         offers_use: bool,
@@ -481,6 +478,7 @@ impl StepRunner {
         workflow: Option<WorkflowInputs>,
         continuation: Option<WorkflowToolContinuation>,
     ) -> Result<GeneratedStep, StepFault> {
+        let vault = self.vault.as_ref();
         // FIX 12516: a step in a room with a live off-record stretch keeps
         // no model-call evidence. Arrival is checked here, Done rechecks
         // before the write: a stretch may open mid-call.
@@ -822,10 +820,18 @@ impl StepRunner {
                 requester_craft_rows.clone(),
             ])
         };
-        let run = self
-            .models
-            .funded_run(run_id, guard.clone(), payer)
-            .sourced(sources.clone());
+        let run = match &lease {
+            Some(scope) => self.models.funded_run_on_scope(
+                run_id,
+                guard.clone(),
+                payer,
+                Arc::clone(&self.vault),
+                scope.clone(),
+                Some(attempt.id),
+            ),
+            None => self.models.funded_run(run_id, guard.clone(), payer),
+        }
+        .sourced(sources.clone());
         let run = run.with_work_context({
             let mut context = run.work_context();
             context.class = WorkClass::Foreground;
@@ -934,6 +940,7 @@ impl StepRunner {
                 &ladder,
                 &run,
                 &live,
+                lease.as_ref(),
                 request,
                 continuation
                     .as_ref()
@@ -942,8 +949,12 @@ impl StepRunner {
             ),
             None => {
                 let final_request = request.clone();
-                runtime
-                    .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
+                let generated = runtime
+                    .block_on(ladder.generate_recorded_while(&run, request, None, &may_send));
+                if let Some(scope) = &lease {
+                    crate::models::record_scoped_model_return(vault, scope, &run, Some(attempt.id));
+                }
+                generated
                     .map(|(response, binding)| StepConversation::Answered {
                         response,
                         binding,
