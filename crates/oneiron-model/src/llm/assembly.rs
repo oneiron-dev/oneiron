@@ -221,11 +221,14 @@ impl StreamAssembly {
             } => (
                 ContentPart::Reasoning {
                     text,
-                    signature,
+                    signature: signature.clone(),
                     reasoning_kind,
                     data,
                 },
-                LlmStreamEvent::ReasoningEnd { part_id: id.into() },
+                LlmStreamEvent::ReasoningEnd {
+                    part_id: id.into(),
+                    signature,
+                },
             ),
             PendingPart::Tool {
                 call_id,
