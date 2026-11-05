@@ -44,10 +44,10 @@ impl OfferLadder {
     /// answered its capsule, including an owner's fallback prompt. Only
     /// this call-local ladder changes; its offer and all admission stay put.
     pub(crate) fn for_replay_binding(
-        mut self,
+        &self,
         binding: &oneiron::code_run::CapsuleRungBinding,
     ) -> Option<Self> {
-        let [rung] = self.rungs.as_mut_slice() else {
+        let [rung] = self.rungs.as_slice() else {
             return None;
         };
         if !self.picked
@@ -58,8 +58,17 @@ impl OfferLadder {
         {
             return None;
         }
+        let mut rung = rung.clone();
         rung.prompt = binding.prompt.clone();
-        Some(self)
+        Some(Self {
+            name: self.name.clone(),
+            rungs: vec![rung],
+            picked: self.picked,
+            rests: self.rests.clone(),
+            scope: self.scope,
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        })
     }
 
     /// The route this ladder's one picked rung sends on, as a capsule pins
