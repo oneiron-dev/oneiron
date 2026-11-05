@@ -45,7 +45,7 @@ pub struct PendingProposalView {
 
 impl PendingRow {
     pub(super) fn view(&self, artifact_id: EntityId) -> PendingProposalView {
-        let summary = match &self.body {
+        let mut summary = match &self.body {
             PendingBody::SheetAnswers { bundle } => serde_json::json!({
                 "format": "xlsx",
                 "status": "needs_staging",
@@ -79,6 +79,9 @@ impl PendingRow {
                     .unwrap_or(serde_json::Value::Null),
             }),
         };
+        if let Some(next) = self.next_sheet_row {
+            summary["next_sheet_row"] = serde_json::json!(next);
+        }
         PendingProposalView {
             artifact_id,
             artifact: crate::lens::RecordRef::from_id(

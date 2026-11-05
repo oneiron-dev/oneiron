@@ -324,6 +324,9 @@ pub struct ArtifactAskRun {
     pub proposal: Option<super::EditProposal>,
     /// Completed sheet decisions whose owning caller must retain before staging.
     pub sheet_answers: Option<super::SheetAnswerWork>,
+    /// A later intake floor stopped this run after paid answers completed.
+    /// Retain those answers and the cursor before returning this refusal.
+    pub deferred_floor: Option<oneiron_docedit::resource::ResourceRefusal>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
     /// The rows the ask's own reads picked (FIX 5455): each version it read,

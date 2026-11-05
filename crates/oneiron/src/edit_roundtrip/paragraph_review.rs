@@ -202,6 +202,7 @@ impl Vault {
             return Ok(ArtifactAskRun {
                 proposal: None,
                 sheet_answers: None,
+                deferred_floor: None,
                 abstained,
                 refused,
                 read_rows,
@@ -233,6 +234,7 @@ impl Vault {
         Ok(ArtifactAskRun {
             proposal: Some(proposal),
             sheet_answers: None,
+            deferred_floor: None,
             abstained,
             refused,
             read_rows,

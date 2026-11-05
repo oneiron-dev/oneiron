@@ -71,6 +71,7 @@ impl Vault {
             base_version: Some(work.base_version),
             base_content_hash: Some(work.base_content_hash),
             explicit_fork: false,
+            next_sheet_row: work.next_sheet_row,
             new_bytes: Vec::new(),
             body: PendingBody::SheetAnswers {
                 bundle: work.bundle().clone(),

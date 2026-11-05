@@ -62,8 +62,10 @@
 //!
 //! [`ArtifactAskRun::sheet_answers`] is paid work before byte staging, not a
 //! validated proposal. Its caller retains the bundle and its read rows first,
-//! then stages under the original whole-ask deadline. Fresh, standing and wake
-//! asks do this before their byte attempt. See `docs/ops/artifact-ask-staging.md`
+//! then stages under the original whole-ask deadline. A later intake floor
+//! travels as [`ArtifactAskRun::deferred_floor`]: callers retain paid answers
+//! and the next-row cursor before returning the typed refusal, without staging.
+//! Fresh, standing and wake asks do this before their byte attempt. See `docs/ops/artifact-ask-staging.md`
 //! for native caller order, retry and the existing Keep action.
 //!
 //! # External-binary seam
@@ -146,7 +148,6 @@ pub use oneiron_xlsx_formula::RecalcClock;
 pub(crate) fn read_office_package(bytes: &[u8]) -> crate::error::Result<()> {
     opc::read(bytes).map(|_| ())
 }
-
 #[cfg(test)]
 mod docx_tests;
 #[cfg(test)]
