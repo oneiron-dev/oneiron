@@ -38,13 +38,3 @@ pub(super) use settlement::reconcile_settlement;
 
 /// The local native publisher records no invented caller when none exists.
 pub(super) const ANONYMOUS_COMMIT: &str = "native_skill_state";
-
-/// A source comparison only. This does not make a received document an
-/// admitted read or a native persistence owner.
-#[cfg(feature = "sync")]
-pub(super) fn project_source_state(
-    document: &super::EntityDoc,
-    body: &mut rmpv::Value,
-) -> crate::error::Result<()> {
-    project::project_state(document, body)
-}

@@ -363,20 +363,14 @@ impl Review<'_> {
             .copied()
             .find(|raw| blake3::hash(raw).as_bytes() == operation.source_core);
         if let Some(raw) = raw {
-            let mut body =
-                rmpv::decode::read_value(&mut std::io::Cursor::new(storage::body_with_document(
-                    self.field,
-                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                    &original,
-                )?))
-                .map_err(|_| invalid("record native source body"))?;
-            // Project only for comparison. This is not an admitted read or a
-            // replacement for the original native/source/actor/secret doors.
-            crate::entity_doc::native_skill_state::project_source_state(&original, &mut body)?;
-            let mut encoded = Vec::new();
-            rmpv::encode::write_value(&mut encoded, &body)
-                .map_err(|_| invalid("record native source body"))?;
-            let record = crate::skill::decode_skill_record(&encoded)?;
+            // The supplied-source reader projects only this exact version,
+            // including its genuine selected None. It grants no admission.
+            let body = storage::body_with_document(
+                self.field,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                &original,
+            )?;
+            let record = crate::skill::decode_skill_record(&body)?;
             if (record.lifecycle_status, record.approval_status) != operation.prior {
                 return Err(invalid("record native source prior"));
             }
