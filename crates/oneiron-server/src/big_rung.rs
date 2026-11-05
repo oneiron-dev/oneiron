@@ -17,8 +17,8 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionModel, DecisionQuestion, DecisionRung,
-    ProviderCapability, ProviderDecision, ProviderPin,
+    AnswerContract, CapturedDecision, DecisionAnswer, DecisionCall, DecisionModel,
+    DecisionQuestion, DecisionRung, ProviderCapability, ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{
@@ -449,6 +449,16 @@ impl DecisionModel for BigModel {
     /// (FIX 9525).
     fn leaves_host(&self) -> bool {
         self.route_leaves_host()
+    }
+
+    fn decide_captured(&self, call: &DecisionCall<'_>) -> Option<CapturedDecision> {
+        // A new capture cannot retroactively wrap a caller's existing run.
+        if call.run.is_some() {
+            return None;
+        }
+        let (result, receipts) =
+            oneiron::llm::run_admission::capture_settlements(|| self.decide(call));
+        Some(CapturedDecision { result, receipts })
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
