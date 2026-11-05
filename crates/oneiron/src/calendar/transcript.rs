@@ -182,6 +182,7 @@ fn ingest_file_drop_transcript_inner(
             &parsed,
             session_key,
             fail_after_turns,
+            None,
         )
     })
 }
@@ -194,6 +195,7 @@ fn ingest_parsed_transcript_in_txn(
     parsed: &ParsedTranscript,
     session_key: crate::session_lifecycle::SessionKey,
     fail_after_turns: bool,
+    source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
 ) -> crate::Result<TranscriptIngestOutcome> {
     let hint = crate::session_lifecycle::SessionHintTimestamp {
         claimed_ms: parsed.claimed_started_ms,
@@ -214,6 +216,7 @@ fn ingest_parsed_transcript_in_txn(
                 session_ref,
                 &parsed.turns,
                 request.arrived_at_ms,
+                source_version,
             )?;
             let wake = vault.plan_session_end_wake_in_txn(wtxn, &session_ref)?;
             let wake_turn_refs = wake.planned_turn_ids.clone();
@@ -266,6 +269,7 @@ fn persist_turns(
     session_ref: crate::EntityId,
     turns: &[ParsedTranscriptTurn],
     arrived_at_ms: u64,
+    source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
 ) -> crate::Result<Vec<crate::EntityId>> {
     let conversation_ref = vault.store.clock.entity_id()?;
     vault
@@ -293,14 +297,31 @@ fn persist_turns(
         // Import provides no verified PERSON identity. Do not stamp `actor`:
         // the string is not authorship, so only owner/admin policy can later
         // authorize deletion of this unknown-author room TURN.
-        let body = rmp_serde::to_vec_named(&serde_json::json!({
+        let mut body_value = serde_json::json!({
             "ordinal": turn.ordinal, "speaker": "user", "spkr": "user",
             "role": "user", "speaker_label": turn.speaker_label,
             "text": turn.text, "txt": turn.text, "source_blob_ref": source_blob_ref.to_hex(),
             "claimed_start_ms": turn.claimed_start_ms, "claimed_end_ms": turn.claimed_end_ms,
             "arrived_at_ms": arrived_at_ms,
-        }))
-        .map_err(|_| crate::Error::InvariantViolation("transcript TURN encode"))?;
+        });
+        if let Some(source_version) = source_version {
+            if let serde_json::Value::Object(ref mut map) = body_value {
+                map.insert(
+                    "source_blob_version".to_owned(),
+                    serde_json::Value::from(source_version.version),
+                );
+                map.insert(
+                    "source_blob_content_hash".to_owned(),
+                    serde_json::Value::from(
+                        blake3::Hash::from_bytes(source_version.content_hash)
+                            .to_hex()
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+        let body = rmp_serde::to_vec_named(&body_value)
+            .map_err(|_| crate::Error::InvariantViolation("transcript TURN encode"))?;
         let time = turn.claimed_start_ms.unwrap_or(arrived_at_ms) / 1000;
         vault
             .batch_in()
@@ -528,6 +549,7 @@ fn put_calendar_test_policy(
                 entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 occurred: crate::temporal::TimeRange { start: at, end: at },
                 learned_at: at,
+                row_version: None,
                 data: body,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

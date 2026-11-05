@@ -1,0 +1,35 @@
+/* The macOS shell alone supplies this marker. Keep a real, shallow chrome
+   row in the existing material; move the whole app down, never sideways. */
+.desktop-drag-region { display: none; }
+
+html[data-window-chrome="macos"] { --desktop-top-inset: 40px; }
+html[data-window-chrome="macos"] body.app {
+  box-sizing: border-box;
+  padding-top: var(--desktop-top-inset);
+}
+
+/* Genuine traffic lights occupy the left 80px. Leave a 6px outer gutter for
+   native edge/corner resizing. The remaining empty row is a usable drag target,
+   with no app controls underneath it and no shell-wide gesture interception. */
+html[data-window-chrome="macos"] .desktop-drag-region {
+  display: block;
+  position: fixed;
+  top: 6px; left: 80px; right: 6px;
+  height: calc(var(--desktop-top-inset) - 12px);
+  z-index: 30;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Fixed root surfaces do not inherit body padding. Keep the sign-in and error
+   scenes below the same row. The bare home route has an inline 100dvh minimum. */
+html[data-window-chrome="macos"] .gate,
+html[data-window-chrome="macos"] .lost { top: var(--desktop-top-inset); }
+html[data-window-chrome="macos"] body.app > main {
+  min-height: calc(100dvh - var(--desktop-top-inset)) !important;
+}
+
+/* Top-anchored overlays follow the app down. Bottom-anchored sheets and the
+   centered command palette already clear the chrome. No folded-rail hacks. */
+html[data-window-chrome="macos"] .tuner { top: calc(12px + var(--desktop-top-inset)); }
+html[data-window-chrome="macos"] .vmenu { top: calc(40px + var(--desktop-top-inset)); }

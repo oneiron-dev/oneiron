@@ -34,6 +34,10 @@ pub struct ModelsStatus {
     /// process serves, in the live status only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<SnapshotStatus>,
+    /// The next turn's prepared tails on native sessions (I1 = C), in the
+    /// live status only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_tails: Option<PreparedTailStatus>,
     /// The host tagger's row (FIX 6914), filled by the status route from
     /// the server's tagger slot; none when no `[oneironer]` tagger is
     /// configured. Stands whether or not a `[models.providers]` row names
@@ -232,6 +236,39 @@ pub struct SnapshotStatus {
     pub restores_cold: u64,
     /// Parks skipped, by reason.
     pub skips: SnapshotSkips,
+}
+
+/// The next turn's prepared tails since this process started (I1 = C):
+/// counts and tokens only, never a manifest, a digest or a vault id.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct PreparedTailStatus {
+    /// Whether the policy prepares tails at all (`[models.sessions]
+    /// prepare_tail`).
+    pub enabled: bool,
+    /// Whether the learned planner decides beside the fixed policy.
+    pub planner: bool,
+    /// Prepares sent, those that answered with a tail, and those stopped or
+    /// refused before one (the turn arrived, the session moved on).
+    pub started: u64,
+    pub ready: u64,
+    pub stopped: u64,
+    /// Publishes that prepared nothing, by reason: the policy is off, the
+    /// planner held it back, the worker serves no prepare, or the producer
+    /// knew no tail.
+    pub skipped_off: u64,
+    pub skipped_planner: u64,
+    pub skipped_unsupported: u64,
+    pub skipped_no_tail: u64,
+    /// Forks that attached to a prepared tail, and forks that found one and
+    /// did not (the real turn's tokens diverged before it gave more).
+    pub attached: u64,
+    pub missed: u64,
+    /// Tokens the prepares computed, the turns reused of them, and the
+    /// rest: work thrown away. A stopped prepare's work is not known and is
+    /// in none of them.
+    pub computed_tokens: u64,
+    pub reused_tokens: u64,
+    pub wasted_tokens: u64,
 }
 
 /// Why parks were skipped since this process started, one count each.

@@ -257,43 +257,82 @@ fn admit_imported_evidence_claim_typed_guarded(
             admission.learned_at,
         )
         .commit_with_target_guard(|txn| {
-            // Check both predicate directions in the SAME writer snapshot as the
-            // candidate write. A generic incoming predicate cannot disguise an
-            // overwrite of an existing private keyed revision.
-            let owned_door = || {
-                crate::error::Error::Claim(crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor)
-            };
-            if predicate == crate::claim::KEY_VALUE_PREDICATE {
-                return Err(owned_door());
-            }
-            if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+            guard_imported_claim_target(vault, txn, predicate, admission)
+        })
+}
+
+/// The registered MACHINE import door composed into the caller's writer.
+/// Errors must abort that writer, including any earlier batches it staged.
+pub(crate) fn admit_imported_evidence_claim_typed_for_machine_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    predicate: &str,
+    value: MsgpackValue,
+    source_record_id: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    let (candidate, mut envelope) =
+        imported_candidate(predicate, value, source_record_id, admission)?;
+    vault.sign_registered_machine_claim_in_txn(
+        txn,
+        &admission.claim_id,
+        &candidate,
+        &mut envelope,
+    )?;
+    guard_imported_claim_target(vault, txn, predicate, admission)?;
+    vault
+        .batch_in()
+        .claim_candidate(
+            &admission.claim_id,
+            candidate,
+            &envelope,
+            admission.occurred,
+            admission.learned_at,
+        )
+        .apply(txn)
+}
+
+fn guard_imported_claim_target(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    // Check both predicate directions in the SAME writer snapshot as the
+    // candidate write. A generic incoming predicate cannot disguise an
+    // overwrite of an existing private keyed revision.
+    let owned_door =
+        || crate::error::Error::Claim(crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor);
+    if predicate == crate::claim::KEY_VALUE_PREDICATE {
+        return Err(owned_door());
+    }
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "import cannot recreate an erased claim id",
+        ));
+    }
+    if let Some(raw) = vault.get_raw_in(txn, &admission.claim_id)? {
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+            crate::error::Error::CorruptedIndex("import claim target header"),
+        )?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            // An erased body no longer identifies its predicate. Never
+            // reuse its id through this caller-selected import door.
+            if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
                 return Err(crate::error::Error::InvalidClaimBody(
                     "import cannot recreate an erased claim id",
                 ));
             }
-            if let Some(raw) = vault.get_raw_in(txn, &admission.claim_id)? {
-                let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
-                    crate::error::Error::CorruptedIndex("import claim target header"),
-                )?;
-                if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    // An erased body no longer identifies its predicate. Never
-                    // reuse its id through this caller-selected import door.
-                    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
-                        return Err(crate::error::Error::InvalidClaimBody(
-                            "import cannot recreate an erased claim id",
-                        ));
-                    }
-                    let body = crate::claim::decode_claim_body(
-                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                        true,
-                    )?;
-                    if !crate::claim::claim_generic_readable(&body) {
-                        return Err(owned_door());
-                    }
-                }
+            let body = crate::claim::decode_claim_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?;
+            if !crate::claim::claim_generic_readable(&body) {
+                return Err(owned_door());
             }
-            Ok(())
-        })
+        }
+    }
+    Ok(())
 }
 
 /// Actor-bound import inside an existing content transaction. The web doors

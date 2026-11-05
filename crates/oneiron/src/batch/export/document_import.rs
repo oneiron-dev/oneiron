@@ -20,11 +20,11 @@ use super::{
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
-use crate::entity_id::EntityId;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_EVENT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -213,6 +213,7 @@ impl Vault {
                 ExportBody::File(file) => {
                     if file_row_stored(self, &wtxn, &id, &row, file, &archive.files)? {
                         validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                        stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                         unchanged_entities += 1;
                         continue;
                     }
@@ -229,6 +230,7 @@ impl Vault {
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
                 }
@@ -239,6 +241,7 @@ impl Vault {
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
                 }
@@ -249,7 +252,7 @@ impl Vault {
             // row index (FIX 2766, 3678): its body is built again when it
             // goes in, and a file body, which waits on nothing, is read from
             // the archive only then.
-            let waits_on = if matches!(row.body, ExportBody::File(_)) {
+            let mut waits_on = if matches!(row.body, ExportBody::File(_)) {
                 Vec::new()
             } else {
                 dependencies(
@@ -257,6 +260,18 @@ impl Vault {
                     &imported_body(&row, &archive.index, &archive.files)?,
                 )?
             };
+            // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
+            // non-default facet waits on its archived facet row, so the
+            // facet's put lands first and the masked initial put below finds
+            // a stored FACET. A facet the archive does not carry blocks
+            // nothing (it is never Waiting); the put then fails fail-closed.
+            if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+                if let Some(facet) = archived_birth_facet(&archive, &id)?
+                    && !waits_on.contains(&facet)
+                {
+                    waits_on.push(facet);
+                }
+            }
             archive
                 .index
                 .put(Tag::Pending, id.as_bytes(), &id_list(&waits_on))?;
@@ -490,10 +505,11 @@ fn insert_ready_row<R: Read + Seek>(
             Ok(())
         })?;
         let staged = staged.ok_or(Error::InvariantViolation("archive file body not staged"))?;
-        return vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged);
+        vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged)?;
+        return stamp_archived_birth(vault, wtxn, archive, &id);
     }
     let body = imported_body(&row, &archive.index, &archive.files)?;
-    match row.entity_type {
+    let landed = match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
             if crate::write_envelope::learning_predicate::is_learning_predicate(&claim.predicate) {
@@ -542,10 +558,79 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.put_skill_record_in_txn(wtxn, &id, &record, occurred, row.learned_at)
             }
         }
-        _ => vault
-            .batch_in()
-            .put(&id, row.entity_type, occurred, row.learned_at, &body)
-            .apply(wtxn),
+        _ => {
+            // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
+            // non-default facet is masked with its archived birth facet, so
+            // the initial put births it under the original facet instead of
+            // minting a destination-default stamp the archived FacetOf edge
+            // then breaks (FacetStampImmutable). Other rows keep today's
+            // unmasked put.
+            let mask = if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+                archived_birth_facet(&archive, &id)?
+            } else {
+                None
+            };
+            vault
+                .batch_in()
+                .mask(mask)
+                .put(&id, row.entity_type, occurred, row.learned_at, &body)
+                .apply(wtxn)
+        }
+    };
+    landed?;
+    stamp_archived_birth(vault, wtxn, archive, &id)
+}
+
+/// FIX 1178: stamps the birth the archive carries for `id` beside its landed
+/// row, in the import's own transaction. Its refs are renamed onto this
+/// vault's MODEL ids (FIX 3890), as the row's own refs were. The replicated
+/// writer needs no named row present, so a birth lands whole even when an
+/// input or trigger sits outside this archive. As on sync
+/// (`stamp_birth_or_warn`), a birth this vault refuses — a different one
+/// already stands, or its actor was erased here — is left out with a
+/// warning: the row stands, and its stored birth is never replaced, but
+/// for a document birth that stood in for it (FIX 1180).
+pub(super) fn stamp_archived_birth<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(row) = archive.row_birth(id)? else {
+        return Ok(());
+    };
+    let mut renamed = BTreeMap::new();
+    for input in &row.birth.made_by.inputs {
+        renamed.insert(
+            input.row,
+            super::provenance_import::mapped(&archive.index, input.row)?,
+        );
+    }
+    if let Some(trigger) = &row.birth.made_by.trigger {
+        renamed.insert(
+            trigger.row(),
+            super::provenance_import::mapped(&archive.index, trigger.row())?,
+        );
+    }
+    let birth = row
+        .birth
+        .renamed_refs(|row| renamed.get(&row).copied().unwrap_or(row));
+    match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
+        &vault.store,
+        wtxn,
+        id,
+        &birth,
+    ) {
+        Ok(()) => Ok(()),
+        Err(error @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
+            tracing::warn!(
+                entity = %id.to_hex(),
+                %error,
+                "archived row birth refused; the row stands without it"
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -1385,6 +1470,26 @@ fn imported_body(
     }
 }
 
+/// The archived `FacetOf` target of EVENT/TURN row `id`, if the archive
+/// carries the stamp (blind-review P1b, REVIEW-4389). The dependency queue
+/// waits on it and the initial put is masked with it, so the row is born
+/// under its original facet; `None` keeps today's destination default.
+fn archived_birth_facet<R: Read + Seek>(
+    archive: &IndexedArchive<'_, R>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    let mut prefix = Vec::with_capacity(ENTITY_ID_LEN + 1);
+    prefix.extend_from_slice(id.as_bytes());
+    prefix.push(EdgeKind::FacetOf as u8);
+    let Some((key, _)) = archive.index.next(Tag::Edge, &prefix, None)? else {
+        return Ok(None);
+    };
+    if key.len() != 2 * ENTITY_ID_LEN + 1 || !key.starts_with(&prefix) {
+        return Ok(None);
+    }
+    id_at(&key, ENTITY_ID_LEN + 1).map(Some)
+}
+
 fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
     Ok(match entity_type {
         ENTITY_TYPE_CLAIM => {
@@ -1393,6 +1498,12 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
                 ClaimSubject::Entity(id) => vec![id],
                 ClaimSubject::Edge { source, target, .. } => vec![source, target],
             };
+            // Blind-review P1 (REVIEW-4389 round 4): a CLAIM birth stamps
+            // its body's scope_facet, which must name a stored FACET. Queue
+            // it like any other reference so the facet row lands first; a
+            // facet the archive does not carry blocks nothing, and the put
+            // then fails fail-closed.
+            refs.push(body.scope_facet);
             if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
@@ -1475,6 +1586,13 @@ pub(super) fn import_edge(
                         && crate::workspace_roster::is_project_entity(&vault.store, wtxn, source)?
                         && crate::workspace_roster::is_project_entity(&vault.store, wtxn, target)?
                 }
+                // Blind-review P1 (REVIEW-4389 round 4): a newly inserted
+                // EVENT/TURN's initial put mints its FacetOf with the row's
+                // learned_at; the archived edge carries the original birth
+                // metadata for the same target (the key matched). Restoring
+                // the archived metadata is safe; anything else stays a
+                // collision.
+                EdgeKind::FacetOf => true,
                 _ => false,
             };
         if !door_minted {

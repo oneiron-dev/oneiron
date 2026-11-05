@@ -1,3 +1,6 @@
+//! Overlay snapshots: staged-row views merged over durable state for one read.
+//! Entry [`OverlaySnapshot`]; built from `journal` rows for `overlay_db::merge`.
+//! Owned by `session_overlay`; a snapshot never writes, it only stages.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

@@ -71,7 +71,7 @@ mod refusal;
 mod relay_delete;
 
 #[cfg(target_os = "linux")]
-pub(super) use self::carrier_watch::carrier_recipient;
+pub(super) use self::carrier_watch::carrier_recipients_snapshot;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;
@@ -225,6 +225,11 @@ pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 /// request, verified at ingress; never the host root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
+
+/// A registered MCP lifecycle call, classified from the verified held body.
+/// This carries only a wake hint, never caller authority or body bytes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct McpLifecycleObservation;
 
 /// The person a supervisor-signed `ManagedPersonAction` names for one
 /// request at a member door (FIX 1302), verified at ingress; never the

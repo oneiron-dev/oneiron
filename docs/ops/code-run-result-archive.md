@@ -31,3 +31,13 @@ An imported record with unknown determinism still supports its result readers.
 Execution, continuation or shadow replay that needs the clock and seed reports
 those inputs as unavailable instead of inventing them. A present clock and seed
 alone do not prove full replayability of an imported result archive.
+
+## Heal evidence body reads
+
+A heal's evidence context reads a code run's full output bodies through the reader's own
+scoped lane, in the same snapshot as the replay record that names them: each body is
+admitted against the complete source rows its occurrence and its run record, and withheld
+by the occurrence's secret mark, taint or erase, as an outside-run result read withholds
+one. An unavailable body keeps its manifest and recorded preview, with only its reason
+recorded. The replay record's bridge calls, checkpoints and bindings stay owner-gated as
+before, and the owner's result doors are unchanged.

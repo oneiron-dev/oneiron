@@ -294,6 +294,16 @@ pub(crate) fn team_shape_skill_in_force_in_txn(
     head_in_force_in_txn(vault, txn, project, &mut Reads::Off)
 }
 
+/// The loadable head of any skill root, using the same native succession
+/// walk as the team-shape tree in the caller's snapshot.
+pub(super) fn skill_head_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+) -> Result<Option<EntityId>> {
+    vault_head_in_txn(vault, txn, root, &mut Reads::Off)
+}
+
 /// [`team_shape_skill_in_force_in_txn`], noting the rows it reads in
 /// `reads`.
 fn head_in_force_in_txn(

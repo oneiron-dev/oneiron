@@ -62,8 +62,10 @@ pub use contribution::{
     contributed, contribution_check_candidates_after, record_contribution_pair,
 };
 mod contribution_admission;
-pub(crate) use contribution_admission::erase_contribution_checks_in_txn;
 pub use contribution_admission::{ContributionRecord, UnmatchedReason};
+pub(crate) use contribution_admission::{
+    erase_contribution_checks_in_txn, rebind_contribution_fork_receipts_in_txn,
+};
 mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};

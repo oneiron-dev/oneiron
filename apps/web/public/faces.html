@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>agent faces · candidates</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap">
+<style>@font-face{font-family:"Server Mono";src:url("/fonts/ServerMono-Regular.woff2") format("woff2")}</style>
+<style>
+  :root { color-scheme: light dark; --serif: "Source Serif 4", Georgia, serif; --mono: "Server Mono", ui-monospace, monospace; }
+  body { margin: 0; font-family: var(--serif); background: #131110; color: #DDD6C9; }
+  .rooms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 100vh; }
+  .room { min-width: 0; }
+  .room { padding: 34px 40px 60px; }
+  .paper { background: #EBE7DF; color: #26221E; }
+  .paper .sheet { background: #F3F0E9; }
+  .paper .meta, .paper .name-tory { }
+  .film { background: #131110; color: #DDD6C9; }
+  .film .sheet { background: #1B1815; }
+  h1 { font-size: 20px; font-weight: 550; margin: 0 0 6px; }
+  .lead { font-size: 13.5px; opacity: .72; max-width: 52ch; line-height: 1.5; margin: 0 0 24px; }
+  .sheet { border-radius: 8px; padding: 18px 22px 10px; margin-bottom: 22px; }
+  .opt { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; opacity: .6; margin-bottom: 8px; }
+  .row { display: grid; grid-template-columns: 44px 84px 1fr; align-items: center; gap: 12px; padding: 7px 8px; border-radius: 5px; }
+  .row:hover { background: rgba(128,128,128,.12); }
+  .row img { display: block; margin: 0 auto; }
+  .row .name { font-size: 14.5px; }
+  .row .what { font-size: 13px; opacity: .7; }
+  .film .name.eiri { color: #6FA3C7; } .paper .name.eiri { color: #2E6E96; }
+  .film .name.tory { color: #BE687A; } .paper .name.tory { color: #8E3B4A; }
+  .film .name.antevon { color: #857BB8; } .paper .name.antevon { color: #4E4488; }
+  .px { image-rendering: pixelated; }
+  .sizes { display: flex; gap: 18px; align-items: center; padding: 6px 8px 2px; }
+  .sizes img { display: block; }
+  .k { font-family: var(--mono); font-size: 10.5px; opacity: .55; }
+  .face { display: block; margin: 0 auto; background: var(--ink); -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat; }
+  .paper { --ink-eiri: #2E6E96; --ink-tory: #8E3B4A; --ink-antevon: #4E4488; }
+  .film { --ink-eiri: #6FA3C7; --ink-tory: #BE687A; --ink-antevon: #857BB8; }
+  .sizes .face { display: inline-block; margin: 0; flex: none; }
+  .sizes { flex-wrap: wrap; row-gap: 10px; }
+  .sizes img { flex: none; }
+</style>
+<div class="rooms">
+  <section class="room paper" id="paper"></section>
+  <section class="room film" id="film"></section>
+</div>
+<script>
+  const HAVE_STAMP = true
+  const AGENTS = [
+    ['eiri', 'Eiri', 'outbound · writes and sends, every send is your click'],
+    ['tory', 'Tory', 'research · reads filings, watches suppliers'],
+    ['antevon', 'Antevon', 'the house mind · answers in the channels'],
+  ]
+  const CREATURE = { eiri: [30, 24], tory: [21, 26], antevon: [30, 16] }
+  const face = (k, m, z) => `<span class="face" style="--m:url(/art/faces/${k}-${m}.png);--ink:var(--ink-${k});width:${z}px;height:${z}px" role="img" aria-label="${k}"></span>`
+  const have = { stamp: HAVE_STAMP }
+  function room(id, day) {
+    const el = document.getElementById(id)
+    const r = day ? 'day' : 'night'
+    const rows = (src) => AGENTS.map(([k, n, w]) => `
+      <div class="row">${src(k)}<span class="name ${k}">${n}</span><span class="what">${w}</span></div>`).join('')
+    el.innerHTML = `
+      <h1>Agent faces</h1>
+      <p class="lead">Four ways the roster could carry a face. Same rows, same size (32px). Hover a row to see it lit. The last block shows each style at 24 · 32 · 48 · 64.</p>
+      <div class="sheet"><div class="opt">A · riso portrait, three inks${day ? '' : ' · night pulled from the SAME day drawing (inks lifted, paper → film)'}</div>${rows((k) => `<img src="/art/faces/${k}-A-${day ? 'day' : 'night2'}.png" width="32" height="32" alt="">`)}</div>
+      ${day ? '' : `<div class="sheet"><div class="opt">A-old · night drawn separately (a different pose from day)</div>${rows((k) => `<img src="/art/faces/${k}-A-night.png" width="32" height="32" alt="">`)}</div>`}
+      <div class="sheet"><div class="opt">B · single-ink stamp mark (day / night pair)</div>${rows((k) => `<img src="/art/faces/${k}-B-${r}.png" width="32" height="32" alt="">`)}</div>
+      <div class="sheet"><div class="opt">D · B as a mask, filled with the agent's own ink${day ? '' : ' · night print DRAWN from the same stamp (pale ink carries the light), then masked into the ink'}</div>${rows((k) => face(k, day ? 'mask' : 'mask-nightd', 32))}</div>
+      ${day ? '' : `<div class="sheet"><div class="opt">D-computed · night plate computed from the day mask (holes + rim + faint wash)</div>${rows((k) => face(k, 'mask-night2', 32))}</div>`}
+      <div class="sheet"><div class="opt">D-cut · the same stamp simplified by codex (identifying marks only)</div>${rows((k) => face(k, 'cut', 32))}</div>
+      <div class="sheet"><div class="opt">D-sign · the same stamp reduced to silhouette + a few cutouts</div>${rows((k) => face(k, 'sign2', 32))}</div>
+      <div class="sheet"><div class="opt">G · pictogram, redrawn for 20–24px (one ink, ≤3 cutouts)</div>${rows((k) => face(k, 'mark', 32))}</div>
+      ${have.stamp ? `<div class="sheet"><div class="opt">H · hand-cut stamp, mid abstraction (5–7 shapes)</div>${rows((k) => face(k, 'stamp', 32))}</div>
+      <div class="sheet"><div class="opt">H2 · sign, near-symbolic (3–4 shapes)</div>${rows((k) => face(k, 'sign', 32))}</div>` : ''}
+      <div class="sheet"><div class="opt">G · the gods — Iris (Eiri, messenger) · Athena (Tory, watchful) · Mnemosyne (Antevon, memory) — as printed</div>${rows((k) => `<img src="/art/faces/${k}-G-${r}.png" width="32" height="32" alt="">`)}</div>
+      <div class="sheet"><div class="opt">G-ink · the gods as a mask, filled with the agent's ink</div>${rows((k) => face(k, 'G-mask-' + r, 32))}</div>
+      <div class="sheet"><div class="opt">S · spirits — the messenger with a letter · the seeker with a lantern · the house mind with an ember — as printed</div>${rows((k) => `<img src="/art/faces/${k}-S-${r}.png" width="32" height="32" alt="">`)}</div>
+      <div class="sheet"><div class="opt">S-ink · the spirits as a mask, filled with the agent's ink</div>${rows((k) => face(k, 'S-mask-' + r, 32))}</div>
+      <div class="sheet"><div class="opt">P · presences, the ghost in the machine — a plume · a ring · a column — as printed</div>${rows((k) => `<img src="/art/faces/${k}-P-${r}.png" width="32" height="32" alt="">`)}</div>
+      <div class="sheet"><div class="opt">P-ink · the presences as a mask, filled with the agent's ink</div>${rows((k) => face(k, 'P-mask-' + r, 32))}</div>
+      <div class="sheet"><div class="opt">O · the Oneiroi — the same creatures as dream-spirits, one ink, as printed (${day ? 'prussian on paper' : 'ivory on film'})</div>${rows((k) => `<img src="/art/faces/${k}-O-${r}.png" width="32" height="32" alt="">`)}</div>
+      <div class="sheet"><div class="opt">O-ink · the Oneiroi as a mask, filled with the agent's ink</div>${rows((k) => face(k, 'O-mask-' + r, 32))}</div>
+      <div class="sheet"><div class="opt">C · no face — the name in its ink is the mark</div>${rows(() => `<span></span>`)}</div>
+      <div class="sheet"><div class="opt">now · pixel creatures at 2×</div>${rows((k) => `<img class="px" src="/art/creatures/${k}.png" width="${CREATURE[k][0] * 2}" height="${CREATURE[k][1] * 2}" alt="">`)}</div>
+      <div class="sheet"><div class="opt">sizes</div>
+        ${['A', 'B'].map((s) => `<div class="sizes"><span class="k">${s}</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => `<img src="/art/faces/${k}-${s}-${s === 'A' && !day ? 'night2' : r}.png" width="${z}" height="${z}" alt="">`).join('')).join('<span class="k">·</span>')}</div>`).join('')}
+        ${['G','S','P'].map((f) => `<div class="sizes"><span class="k">${f}</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => `<img src="/art/faces/${k}-${f}-${r}.png" width="${z}" height="${z}" alt="">`).join('')).join('<span class="k">·</span>')}</div>
+        <div class="sizes"><span class="k">${f}-ink</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => face(k, f + '-mask-' + r, z)).join('')).join('<span class="k">·</span>')}</div>`).join('')}
+        <div class="sizes"><span class="k">O</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => `<img src="/art/faces/${k}-O-${r}.png" width="${z}" height="${z}" alt="">`).join('')).join('<span class="k">·</span>')}</div>
+        <div class="sizes"><span class="k">O-ink</span>${[16, 20, 24, 32, 48, 64, 96].map((z) => AGENTS.map(([k]) => face(k, 'O-mask-' + r, z)).join('')).join('<span class="k">·</span>')}</div>
+        ${[...(day ? [['D','mask']] : [['D','mask-nightd'],['D-comp','mask-night2']]), ['D-cut','cut'], ['D-sign','sign2'], ['G','mark'], ...(have.stamp ? [['H','stamp'],['H2','sign']] : [])].map(([s, m]) => `<div class="sizes"><span class="k">${s}</span>${[16, 20, 24, 32, 48, 64].map((z) => AGENTS.map(([k]) => face(k, m, z)).join('')).join('<span class="k">·</span>')}</div>`).join('')}
+      </div>`
+  }
+  room('paper', true); room('film', false)
+</script>

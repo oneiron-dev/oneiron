@@ -7,7 +7,9 @@
 //! expensive path found nothing the rules missed there. An audit's kept
 //! decisions name candidate refs of their own: a served copy keeps only
 //! those the reader's floor admits, and marks the decisions it redacted
-//! (FIX 8322); the stored audit and a saved period's copy keep them whole.
+//! (FIX 8322). Erasure scrubs candidate refs from both the stored audit and
+//! its saved copies in the same writer (FIX 9222); reader-only redactions
+//! still change only the served copy.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::{

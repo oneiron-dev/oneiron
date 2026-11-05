@@ -6,6 +6,7 @@ use super::proposal::{
 };
 use super::snapshot::{StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind};
 use super::types::{RepoForkHash, RepoMutationOplogEntry};
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::{
     Vault,
     codebase::RepoRef,
@@ -120,7 +121,7 @@ pub(super) fn require_candidate(
 }
 
 /// Whether the snapshot `entry` is exactly `state`: absent, or a kept
-/// regular file, executable file or symlink at that Git mode.
+/// regular file, executable file, symlink or opaque gitlink at that Git mode.
 pub(super) fn snapshot_state_is(
     entry: Option<&StoredRepoSnapshotEntry>,
     state: &crate::code_document::CodeFilePresence,
@@ -131,6 +132,7 @@ pub(super) fn snapshot_state_is(
             StoredRepoSnapshotEntryKind::File if entry.executable => Some(0o100_755),
             StoredRepoSnapshotEntryKind::File => Some(0o100_644),
             StoredRepoSnapshotEntryKind::Symlink => Some(0o120_000),
+            StoredRepoSnapshotEntryKind::Gitlink => Some(MODE_GITLINK),
             StoredRepoSnapshotEntryKind::Withheld => return false,
         },
     };

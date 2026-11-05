@@ -5,8 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::claims::{
     CommClaim, CommClaimValue, CommError, CommResult, PREDICATE_COMM_THREAD_MEMBER,
 };
+use super::head_admission::HeadAdmission;
 use super::projection_writes::{
-    latest_claim_transition_boundary, put_projected_comm_claim_in_txn, require_at_most_one,
+    latest_claim_transition_boundary,
+    put_projected_comm_claim_with_admission_in_txn as put_projected_comm_claim_in_txn,
+    require_at_most_one,
 };
 use super::projector::ProjectorAction;
 use super::records::{CommEventKind, CommRecord, comm_records_in_txn};
@@ -199,6 +202,7 @@ pub(super) fn apply_thread_membership_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     index: &CommProjectorIndex,
     event: &ProjectedCommEvent<'_>,
+    admission: &mut HeadAdmission<'_>,
 ) -> CommResult<ProjectorIndexDelta> {
     let &ProjectedCommEvent {
         rule,
@@ -261,6 +265,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     source_event_id,
                     &value,
                     occurred_at,
+                    admission,
                 )?;
                 // Deterministic tie-breaker: at equal occurred_at a join loses to
                 // the boundary (a same-time leave/transition), so equal-time
@@ -270,7 +275,10 @@ pub(super) fn apply_thread_membership_in_txn(
                     && let Some(boundary) =
                         latest_transition.filter(|boundary| occurred_at <= *boundary)
                 {
-                    vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
+                    admission.write(vault, wtxn, &[claim_id], &[claim_id], |txn| {
+                        vault.retract_claim_in_txn(txn, &claim_id, boundary)?;
+                        Ok(())
+                    })?;
                 }
                 if minted {
                     heads.push(claim_id);
@@ -343,7 +351,10 @@ pub(super) fn apply_thread_membership_in_txn(
                         false,
                     )? {
                         if claim.is_standing() {
-                            vault.retract_claim_in_txn(wtxn, &claim_id, occurred_at)?;
+                            admission.write(vault, wtxn, &[claim_id], &[claim_id], |txn| {
+                                vault.retract_claim_in_txn(txn, &claim_id, occurred_at)?;
+                                Ok(())
+                            })?;
                             heads.push(claim_id);
                         }
                     }

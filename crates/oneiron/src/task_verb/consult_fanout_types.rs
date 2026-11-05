@@ -1,7 +1,6 @@
 //! Public fan-out governance inputs and observable outcomes.
 
 use crate::agent_dispatch::FanoutStatement;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub use crate::outbound_chokepoint::FanoutApprovalMode as ConsultFanOutMode;

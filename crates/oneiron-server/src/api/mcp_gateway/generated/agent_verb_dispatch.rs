@@ -565,6 +565,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.off_record.discard" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.notes.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.artifacts.save" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "self.off_record.execute" => a.spec.clone().ok_or_else(invalid),
         "self.off_record.results.list" => a.spec.clone().ok_or_else(invalid),
@@ -2817,6 +2818,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.off_record.notes.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.artifacts.save" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.off_record.claims.upsert" => {
@@ -5447,6 +5451,7 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
     let ran = execute_agent_verb_row(
         server,
         tool,
@@ -5456,6 +5461,7 @@ async fn execute_agent_verb_listing(
         surface,
         served,
         board_hooks,
+        pre_hooked_fold,
     )
     .await;
     // A row that fails after its pre chain ran keeps a session-only call's
@@ -5489,6 +5495,7 @@ async fn execute_agent_verb_row(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -5513,6 +5520,7 @@ async fn execute_agent_verb_row(
             surface,
             served,
             board_hooks,
+            pre_hooked_fold,
         ),
     )
     .await
@@ -5529,6 +5537,7 @@ async fn execute_agent_verb_row_on(
     surface: McpRowSurface,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
 ) -> Result<
     (
         Value,
@@ -12840,6 +12849,26 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_off_record_notes_create(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.artifacts.save" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.artifacts.save", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordArtifactSaveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_artifacts_save(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -26349,6 +26378,7 @@ async fn execute_agent_verb_row_on(
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.fold"),
                 input,
+                pre_hooked_fold,
             ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

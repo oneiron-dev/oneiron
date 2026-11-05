@@ -1,13 +1,14 @@
 //! A hard delete inside a saved weave period (FIX 7693, 8672). The period
 //! keeps every row the deleted ref is not in: a loop row that names it
-//! loses that ref, and a health card drafted from it loses its draft's
-//! text, both in the erasure's own transaction, with the period's erase
+//! loses that ref, an audit decision loses its candidate ref, and a health
+//! card drafted from it loses its draft's text, in the erasure's own
+//! transaction, with the period's erase
 //! index repaired to the refs it still carries. A source the period's own
 //! checks read (a copied claim, a project, a link end, an audit's row)
 //! still erases the whole period, as does a row that does not decode.
 use super::{
-    WireDigest, dependencies, digest_row_in, erase_weave_digest_in_txn, index_source_in_txn,
-    invalid, loop_decisions, put_digest_row_in_txn, report_sources,
+    WeaveItem, WireDigest, dependencies, digest_row_in, erase_weave_digest_in_txn,
+    index_source_in_txn, invalid, loop_decisions, put_digest_row_in_txn, report_sources,
 };
 use crate::EntityId;
 use crate::error::Result;
@@ -59,6 +60,9 @@ pub(super) fn erase_source_in_period_in_txn(
     {
         rewritten |= loop_decisions::strip_ref(item, source);
         rewritten |= dependencies::scrub_draft_of(item, source);
+        if let WeaveItem::SieveAudit { audit, .. } = item {
+            rewritten |= audit.forget_decision_candidate(source);
+        }
     }
     // An index entry no row answers to any more: the caller drops it.
     if !rewritten {

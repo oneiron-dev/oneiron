@@ -12,7 +12,7 @@ use crate::handlers::AskHandlers;
 use crate::outcome::OrganOutcome;
 use crate::process::OrganProcess;
 use crate::slot::Slot;
-use crate::spec::{LentInput, OrganCall, OrganSpec};
+use crate::spec::{LentInput, OrganCall, OrganSpec, OrganTier};
 
 /// The resources one call runs with, sized by its caller. Neither is ever
 /// less than the install grant's own.
@@ -29,6 +29,9 @@ pub struct CallSize {
 /// What one sized call measured, however it ended.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CallMeasure {
+    /// The provenance tier of the actual slot selected for this call, not
+    /// a separate install lookup that could race a reinstall.
+    pub tier: Option<OrganTier>,
     /// Memory the call booked.
     pub booked: u64,
     /// The largest frame body the host sent the call's process, as
@@ -55,6 +58,7 @@ impl Run<'_> {
     pub(super) fn booking(&mut self, spec: &OrganSpec) -> u64 {
         match self {
             Self::Sized(size, measure) => {
+                measure.tier = Some(spec.tier);
                 measure.booked = size.booking.max(spec.call_memory_bytes);
                 measure.booked
             }

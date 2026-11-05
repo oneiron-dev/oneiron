@@ -441,7 +441,8 @@ pub(crate) fn open_conflict_in_txn(
 /// that would is refused, and the conflict stays for the owner. `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
-/// `keep_as` says how a kept retained alternative lands (FIX 5753).
+/// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
+/// milliseconds; native claim lifecycle calls below take Unix seconds.
 pub(crate) fn apply_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -525,18 +526,18 @@ pub(crate) fn apply_settlement_in_txn(
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &loser,
-                now,
+                now / 1_000,
                 "superseded",
                 reasons(),
                 None,
             )?;
-            vault.supersede_claim_in_txn_as(txn, &winner, &loser, now, close_as)?;
+            vault.supersede_claim_in_txn_as(txn, &winner, &loser, now / 1_000, close_as)?;
             // The lifecycle projector may raise a Proposed row's tray again;
             // a settled loser keeps no actionable consent.
             vault.store.close_pending_gate_consent_in_txn(
                 txn,
                 &loser,
-                now,
+                now / 1_000,
                 "superseded",
                 reasons(),
                 None,
@@ -696,7 +697,7 @@ pub(crate) fn revert_settlement_in_txn(
     let kept = marker_ids(resolution, "kept").next();
     let superseded: Vec<EntityId> = marker_ids(resolution, "superseded").collect();
     let born = marker_ids(resolution, MATERIALIZED_KEY).next();
-    vault.retract_claim_in_txn_as(txn, &resolved, now, Some(reverter))?;
+    vault.retract_claim_in_txn_as(txn, &resolved, now / 1_000, Some(reverter))?;
     let mut reverted = RevertedSettlement {
         marker,
         restored: Vec::new(),
@@ -722,7 +723,7 @@ pub(crate) fn revert_settlement_in_txn(
             .get_claim_in_txn(txn, &kept)?
             .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
     {
-        vault.retract_claim_in_txn_as(txn, &kept, now, Some(reverter))?;
+        vault.retract_claim_in_txn_as(txn, &kept, now / 1_000, Some(reverter))?;
         reverted.retracted = Some(kept);
     }
     Ok(reverted)
@@ -769,7 +770,7 @@ pub(super) fn restore_member_in_txn(
     if superseded_elsewhere_in_txn(vault, txn, kept, loser)? {
         return Ok(MemberRestore::LeftClosed);
     }
-    if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now)? {
+    if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now / 1_000)? {
         return Ok(MemberRestore::Restored);
     }
     Ok(

@@ -115,19 +115,28 @@ impl OffRecordSessionEntryState {
     /// Notes `messages` of `turn` (each with when it was said and its body),
     /// now in base, for a copy of a room's talk.
     pub(super) fn keep_messages(&mut self, turn: EntityId, messages: &[(EntityId, u64, &[u8])]) {
+        self.keep_message_digests(
+            turn,
+            messages
+                .iter()
+                .map(|&(message, at, body)| (message, at, *blake3::hash(body).as_bytes())),
+        );
+    }
+
+    /// Keeps the actual committed bytes' digests, captured in the save writer.
+    pub(super) fn keep_message_digests(
+        &mut self,
+        turn: EntityId,
+        messages: impl IntoIterator<Item = (EntityId, u64, [u8; 32])>,
+    ) {
         if self.record.room.is_none() {
             return;
         }
-        // A retry of a message already kept changes nothing: the vault holds
-        // the row as it was first written, so that is the one kept.
-        for &(message, at, body) in messages {
+        // A retry keeps the first committed body, never its offered copy.
+        for (message, at, digest) in messages {
             self.kept_messages
                 .entry(message)
-                .or_insert_with(|| KeptMessage {
-                    turn,
-                    at,
-                    digest: *blake3::hash(body).as_bytes(),
-                });
+                .or_insert(KeptMessage { turn, at, digest });
         }
     }
 
@@ -202,9 +211,11 @@ impl OffRecordSessionRegistry {
                 },
             ));
         }
+        let overlay_shell = clock.entity_id()?;
         let record = OffRecordSessionRecord {
             version: OFF_RECORD_SESSION_RECORD_VERSION,
             session_ref: session_ref.to_owned(),
+            instance_ref: overlay_shell,
             mode,
             backend,
             entered_at: clock.now_recorded_at(),
@@ -237,7 +248,7 @@ impl OffRecordSessionRegistry {
                 // room. Allocating it lazily made "one shell per live
                 // session" a property of whoever touched it first; allocating
                 // it here makes it a property of entry.
-                overlay_shell: clock.entity_id()?,
+                overlay_shell,
                 overlay_shell_staged: false,
                 continuation_shell: None,
                 kept_messages: BTreeMap::new(),

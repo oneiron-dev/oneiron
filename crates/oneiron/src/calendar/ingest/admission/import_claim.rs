@@ -86,6 +86,40 @@ pub(super) fn admit_calendar_import_claim_screened(
     Ok(claim_id)
 }
 
+/// The outbound connector's unscreened imported claim in its publication writer.
+pub(in crate::calendar) fn admit_calendar_import_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event_ref: &EntityId,
+    predicate: &str,
+    value: rmpv::Value,
+    source_record_id: &str,
+    recorded_at: u64,
+) -> crate::Result<EntityId> {
+    let actor = ensure_ics_import_actor_in_txn(vault, txn, recorded_at)?;
+    let claim_id = vault.store.clock.entity_id()?;
+    let admission = ImportedEvidenceAdmission::proposed(
+        ICS_FEED_SOURCE_ID,
+        claim_id,
+        ImportedEvidenceEntityResolution::subject(*event_ref),
+        WriteActor::new(actor, crate::edge::EdgeActorClass::System),
+        TimeRange {
+            start: recorded_at,
+            end: recorded_at,
+        },
+        recorded_at,
+    );
+    crate::ingest::admit_imported_evidence_claim_typed_for_machine_in_txn(
+        vault,
+        txn,
+        predicate,
+        value,
+        source_record_id,
+        &admission,
+    )?;
+    Ok(claim_id)
+}
+
 /// The adapter's write actor: one deterministic MACHINE entity, minted on
 /// first use. Imported claims attribute to it as `EdgeActorClass::System`.
 pub fn ics_import_actor_id() -> crate::Result<EntityId> {
@@ -95,15 +129,7 @@ pub fn ics_import_actor_id() -> crate::Result<EntityId> {
 pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
     let id = ics_import_actor_id()?;
     if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("name"),
-                rmpv::Value::from("calendar ICS feed importer"),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("actor body did not encode"))?;
+        let body = ics_import_actor_body()?;
         vault.put_entity(
             &id,
             ENTITY_TYPE_MACHINE,
@@ -113,6 +139,45 @@ pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<
             },
             now,
             &body,
+        )?;
+    }
+    Ok(id)
+}
+
+fn ics_import_actor_body() -> crate::Result<Vec<u8>> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("name"),
+            rmpv::Value::from("calendar ICS feed importer"),
+        )]),
+    )
+    .map_err(|_| crate::Error::InvariantViolation("actor body did not encode"))?;
+    Ok(body)
+}
+
+fn ensure_ics_import_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    now: u64,
+) -> crate::Result<EntityId> {
+    let id = ics_import_actor_id()?;
+    if vault.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_MACHINE) {
+        crate::ports::EntityStore::port_entity_put(
+            vault,
+            txn,
+            &id,
+            &crate::ports::EntityRecord {
+                entity_type: ENTITY_TYPE_MACHINE,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: 0,
+                body: ics_import_actor_body()?,
+            },
         )?;
     }
     Ok(id)

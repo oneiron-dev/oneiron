@@ -1,3 +1,6 @@
+//! Overlay keyspace manifest: the 28 named databases and their mutations.
+//! Entry [`OverlayKeyspace`]; read by `overlay::rows` and the `overlay_db` accessors.
+//! Owned by `session_overlay`; slots mirror the durable manifest, never invented here.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

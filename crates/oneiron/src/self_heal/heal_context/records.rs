@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use base64::Engine as _;
 use serde_json::{Value, json};
 
-use crate::code_run::{CodeRunOutputKind, CodeRunReplayRecord};
+use crate::code_run::{CodeRunOutputKind, CodeRunRawOutput, CodeRunReplayRecord};
 use crate::entity_id::bytes_to_hex_lower;
 
 /// `nodes` in source order: each before the nodes its `links` name, ties by id, and
@@ -53,8 +53,8 @@ pub(super) fn source_order<T: Ord + Copy>(
 
 /// A code run's replay record as data (OF-418 L10): its bridge calls whole, its step
 /// checkpoints, its outputs' manifests with their recorded previews, and its result
-/// names. The live run's credential binding stays out; output bodies are read only
-/// through the owner's result doors.
+/// names. The live run's credential binding stays out; an output body rides beside its
+/// manifest only once the admission reads it through the reader's lane.
 pub(super) fn code_run_value(record: &CodeRunReplayRecord) -> Value {
     let calls: Vec<Value> = record
         .bridge_calls
@@ -127,6 +127,23 @@ pub(super) fn body_value(body: &[u8]) -> Value {
     match rmpv::decode::read_value(&mut cursor) {
         Ok(value) if cursor.position() == body.len() as u64 => msgpack_value(&value),
         _ => json!({ "base64": base64::engine::general_purpose::STANDARD.encode(body) }),
+    }
+}
+
+/// A code-run raw output body as data (FIX 7275): a text body's whole UTF-8 as a JSON
+/// string, a binary body's bytes as base64. A text body that does not decode keeps its
+/// exact bytes as base64, never a replaced text.
+pub(super) fn raw_output_body_value(output: &CodeRunRawOutput, body: &[u8]) -> Value {
+    match output.kind {
+        CodeRunOutputKind::Text => match std::str::from_utf8(body) {
+            Ok(text) => Value::String(text.to_owned()),
+            Err(_) => {
+                json!({ "base64": base64::engine::general_purpose::STANDARD.encode(body) })
+            }
+        },
+        CodeRunOutputKind::Binary => {
+            json!({ "base64": base64::engine::general_purpose::STANDARD.encode(body) })
+        }
     }
 }
 

@@ -8,7 +8,7 @@ use crate::llm::BudgetDenied;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{BudgetExhaustionPolicy, BudgetGuard, EntityId, Vault};
 
-use super::{InvocationId, VerbCall, VerbDomain};
+use super::{InvocationId, VerbCall, VerbCallScope, VerbDomain};
 
 /// The host verb a budget hit runs under.
 pub const HOST_BUDGET_HIT: &str = "host.budget.hit";
@@ -25,6 +25,8 @@ pub struct BudgetHit<'a> {
     /// Whose work the line paid for.
     pub actor: EntityId,
     pub invocation: InvocationId,
+    /// The hook axes the hit runs in, when the producer proved one.
+    pub scope: Option<VerbCallScope>,
 }
 
 impl Vault {
@@ -41,7 +43,7 @@ impl Vault {
             actor: hit.actor,
             // A write a host verb causes stamps the System class.
             class: HookActorClass::System,
-            scope: None,
+            scope: hit.scope,
             board_epoch: None,
             turn: None,
             domain: VerbDomain::Write,
@@ -75,14 +77,17 @@ impl Vault {
     /// `host.budget.hit` for a guard that just refused a reservation. `seat`
     /// is the model or line it refused; the guard gives the policy and the
     /// accounting. `actor` is whose work the line paid for, else the actor the
-    /// guard is bound to, else the vault's owner. A refusal other than a spent
-    /// line runs nothing, and the refusal itself stands as the host made it.
+    /// guard is bound to, else the vault's owner. `scope` is the hook axes
+    /// the hit runs in, when the producer proved one; `None` keeps today's
+    /// behavior. A refusal other than a spent line runs nothing, and the
+    /// refusal itself stands as the host made it.
     pub fn budget_denied_hooks(
         &self,
         denied: &BudgetDenied,
         guard: &BudgetGuard,
         seat: &str,
         actor: Option<EntityId>,
+        scope: Option<VerbCallScope>,
     ) {
         if !matches!(denied, BudgetDenied::Exhausted) {
             return;
@@ -104,6 +109,7 @@ impl Vault {
             accounting: serde_json::to_value(&read).unwrap_or(Value::Null),
             actor,
             invocation: InvocationId::mint(),
+            scope,
         });
     }
 }
