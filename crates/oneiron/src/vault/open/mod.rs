@@ -332,6 +332,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -480,6 +481,7 @@ impl Vault {
                         end: header.occurred_end,
                     },
                     learned_at: header.learned_at,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -614,6 +616,7 @@ impl Vault {
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             claim_vad_payment: Default::default(),
+            cloud_registration_erase_revokes: Default::default(),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -722,7 +725,10 @@ impl Vault {
                 crate::skill_hub::seed_bootstrap_skills(&vault)?;
                 crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
                 crate::store::default_skill_hub::seed_default_skill_hub(&vault)?;
-                crate::comm::seed_claim_class_descriptors(&vault)?;
+                vault
+                    .store
+                    .record_hooks
+                    .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
             }
         }

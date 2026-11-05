@@ -14,6 +14,7 @@ pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_diagnostic;
+mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
@@ -32,6 +33,7 @@ mod curator;
 pub mod detectors;
 mod evaluation;
 mod feedback_triage;
+mod fold_suggestions;
 pub mod fork_promote;
 pub mod honesty;
 pub mod identity;
@@ -72,7 +74,8 @@ pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
-    HarnessEvaluationTarget, RetuneThresholds,
+    HarnessEvaluationTarget, HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation,
+    HarnessOf360Scheduled, RetuneThresholds,
 };
 use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";
@@ -272,6 +275,9 @@ pub(crate) fn execute(
         }
         coach::COACH_ROOM_UPKEEP_FACET => {
             room_upkeep::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_FOLD_SUGGESTIONS_FACET => {
+            fold_suggestions::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
