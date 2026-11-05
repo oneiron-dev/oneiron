@@ -20,6 +20,7 @@ pub(crate) type EntitySideRowEraser =
 
 /// Every per-entity eraser, one line per module.
 const ERASERS: &[EntitySideRowEraser] = &[
+    |write, txn, id| crate::agent_dispatch::erase_workflow_tool_source_in_txn(write.store, txn, id),
     |write, txn, id| crate::typed_body::erase_in_txn(write.store, txn, id),
     |write, txn, id| crate::office_body::erase_in_txn(write.store, txn, id),
     |write, txn, id| crate::edit_roundtrip::deck_create::erase_in_txn(write.store, txn, id),
@@ -92,6 +93,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| erase_skipped_send_receipt_in_txn(write.store, txn, id),
     // FIX 12004: meeting cards whose EVENT or copied source row is erased.
     |write, txn, id| erase_inbox_cards_in_txn(write.store, txn, id),
+    // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
+    |write, txn, id| crate::mail_pack::erase_occurrence_rows_in_txn(write.store, txn, id),
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     |write, txn, id| {
         crate::store::pack_hook_proposal::erase_hook_proposal_in_txn(write.store, txn, id)

@@ -200,6 +200,46 @@ pub(super) fn retained_claim_names(
     Ok(false)
 }
 
+/// Whether a retained replicated version claim keeps this artifact's
+/// payload under a hold. Its claim is preserved with the bytes it names.
+pub(super) fn artifact_claim_held_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+) -> Result<bool> {
+    for edge in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        txn,
+        artifact,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        let claim = edge?.target;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
+            continue;
+        };
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN
+            || raw[0] != ENTITY_TYPE_CLAIM
+            || crate::deletion::row_deletion_marked(store, txn, &claim, Some(&raw))?
+        {
+            continue;
+        }
+        let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            true,
+        ) else {
+            continue;
+        };
+        if version_claim_reference(&body).is_some_and(|(id, _)| id == *artifact)
+            && crate::store::legal_hold::held_in_txn(store, txn, claim.as_bytes())?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether a `blob.version` claim here named `artifact`: its delete has bytes to settle even
 /// when its row never arrived.
 pub(crate) fn claimed_hash_rows_exist(
