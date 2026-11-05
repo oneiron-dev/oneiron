@@ -3345,7 +3345,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "chrono",
 ]
@@ -3353,7 +3353,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3380,7 +3380,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3391,7 +3391,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3401,7 +3401,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5#7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f#e7cbab17d0eb27f2b32b68c5f7ea2d9f63e47e3f"
 dependencies = [
  "calamine",
  "chrono",
@@ -8009,6 +8009,7 @@ dependencies = [
  "oneiron",
  "oneiron-server",
  "oneiron-vault-contract",
+ "serde_json",
  "tempfile",
  "zeroize",
 ]
