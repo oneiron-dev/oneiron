@@ -1,6 +1,6 @@
 //! Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage ABI/schema gates.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "linux")]
 use std::fs::File;
 use std::path::PathBuf;
@@ -32,6 +32,16 @@ use super::open_version_keys::{
 use super::vault_root_bind::{VaultRootIdentity, duplicate_open_root, vault_root_preflight_error};
 use crate::error::StoreError;
 
+/// Each open store's path and the root identity it holds, as
+/// [`duplicate_open_root`] reads them.
+fn open_identities(
+    open_paths: &HashMap<PathBuf, OpenStorePath>,
+) -> impl Iterator<Item = (&PathBuf, Option<&VaultRootIdentity>)> {
+    open_paths
+        .iter()
+        .map(|(path, open)| (path, open.identity.as_ref()))
+}
+
 /// How long a reopen waits for a vault whose only handles are those its
 /// store's leader holds to close (FIX 12316): a detached write's run and the
 /// close after it, a few commits at most.
@@ -60,9 +70,9 @@ impl RegisteredPath {
             let open_path = if open_paths.contains_key(&path) {
                 Some(path.clone())
             } else {
-                identity
-                    .as_ref()
-                    .and_then(|identity| duplicate_open_root(&open_paths, &path, identity))
+                identity.as_ref().and_then(|identity| {
+                    duplicate_open_root(open_identities(&open_paths), &path, identity)
+                })
             };
             let Some(open_path) = open_path else {
                 let holds = crate::store::LeaderHolds::default();
@@ -98,7 +108,8 @@ impl RegisteredPath {
             .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
 
         if let Some(identity) = &identity
-            && let Some(open_path) = duplicate_open_root(&open_paths, &self.path, identity)
+            && let Some(open_path) =
+                duplicate_open_root(open_identities(&open_paths), &self.path, identity)
         {
             return Err(vault_root_preflight_error(
                 &self.path,
