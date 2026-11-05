@@ -642,7 +642,12 @@ impl SyncConnection {
             // so no clear reaches them.
             match client.update_verdict(&update.window_key, &update.encoded) {
                 UpdateVerdict::Portable => {}
-                UpdateVerdict::Withheld => continue,
+                UpdateVerdict::Withheld => {
+                    // A home that may not read the world takes it sealed,
+                    // when the world syncs sealed (DEC-0005 fix 8).
+                    client.relay_withheld_update(&update.window_key, &update.encoded);
+                    continue;
+                }
                 UpdateVerdict::Uninspectable => break,
             }
             // A window the home refused to grant again keeps its rows queued,
