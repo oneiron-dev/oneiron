@@ -62,6 +62,14 @@ impl PhoneCallRead {
         Ok(read)
     }
 
+    pub(crate) fn admitted_media_agent(&self, vault: &Vault) -> Result<EntityId, HostError> {
+        if !std::ptr::eq(vault, self.vault.as_ref()) {
+            return Err(HostError::InvalidRequest);
+        }
+        self.current_scope()?;
+        Ok(self.agent)
+    }
+
     pub(super) fn agent(&self) -> EntityId {
         self.agent
     }
