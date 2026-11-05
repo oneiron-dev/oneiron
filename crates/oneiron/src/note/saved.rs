@@ -118,6 +118,7 @@ impl PreparedSavedNote {
                 end: self.header.occurred_end,
             },
             learned_at: self.header.learned_at,
+            row_version: Some(self.header.row_version),
             data: self.body.clone(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
