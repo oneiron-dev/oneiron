@@ -267,9 +267,13 @@ impl SyncConnection {
                         &mut write, client, debounce_buffer, &mut document_buffer,
                         &mut publication_slot, &mut batch_turn,
                     ).await {
-                        Err(error) => {
+                        Err(LoopExit::Shutdown) => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        Err(exit) => {
                             flush_to_queue(&self.queue, debounce_buffer);
-                            return LoopExit::Disconnected(error);
+                            return exit;
                         }
                         Ok(Some((part, sent))) => {
                             client.artifact_publication_released(&mut publication_cursor, &part, sent);
@@ -453,10 +457,19 @@ impl SyncConnection {
                         debounce_deadline.get_or_insert_with(||
                             Instant::now() + Duration::from_millis(debounce_ms));
                     }
-                    if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
-                        return LoopExit::Disconnected(e);
-                    }
-                    if let Err(e) = crate::sync::client::send_leaf_key_requests(client, &mut write).await {
+                    let mut housekeeping_left_rx = self.left.subscribe();
+                    let send_result = tokio::select! {
+                        biased;
+                        () = async { let _ = housekeeping_left_rx.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        result = async {
+                            crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
+                            crate::sync::client::send_leaf_key_requests(client, &mut write).await
+                        } => result,
+                    };
+                    if let Err(e) = send_result {
                         return LoopExit::Disconnected(e);
                     }
                     if let Err(error) = client.replay_deferred_federation_update() {

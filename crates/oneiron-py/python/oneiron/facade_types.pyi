@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1231 facade rows, 4482 declarations.
-Inputs: 1162 of 1231 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1066 of 1231 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1232 facade rows, 4483 declarations.
+Inputs: 1163 of 1232 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1067 of 1232 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -5569,6 +5569,8 @@ class SkillCodeAutoInstallRequest(TypedDict):
 SkillFitChoice = Literal["rule_fit", "owner_asked"]
 class SkillFitSetRequest(TypedDict):
     setting: SkillFitChoice
+class SkillAdvisoryAskRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -16633,6 +16635,7 @@ class UnsupportedCapability(TypedDict):
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
+    code: NotRequired[str | None]
 class FatalLlmErrorInvalidRequestDetail(TypedDict):
     InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):

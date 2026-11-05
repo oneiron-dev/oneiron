@@ -35,6 +35,7 @@ mod diverged;
 mod endpoint;
 mod guest;
 mod host;
+mod host_status;
 mod link;
 mod local;
 mod scan;
@@ -49,6 +50,7 @@ pub(super) use self::endpoint::{
 };
 pub use self::guest::run_vm_outbox;
 pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label};
+pub use self::host_status::{VmOutboxHostMemberStatus, read_vm_outbox_member_statuses};
 pub(crate) use self::store::DivergedAnswer;
 
 use self::local::Owner;
