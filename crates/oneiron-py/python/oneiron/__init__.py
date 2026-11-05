@@ -947,6 +947,9 @@ class Oneiron:
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs":
             return Oneiron._VaultCustodyVerbs(self._client)
+        @property
+        def mail(self) -> "Oneiron._VaultMailVerbs":
+            return Oneiron._VaultMailVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5753,6 +5756,90 @@ class Oneiron:
         def folder(self, spec):
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
             return json.loads(_translate(lambda: self._client.vault_custody_members_drain_folder(json.dumps(spec))))
+    class _VaultMailVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def pack(self) -> "Oneiron._VaultMailPackVerbs":
+            return Oneiron._VaultMailPackVerbs(self._client)
+        @property
+        def sources(self) -> "Oneiron._VaultMailSourcesVerbs":
+            return Oneiron._VaultMailSourcesVerbs(self._client)
+        @property
+        def threads(self) -> "Oneiron._VaultMailThreadsVerbs":
+            return Oneiron._VaultMailThreadsVerbs(self._client)
+        @property
+        def compliance(self) -> "Oneiron._VaultMailComplianceVerbs":
+            return Oneiron._VaultMailComplianceVerbs(self._client)
+        def inbox(self, spec):
+            """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+            return json.loads(_translate(lambda: self._client.vault_mail_inbox(json.dumps(spec))))
+    class _VaultMailPackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def install(self, spec=None):
+            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            return json.loads(_translate(lambda: self._client.vault_mail_pack_install(json.dumps({} if spec is None else spec))))
+    class _VaultMailSourcesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def connect(self, spec):
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_connect(json.dumps(spec))))
+        def list(self, spec=None):
+            """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_list(json.dumps({} if spec is None else spec))))
+        @property
+        def settings(self) -> "Oneiron._VaultMailSourcesSettingsVerbs":
+            return Oneiron._VaultMailSourcesSettingsVerbs(self._client)
+        @property
+        def members(self) -> "Oneiron._VaultMailSourcesMembersVerbs":
+            return Oneiron._VaultMailSourcesMembersVerbs(self._client)
+        def audience_events(self, spec):
+            """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_audience_events(json.dumps(spec))))
+        def sync_status(self, spec):
+            """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_sync_status(json.dumps(spec))))
+    class _VaultMailSourcesSettingsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_settings_set(json.dumps(spec))))
+    class _VaultMailSourcesMembersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_members_set(json.dumps(spec))))
+    class _VaultMailThreadsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def share(self, spec):
+            """Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox."""
+            return json.loads(_translate(lambda: self._client.vault_mail_threads_share(json.dumps(spec))))
+        def unshare(self, spec):
+            """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
+            return json.loads(_translate(lambda: self._client.vault_mail_threads_unshare(json.dumps(spec))))
+        def read(self, spec):
+            """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+            return json.loads(_translate(lambda: self._client.vault_mail_threads_read(json.dumps(spec))))
+    class _VaultMailComplianceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def setting(self, spec=None):
+            """Whether org compliance search across mailboxes is on; off by default."""
+            return json.loads(_translate(lambda: self._client.vault_mail_compliance_setting(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log."""
+            return json.loads(_translate(lambda: self._client.vault_mail_compliance_set(json.dumps(spec))))
+        def log(self, spec=None):
+            """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
+            return json.loads(_translate(lambda: self._client.vault_mail_compliance_log(json.dumps({} if spec is None else spec))))
+        def search(self, spec):
+            """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+            return json.loads(_translate(lambda: self._client.vault_mail_compliance_search(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
