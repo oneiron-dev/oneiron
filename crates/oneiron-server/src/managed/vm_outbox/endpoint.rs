@@ -161,12 +161,22 @@ fn answer(
             },
             Ok(Request::Park) => {
                 runtime.set_parked(true)?;
-                gate.park();
+                if !gate.set_unless_draining(super::Mode::Parked) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "the outbox companion is draining",
+                    ));
+                }
                 Reply::Parked
             }
             Ok(Request::Resume) => {
                 runtime.set_parked(false)?;
-                gate.resume();
+                if !gate.set_unless_draining(super::Mode::Open) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "the outbox companion is draining",
+                    ));
+                }
                 Reply::Resumed
             }
             Ok(Request::RegisterBackup { dir, label }) => match register(&dir, &label, uid) {

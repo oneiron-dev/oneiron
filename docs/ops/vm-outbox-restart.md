@@ -22,7 +22,11 @@ reports idle only after Park is acknowledged, and retries Resume after wake
 rather than leaving a restarted companion parked. Both waits hear Stop;
 cancelling them closes their pending socket I/O without a detached blocking
 worker. Ordinary serving continues while these lifecycle requests wait. No
-new retry duration or attempt cap is added.
+new retry duration or attempt cap is added. After Park is acknowledged, the
+engine reads the current off-record snapshot predicate immediately before its
+idle report. A late guest lifecycle request cannot overwrite a companion's
+terminal Draining mode or acknowledge a transition it did not apply. This
+guard does not change the host attachment's existing drain/resume behavior.
 
 The lifecycle endpoint records its authenticated Park/Resume and validated
 backup registration in `/run/oneiron-outbox/runtime.json`, root-owned 0600.

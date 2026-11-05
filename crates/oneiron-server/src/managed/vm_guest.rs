@@ -258,12 +258,12 @@ pub(super) fn spawn_lifecycle(
                             None
                         }
                     };
-                    let snapshot_ok = !server.vault().has_open_off_record_session();
                     let companion = outbox_admitted;
                     let parked = async {
                         if companion {
                             super::vm_outbox::park_companion().await;
                         }
+                        let snapshot_ok = !server.vault().has_open_off_record_session();
                         link.idle(wake, snapshot_ok).await
                     };
                     tokio::select! {
