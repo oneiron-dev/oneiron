@@ -21,6 +21,7 @@ pub(crate) use run_self::describe_self_for_run;
 mod scratchpad;
 mod session;
 mod split;
+pub(crate) use split::next_state_part;
 mod standing;
 mod turn_actions;
 
