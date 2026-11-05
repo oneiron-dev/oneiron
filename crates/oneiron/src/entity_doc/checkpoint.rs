@@ -22,6 +22,9 @@ mod loro;
 mod message_receipts;
 mod native_source;
 mod proposal;
+mod raw_image;
+
+pub(crate) use raw_image::validate_native_image_rows;
 
 // The entity document family's Loro split and join (FIX 9126): a group is
 // its full snapshot, then its updates in replay order.

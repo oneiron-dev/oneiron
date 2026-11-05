@@ -64,6 +64,71 @@ pub(in crate::entity_doc) fn validate_checkpoint_history<'a>(
             return Err(invalid());
         }
     }
+    validate_doc(entity, doc)
+}
+
+/// Inspect decodable raw image histories without treating an opaque NOTE or
+/// unknown row as an admitted native source. Pending or undecodable fragments
+/// still need admission when a later ingress actually joins them.
+pub(in crate::entity_doc) fn validate_image_history<'a>(
+    rows: impl IntoIterator<Item = &'a [u8]>,
+) -> Result<Option<EntityDoc>> {
+    let mut rows = rows.into_iter();
+    let snapshot = rows.next().ok_or_else(invalid)?;
+    let updates: Vec<_> = rows.collect();
+    let doc = match EntityDoc::from_snapshot(snapshot) {
+        Ok(doc) => doc,
+        Err(_) => {
+            // Other document codecs share these rows. A readable native root
+            // without a valid entity birth is not one of those codecs.
+            if let Ok(raw) = loro::LoroDoc::from_snapshot(snapshot) {
+                for update in updates {
+                    let _ = raw.import(update);
+                }
+                if has_native_root(&raw) {
+                    return Err(invalid());
+                }
+            }
+            return Ok(None);
+        }
+    };
+    let mut incomplete = false;
+    for update in updates {
+        match doc.doc.import(update) {
+            Ok(imported) => incomplete |= imported.pending.is_some(),
+            Err(_) => incomplete = true,
+        }
+    }
+    if !has_native_root(&doc.doc) {
+        return Ok(None);
+    }
+    let entity = EntityId::from_hex(&doc.birth().entity)?;
+    let checked = validate_doc(entity, doc)?;
+    if checked.is_some() && incomplete {
+        return Err(invalid());
+    }
+    Ok(checked)
+}
+
+fn has_native_root(doc: &loro::LoroDoc) -> bool {
+    if let LoroValue::Map(roots) = doc.get_value()
+        && roots.contains_key(ROOT)
+    {
+        return true;
+    }
+    let start = if doc.is_shallow() {
+        doc.shallow_since_vv().to_vv()
+    } else {
+        loro::VersionVector::default()
+    };
+    doc.export_json_updates_without_peer_compression(&start, &doc.oplog_vv())
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| matches!(&op.container, ContainerID::Root { name, .. } if name.as_str() == ROOT))
+}
+
+fn validate_doc(entity: EntityId, doc: EntityDoc) -> Result<Option<EntityDoc>> {
     let birth = doc.birth();
     if birth.entity != entity.to_hex() {
         return Err(invalid());
