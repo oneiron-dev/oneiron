@@ -1,7 +1,4 @@
-//! Core half of `store::skill_package::codec`: its store-layer items live in `oneiron_store::skill_package::codec` and are
-//! re-exported here; the items below stay in the engine.
-
-pub use oneiron_store::skill_package::codec::*;
+//! Package envelope codec and source consistency validation.
 
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
@@ -18,6 +15,80 @@ impl RawValue for HubPackage {
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         Ok(decode_hub_package(bytes)?)
     }
+}
+
+pub(crate) fn invalid(message: &'static str) -> Error {
+    Error::Artifact(ArtifactError::InvalidSkillBody(message))
+}
+const MAGIC: &[u8] = b"oneiron.hub-package.v1\0";
+
+/// Transport packages do not claim a storage holder. The ASSET guard uses
+/// this discriminator to refuse the removed, unshipped holderless shape.
+pub(crate) fn is_hub_package_envelope(bytes: &[u8]) -> bool {
+    bytes.starts_with(MAGIC)
+}
+
+pub(crate) const MAX_ENCODED: usize = MAX_HUB_PACKAGE_TOTAL_BYTES + 8 * 1024 * 1024;
+const MAX_RECORD: usize = 1024 * 1024;
+
+fn field(out: &mut Vec<u8>, value: &[u8]) -> Result<()> {
+    let len = u32::try_from(value.len()).map_err(|_| invalid("package field too large"))?;
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(value);
+    Ok(())
+}
+fn count(input: &mut Cursor<&[u8]>, max: usize) -> Result<usize> {
+    let mut b = [0; 4];
+    input
+        .read_exact(&mut b)
+        .map_err(|_| invalid("truncated package"))?;
+    let n = u32::from_be_bytes(b) as usize;
+    if n > max {
+        return Err(invalid("package field exceeds bound"));
+    }
+    Ok(n)
+}
+/// The bytes one file takes in an encoded package: its path and its content,
+/// each after its four-byte length.
+pub(crate) const fn encoded_file_bytes(path: usize, content: usize) -> usize {
+    path.saturating_add(content).saturating_add(8)
+}
+/// A package's file count, read apart from the bounded field lengths. Each
+/// file takes at least its two four-byte lengths, so a count the bytes left
+/// cannot hold is a truncated package; no count is refused for its size
+/// (FIX 10100).
+fn read_file_count(input: &mut Cursor<&[u8]>) -> Result<usize> {
+    let mut b = [0; 4];
+    input
+        .read_exact(&mut b)
+        .map_err(|_| invalid("truncated package"))?;
+    let n = usize::try_from(u32::from_be_bytes(b)).map_err(|_| invalid("truncated package"))?;
+    let left = input
+        .get_ref()
+        .len()
+        .saturating_sub(input.position() as usize);
+    if n > left / 8 {
+        return Err(invalid("truncated package"));
+    }
+    Ok(n)
+}
+fn bytes(input: &mut Cursor<&[u8]>, max: usize) -> Result<Vec<u8>> {
+    let n = count(input, max)?;
+    if n > input
+        .get_ref()
+        .len()
+        .saturating_sub(input.position() as usize)
+    {
+        return Err(invalid("truncated package field"));
+    }
+    let mut out = vec![0; n];
+    input
+        .read_exact(&mut out)
+        .map_err(|_| invalid("truncated package"))?;
+    Ok(out)
+}
+fn text(input: &mut Cursor<&[u8]>, max: usize) -> Result<String> {
+    String::from_utf8(bytes(input, max)?).map_err(|_| invalid("package text is not UTF-8"))
 }
 
 /// Encodes a validated package for bounded local storage or explicit host transport.

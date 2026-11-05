@@ -172,8 +172,6 @@ pub mod setting_seed;
 pub mod settings;
 pub mod side_table;
 pub mod skill_hub_predicates;
-pub mod skill_package;
-pub mod skill_source_carrier;
 pub mod snapshot_key;
 pub mod snapshot_lifecycle;
 pub mod snapshot_lock_result;

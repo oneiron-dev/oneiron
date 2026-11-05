@@ -1,17 +1,12 @@
 //! Stored capability surface encoding.
 
-use crate::side_table::codec::CodecError;
-use crate::side_table::codec::RawValue;
-use crate::skill_package::package::MAX_CAPABILITY_TEXT_BYTES;
-use crate::skill_package::package::SkillCapabilitySurface;
-use crate::write_envelope::skill_source::support::decode_value;
-use crate::write_envelope::skill_source::support::encode_value;
-use crate::write_envelope::skill_source::support::exact_map;
-use crate::write_envelope::skill_source::support::required_value;
-use crate::write_envelope::skill_source::support::validate_text;
-use oneiron_base::error::ArtifactError;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
+use super::SkillCapabilitySurface;
+use super::package::MAX_CAPABILITY_TEXT_BYTES;
+use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{CodecError, RawValue};
+use crate::write_envelope::skill_source::support::{
+    decode_value, encode_value, exact_map, required_value, validate_text,
+};
 use rmpv::Value;
 use std::collections::BTreeSet;
 
@@ -28,7 +23,7 @@ impl RawValue for SkillCapabilitySurface {
     }
 }
 
-pub fn encode_capability_surface_value(surface: &SkillCapabilitySurface) -> Value {
+pub(crate) fn encode_capability_surface_value(surface: &SkillCapabilitySurface) -> Value {
     Value::Map(vec![
         (Value::from("bins"), string_set_value(&surface.bins)),
         (Value::from("env"), string_set_value(&surface.env)),

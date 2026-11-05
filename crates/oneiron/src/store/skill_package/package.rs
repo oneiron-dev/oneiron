@@ -4,17 +4,17 @@
 
 use std::collections::BTreeSet;
 
+use crate::error::{Error, Result};
 use crate::write_envelope::skill_record::{
     SkillContentHash, SkillRecord, canonical_skill_tree_hash,
 };
-use oneiron_base::error::{Error, Result};
 
+use crate::error::ArtifactError;
 use crate::write_envelope::skill_source::support::validate_text;
-use oneiron_base::error::ArtifactError;
 
-pub const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
-pub const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
-pub const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
+pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 use crate::write_envelope::skill_source::{HubFile, SkillPackageFormat};
 
@@ -56,7 +56,7 @@ impl SkillCapabilitySurface {
         self
     }
 
-    pub fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         for entries in [&self.bins, &self.env, &self.mcp, &self.allowed_tools] {
             for entry in entries {
                 validate_text(
@@ -69,7 +69,7 @@ impl SkillCapabilitySurface {
         Ok(())
     }
 
-    pub fn is_same_or_narrower_than(&self, prior: &Self) -> bool {
+    pub(crate) fn is_same_or_narrower_than(&self, prior: &Self) -> bool {
         self.bins.is_subset(&prior.bins)
             && self.env.is_subset(&prior.env)
             && self.mcp.is_subset(&prior.mcp)
