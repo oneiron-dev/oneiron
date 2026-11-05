@@ -48,8 +48,9 @@ impl Vault {
             .ok_or(Error::InvalidConfig(
                 "invalid reminder worker read key".into(),
             ))?
-            .require_relationship_grants(Some(actor));
-        let reader = self.scoped_read(key).for_destination(destination);
+            .require_relationship_grants(Some(actor))
+            .for_destination(destination);
+        let reader = self.scoped_read(key);
         reader.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let head = self.commitment_head_in_txn(&txn, &reminder.instance_id)?;
