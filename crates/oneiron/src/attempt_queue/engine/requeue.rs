@@ -91,10 +91,28 @@ impl AttemptQueue<'_> {
         validate_transition_lease(&row, &input.lease_owner, input.attempt_count, "requeue")?;
         validate_failure_reason(&input.reason)?;
 
+        let mut reason = input.reason.clone();
+        if coalesce {
+            match self.vault {
+                Some(vault) => crate::batch::secret_scan::admit_typed(
+                    vault,
+                    wtxn,
+                    ("attempt", input.id.as_bytes()),
+                    &mut reason,
+                )?,
+                None => crate::batch::secret_scan::admit_typed(
+                    self.store,
+                    wtxn,
+                    ("attempt", input.id.as_bytes()),
+                    &mut reason,
+                )?,
+            };
+        }
+
         if coalesce
             && let Some(last) = row.history.last_mut()
             && last.lease_owner == input.lease_owner
-            && last.reason == input.reason
+            && last.reason == reason
             && u64::from(last.attempt_count) + u64::from(last.count) == u64::from(row.attempt_count)
             && let Some(count) = last.count.checked_add(1)
         {
@@ -107,7 +125,7 @@ impl AttemptQueue<'_> {
                 count: 1,
                 lease_owner: input.lease_owner,
                 attempt_count: row.attempt_count,
-                reason: input.reason.clone(),
+                reason,
             });
         }
         row.last_error = Some(input.reason);
