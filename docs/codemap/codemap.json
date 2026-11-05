@@ -109266,7 +109266,7 @@
      "path": "src/native/pdf/admitted.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -109480,7 +109480,7 @@
      "path": "src/native/verify/verify_chain_gates.rs",
      "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
