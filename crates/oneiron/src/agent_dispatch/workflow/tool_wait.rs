@@ -110,6 +110,7 @@ struct CheckpointContent {
     progress: WorkflowToolProgress,
     body_owner: EntityId,
     body: OutputRef,
+    published_digests: Vec<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +120,7 @@ struct CheckpointBinding {
     room: Option<EntityId>,
     known_sources: Vec<EntityId>,
     body_owner: EntityId,
+    published_digests: Vec<[u8; 32]>,
 }
 
 impl CheckpointContent {
@@ -128,6 +130,7 @@ impl CheckpointContent {
             room: self.room,
             known_sources: self.progress.known_sources.clone(),
             body_owner: self.body_owner,
+            published_digests: self.published_digests.clone(),
         }
     }
 }
@@ -228,6 +231,12 @@ pub(crate) fn put_in_txn(
     check_progress_in_txn(vault, txn, &actual, actor, &progress)?;
     let k = key(actual.id)?;
     let prior = TABLE.get(&vault.store, txn, &k)?;
+    let owner = body_owner(actual.id)?;
+    let mut published_digests = match prior.as_ref().and_then(CheckpointRow::binding) {
+        Some(binding) if binding.body_owner == owner => binding.published_digests,
+        Some(_) => return Err(invalid("workflow checkpoint has foreign body owner")),
+        None => Vec::new(),
+    };
     let fenced = fence::check(&vault.store, txn, &actual)?;
     if fenced != prior.is_some() {
         return Err(invalid("workflow checkpoint payload is unavailable"));
@@ -304,15 +313,19 @@ pub(crate) fn put_in_txn(
         sink,
         std::io::Cursor::new(bytes),
     )?;
-    let owner = body_owner(actual.id)?;
     vault.put_code_run_output_in_txn(txn, &finished, &finished.output, Some(owner))?;
+    let body = finished.output.output_ref();
+    if !published_digests.contains(&body.hash) {
+        published_digests.push(body.hash);
+    }
     let content = CheckpointContent {
         actor: actor.entity_ref(),
         actor_class: actor.actor_class(),
         room,
         progress,
         body_owner: owner,
-        body: finished.output.output_ref(),
+        body,
+        published_digests,
     };
     let mut row = CheckpointRow {
         attempt: actual.id,
