@@ -23,8 +23,13 @@
 //! to those who read what it came from ([`walk`]): the facts learned from a
 //! personal mailbox stay with its owner.
 //!
-//! Policies, bindings and the share events are vault metadata; a vault that
-//! holds no policy binds no row, and the conjunct answers at once.
+//! Policies, bindings and the share events are vault metadata, and they do
+//! not travel with a replica. So a bound row, and a row whose words came
+//! from one, stay out of window replication
+//! ([`withheld_from_replication_in`]); and a row a source landed, read where
+//! its binding is absent, reads to no one. A vault that holds no policy
+//! binds no row, and the conjunct answers at once for every row no source
+//! landed.
 
 mod walk;
 
@@ -36,7 +41,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
-pub(crate) use walk::readable_with_read_in;
+pub(crate) use walk::{readable_with_read_in, withheld_from_replication_in};
 
 /// One policy, by its id.
 const POLICIES: SideTable<EntityId, SourceAudiencePolicy, Named> =

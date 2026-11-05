@@ -3,9 +3,10 @@
 //! of the live inbox and keeps it as a labelled source-deleted copy, still
 //! searchable by its readers. "Forget too" forgets every revision of it in
 //! the vault through the ordinary user delete, and keeps only the provider id
-//! as a fence, so a later listing never brings it back. A message moved to
-//! trash or spam counts as deleted at the provider; one taken out of the
-//! trash or spam again is live again, when its copy was kept.
+//! as a fence, so a later listing never brings it back: its sender, subject
+//! and labels go from the pack's own rows too. A message moved to trash or
+//! spam counts as deleted at the provider; one taken out of the trash or
+//! spam again is live again, when its copy was kept.
 
 use super::source::{MailProviderDeleteSetting, MailSourceRow};
 use super::state::{
@@ -43,6 +44,11 @@ pub(super) fn apply_provider_delete(
     let outcome = match row.on_provider_delete {
         MailProviderDeleteSetting::KeepInMemory => ProviderDeleteOutcome::Kept,
         MailProviderDeleteSetting::ForgetToo => {
+            // The opened attachments' artifacts go first: their rows name
+            // them, and the message's erase removes the rows.
+            for artifact in super::attachments::message_artifacts(vault, source, provider_id)? {
+                vault.delete_entity_with_reason(&artifact, DeleteReason::UserDelete)?;
+            }
             for message in &occurrence.messages {
                 vault.delete_entity_with_reason(message, DeleteReason::UserDelete)?;
             }
@@ -56,11 +62,13 @@ pub(super) fn apply_provider_delete(
         let Some(mut current) = OCCURRENCES.get(&vault.store, txn, &key)? else {
             return Ok(());
         };
-        current.presence = match outcome {
-            ProviderDeleteOutcome::Forgotten => MailPresence::Forgotten { at },
-            _ => MailPresence::SourceDeleted { at },
-        };
-        current.updated_at = at;
+        match outcome {
+            ProviderDeleteOutcome::Forgotten => current.scrub(at),
+            _ => {
+                current.presence = MailPresence::SourceDeleted { at };
+                current.updated_at = at;
+            }
+        }
         BODY_QUEUE.delete(
             &vault.store,
             txn,
