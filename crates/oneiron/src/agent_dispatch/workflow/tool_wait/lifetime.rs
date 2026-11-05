@@ -14,9 +14,10 @@ use crate::{EntityId, Result, Vault};
 fn erase_matching_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
+    retain_binding: bool,
     matches: impl Fn(&CheckpointBinding) -> bool,
 ) -> Result<()> {
-    let mut erased: Vec<(EntityId, CheckpointRow)> = Vec::new();
+    let mut erased: Vec<(EntityId, CheckpointRow, CheckpointBinding)> = Vec::new();
     for row in TABLE.iter_raw_from(store, txn, &[])? {
         let (key, bytes) = row?;
         let Some(key) = <EntityId as SideKey>::decode_key(&key) else {
@@ -25,20 +26,30 @@ fn erase_matching_in_txn(
         let Ok(row) = TABLE.decode_value(&bytes) else {
             continue;
         };
-        if row.binding().as_ref().is_some_and(&matches) {
-            if key != super::key(row.attempt)? {
-                return Err(invalid("workflow checkpoint binding has foreign key"));
-            }
-            fence::require(store, txn, row.attempt, row.generation)?;
-            erased.push((key, row));
+        let Some(binding) = row.binding().filter(&matches) else {
+            continue;
+        };
+        if key != super::key(row.attempt)? {
+            return Err(invalid("workflow checkpoint binding has foreign key"));
         }
+        fence::require(store, txn, row.attempt, row.generation)?;
+        erased.push((key, row, binding));
     }
-    for (key, row) in erased {
-        if let Some(content) = &row.content {
-            release_in_txn(store, txn, content)?;
+    for (key, mut row, binding) in erased {
+        if retain_binding && binding.body_owner != body_owner(row.attempt)? {
+            return Err(invalid("workflow checkpoint payload has foreign owner"));
         }
-        // Keep an erased form so a late checkpoint cannot revive this leaf.
-        TABLE.put_erased(store, txn, &key, Erased::of(row)?)?;
+        if let Some(content) = row.content.take() {
+            release_in_txn(store, txn, &content)?;
+        }
+        if retain_binding {
+            // A source delete does not erase its keys or lose the binding
+            // needed by a later, actual erase of that same source.
+            row.retained = Some(binding);
+            TABLE.put(store, txn, &key, &row)?;
+        } else {
+            TABLE.put_erased(store, txn, &key, Erased::of(row)?)?;
+        }
     }
     Ok(())
 }
@@ -51,7 +62,7 @@ pub(crate) fn erase_source_in_txn(
     txn: &mut RwTxn<'_>,
     source: &EntityId,
 ) -> Result<()> {
-    erase_matching_in_txn(store, txn, |content| depends_on(content, source))
+    erase_matching_in_txn(store, txn, true, |content| depends_on(content, source))
 }
 
 fn depends_on(binding: &CheckpointBinding, source: &EntityId) -> bool {
@@ -71,7 +82,7 @@ pub(crate) fn settle_payloads_in_txn(
     source: &EntityId,
     disposition: PayloadDisposition,
 ) -> Result<()> {
-    let mut owners = Vec::new();
+    let mut matched = Vec::new();
     for found in TABLE.iter_raw_from(store, txn, &[])? {
         let (raw_key, bytes) = found?;
         let Some(row_key) = <EntityId as SideKey>::decode_key(&raw_key) else {
@@ -80,27 +91,58 @@ pub(crate) fn settle_payloads_in_txn(
         let Ok(row) = TABLE.decode_value(&bytes) else {
             continue;
         };
-        let Some(content) = row.binding() else {
+        let Some(binding) = row.binding() else {
             continue;
         };
-        if !depends_on(&content, source) {
+        if !depends_on(&binding, source) {
             continue;
         }
-        if row_key != key(row.attempt)? || content.body_owner != body_owner(row.attempt)? {
+        if row_key != key(row.attempt)? || binding.body_owner != body_owner(row.attempt)? {
             return Err(invalid("workflow checkpoint payload has foreign owner"));
         }
-        owners.push(content.body_owner);
+        matched.push((row_key, row, binding));
     }
-    for owner in owners {
-        settle_owner_in_txn(
-            store,
-            txn,
-            Subtype::AttachmentOccurrence,
-            owner.as_bytes(),
-            disposition,
-        )?;
+    for (row_key, row, binding) in matched {
+        if matches!(disposition, PayloadDisposition::Erase)
+            && let Some(content) = &row.content
+        {
+            release_in_txn(store, txn, content)?;
+        }
+        settle_binding_in_txn(store, txn, source, &binding, disposition)?;
+        if matches!(disposition, PayloadDisposition::Erase) {
+            TABLE.put_erased(store, txn, &row_key, Erased::of(row)?)?;
+        }
     }
     Ok(())
+}
+
+fn settle_binding_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    erase_source: &EntityId,
+    binding: &CheckpointBinding,
+    disposition: PayloadDisposition,
+) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = erase_source;
+    #[cfg(unix)]
+    if matches!(disposition, PayloadDisposition::Erase) {
+        crate::store::erase_bodies_for_owner_in_txn(
+            store,
+            txn,
+            erase_source,
+            &binding.body_owner,
+            &binding.published_digests,
+            false,
+        )?;
+    }
+    settle_owner_in_txn(
+        store,
+        txn,
+        Subtype::AttachmentOccurrence,
+        binding.body_owner.as_bytes(),
+        disposition,
+    )
 }
 
 /// The independently registered hard-actor erase/restore scrub.
@@ -109,5 +151,5 @@ pub(crate) fn erase_actor_in_txn(
     txn: &mut RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    erase_matching_in_txn(&vault.store, txn, |content| content.actor == *actor)
+    erase_matching_in_txn(&vault.store, txn, false, |content| content.actor == *actor)
 }
