@@ -35,7 +35,10 @@ use std::time::Instant;
 
 use candle_core::{DType, Device};
 use candle_nn::VarBuilder;
-use oneiron::embed::{Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput};
+use oneiron::EntityId;
+use oneiron::embed::{
+    EmbeddedVector, Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput,
+};
 use tokenizers::Tokenizer;
 
 use self::evidence::RunProfile;
@@ -103,6 +106,7 @@ pub(super) enum Priority {
 pub(super) struct Embedded {
     pub(super) rows: Vec<Vec<f32>>,
     pub(super) tokens: usize,
+    pub(super) tokens_per_item: Vec<usize>,
 }
 
 /// One forward runs at a time, and a query goes first.
@@ -418,6 +422,7 @@ impl LocalEmbedder {
             return Ok(Embedded {
                 rows: Vec::new(),
                 tokens: 0,
+                tokens_per_item: Vec::new(),
             });
         }
         let tokenized = batcher::tokenize(&self.tokenizer, texts)?;
@@ -480,29 +485,34 @@ impl LocalEmbedder {
                 ))
             })
             .collect::<oneiron::Result<_>>()?;
+        let total: usize = lengths.iter().sum();
         Ok(Embedded {
             rows,
-            tokens: lengths.iter().sum(),
+            tokens: total,
+            tokens_per_item: lengths,
         })
     }
 
-    /// Embeds texts and holds each output to the numerics contract.
+    /// Embeds texts and holds each output to the numerics contract, with the
+    /// actual per-item encoder input counts alongside in input order.
     fn embed_finished(
         &self,
         texts: &[String],
         side: Side,
         priority: Priority,
-    ) -> oneiron::Result<Vec<Vec<f32>>> {
-        self.embed_raw(texts, side, None, priority)?
+    ) -> oneiron::Result<(Vec<Vec<f32>>, Vec<usize>)> {
+        let embedded = self.embed_raw(texts, side, None, priority)?;
+        let rows = embedded
             .rows
             .into_iter()
             .map(|row| self.common.finish_vector(row))
-            .collect()
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        Ok((rows, embedded.tokens_per_item))
     }
 
     /// Embeds document texts in input order, each behind the model's own
-    /// document prompt.
-    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
+    /// document prompt, with the actual per-item encoder input counts.
+    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<(Vec<Vec<f32>>, Vec<usize>)> {
         self.embed_finished(texts, Side::Document, Priority::Bulk)
     }
 }
@@ -628,10 +638,46 @@ impl Embedder for LocalEmbedder {
             .map(|input| self.common.document_text(input))
             .collect::<oneiron::Result<_>>()?;
         self.embed_documents(&texts)
+            .map(|(vectors, _tokens_per_item)| vectors)
     }
 
     fn provenance(&self) -> EmbeddingProvenance {
         self.provenance.clone()
+    }
+
+    fn embed_marked_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
+        let texts: Vec<String> = inputs
+            .iter()
+            .map(|input| self.common.document_text(input))
+            .collect::<oneiron::Result<_>>()?;
+        let (vectors, tokens_per_item) = self.embed_documents(&texts)?;
+        if vectors.len() != inputs.len() || tokens_per_item.len() != inputs.len() {
+            return Err(oneiron::Error::InvariantViolation(
+                "embedder answered another number of counts than inputs",
+            ));
+        }
+        Ok(vectors
+            .into_iter()
+            .zip(tokens_per_item)
+            .map(|(vector, input_tokens)| EmbeddedVector {
+                vector,
+                provenance: self.provenance.clone(),
+                input_tokens: Some(input_tokens as u64),
+            })
+            .collect())
+    }
+
+    fn embed_released_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
+        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
+        release(&rows)?;
+        self.embed_marked_measured(inputs)
     }
 }
 
@@ -645,7 +691,8 @@ impl QueryEmbedder for LocalEmbedder {
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
-        let mut vectors = self.embed_finished(&[text.to_owned()], Side::Query, Priority::Query)?;
+        let (mut vectors, _tokens_per_item) =
+            self.embed_finished(&[text.to_owned()], Side::Query, Priority::Query)?;
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder answered a single query with no row",
         ))

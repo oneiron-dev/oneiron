@@ -29,7 +29,7 @@ use crate::task_type::{
 use crate::temporal::TimeRange;
 
 use self::validation::validate_tree;
-use super::team_shape::team_shape_skill;
+use super::team_shape::team_shape_root_in_txn;
 use super::widen_record::invalid;
 
 mod validation;
@@ -63,7 +63,7 @@ fn tree_in_force_in_txn(
     project: Option<EntityId>,
     reads: &mut Reads,
 ) -> Result<TaskTypeTree> {
-    let vault_skill = team_shape_skill()?;
+    let vault_skill = team_shape_root_in_txn(vault, txn)?;
     if project.is_some() {
         // A project's visibility folds rows this module cannot name.
         reads.unknown();
@@ -197,7 +197,7 @@ pub(crate) fn load_team_type_tree_at_in_txn(
     if in_force.version == version {
         return Ok(Some(in_force));
     }
-    for skill in kept_revisions_in_txn(vault, txn, project, team_shape_skill()?)? {
+    for skill in kept_revisions_in_txn(vault, txn, project, team_shape_root_in_txn(vault, txn)?)? {
         if vault.get_skill_record_in_txn(txn, &skill)?.is_some()
             && let Some(tree) = stored_tree_unchecked_in_txn(vault, txn, &skill, &mut Reads::Off)?
             && tree.version == version
@@ -302,7 +302,7 @@ fn head_in_force_in_txn(
     project: Option<EntityId>,
     reads: &mut Reads,
 ) -> Result<Option<EntityId>> {
-    let vault_skill = team_shape_skill()?;
+    let vault_skill = team_shape_root_in_txn(vault, txn)?;
     if project.is_some() {
         // A project's visibility folds rows this module cannot name.
         reads.unknown();
@@ -370,7 +370,7 @@ pub fn store_team_type_tree(
         if record.lifecycle_status != SkillLifecycle::Candidate {
             return Err(invalid("a stored type tree goes into an open fork"));
         }
-        let vault_skill = team_shape_skill()?;
+        let vault_skill = team_shape_root_in_txn(vault, txn)?;
         if !in_lineage_in_txn(vault, txn, fork, vault_skill)? {
             return Err(invalid("fork is not in the team-shape skill's lineage"));
         }

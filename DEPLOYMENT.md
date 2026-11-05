@@ -200,6 +200,17 @@ vault id, rewrites the request's Host and URI authority to that internal
 authority, and composes every public URL: no public name reaches the vault,
 and no response names the internal one.
 
+Managed wake-ledger reports also carry logical `artifact_origins`: `vault`
+and `app` with an `artifact_id` from stored published pointers whose labels
+fit the existing per-app host codec. Preview pointers are excluded. These are
+publication facts, not public DNS, artifact availability or a change to any
+serve tier or credential check. The supervisor joins its own public slug and
+domains; this report does not enable `artifact_domains` or hosted ingress.
+Origins share the existing bounded pages and digest with wake entries, and an
+origin-only change advances the report. Engine, supervisor and vault-VM
+readers must all include the FIX 11004 build floor documented under
+`CONTRACT_VERSION`; the new fields are required, with no old reader.
+
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
 floor at the disk's last byte. The count rows sit far above fleet scale (each
@@ -312,11 +323,12 @@ seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision c
 seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (each stream decodes whole; the largest also meets seal_stream_decode_bytes)
 seal_identity_asks = 1            # signing-identity asks one seal call makes; past it the pinned identity is answered again and the row asks
 seal_sign_asks = 3                # signature asks one seal call makes (still one issuance per revision the engine wrote); past it each is answered and the row asks
-seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
+seal_fetch_asks = 32              # fetch asks (timestamps, CRLs, OCSP) one seal call makes; past it each allowlisted fetch runs and the row asks
 seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
 seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
 seal_memory_asks = 256            # memory.grow asks one seal call makes, its own buffers reserved, counted apart from seal_asks and seal_answer_bytes; past it each is answered and the row asks
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
+seal_ocsp_bytes = 1048576         # bytes of one OCSP reply a seal fetches; past it the reply is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
 seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (each stream decodes whole)
