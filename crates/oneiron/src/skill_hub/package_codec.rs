@@ -106,37 +106,6 @@ impl Vault {
         }
         PACKAGE.put(&self.store, txn, entity, package)
     }
-    /// Recovers the exact package from its replicated carrier when the local
-    /// sidecar is absent after sync. Exact tree hash plus skill id, version
-    /// and description must match the stored record; anything else fails
-    /// closed instead of presenting near or foreign bytes as this skill.
-    pub(crate) fn hub_package_from_carrier_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        entity: &EntityId,
-        record: &crate::skill::SkillRecord,
-    ) -> Result<Option<HubPackage>> {
-        let Some(hash) = record.content_hash else {
-            return Ok(None);
-        };
-        let carrier = super::source_carrier::source_carrier_id(entity, &hash)?;
-        let Some((holder, package)) =
-            super::source_carrier::read_source_carrier_in_txn(&self.store, txn, &carrier)?
-        else {
-            return Ok(None);
-        };
-        if holder != *entity
-            || package.content_hash()? != hash
-            || package.record.skill_id != record.skill_id
-            || package.record.version != record.version
-            || package.record.desc != record.desc
-            || package.record.role != record.role
-            || package.record.call != record.call
-        {
-            return Err(invalid("replicated source differs from its native skill"));
-        }
-        Ok(Some(package))
-    }
     /// Instruction bytes for an admitted runtime load, never a standalone export door.
     pub(crate) fn runtime_skill_package_in_txn(
         &self,
@@ -144,26 +113,7 @@ impl Vault {
         entity: &EntityId,
         record: &crate::skill::SkillRecord,
     ) -> Result<Option<HubPackage>> {
-        let package = match PACKAGE.get(&self.store, txn, entity)? {
-            Some(package) => package,
-            None => return self.hub_package_from_carrier_in_txn(txn, entity, record),
-        };
-        super::source_custody::check_source_custody(
-            &self.store,
-            txn,
-            entity,
-            &package.content_hash()?,
-        )?;
-        if record.content_hash != Some(package.content_hash()?)
-            || record.skill_id != package.record.skill_id
-            || record.version != package.record.version
-            || record.desc != package.record.desc
-            || record.role != package.record.role
-            || record.call != package.record.call
-        {
-            return Err(invalid("runtime package differs from the admitted skill"));
-        }
-        Ok(Some(package))
+        runtime_skill_package_in_read(&self.store.read(), txn, entity, record)
     }
     /// The replicated carrier ASSET a runtime load of `entity`'s package read
     /// its bytes from, on the load's snapshot (FIX 7017): `None` while the
@@ -258,6 +208,67 @@ impl Vault {
         self.export_hub_package_in_txn(txn, entity)?
             .ok_or_else(|| invalid("skill has no stored package"))
     }
+}
+
+/// Recovers the exact package from its replicated carrier when the local
+/// sidecar is absent after sync. Exact tree hash plus skill id, version
+/// and description must match the stored record; anything else fails
+/// closed instead of presenting near or foreign bytes as this skill.
+fn hub_package_from_carrier_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    record: &crate::skill::SkillRecord,
+) -> Result<Option<HubPackage>> {
+    let Some(hash) = record.content_hash else {
+        return Ok(None);
+    };
+    let carrier = super::source_carrier::source_carrier_id(entity, &hash)?;
+    let Some((holder, package)) =
+        super::source_carrier::read_source_carrier_in_read(read, txn, &carrier)?
+    else {
+        return Ok(None);
+    };
+    if holder != *entity
+        || package.content_hash()? != hash
+        || package.record.skill_id != record.skill_id
+        || package.record.version != record.version
+        || package.record.desc != record.desc
+        || package.record.role != record.role
+        || package.record.call != record.call
+    {
+        return Err(invalid("replicated source differs from its native skill"));
+    }
+    Ok(Some(package))
+}
+
+/// Exact package content on one canonical or composed snapshot; not a read grant.
+pub(crate) fn runtime_skill_package_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    record: &crate::skill::SkillRecord,
+) -> Result<Option<HubPackage>> {
+    let package = match PACKAGE.get(read, txn, entity)? {
+        Some(package) => package,
+        None => return hub_package_from_carrier_in_read(read, txn, entity, record),
+    };
+    super::source_custody::check_source_custody_in_read(
+        read,
+        txn,
+        entity,
+        &package.content_hash()?,
+    )?;
+    if record.content_hash != Some(package.content_hash()?)
+        || record.skill_id != package.record.skill_id
+        || record.version != package.record.version
+        || record.desc != package.record.desc
+        || record.role != package.record.role
+        || record.call != package.record.call
+    {
+        return Err(invalid("runtime package differs from the admitted skill"));
+    }
+    Ok(Some(package))
 }
 
 /// Payload erasure shared by physical purge and shell-preserving SoftErase.
