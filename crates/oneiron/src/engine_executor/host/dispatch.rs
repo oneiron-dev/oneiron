@@ -478,15 +478,16 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
                 .map(|reason| (*reason).to_owned())
                 .collect(),
         })),
-        // No provider answered a door's model call (FIX 3194): the guest sees
-        // the typed failure, and the step ends on the outage, which parks
-        // its run.
-        Error::ProviderUnavailable { .. } => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
-            effect: call.effect(),
-            error: err.to_string(),
-            code: None,
-            disk_floor: None,
-        })),
+        // A door's outage or durable trap ends the native step even when
+        // the guest catches its typed failure.
+        Error::ProviderUnavailable { .. } | Error::DurableStepTrapped => {
+            Some(SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect(),
+                error: err.to_string(),
+                code: None,
+                disk_floor: None,
+            }))
+        }
         // A refusal names its bound: the guest reads what it can act on.
         Error::Refused(_) => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: call.effect(),
