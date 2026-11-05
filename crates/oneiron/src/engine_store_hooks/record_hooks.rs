@@ -1,6 +1,264 @@
 use super::*;
 
 impl StoreRecordHooks for EngineRecordHooks {
+    fn create_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::CreateCampaignRequest,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord> {
+        crate::campaign::surface::create_campaign(vault, authenticated_principal, request, now)
+    }
+
+    fn launch_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+        campaign_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord> {
+        crate::campaign::surface::launch_campaign(
+            vault,
+            authenticated_principal,
+            actor_class,
+            campaign_ref,
+            expected_definition_version,
+            now,
+        )
+    }
+
+    fn read_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        campaign_ref: EntityId,
+    ) -> Result<Option<crate::memory::campaign_records::CampaignRecord>> {
+        crate::campaign::surface::read_campaign(vault, authenticated_principal, campaign_ref)
+    }
+
+    fn update_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        campaign_ref: EntityId,
+        request: &crate::memory::campaign_records::UpdateCampaignRequest,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord> {
+        crate::campaign::surface::update_campaign(
+            vault,
+            authenticated_principal,
+            campaign_ref,
+            request,
+            now,
+        )
+    }
+
+    fn archive_campaign(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        campaign_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> Result<crate::memory::campaign_records::CampaignRecord> {
+        crate::campaign::surface::archive_campaign(
+            vault,
+            authenticated_principal,
+            campaign_ref,
+            expected_definition_version,
+            now,
+        )
+    }
+
+    fn create_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        owner_actor_class: crate::edge::EdgeActorClass,
+        request: &crate::memory::query_records::CreateSavedQueryRequest,
+        now: u64,
+    ) -> Result<crate::memory::query_records::SavedQueryRecord> {
+        crate::saved_query::create_saved_query(
+            vault,
+            authenticated_principal,
+            owner_actor_class,
+            request,
+            now,
+        )
+    }
+
+    fn read_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        query_ref: EntityId,
+    ) -> Result<Option<crate::memory::query_records::SavedQueryRecord>> {
+        crate::saved_query::read_saved_query(vault, authenticated_principal, query_ref)
+    }
+
+    fn update_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        query_ref: EntityId,
+        request: &crate::memory::query_records::UpdateSavedQueryRequest,
+        now: u64,
+    ) -> Result<crate::memory::query_records::SavedQueryRecord> {
+        crate::saved_query::update_saved_query(
+            vault,
+            authenticated_principal,
+            query_ref,
+            request,
+            now,
+        )
+    }
+
+    fn archive_saved_query(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        query_ref: EntityId,
+        expected_definition_version: u64,
+        now: u64,
+    ) -> Result<crate::memory::query_records::SavedQueryRecord> {
+        crate::saved_query::archive_saved_query(
+            vault,
+            authenticated_principal,
+            query_ref,
+            expected_definition_version,
+            now,
+        )
+    }
+
+    fn read_campaign_members(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        req: &crate::memory::campaign_records::MembershipReadRequest,
+    ) -> Result<crate::memory::campaign_records::MembershipPage> {
+        crate::campaign::surface::read_campaign_members(read, req)
+    }
+
+    fn read_saved_query_members(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        req: &crate::memory::campaign_records::MembershipReadRequest,
+    ) -> Result<crate::memory::campaign_records::MembershipPage> {
+        crate::campaign::surface::read_saved_query_members(read, req)
+    }
+
+    fn create_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::CreateCampaignProgramRequest,
+        filer: &dyn Fn() -> WriteActor,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramRecord> {
+        let draft = request.draft()?;
+        let program = crate::campaign::enrollment::create_campaign_program(
+            vault,
+            authenticated_principal,
+            request.campaign_ref,
+            request.schema_version,
+            &draft,
+            vault.store.clock.now_recorded_at(),
+        )?;
+        // The program ref above is minted inside the create, so its step
+        // bodies file after it. A filer failure is returned, never
+        // swallowed: the program row persists, its sends fail closed, and
+        // an update re-files.
+        let filer = filer();
+        let filed_at = vault.store.clock.now_recorded_at();
+        for step in &program.steps {
+            if let Some(outbound) = step.outbound.as_ref() {
+                vault.save_campaign_step_body(
+                    program.program.program_ref,
+                    step.step_ref,
+                    outbound.call_seq,
+                    &outbound.payload,
+                    filer,
+                    filed_at,
+                )?;
+            }
+        }
+        Ok(crate::memory::campaign_records::program::campaign_program_record(&program))
+    }
+
+    fn read_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::CampaignProgramReadRequest,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramReadResult> {
+        let program = crate::campaign::enrollment::read_campaign_program(
+            vault,
+            authenticated_principal,
+            request.campaign_ref,
+            request.program_ref,
+        )?;
+        Ok(
+            crate::memory::campaign_records::program::CampaignProgramReadResult {
+                found: program.is_some(),
+                record: program
+                    .as_ref()
+                    .map(crate::memory::campaign_records::program::campaign_program_record),
+            },
+        )
+    }
+
+    fn update_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::UpdateCampaignProgramRequest,
+        filer: &dyn Fn() -> WriteActor,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramRecord> {
+        let draft = request.draft()?;
+        let filer = filer();
+        let filed_at = vault.store.clock.now_recorded_at();
+        for step in &draft.steps {
+            if let Some(outbound) = step.outbound.as_ref() {
+                vault.save_campaign_step_body(
+                    request.program_ref,
+                    step.step_ref,
+                    outbound.call_seq,
+                    &outbound.payload,
+                    filer,
+                    filed_at,
+                )?;
+            }
+        }
+        let program = crate::campaign::enrollment::update_campaign_program(
+            vault,
+            authenticated_principal,
+            request.campaign_ref,
+            request.program_ref,
+            request.expected_definition_version,
+            &draft,
+            vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::memory::campaign_records::program::campaign_program_record(&program))
+    }
+
+    fn archive_campaign_program(
+        &self,
+        vault: &crate::Vault,
+        authenticated_principal: EntityId,
+        request: &crate::memory::campaign_records::program::ArchiveCampaignProgramRequest,
+    ) -> Result<crate::memory::campaign_records::program::CampaignProgramRecord> {
+        let program = crate::campaign::enrollment::archive_campaign_program(
+            vault,
+            authenticated_principal,
+            request.campaign_ref,
+            request.program_ref,
+            request.expected_definition_version,
+            vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::memory::campaign_records::program::campaign_program_record(&program))
+    }
+
     fn resolve_party_ref_from_store_in_txn(
         &self,
         store: &Store,
