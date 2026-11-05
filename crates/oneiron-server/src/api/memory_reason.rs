@@ -38,7 +38,6 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
-use oneiron::claim::ScopedRead;
 use oneiron::llm::BudgetLease;
 use oneiron::memory::AnswerAdmission;
 use oneiron::retrieval_depth::{
@@ -48,13 +47,12 @@ use oneiron::retrieval_depth::{
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use oneiron::{Effort, EntityId};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use utoipa::ToSchema;
 
 use super::{json_payload, parse_entity_id_param, scoped_read_for_core_auth};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
-use crate::projection::View;
 use crate::server::{QueryDoor, SyncServer, query_caller};
 
 mod answer_admission;
@@ -64,7 +62,7 @@ mod host;
 mod render;
 pub(crate) use answer_admission::MemoryReasonCompositionRefusal;
 pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
-use evidence::CollectedEvidence;
+use evidence::collect_evidence;
 use render::render_evidence;
 
 /// Evidence rows a reasoning read retrieves when the caller names no limit.
@@ -595,116 +593,6 @@ fn trace_for(effort: Effort, retrieved: &DepthSearchResult) -> Option<MemoryReas
         signals_used: retrieved.signals_used.clone(),
         candidates_scanned: retrieved.candidates_scanned,
     })
-}
-
-/// Projects admitted hits into citable evidence rows, and the rows whose
-/// bodies `bodies` could not hold.
-///
-/// Every row goes back through the actor-keyed projection, so a hit the
-/// ranking produced but the projection cannot read is dropped here rather than
-/// cited as a source with no content behind it. A row past the body budget is
-/// not decoded, cited or read into the answer: it comes back in the second
-/// list, its marker naming the read that returns it whole.
-fn collect_evidence(
-    vault: &oneiron::Vault,
-    scoped_read: &ScopedRead<'_>,
-    retrieved: &mut DepthSearchResult,
-    bodies: &mut crate::projection::BodyBudget<'_>,
-    memory: &oneiron::host_memory::MachineMemory,
-) -> Result<(CollectedEvidence, Vec<Value>), ApiError> {
-    let refs: Vec<_> = retrieved
-        .hits
-        .iter()
-        .filter_map(|hit| {
-            retrieved.revisions.get(&hit.id).map(|revision| {
-                oneiron::claim::PointRead::id(hit.id)
-                    .at(oneiron::memory::ReadMode::Pinned(*revision))
-            })
-        })
-        .collect();
-    let requested = retrieved
-        .narrowing
-        .last()
-        .map(|receipt| receipt.applied.as_filter());
-    let projected = scoped_read
-        .read(&refs, requested.as_ref())
-        .map_err(|_| ApiError::internal_server_error("memory reason projection failed"))?;
-    retrieved.narrowing.push(projected.receipt);
-    let mut evidence = CollectedEvidence::with_capacity(memory, refs.len());
-    let mut omitted = Vec::new();
-    for (read, row) in refs.into_iter().zip(projected.value) {
-        let Some(oneiron::claim::ReadRow {
-            id,
-            entity_type: kind,
-            learned_at,
-            body: Some(body),
-            ..
-        }) = row
-        else {
-            continue;
-        };
-        let mode = read.mode;
-        if !bodies.admits(body.len()) {
-            omitted.push(bodies.omitted(&id, kind, learned_at, &body, View::Summary, mode));
-            continue;
-        }
-        let Value::Object(fields) =
-            crate::projection::project_entity_parts(&id, kind, learned_at, &body, View::Full)
-        else {
-            continue;
-        };
-        let short_id = vault
-            .pinned_short_ref_with_mode(&id, mode)
-            .map_err(|_| ApiError::internal_server_error("memory citation pin failed"))?;
-        let oneiron::memory::ReadMode::Pinned(revision) = mode else {
-            return Err(ApiError::internal_server_error(
-                "memory evidence has no revision",
-            ));
-        };
-        evidence.push(MemoryReasonEvidence {
-            id,
-            revision,
-            kind: string_field(&fields, "kind").unwrap_or_else(|| "UNKNOWN".to_owned()),
-            text: evidence_text(&fields),
-            confidence: evidence_confidence(&fields),
-            short_id,
-        });
-    }
-    Ok((evidence, omitted))
-}
-
-fn string_field(fields: &Map<String, Value>, key: &str) -> Option<String> {
-    fields
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .filter(|value| !value.trim().is_empty())
-}
-
-/// The row's text, preferring the claim value, then the common content keys,
-/// then the projection's own label. Non-string values are rendered as compact
-/// JSON so a structured value is still shown rather than silently dropped.
-fn evidence_text(fields: &Map<String, Value>) -> String {
-    for key in ["val", "content", "text", "txt", "body"] {
-        match fields.get(key) {
-            Some(Value::String(text)) if !text.trim().is_empty() => return text.clone(),
-            Some(Value::Null) | Some(Value::String(_)) | None => {}
-            Some(other) => return other.to_string(),
-        }
-    }
-    string_field(fields, "label").unwrap_or_default()
-}
-
-/// The row's calibrated confidence.
-///
-/// `conf` is the claim codec's own calibrated-absolute field. A structural
-/// record carries none and is `1.0`: the caller named a stored fact, and
-/// nothing about it is a ranked guess.
-fn evidence_confidence(fields: &Map<String, Value>) -> f32 {
-    fields
-        .get("conf")
-        .and_then(Value::as_f64)
-        .map_or(1.0, |confidence| confidence.clamp(0.0, 1.0) as f32)
 }
 
 struct AnsweredRead {
