@@ -31,6 +31,7 @@ pub(super) fn refolds(
                 | AuthorityOp::GrantTravelSet(_)
                 | AuthorityOp::CheckpointPolicySet(_)
                 | AuthorityOp::HomeNodePick(_)
+                | AuthorityOp::OriginCut(_)
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::PolicySettingSet(_)
