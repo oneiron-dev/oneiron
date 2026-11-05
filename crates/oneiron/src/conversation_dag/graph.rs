@@ -255,6 +255,25 @@ pub(crate) fn conversation_of(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<EntityId> {
+    let room = room_of(store, txn, record)?;
+    require_type(store, txn, &room, ENTITY_TYPE_CONVERSATION)?;
+    Ok(room)
+}
+
+/// The conversation `record` was witnessed into, by its one ChildOf edge or
+/// its redaction pin, whether or not that conversation is still live
+/// (FIX 5029): a turn of a deleted conversation still names it, so a reader
+/// of another conversation can tell the turn is not its own.
+///
+/// # Errors
+///
+/// A record with no single conversation, a pin that disagrees with its
+/// edge, an absent record with no pin, and storage errors.
+pub(crate) fn room_of(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<EntityId> {
     let row = live_entity_row_in_txn(store, txn, record)?;
     let pin = super::redacted::read(store, txn, record)?;
     let room = match row {
@@ -284,7 +303,6 @@ pub(crate) fn conversation_of(
         }
         _ => return Err(invalid("unexpected entity type")),
     };
-    require_type(store, txn, &room, ENTITY_TYPE_CONVERSATION)?;
     Ok(room)
 }
 
