@@ -126,6 +126,7 @@ impl Vault {
                     },
                     grants: Vec::new(),
                     revoked_slips: Vec::new(),
+                    detach: None,
                     notify: BTreeSet::new(),
                 }
             }
@@ -151,6 +152,7 @@ impl Vault {
                     change: SharedVaultChange::OwnerAdded { owner: plan.owner },
                     grants: moved.grants,
                     revoked_slips: moved.revoked_slips,
+                    detach: None,
                     notify,
                 }
             }
@@ -174,6 +176,7 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    detach,
                     ..
                 } = moved;
                 Effect {
@@ -184,6 +187,7 @@ impl Vault {
                     },
                     grants,
                     revoked_slips,
+                    detach,
                     notify: BTreeSet::from([from, to]),
                 }
             }
@@ -210,6 +214,7 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    detach,
                     ..
                 } = moved;
                 Effect {
@@ -220,6 +225,7 @@ impl Vault {
                     },
                     grants,
                     revoked_slips,
+                    detach,
                     notify: BTreeSet::from_iter([Some(target), successor].into_iter().flatten()),
                 }
             }

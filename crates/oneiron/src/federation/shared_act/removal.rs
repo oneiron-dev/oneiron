@@ -112,6 +112,7 @@ impl Vault {
             },
             grants: Vec::new(),
             revoked_slips: Vec::new(),
+            detach: None,
             notify: BTreeSet::new(),
         };
         let receipt = self.record_shared_change_in_txn(
