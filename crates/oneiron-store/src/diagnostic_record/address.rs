@@ -1,7 +1,7 @@
 //! Content-derived diagnostic event addresses.
 
-use super::event::DIAGNOSTIC_EVENT_ID_DOMAIN;
-use crate::entity_id::EntityId;
+use crate::diagnostic_record::event::DIAGNOSTIC_EVENT_ID_DOMAIN;
+use oneiron_contracts::entity_id::EntityId;
 
 /// Derives the stable event id for `(detector_id, canonical_body)`.
 ///
