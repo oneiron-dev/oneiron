@@ -509,7 +509,7 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(mode) = ai.chat_self_mode(vault, context.agent) else {
         return ChatReuse::Today;
     };
-    let seed = match chat_breakpoint(vault, action.conversation, action.message) {
+    let mut seed = match chat_breakpoint(vault, action.conversation, action.message) {
         Ok(Some(seed)) => seed,
         Ok(None) => return ChatReuse::Unavailable("breakpoint_missing"),
         Err(_) => return ChatReuse::Unavailable("breakpoint_unreadable"),
@@ -535,11 +535,36 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(mut request) = seed.captured_request() else {
         return ChatReuse::Unavailable("request_changed");
     };
-    let asks = request.messages.last().is_some_and(|last| {
-        last.role == LlmMessageRole::User && message_text(last) == context.user_text
-    });
+    // The captured call closes with the user's words, or with its opener
+    // right after them (FIX 14676).
+    let opened = captured_opener(&request.messages, &context.user_text);
+    let asks = opened
+        || request
+            .messages
+            .last()
+            .is_some_and(|last| asks_with(last, &context.user_text));
     if !asks {
         return ChatReuse::Unavailable("user_turn_changed");
+    }
+    // A Retry answers now, so it closes with today's opener, never the
+    // captured one; a Continue keeps the one its saved reply followed.
+    if opened && action.action == TurnAction::Retry {
+        request.messages.pop();
+        if let Some(opener) = super::turn_opener(ai.chat_settings().turn_opener, vault) {
+            request
+                .messages
+                .push(text_message(LlmMessageRole::User, opener));
+        }
+        // The Retry's reply follows the opener sent now, so the breakpoint
+        // that reply keeps names this request and its digest, and a later
+        // Continue of it resends the same opener. The original reply's own
+        // breakpoint row is left as it was.
+        let (Ok(text), Ok(digest)) = (serde_json::to_string(&request), request.canonical_hash())
+        else {
+            return ChatReuse::Unavailable("request_changed");
+        };
+        seed.request = text;
+        seed.request_digest = hex(&digest);
     }
     // The craft it showed is what the host kept with it, never what its
     // user text reads as (FIX 9439).
@@ -626,7 +651,23 @@ fn readmit_rung(
     admitted.ladder.live_fork_ladder(&rung)
 }
 
-fn message_text(message: &LlmMessage) -> String {
+/// Whether `message` is the user's turn whose words are `user_text`.
+fn asks_with(message: &LlmMessage, user_text: &str) -> bool {
+    message.role == LlmMessageRole::User && message_text(message) == user_text
+}
+
+/// Whether `messages` close with the turn's opener alone right after the
+/// user's turn whose words are `user_text` (FIX 14676).
+pub(super) fn captured_opener(messages: &[LlmMessage], user_text: &str) -> bool {
+    let [.., user, opener] = messages else {
+        return false;
+    };
+    asks_with(user, user_text)
+        && opener.role == LlmMessageRole::User
+        && oneiron::context_board::is_turn_opener_line(&message_text(opener))
+}
+
+pub(super) fn message_text(message: &LlmMessage) -> String {
     message
         .content
         .iter()
