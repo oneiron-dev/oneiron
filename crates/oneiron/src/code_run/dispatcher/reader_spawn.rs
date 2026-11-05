@@ -275,6 +275,7 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::ReaderSpawn,
                 error: code.to_owned(),
+                code: None,
             })
         };
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
@@ -345,6 +346,7 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::ReaderReport,
                 error: code.to_owned(),
+                code: None,
             })
         };
         let Some(child) = self
@@ -394,6 +396,7 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::TasksWaitSet,
                 error: code.to_owned(),
+                code: None,
             })
         };
         // FIX 4706: a wait on a world-privacy request, no children.
