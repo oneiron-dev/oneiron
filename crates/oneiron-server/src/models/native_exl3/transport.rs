@@ -48,6 +48,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
+use super::session_ops::{SnapshotSourceCheck, SnapshotSourceMiss};
 use super::wire::{self, Incoming, Outgoing};
 use super::worker_host;
 
@@ -192,6 +193,34 @@ impl Channel {
         lease: &oneiron::BudgetLease,
         count_inference: bool,
     ) -> Result<(), DispatchWriteError> {
+        self.send_with_fd_checked(
+            op,
+            request_id,
+            epoch,
+            body,
+            fd,
+            lease,
+            count_inference,
+            None::<fn() -> std::future::Ready<Result<(), std::convert::Infallible>>>,
+        )
+        .await
+    }
+
+    async fn send_with_fd_checked<F, Fut, E>(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        fd: BorrowedFd<'_>,
+        lease: &oneiron::BudgetLease,
+        count_inference: bool,
+        source: Option<F>,
+    ) -> Result<(), DispatchWriteError<E>>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), E>>,
+    {
         let bytes =
             Self::frame(op, request_id, epoch, body).map_err(DispatchWriteError::Transport)?;
         let fds = [fd];
@@ -213,6 +242,14 @@ impl Channel {
             lease
                 .check_dispatch_release()
                 .map_err(DispatchWriteError::Release)?;
+            if let Some(source) = &source {
+                let checked = source().await;
+                // A call released during the source read still ends the turn.
+                lease
+                    .check_dispatch_release()
+                    .map_err(DispatchWriteError::Release)?;
+                checked.map_err(DispatchWriteError::Source)?;
+            }
             match stream.try_io(Interest::WRITABLE, || {
                 if count_inference && !attempted {
                     lease.begin_physical_attempt();
@@ -240,6 +277,14 @@ impl Channel {
             lease
                 .check_dispatch_release()
                 .map_err(DispatchWriteError::Release)?;
+            if let Some(source) = &source {
+                let checked = source().await;
+                // A call released during the source read still ends the turn.
+                lease
+                    .check_dispatch_release()
+                    .map_err(DispatchWriteError::Release)?;
+                checked.map_err(DispatchWriteError::Source)?;
+            }
             match stream.try_write(&bytes[sent..]) {
                 Ok(0) => {
                     return Err(DispatchWriteError::Transport(
@@ -539,6 +584,7 @@ impl Channel {
             .map_err(|error| match error {
                 DispatchWriteError::Transport(error) => ReleasedExchangeError::Transport(error),
                 DispatchWriteError::Release(error) => ReleasedExchangeError::Release(error),
+                DispatchWriteError::Source(never) => match never {},
             })?;
         loop {
             match self
@@ -550,6 +596,55 @@ impl Channel {
                 Some(_) => {}
                 None => {
                     return Err(ReleasedExchangeError::Transport(
+                        io::ErrorKind::UnexpectedEof.into(),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub(super) async fn exchange_snapshot_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: &SnapshotSourceCheck<'_>,
+    ) -> Result<Incoming, SnapshotExchangeError> {
+        let request_id = next_request_id();
+        if let Some(fields) = body.as_object_mut() {
+            fields.insert(
+                "input".to_owned(),
+                wire::region(request_id, input.len, input.encoding),
+            );
+        }
+        self.send_with_fd_checked(
+            op,
+            request_id,
+            epoch,
+            body,
+            input.fd,
+            lease,
+            false,
+            Some(source),
+        )
+        .await
+        .map_err(|error| match error {
+            DispatchWriteError::Transport(error) => SnapshotExchangeError::Transport(error),
+            DispatchWriteError::Release(error) => SnapshotExchangeError::Release(error),
+            DispatchWriteError::Source(miss) => SnapshotExchangeError::Source(miss),
+        })?;
+        loop {
+            match self
+                .next()
+                .await
+                .map_err(SnapshotExchangeError::Transport)?
+            {
+                Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => {
+                    return Err(SnapshotExchangeError::Transport(
                         io::ErrorKind::UnexpectedEof.into(),
                     ));
                 }
@@ -700,9 +795,16 @@ pub(super) enum ReleasedExchangeError {
     Release(oneiron::LlmError),
 }
 
-enum DispatchWriteError {
+pub(super) enum SnapshotExchangeError {
     Transport(io::Error),
     Release(oneiron::LlmError),
+    Source(SnapshotSourceMiss),
+}
+
+enum DispatchWriteError<E = std::convert::Infallible> {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(E),
 }
 
 /// How a call's start went wrong.
@@ -907,6 +1009,7 @@ impl Call {
                     Start::Cut(io_fault("send generate", Some(error)))
                 }
                 DispatchWriteError::Release(error) => Start::Release(error),
+                DispatchWriteError::Source(never) => match never {},
             });
         }
         loop {

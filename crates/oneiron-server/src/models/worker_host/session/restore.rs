@@ -13,7 +13,10 @@
 //! epoch, and every source it depends on. The import stages on a session
 //! with a new handle, binding and generation; only after that second
 //! recheck is its checkpoint published and the session made ready, at once
-//! under the registry's lock and the turn's admission.
+//! under the registry's lock and the turn's admission. For an import with
+//! live dispatch conditions, the stored authority is also rechecked off the
+//! runtime before each write of the import frame; the live condition is
+//! checked both before and after that source read.
 //!
 //! A snapshot failure drops the session and the turn runs cold, recomputing
 //! from source: a lost snapshot is a cache miss. A live dispatch condition
@@ -40,7 +43,8 @@ use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, fits_host, identity
 use super::registry::{self, HostCopy, HostReservation, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{
-    OpFault, ReleasedOpFault, SnapshotRegion, session_import_released,
+    OpFault, SnapshotImportFault, SnapshotRegion, SnapshotSourceFuture, SnapshotSourceMiss,
+    session_import_released,
 };
 
 /// A restored session, ready: what the turn forks from.
@@ -292,6 +296,17 @@ impl Restore<'_> {
             snapshot_sha256: SnapshotDigest(self.record.snapshot_sha256),
         };
         let place = self.place;
+        let source = || -> SnapshotSourceFuture<'_> {
+            Box::pin(async move {
+                self.recheck().await.map_err(|cold| {
+                    if cold.retire {
+                        SnapshotSourceMiss::Retire
+                    } else {
+                        SnapshotSourceMiss::Cold
+                    }
+                })
+            })
+        };
         let imported = session_import_released(
             &place.socket,
             &place.epoch,
@@ -299,17 +314,24 @@ impl Restore<'_> {
             region.get(),
             &place.worker,
             self.lease,
+            &source,
         )
         .await;
         drop(region);
         let imported = imported.map_err(|fault| match fault {
-            ReleasedOpFault::Op(OpFault::Refused(code))
+            SnapshotImportFault::Op(OpFault::Refused(code))
                 if SnapshotMiss::from_code(&code) == Some(SnapshotMiss::Incompatible) =>
             {
                 (Failure::Cold(RETIRE), true)
             }
-            ReleasedOpFault::Op(OpFault::Refused(_) | OpFault::Cut) => (Failure::Cold(COLD), true),
-            ReleasedOpFault::Release(error) => (Failure::Release(error), true),
+            SnapshotImportFault::Op(OpFault::Refused(_) | OpFault::Cut) => {
+                (Failure::Cold(COLD), true)
+            }
+            SnapshotImportFault::Release(error) => (Failure::Release(error), true),
+            SnapshotImportFault::Source(SnapshotSourceMiss::Cold) => (Failure::Cold(COLD), true),
+            SnapshotImportFault::Source(SnapshotSourceMiss::Retire) => {
+                (Failure::Cold(RETIRE), true)
+            }
         })?;
         // The ordered recheck again, before anything is ready.
         self.recheck()
