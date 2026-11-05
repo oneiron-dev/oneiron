@@ -15,6 +15,9 @@ use crate::error::{Error, Result, SecretError};
 use crate::provenance::ActorStamp;
 use crate::skill::{SkillLifecycle, SkillRecord};
 
+mod content_source;
+use content_source::ContentSource;
+
 const FORMAT: u8 = 1;
 const SIGNING_DOMAIN: &[u8] = b"oneiron.native.skill-state.v1\0";
 const TOKEN_DOMAIN: &[u8] = b"oneiron.native.skill-state.token.v1\0";
@@ -81,6 +84,7 @@ struct Operation {
     state: State,
     door: Door,
     writer: Option<OriginalWriter>,
+    content_source: ContentSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +188,7 @@ impl SkillStateFact {
                     class: stamp.class as u8,
                     authority_frontier,
                 }),
+                content_source: ContentSource::capture(input)?,
             },
             attestation: None,
         };
@@ -261,6 +266,7 @@ impl SkillStateFact {
             EntityId::from_bytes(writer.token)?;
             crate::edge::EdgeActorClass::try_from_u8(writer.class).ok_or_else(malformed)?;
         }
+        fact.operation.content_source.validate()?;
         if let Some(attestation) = &fact.attestation {
             EntityId::from_bytes(attestation.carrier.machine)?;
             if attestation.signature.len() != 64 {
