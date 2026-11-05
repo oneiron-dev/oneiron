@@ -219,9 +219,20 @@ pub struct HostWriteOrigin {
     /// across replays of the run, never from the guest. A `reveal.wait` a
     /// live re-attempt of that step makes reads its value again under it.
     step: Option<crate::store::verb_invocation::InvocationId>,
+    /// Evidence collected only while this native call serves its reads.
+    read_capture: Option<super::read_capture::ReadCapture>,
 }
 
 impl HostWriteOrigin {
+    pub(crate) fn with_read_capture(mut self, capture: super::read_capture::ReadCapture) -> Self {
+        self.read_capture = Some(capture);
+        self
+    }
+
+    pub(in crate::memory) fn read_capture(&self) -> Option<super::read_capture::ReadCapture> {
+        self.read_capture.clone()
+    }
+
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
         Self {
             envelope,
@@ -232,6 +243,7 @@ impl HostWriteOrigin {
             read_proof: None,
             bound_run: None,
             step: None,
+            read_capture: None,
         }
     }
 
