@@ -339,6 +339,8 @@ pub(crate) fn apply_actor_ops(
         text_index_trusted,
         gate_mode,
         origin,
+        #[cfg(feature = "sync")]
+        None,
     )
     .map(|_| ())
 }
@@ -351,6 +353,7 @@ pub(super) fn apply_actor_ops_collecting(
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
+    #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
 ) -> Result<(super::base_apply::PendingNativeSkillBatch, ContentWriteSet)> {
     if !matches!(origin, BaseWriteOrigin::Ordinary) {
         return Err(Error::InvariantViolation(
@@ -381,6 +384,8 @@ pub(super) fn apply_actor_ops_collecting(
             actor: Some(*actor),
             content_writes: Some(&effects),
         }),
+        #[cfg(feature = "sync")]
+        record_document,
     )?;
     effects.after_collecting(vault, txn, actor)?;
     Ok((pending, effects))

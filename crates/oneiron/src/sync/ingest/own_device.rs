@@ -21,6 +21,8 @@
 //! and every later pass replay persisted bytes with no live proof of who sent
 //! them, so none of them mints a lane.
 
+pub(in crate::sync) mod record_document;
+
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;

@@ -66,6 +66,8 @@ pub(super) fn put_or_stage(
     // its own-device lane to the put, and the batch threads it to the witness
     // check, which reads it for this row and these bytes only.
     let own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
+    let record_document =
+        super::own_device::record_document::selected_in_txn(ctx, wtxn, &id, blob)?;
     let put = ctx.vault.batch_in().put_replicated(
         &id,
         header.entity_type,
@@ -74,10 +76,13 @@ pub(super) fn put_or_stage(
         data,
     );
     match &ctx.authority_beside {
-        Some(authority) => {
-            put.apply_ingested(wtxn, Some(&|| authority.rows()), own_device.as_ref())
-        }
-        None => put.apply_ingested(wtxn, None, own_device.as_ref()),
+        Some(authority) => put.apply_ingested(
+            wtxn,
+            Some(&|| authority.rows()),
+            own_device.as_ref(),
+            record_document.as_ref(),
+        ),
+        None => put.apply_ingested(wtxn, None, own_device.as_ref(), record_document.as_ref()),
     }
 }
 

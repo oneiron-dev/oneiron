@@ -25,7 +25,15 @@ impl BatchBuilder<'_> {
     /// it. Actor-bound batches stage in a savepoint, so a refused routed
     /// projection leaves neither its source event nor any head change behind.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true),
+            None,
+            None,
+            None,
+            #[cfg(feature = "sync")]
+            None,
+        )
     }
 
     /// The typed SKILL door's caller-transaction terminal. The request remains
@@ -39,6 +47,7 @@ impl BatchBuilder<'_> {
         self.apply_with_gate_mode(
             wtxn,
             ApplyOpsGateMode::new(false, true).with_skill_state_write(request),
+            None,
             None,
             None,
             None,
@@ -59,6 +68,7 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
+        record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
     ) -> Result<()> {
         self.apply_with_gate_mode(
             wtxn,
@@ -66,13 +76,22 @@ impl BatchBuilder<'_> {
             None,
             authority_beside,
             own_device,
+            record_document,
         )
     }
 
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(true, true),
+            None,
+            None,
+            None,
+            #[cfg(feature = "sync")]
+            None,
+        )
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
@@ -84,6 +103,8 @@ impl BatchBuilder<'_> {
             Some(actor),
             None,
             None,
+            #[cfg(feature = "sync")]
+            None,
         )
     }
 
@@ -94,6 +115,7 @@ impl BatchBuilder<'_> {
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
+        #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
     ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
@@ -127,6 +149,8 @@ impl BatchBuilder<'_> {
                 Some(&actor),
                 authority_beside,
                 own_device,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
             staged.commit()?;
             if let Some(scope) = scope {
@@ -134,7 +158,15 @@ impl BatchBuilder<'_> {
             }
             Ok(())
         } else {
-            self.apply_staged(wtxn, gate_mode, None, authority_beside, own_device)
+            self.apply_staged(
+                wtxn,
+                gate_mode,
+                None,
+                authority_beside,
+                own_device,
+                #[cfg(feature = "sync")]
+                record_document,
+            )
         }
     }
 
@@ -145,6 +177,7 @@ impl BatchBuilder<'_> {
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
+        #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
     ) -> Result<()> {
         let vault = self.vault;
         // Preserve original-position admission before routing removes a Put.
@@ -234,6 +267,8 @@ impl BatchBuilder<'_> {
                 text_index_trusted,
                 gate_mode,
                 self.origin,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
             (outputs, Some(effects))
         } else {
@@ -253,6 +288,8 @@ impl BatchBuilder<'_> {
                     actor: None,
                     content_writes: None,
                 }),
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
             (outputs, None)
         };

@@ -86,7 +86,7 @@ fn require_source_heads(databases: &ImageRows, slot: &[u8], doc: &EntityDoc) -> 
             // Opaque rows remain data, never a source admission.
             continue;
         };
-        if head.document.as_bytes() != slot {
+        if storage::document_slot(&head)?.to_hex().as_bytes() != slot {
             continue;
         }
         let entity = HexId::decode_key(key).ok_or_else(invalid)?;

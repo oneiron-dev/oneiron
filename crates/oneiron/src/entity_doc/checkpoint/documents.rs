@@ -52,6 +52,7 @@ const NOTE_HEAD_DOCS: SideTable<(EntityId, EntityId), (), Raw> =
 enum Flavor {
     EntityDoc,
     Note,
+    Sequence,
 }
 
 /// Who a slot's rows belong to: one owner and the document its bytes are,
@@ -121,13 +122,24 @@ fn birth_owner(snapshot: &[u8]) -> Option<EntityId> {
 pub(super) fn capture(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
-    heads: BTreeMap<String, EntityId>,
+    heads: Vec<(String, EntityId)>,
+    sequences: Vec<(String, EntityId)>,
     out: &mut Captured,
 ) -> Result<()> {
-    let mut claims: BTreeMap<String, Claim> = heads
-        .into_iter()
-        .map(|(slot, entity)| (slot, Claim::Owner(entity, Flavor::EntityDoc)))
-        .collect();
+    let mut claims: BTreeMap<String, Claim> = BTreeMap::new();
+    for (slots, flavor) in [(heads, Flavor::EntityDoc), (sequences, Flavor::Sequence)] {
+        for (slot, entity) in slots {
+            let owner = Claim::Owner(entity, flavor);
+            claims
+                .entry(slot)
+                .and_modify(|claim| {
+                    if *claim != owner {
+                        *claim = Claim::Shared;
+                    }
+                })
+                .or_insert(owner);
+        }
+    }
     // The NOTE getter captures these markers; here they only join slots.
     for row in NOTE_HEAD_DOCS.iter_raw_from(dbs, txn, &[])? {
         let (key, _) = row?;
@@ -157,6 +169,11 @@ pub(super) fn capture(
         match claim {
             Some(Claim::Owner(entity, Flavor::EntityDoc)) => split_slot(out, entity, group),
             Some(Claim::Owner(note, Flavor::Note)) => split_note_slot(out, note, group),
+            Some(Claim::Owner(entity, Flavor::Sequence)) => group.name(
+                out,
+                Some(OwnerRef::entity(&entity)),
+                Unresolved::ActorSplit("independent sequence text has no native field binding"),
+            ),
             Some(Claim::Shared) => group.name(out, None, Unresolved::SharedOwners),
             None => group.name(out, None, Unresolved::NoOwner),
         }

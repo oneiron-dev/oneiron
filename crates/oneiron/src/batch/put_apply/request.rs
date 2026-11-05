@@ -218,6 +218,9 @@ pub(in crate::batch) struct PutContext<'a> {
     /// Pending-birth prompt sources for FIX 11000 anchors: `Some` proven
     /// from batch state (possibly empty), `None` unknown (incomplete).
     pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
+    /// The actual selected record/document transport, not native admission.
+    #[cfg(feature = "sync")]
+    pub(in crate::batch) record_document: Option<&'a crate::sync::SelectedRecordDocument<'a>>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its
