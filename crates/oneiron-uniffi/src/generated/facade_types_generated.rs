@@ -52819,6 +52819,8 @@ pub enum LlmStreamEvent {
     ReasoningEnd {
         #[serde(rename = "part_id")]
         part_id: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "tool_call_start")]
     ToolCallStart {
