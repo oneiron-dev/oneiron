@@ -30,6 +30,7 @@ mod bundle;
 mod install;
 mod launch_manifest;
 mod launcher;
+mod llama_metrics;
 mod media_worker;
 mod probe;
 #[cfg(unix)]
@@ -662,6 +663,51 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
         .map(|hosted| hosted.worker.clone())
 }
 
+/// The external chat workers on `provider_name` bound at construction: for
+/// each provided row that still matches its hosted row and provider exactly,
+/// the actual worker, keyed by wire model. Endpoint-split and media rows
+/// are left out. The map holds workers only, never configs or secrets.
+pub(super) fn external_workers(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+) -> BTreeMap<String, InferenceWorker> {
+    let Some(host) = HOST.get() else {
+        return BTreeMap::new();
+    };
+    let workers = host.lock();
+    let mut bound = BTreeMap::new();
+    for row in rows {
+        if row.binding.provider != provider_name
+            || row.mode != WorkerMode::External
+            || row.endpoint.is_some()
+            || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
+        {
+            continue;
+        }
+        let Some(hosted) = workers.get(&row.id) else {
+            continue;
+        };
+        if hosted.row != *row || hosted.provider != *provider {
+            continue;
+        }
+        bound.insert(row.binding.model.clone(), hosted.worker.clone());
+    }
+    bound
+}
+
+/// Whether `worker` is still its row's hosted supervisor: a replaced row's
+/// old clone is not. The host lock is released before the caller probes.
+pub(super) fn is_current(worker: &InferenceWorker) -> bool {
+    HOST.get()
+        .and_then(|host| {
+            host.lock()
+                .get(&worker.spec().worker_id)
+                .map(|hosted| hosted.worker.same_instance(worker))
+        })
+        .unwrap_or(false)
+}
+
 /// Whether a managed EXL3 worker this process launches is bound to
 /// `provider`: its chat transport then reaches that worker over its native
 /// socket (`models/native_exl3`).
@@ -752,7 +798,7 @@ pub(super) fn managed_http_evidence(
 
 impl WorkerHost {
     /// Starts a new supervisor's work: a managed worker launches where this
-    /// process may launch, an external one is probed once.
+    /// process may launch, an external one gets its initial probe.
     fn begin(&self, worker: &InferenceWorker) {
         match worker.spec().mode {
             WorkerMode::Managed => {

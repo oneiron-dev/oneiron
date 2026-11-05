@@ -62,6 +62,7 @@ mod conflict_settle;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod core_write_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
@@ -175,7 +176,8 @@ pub use asset_resolve::{
     resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
-    asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, land_asset_blob_in_txn,
+    release_asset_blob_in_txn,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1224 facade rows, 4457 declarations.
-Inputs: 1155 of 1224 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1060 of 1224 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1228 facade rows, 4468 declarations.
+Inputs: 1159 of 1228 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1064 of 1228 fully typed, 164 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -5552,6 +5552,9 @@ class SkillHashRuleRequest(TypedDict):
     blocked: bool
 class SkillCodeAutoInstallRequest(TypedDict):
     enabled: bool
+SkillFitChoice = Literal["rule_fit", "owner_asked"]
+class SkillFitSetRequest(TypedDict):
+    setting: SkillFitChoice
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
@@ -7367,6 +7370,10 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
+RetainedWorkQueue = Literal["federation_burst", "maintenance_ingest", "facet_stamp"]
+class RetainedWorkWaitSetRequest(TypedDict):
+    queue: RetainedWorkQueue
+    secs: NotRequired[int | None]
 class ConnectWindow(TypedDict):
     pact: str
     epoch: int
@@ -8361,6 +8368,11 @@ class RecordEraseSweep(TypedDict):
     erase_complete_at: NotRequired[int | None]
     final_ref: NotRequired[str | None]
     custody: NotRequired[RecordEraseCustody | None]
+class OutboundCallRequestEraseRequest(TypedDict):
+    attempt: EntityId
+    call_seq: int
+class OutboundCallRequestErased(TypedDict):
+    erased: bool
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId
@@ -11012,6 +11024,25 @@ class LearningSettingClear(TypedDict):
     goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class CodeRunSecretLiftDismiss(TypedDict):
+    handle: str
+    occurrence: str
+class CodeRunSecretLiftRequest(TypedDict):
+    dismiss: NotRequired[CodeRunSecretLiftDismiss | None]
+class CodeRunSecretLiftProposalView(TypedDict):
+    handle: str
+    occurrence: str
+    detector_reason: str
+    suggested_secret_name: str
+class CodeRunSecretLiftDismissal(TypedDict):
+    handle: str
+    occurrence: str
+    dismissed_by: str
+    dismissed_at: int
+    receipt: str
+class CodeRunSecretLiftStatus(TypedDict):
+    proposals: list[CodeRunSecretLiftProposalView]
+    dismissed: NotRequired[CodeRunSecretLiftDismissal | None]
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
 class SecretLiftClose(TypedDict):
     proposal: str
