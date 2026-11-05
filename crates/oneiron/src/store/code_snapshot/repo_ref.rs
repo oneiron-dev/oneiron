@@ -1,4 +1,4 @@
-//! RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization.
+//! Repository references: committed local/GitHub trees and current local captures.
 
 use super::snapshot::{CODEBASE_FILE_PATH_MAX_BYTES, validate_bounded_text};
 use crate::error::{CodeError, Error, Result};
@@ -49,7 +49,9 @@ impl RepoRef {
                     "capture repo_ref path must not have leading or trailing whitespace",
                 )));
             }
-            return Ok(Self::LocalCapture { path: path.to_owned() });
+            return Ok(Self::LocalCapture {
+                path: path.to_owned(),
+            });
         }
         if let Some(path) = input.strip_prefix("local:") {
             return parse_local_repo_ref(path);

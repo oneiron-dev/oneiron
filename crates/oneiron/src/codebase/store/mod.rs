@@ -23,6 +23,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
+mod capture;
 pub(crate) mod checkpoint;
 mod index_rows;
 mod ingest_writer;
