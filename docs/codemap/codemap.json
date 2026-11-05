@@ -16809,7 +16809,7 @@
      "path": "src/code_run/contribution.rs",
      "purpose": "The matched-fork contribution runner (FIX 3028, FIX 2870, ARCH-0037 #lineage-credit, ARCH-0053): one sampled…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -17344,7 +17344,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 45,
+      "crate-vis": 47,
       "mod": 8,
       "re-export": 32
      }
@@ -17367,7 +17367,7 @@
      "purpose": "Per-model-call evidence and replay records (FIX 12516)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 10,
       "struct": 4
@@ -17945,7 +17945,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "re-export": 6
      }
     },
@@ -17989,7 +17989,7 @@
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -18030,7 +18030,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 8,
       "struct": 2
      }
@@ -18103,7 +18103,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -18125,6 +18125,16 @@
      "purpose": "The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/fork_erase.rs",
+     "purpose": "Contribution-fork erase ownership (FIX 10754, 11358)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -46003,6 +46013,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/asset_resolve/image_mask.rs",
+     "purpose": "Sanitized raster bytes for caller-marked masked reads",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ImageHandle",
       "ImagePick"
@@ -67102,7 +67122,7 @@
      "path": "src/skill_attribution/contribution_admission.rs",
      "purpose": "Contribution-check admission (FIX 3610, OF-542): every well-formed pair a caller submits is recorded",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2
      }
     },
@@ -91685,7 +91705,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 178,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92294,7 +92314,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 361,
+     "files": 362,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92996,7 +93016,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6504,
+   "source_files": 6506,
    "test_files": 895
   },
   "oneiron-android": {
