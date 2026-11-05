@@ -431,7 +431,7 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let reasoning_tokens = usage
         .get("completion_tokens_details")
         .map_or(0, |details| u64_field(details, "reasoning_tokens"));
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             total: prompt_tokens,
             cache_read: cached_tokens,
@@ -444,7 +444,12 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: usage.get("prompt_tokens").and_then(JsonValue::as_u64),
+        output: usage.get("completion_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// The finish of a reply whose provider reported none.
