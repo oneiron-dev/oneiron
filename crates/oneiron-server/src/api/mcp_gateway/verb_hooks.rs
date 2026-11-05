@@ -219,10 +219,7 @@ impl McpCallContext {
             .map_err(|_| VerbAskRefusal::CredentialUnavailable)?;
         let registry = server.mcp_registry.lock().await;
         let resolved = registry.resolve_connection(connection, now, |class, actor| {
-            server
-                .vault
-                .gate_actor_ceiling_exists(class, actor)
-                .unwrap_or(false)
+            super::actor_dispatch::mcp_actor_ceiling_admits(server, &auth, class, actor)
         });
         drop(registry);
         let mut actor = resolved.map_err(crate::credential_resume::adapter_refusal)?;
@@ -310,6 +307,8 @@ async fn rerun_saved_call(
     call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
 ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal> {
     use oneiron::runtime_hooks::verb::VerbAskRefusal;
+    let share_context = super::actor_dispatch::mcp_share_view_context(context, &call.verb);
+    let context = share_context.as_ref().unwrap_or(context);
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();

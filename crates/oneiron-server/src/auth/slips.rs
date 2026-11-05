@@ -268,14 +268,22 @@ impl CoreAuth {
         if invited && INVITEE_DOORS.contains(&verb) {
             self.scopes = BTreeSet::from([CoreScope::Read, CoreScope::Write]);
         }
-        // A share-only credential acquires the row's Read scope only on its
-        // two rendering doors. It never gains general core:read authority.
-        if matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+        self.at_share_view_door(verb)
+    }
+
+    /// Whether this verified share credential permits this rendering door.
+    pub(crate) fn allows_share_view_verb(&self, verb: &str) -> bool {
+        matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
             && self
                 .verified_slip
                 .as_ref()
                 .is_some_and(|slip| slip.claims().share_ref.is_some() && slip.allows_verb(verb))
-        {
+    }
+
+    /// A request-local Read scope for the two share renderers, never general
+    /// core:read authority or a generic scoped-read key.
+    pub(crate) fn at_share_view_door(mut self, verb: &str) -> Self {
+        if self.allows_share_view_verb(verb) {
             self.scopes.insert(CoreScope::Read);
         }
         self
