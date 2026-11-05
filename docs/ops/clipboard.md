@@ -37,8 +37,11 @@ ASSET/entity bypass is used. Repeated equal copies are separate records.
 `clipboard_entries_as_owner(owner, before, limit)` revalidates before reading
 one snapshot. It returns masked text, newest `(copied_at, clip)` first, with
 an exclusive position and no upper count clamp. Zero requests no rows. Pages
-show active clips; cleanup and erasure also reach closed/retracted clips whose
-stored text remains. The page retains only its selected text. This owner API is not an agent grant
+show active, readable clips; cleanup and erasure also reach closed/retracted
+or source-withdrawn clips whose stored text remains. Destructive selection and
+its pre-scrub recheck validate the raw stored CLAIM's exact predicate, world
+and subject; ordinary page reads retain the native visibility filter. The page
+retains only its selected text. This owner API is not an agent grant
 or proof that ordinary recall excludes the Clipboard world.
 
 ## Retention and erasure
