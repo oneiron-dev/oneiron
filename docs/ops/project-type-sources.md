@@ -3,7 +3,9 @@
 `agent_dispatch::load_vault_type_tree_sourced` returns the vault tree and each
 requested project's selected team-shape head. A project's source list names the
 stored entity rows behind the same snapshot's project visibility and skill
-selection. It does not grant access or replace the ordinary visibility checks.
+selection. The crate-private `load_vault_type_tree_sourced_in_txn` runs that same
+selection in a caller's existing snapshot or writer; the public wrapper still
+opens one read transaction. Neither grants access or replaces visibility checks.
 
 The project reader records every stored project row and indexed revision
 companion its component, parent and witness decisions read. Its authority fold
