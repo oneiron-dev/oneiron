@@ -19,9 +19,57 @@ pub(crate) fn threshold_in_txn(
     txn: &RoTxn<'_>,
     scan: EngineScan,
 ) -> Result<u64> {
-    Ok(POLICY
-        .get(store, txn, &scan.tag())?
-        .unwrap_or(scan.default_threshold()))
+    Ok(policy_row_in_txn(store, txn, scan.tag())?.unwrap_or(scan.default_threshold()))
+}
+
+thread_local! {
+    /// The policy rows one recall on this thread has read, for one committed
+    /// snapshot ([`crate::ports::recall_memo_key`]).
+    static POLICY_ROWS: std::cell::RefCell<PolicyRows> =
+        std::cell::RefCell::new(PolicyRows::default());
+}
+
+/// Scan policy rows kept for one recall's committed snapshot: a recall
+/// counts many adjacency scans of one kind, and each reads the same row, so
+/// later counts read it back instead of from the store (L15 recall speed).
+/// A read error is never kept.
+#[derive(Default)]
+struct PolicyRows {
+    at: Option<(u64, usize, usize)>,
+    rows: Vec<([u8; 1], Option<u64>)>,
+}
+
+/// The policy row of the scan tagged `tag` as `txn` reads it, if any.
+fn policy_row_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    tag: [u8; 1],
+) -> Result<Option<u64>> {
+    let Some(key) = crate::ports::recall_memo_key(store, txn) else {
+        return POLICY.get(store, txn, &tag);
+    };
+    let kept = POLICY_ROWS.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at != Some(key) {
+            memo.at = Some(key);
+            memo.rows.clear();
+        }
+        memo.rows
+            .iter()
+            .find(|(kept, _)| *kept == tag)
+            .map(|(_, row)| *row)
+    });
+    if let Some(row) = kept {
+        return Ok(row);
+    }
+    let row = POLICY.get(store, txn, &tag)?;
+    POLICY_ROWS.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.at == Some(key) {
+            memo.rows.push((tag, row));
+        }
+    });
+    Ok(row)
 }
 
 /// One scan's rows, counted against its threshold row.
