@@ -356,6 +356,12 @@ impl Vault {
         let (cascaded_shells, mut changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
         cancelled.extend(shell_cancelled);
+        crate::comm::settle_scoped_touch_checkpoint_payloads_for_reason_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            decoded.reason,
+        )?;
         let (_existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             wtxn,
             id,

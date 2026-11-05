@@ -29,6 +29,11 @@ mod projector;
 mod receipt_import;
 mod records;
 mod scoped_touch;
+mod scoped_touch_erase;
+pub(crate) use scoped_touch_erase::{
+    erase_scoped_touch_sources_for_erased_in_txn, erase_scoped_touch_sources_in_txn,
+    settle_scoped_touch_checkpoint_payloads_for_reason_in_txn,
+};
 mod stop_hold;
 mod thread_membership;
 
