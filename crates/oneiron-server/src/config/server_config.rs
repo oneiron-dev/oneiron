@@ -279,6 +279,24 @@ impl SyncServerConfig {
     }
 }
 
+/// The explicit vault inputs an embedded binding resolved over its config file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmbeddedHolderOverrides {
+    pub vault_path: PathBuf,
+    pub dimensions: Option<usize>,
+}
+
+impl EmbeddedHolderOverrides {
+    pub(crate) fn serve_args(&self, config: Option<PathBuf>) -> super::ServeArgs {
+        super::ServeArgs {
+            config,
+            vault_path: Some(self.vault_path.clone()),
+            dimensions: self.dimensions,
+            ..Default::default()
+        }
+    }
+}
+
 /// Fully resolved serve configuration after defaults, config file, env vars,
 /// and flags have been merged.
 ///
@@ -290,6 +308,10 @@ pub struct ServeConfig {
     /// The resolved file first-run model setup may rewrite, `None` for managed
     /// argv/settings-only serving or a binding started without a file.
     pub config_path: Option<PathBuf>,
+    /// Original embedded holder inputs for first-run setup replay. Unset for
+    /// configs that did not declare these overrides; resolved file values
+    /// must not be copied here because that would hide later file changes.
+    pub embedded_holder_overrides: Option<EmbeddedHolderOverrides>,
     pub host: String,
     pub port: u16,
     /// The artifact-only listener's port on `host`; `0` takes any free one,
@@ -465,6 +487,7 @@ impl Default for ServeConfig {
         Self {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
             config_path: None,
+            embedded_holder_overrides: None,
             host: "0.0.0.0".to_owned(),
             port: 9090,
             artifact_port: 0,
