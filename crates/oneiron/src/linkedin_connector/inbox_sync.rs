@@ -350,7 +350,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     /// Claims, routes and durably admits one batch of a thread's messages.
     fn admit_conversation_messages(
         &self,
-        messages: Vec<LinkedInConversationMessage>,
+        messages: Vec<(bool, LinkedInConversationMessage)>,
         now: u64,
         report: &mut LinkedInInboxSyncReport,
     ) -> Result<()> {
@@ -365,7 +365,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
             .backfill_skipped_messages
             .saturating_add(all_message_count.saturating_sub(events.len()));
 
-        for event in events {
+        for (incoming, event) in events {
             match claim_linkedin_inbox_message(self.vault, &self.config, &event.message)? {
                 LinkedInInboxClaim::Claimed => {}
                 LinkedInInboxClaim::Reclaimed => {
@@ -377,17 +377,10 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 }
             }
 
-            // The message's words go to the provider-event archive, as a
-            // Slack or LINE inbound's do (FIX 12328), and its event names the
-            // archive, which the connector reply responder reads them from.
-            let event_input = match archive_linkedin_message(self.vault, &event, now) {
-                Ok(payload_ref) => event.event_input.clone().with_payload_ref(payload_ref),
-                Err(err) => {
-                    release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
-                    return Err(err);
-                }
-            };
-            let receipt = match self.vault.route_inbound_surface_event(event_input.clone()) {
+            let receipt = match self
+                .vault
+                .route_inbound_surface_event(event.event_input.clone())
+            {
                 Ok(receipt) => receipt,
                 Err(err) => {
                     release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
@@ -395,6 +388,23 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 }
             };
             if receipt.outcome == InboundSurfaceRouteOutcome::Routed {
+                // Every message keeps its admission. Only positively incoming
+                // words become a body the reply responder can read.
+                let event_input = if incoming {
+                    match archive_linkedin_message(self.vault, &event, now) {
+                        Ok(payload_ref) => event.event_input.clone().with_payload_ref(payload_ref),
+                        Err(err) => {
+                            release_linkedin_inbox_message_claim(
+                                self.vault,
+                                &self.config,
+                                &event.message,
+                            )?;
+                            return Err(err);
+                        }
+                    }
+                } else {
+                    event.event_input.clone()
+                };
                 // The durable handoff commits before the seen marker: a
                 // crash between them leaves the claim, the next poll
                 // reclaims it, and the handoff's correlation id dedupes the
@@ -510,16 +520,14 @@ fn linkedin_tool_failure(tool: &'static str, err: &str) -> Error {
     }
 }
 
-/// The messages of a `get_conversation` output, in page order. With a
-/// `seat_key`, a message the output shows the seat sent is left out
-/// (FIX 12328): one whose `sender` is the seat's key, or a page-text turn
-/// headed by a name a link to the seat's own profile carries. A seat's own
-/// reply is never an inbound message.
+/// Every message of a `get_conversation` output, in page order, with whether
+/// its sender is positively incoming to `seat_key`. Own and unattributed
+/// messages still keep their admission, but do not supply reply text.
 pub(super) fn conversation_messages_from_tool_output(
     output: &Value,
     fallback_thread_id: Option<&str>,
     seat_key: Option<&str>,
-) -> Result<Vec<LinkedInConversationMessage>> {
+) -> Result<Vec<(bool, LinkedInConversationMessage)>> {
     let payload = mcp_payload(output)?;
     let conversation_references = section_references(&payload, "conversation");
     let thread_id = match thread_id_from_payload_url(&payload)? {
@@ -537,9 +545,12 @@ pub(super) fn conversation_messages_from_tool_output(
         },
     };
 
+    let mut structured = false;
     let mut messages =
         if let Some(message_values) = payload.get("messages").and_then(Value::as_array) {
-            explicit_conversation_messages(&thread_id, message_values)?
+            let messages = explicit_conversation_messages(&thread_id, message_values)?;
+            structured = !messages.is_empty();
+            messages
         } else {
             Vec::new()
         };
@@ -548,15 +559,22 @@ pub(super) fn conversation_messages_from_tool_output(
     {
         messages = fallback_conversation_messages(&thread_id, conversation_text)?;
     }
-    if let Some(seat_key) = seat_key {
-        let (seat_names, _) = conversation_link_names(&payload, seat_key);
-        messages.retain(|(sender, _)| {
-            sender
-                .as_deref()
-                .is_none_or(|sender| sender != seat_key && !matches_any_name(&seat_names, sender))
-        });
-    }
-    Ok(messages.into_iter().map(|(_, message)| message).collect())
+    let (seat_names, other_names) = seat_key
+        .map(|seat| conversation_link_names(&payload, seat))
+        .unwrap_or_default();
+    Ok(messages
+        .into_iter()
+        .map(|(sender, message)| {
+            let incoming = seat_key
+                .zip(sender.as_deref())
+                .is_some_and(|(seat, sender)| {
+                    !sender.eq_ignore_ascii_case(seat)
+                        && !matches_any_name(&seat_names, sender)
+                        && (structured || matches_any_name(&other_names, sender))
+                });
+            (incoming, message)
+        })
+        .collect())
 }
 
 pub(super) fn message_in_backfill_window(
