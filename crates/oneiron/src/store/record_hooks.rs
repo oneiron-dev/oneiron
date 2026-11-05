@@ -137,4 +137,12 @@ pub trait StoreRecordHooks: Send + Sync {
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<SecretCustodyRecord>>;
+
+    /// The engine's `comm::is_restrictive_comm_predicate`.
+    fn is_restrictive_comm_predicate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        predicate: &str,
+    ) -> Result<bool>;
 }

@@ -143,4 +143,13 @@ impl StoreRecordHooks for EngineRecordHooks {
     ) -> Result<Option<crate::secret_record::SecretCustodyRecord>> {
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, id)
     }
+
+    fn is_restrictive_comm_predicate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        predicate: &str,
+    ) -> Result<bool> {
+        crate::comm::is_restrictive_comm_predicate(store, txn, predicate)
+    }
 }
