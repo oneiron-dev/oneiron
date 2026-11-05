@@ -30,7 +30,14 @@ An adapter built without a line keeps its previous unbound behavior. The query
 helper lives in the adapter's `media_query` child; its native search and error
 handling are unchanged apart from this resource argument.
 
-Other pipeline buffers, the adapter's separate borrowed-view slots, trace
-serialization, provider storage, construction and return gaps, pre-growth
-admission and a full working-set bound remain open.
+When bound, the adapter also records the actual capacity of the separate
+borrowed tuple-view vector made by its seeded query helper. Only the vector's
+backing storage is counted. Its space, embedding and kind-filter references
+borrow the seed buffers; those buffers and the pipeline's owned copies stay
+with their separate owners. The view drops before its local lease on both
+success and error, including unwinding. An unbound adapter remains usable.
+
+Other pipeline buffers, trace serialization, provider storage, construction
+and return gaps, pre-growth admission and a full working-set bound remain
+open.
 No runtime, compiler or performance result is implied by these source changes.
