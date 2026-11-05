@@ -99,6 +99,9 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                     Value::Array(rows.iter().copied().map(entity_id_value).collect()),
                 ));
             }
+            if let Some(notice) = &answer.hook_notice {
+                entries.push(("hook_notice", Value::from(notice.to_string())));
+            }
             observations::keep_observations(&mut entries, &answer.observations)?;
             request_map(entries)
         }
@@ -314,6 +317,13 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             rows: map_get(entries, "rows")
                 .ok()
                 .map(|rows| decode_array(rows, entity_value))
+                .transpose()?,
+            hook_notice: map_get(entries, "hook_notice")
+                .ok()
+                .map(|notice| {
+                    serde_json::from_str(str_value(notice)?)
+                        .map_err(|_| invalid_code_run_replay("invalid agent verb hook notice"))
+                })
                 .transpose()?,
             observations: observations::decode_observations(entries)?,
         })),

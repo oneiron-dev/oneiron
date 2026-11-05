@@ -266,6 +266,16 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 admitted(cancel, || state.host.dispatch_self(call))?
             };
             let body = fit_reply(state.host, cancel, reply_body(&answered.outcome)?)?;
+            if let SelfDispatchOutcome::AgentVerb(answer) = &answered.outcome
+                && let Some(notice) = &answer.hook_notice
+            {
+                let mut frame = notice
+                    .as_str()
+                    .map_or_else(|| notice.to_string(), str::to_owned);
+                frame.push('\n');
+                // The verb already ran: a notice cannot fail or repeat it.
+                let _ = output(state, StreamTarget::Console, frame.into_bytes());
+            }
             Ok(answered.guest_json(body).to_string())
         }
     }
