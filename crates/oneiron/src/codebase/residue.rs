@@ -8,7 +8,7 @@ use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
 use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
-use crate::secret_snapshot::{SnapshotCustodyReport, SnapshotExclusionSet, snapshot_root};
+use crate::secret_snapshot::{SnapshotCustodyReport, SnapshotExclusionSet};
 use crate::side_table::{self, Raw, SideTable};
 
 type ContentHash = [u8; CODEBASE_CONTENT_HASH_LEN];
@@ -43,7 +43,7 @@ pub(super) fn reclaimable_asset_hashes(
                 && exclusions.excludes(
                     &file.path,
                     &file.content_hash,
-                    snapshot_root(&prior.repo_ref),
+                    prior.custody_root.as_deref(),
                 )
             {
                 candidates.insert(file.content_hash);
@@ -79,7 +79,7 @@ pub(super) fn reclaimable_asset_hashes(
                     || !(exclusions.excludes(
                         &file.path,
                         &file.content_hash,
-                        snapshot_root(&prior.repo_ref),
+                        prior.custody_root.as_deref(),
                     ) || quarantined_blobs.contains(&(file.path.as_str(), file.content_hash))))
             {
                 protected.insert(file.content_hash);

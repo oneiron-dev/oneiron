@@ -20,9 +20,17 @@ file declarations use the same discovered worktree or Git directory that the
 commit tree came from, not the run's admitted namespace. Both the early pass and
 the final writer use that same physical root; the final writer still reads the
 current declarations. Relative declarations and registered hashes are unchanged.
-A direct snapshot put retains its existing snapshot-root anchoring. Historical
-residue handling is unchanged and does not reinterpret an older namespace as a
-physical root. No read alias or broader grant is introduced here.
+New snapshots store that declaration anchor in `custody_root`, separately from
+the admitted repository namespace. Filtering and publication reconstruction keep
+the original stored anchor. Historical residue checks use each prior snapshot's
+own stored anchor, never today's checkout or a root guessed from its namespace.
+Direct snapshot callers supply their declaration anchor explicitly; the native
+binding carries it as nullable `custodyRoot` and does not infer it from `repoRef`.
+A null anchor records that no anchor was supplied. It is not proof that every
+file has no filesystem origin. Mixed, temporary tested-revision manifests have
+no single supplied anchor and are not stored as physical captures.
+No read alias or broader grant is introduced here. The anchor changes neither
+repository admission nor the existing fork and scope hashes.
 
 The custody lift can quarantine a file of a snapshot that was stored earlier.
 Its stored manifest and fork hash stay unchanged. The mount reads that file as
@@ -34,6 +42,9 @@ The native mount listing omits the same custody-withheld paths. Its existing
 owned-mount materializer already skipped those paths when their read returned
 absent; its returned file bodies do not change.
 
-These changes need only the normal matching engine/server update. They add no
-settings, numeric defaults, wire formats, guest images, artifact pins, storage
-migrations or old-format readers. Existing snapshots are not rekeyed or migrated.
+The stored MessagePack snapshot has a required seventh key, `custody_root`,
+containing a string or null. A missing key is an error; there is no old-format
+reader. Rollout requires matching engine/server and native-binding code for
+this snapshot format. These changes add no settings, numeric defaults, guest
+images, artifact pins or storage migrations. Existing snapshots are not rekeyed
+or migrated.

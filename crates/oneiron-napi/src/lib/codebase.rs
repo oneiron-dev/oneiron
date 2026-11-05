@@ -271,6 +271,7 @@ pub(super) fn core_codebase_snapshot(
     let NapiCodebaseSnapshot {
         project_id,
         repo_ref: repo_ref_string,
+        custody_root,
         commit_hash,
         fork_hash,
         scope_key,
@@ -302,8 +303,9 @@ pub(super) fn core_codebase_snapshot(
         .as_ref()
         .map(|buf| parse_fixed_hash::<CODEBASE_SCOPE_KEY_LEN>(buf, "scope_key"))
         .transpose()?;
-    let snapshot = CodebaseSnapshot::new(project_id, repo_ref, commit_hash, core_files)
-        .map_err(|e| e.to_string())?;
+    let snapshot =
+        CodebaseSnapshot::new(project_id, repo_ref, custody_root, commit_hash, core_files)
+            .map_err(|e| e.to_string())?;
     if let Some(fork_hash) = fork_hash
         && snapshot.fork_hash != fork_hash
     {
@@ -342,6 +344,7 @@ pub(super) fn napi_codebase_snapshot(
     Ok(NapiCodebaseSnapshot {
         project_id: snapshot.project_id,
         repo_ref: snapshot.repo_ref.canonical(),
+        custody_root: snapshot.custody_root,
         commit_hash: snapshot.commit_hash,
         fork_hash: Some(Buffer::from(snapshot.fork_hash.as_slice())),
         scope_key: Some(Buffer::from(snapshot.scope_key.as_slice())),

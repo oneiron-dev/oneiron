@@ -29,9 +29,10 @@ pub const CODEBASE_SCOPE_KEY_LEN: usize = 32;
 /// okay: the count it once refused past (FIX 8678). Never a refusal.
 pub const CODEBASE_SNAPSHOT_MAX_FILES: usize = 100_000;
 
-pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 6] = [
+pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 7] = [
     "project_id",
     "repo_ref",
+    "custody_root",
     "commit_hash",
     "fork_hash",
     "scope_key",
@@ -44,13 +45,15 @@ const KEY_PROJECT_ID: &str = CODEBASE_SNAPSHOT_BODY_KEYS[0];
 
 const KEY_REPO_REF: &str = CODEBASE_SNAPSHOT_BODY_KEYS[1];
 
-const KEY_COMMIT_HASH: &str = CODEBASE_SNAPSHOT_BODY_KEYS[2];
+const KEY_CUSTODY_ROOT: &str = CODEBASE_SNAPSHOT_BODY_KEYS[2];
 
-const KEY_FORK_HASH: &str = CODEBASE_SNAPSHOT_BODY_KEYS[3];
+const KEY_COMMIT_HASH: &str = CODEBASE_SNAPSHOT_BODY_KEYS[3];
 
-const KEY_SCOPE_KEY: &str = CODEBASE_SNAPSHOT_BODY_KEYS[4];
+const KEY_FORK_HASH: &str = CODEBASE_SNAPSHOT_BODY_KEYS[4];
 
-const KEY_FILES: &str = CODEBASE_SNAPSHOT_BODY_KEYS[5];
+const KEY_SCOPE_KEY: &str = CODEBASE_SNAPSHOT_BODY_KEYS[5];
+
+const KEY_FILES: &str = CODEBASE_SNAPSHOT_BODY_KEYS[6];
 
 const KEY_FILE_PATH: &str = CODEBASE_FILE_ENTRY_KEYS[0];
 
@@ -103,6 +106,8 @@ impl CodebaseFileEntry {
 pub struct CodebaseSnapshot {
     pub project_id: String,
     pub repo_ref: RepoRef,
+    /// The source tree's declared-path anchor, independent of its admitted namespace.
+    pub custody_root: Option<String>,
     pub commit_hash: Option<String>,
     pub fork_hash: CodebaseForkHash,
     pub scope_key: CodebaseScopeKey,
@@ -113,6 +118,7 @@ impl CodebaseSnapshot {
     pub fn new(
         project_id: impl Into<String>,
         repo_ref: RepoRef,
+        custody_root: Option<String>,
         commit_hash: Option<String>,
         files: Vec<CodebaseFileEntry>,
     ) -> Result<Self> {
@@ -122,6 +128,7 @@ impl CodebaseSnapshot {
             scope_key: codebase_scope_key(&project_id, &repo_ref)?,
             project_id,
             repo_ref,
+            custody_root,
             commit_hash: commit_hash.map(normalize_commit_hash).transpose()?,
             files,
         };
@@ -165,6 +172,13 @@ pub fn encode_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<Vec<u8>> 
             Value::from(snapshot.repo_ref.canonical()),
         ),
         (
+            Value::from(KEY_CUSTODY_ROOT),
+            snapshot
+                .custody_root
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
+        (
             Value::from(KEY_COMMIT_HASH),
             snapshot
                 .commit_hash
@@ -206,7 +220,7 @@ impl RawValue for CodebaseSnapshot {
 const FILE_ENTRY_MIN_BYTES: usize = 64;
 
 /// What a snapshot body of `body_bytes` may unfold into before its schema is
-/// read: a root map of six fields whose `files` array holds entry maps of
+/// read: a root map of seven fields whose `files` array holds entry maps of
 /// four, as many as its bytes could spell (a memory floor, never a file
 /// count: FIX 8678), and no field longer than a path.
 fn snapshot_shape(body_bytes: usize) -> ShapeBudget {
@@ -253,6 +267,7 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
 
     let mut project_id: Option<String> = None;
     let mut repo_ref: Option<RepoRef> = None;
+    let mut custody_root: Option<Option<String>> = None;
     let mut commit_hash: Option<Option<String>> = None;
     let mut fork_hash: Option<CodebaseForkHash> = None;
     let mut scope_key: Option<CodebaseScopeKey> = None;
@@ -300,6 +315,19 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
                         )))?;
                 repo_ref = Some(RepoRef::parse(text)?);
             }
+            KEY_CUSTODY_ROOT => {
+                custody_root = Some(match value {
+                    Value::Nil => None,
+                    _ => Some(
+                        value
+                            .as_str()
+                            .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                                "custody_root must be null or a UTF-8 string",
+                            )))?
+                            .to_owned(),
+                    ),
+                });
+            }
             KEY_COMMIT_HASH => {
                 commit_hash = Some(match value {
                     Value::Nil => None,
@@ -345,6 +373,9 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
         )))?,
         repo_ref: repo_ref.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key repo_ref",
+        )))?,
+        custody_root: custody_root.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "missing required snapshot key custody_root",
         )))?,
         commit_hash: commit_hash.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key commit_hash",

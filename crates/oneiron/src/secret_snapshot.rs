@@ -11,7 +11,7 @@ use crate::error::{CodeError, Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_lease::decode_local_registration_body;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
-use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
+use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot};
 use crate::vault::Vault;
 
 /// SECRET-03 (ONE-1921): the T2 local-registration rows this snapshot filter
@@ -135,15 +135,6 @@ impl SnapshotWithhold {
             outcome: "deny",
             reason_codes: vec!["gate.secret_scan.detected", reason],
         })
-    }
-}
-
-/// The repository root that anchors absolute custody declarations. Only local
-/// checkouts have one; hosted repo_refs name no path on this machine.
-pub(crate) fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
-    match repo_ref {
-        RepoRef::LocalFolder { path, .. } => Some(path.trim_end_matches('/')),
-        RepoRef::GitHubAtCommit { .. } => None,
     }
 }
 
