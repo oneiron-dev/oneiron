@@ -12,23 +12,21 @@ use crate::error::{Error, Result};
 
 /// The scratch document and next witness have no exporter or persistence
 /// terminal. Only the native publisher can consume their private fields.
-pub(super) struct PreparedSkillState {
-    pub(super) head: storage::Head,
-    pub(super) document: EntityDoc,
-    pub(super) before: VersionVector,
-    pub(super) next: SkillStateFact,
-    admission: LocalSkillStateAdmission,
+struct PreparedSkillState<'source> {
+    head: storage::Head,
+    document: EntityDoc,
+    before: VersionVector,
+    admission: LocalSkillStateAdmission<'source>,
 }
 
 /// Actual local stored source: load the original head and replay into a fresh
 /// owned document, never a registry/shared cached handle. Incoming or restored
 /// witnesses still need their real source admission before this path can run.
-pub(super) fn prepare_in_txn(
-    input: &NativeSkillFinalInput<'_>,
+fn prepare_in_txn<'source>(
+    input: &'source NativeSkillFinalInput<'_>,
     txn: &mut heed::RwTxn<'_>,
-) -> Result<PreparedSkillState> {
+) -> Result<PreparedSkillState<'source>> {
     let (source, head, document) = LocalSkillStateSource::capture_in_txn(input, txn)?;
-    let store = &input.vault().store;
     let entity = input.entity();
     let document_id = EntityId::from_hex(&head.document)?;
     let before = document.doc.oplog_vv();
@@ -59,17 +57,30 @@ pub(super) fn prepare_in_txn(
                 .timestamp(timestamp),
         );
     }
-    // The Binary witness also retains this opaque token when its commit
-    // message later falls below a shallow floor. Keep its ordinary hold use
-    // in this writer, without resolving the token or asserting permission.
     let admission = source.admit_local(&document, &local)?;
-    admission.recheck_in_txn(input.vault(), txn)?;
-    crate::provenance::record_actor_stamp_uses_in_txn(store, txn, &entity, next.writer_token()?)?;
+    admission.recheck_in_txn(txn)?;
     Ok(PreparedSkillState {
         head,
         document,
         before,
-        next: next.clone(),
         admission,
     })
+}
+
+/// Only the builder's actual final continuation may supply this input. The
+/// input, complete old source, new native write and persistence all remain in
+/// this call and the caller's one writer; no prepared proof escapes it.
+pub(in crate::entity_doc) fn publish_in_txn(
+    input: NativeSkillFinalInput<'_>,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let mut prepared = prepare_in_txn(&input, txn)?;
+    storage::persist_native_skill(
+        txn,
+        &input.entity(),
+        &mut prepared.head,
+        &prepared.document,
+        Some(&prepared.before),
+        prepared.admission,
+    )
 }

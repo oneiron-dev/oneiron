@@ -5,6 +5,7 @@ mod admission;
 mod canonical;
 mod checkpoint;
 mod codec;
+mod inherited;
 mod inspect;
 #[cfg(feature = "sync")]
 mod prepare;
@@ -12,11 +13,14 @@ mod project;
 mod register;
 mod request;
 
+#[cfg(feature = "sync")]
+pub(super) use admission::LocalSkillStateAdmission;
 pub(super) use canonical::{CanonicalSkillState, has_witness};
 pub(super) use checkpoint::{
     check_checkpoint_insert, check_checkpoint_op, is_checkpoint_root, validate_checkpoint_history,
     validate_image_history,
 };
+pub(super) use inherited::reconcile_for_persist;
 pub(super) use register::current_witness_bytes;
 #[cfg(feature = "sync")]
 pub(crate) use request::SkillStateSnapshot;

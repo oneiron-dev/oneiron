@@ -13,7 +13,8 @@ use crate::{EntityId, Vault};
 /// real old head and complete document in the applying writer. The stored
 /// source invariant must cover every ingress before native doors are enabled;
 /// this is not a constructor for caller-supplied rows or decoded snapshots.
-pub(super) struct LocalSkillStateSource {
+pub(super) struct LocalSkillStateSource<'vault> {
+    vault: &'vault Vault,
     entity: EntityId,
     head: Vec<u8>,
     frontier: Vec<u8>,
@@ -23,8 +24,8 @@ pub(super) struct LocalSkillStateSource {
 
 /// The exact native extension of that source, not recipient standing. No
 /// decoder, signature checker or raw document constructor can produce it.
-pub(super) struct LocalSkillStateAdmission {
-    source: LocalSkillStateSource,
+pub(in crate::entity_doc) struct LocalSkillStateAdmission<'vault> {
+    source: LocalSkillStateSource<'vault>,
     inventory: NativeMapInventory,
 }
 
@@ -32,9 +33,9 @@ fn invalid() -> Error {
     Error::CorruptedIndex("native SKILL state local publication source")
 }
 
-impl LocalSkillStateSource {
+impl<'vault> LocalSkillStateSource<'vault> {
     pub(super) fn capture_in_txn(
-        input: &NativeSkillFinalInput<'_>,
+        input: &'vault NativeSkillFinalInput<'_>,
         txn: &heed::RoTxn<'_>,
     ) -> Result<(Self, storage::Head, EntityDoc)> {
         input.recheck_in_txn(txn)?;
@@ -46,6 +47,7 @@ impl LocalSkillStateSource {
         let inventory = inspect(&document)?;
         validate_birth(&inventory, entity, document.birth().at)?;
         let source = Self {
+            vault: input.vault(),
             entity,
             head: head_bytes,
             frontier: document.frontier(),
@@ -65,7 +67,7 @@ impl LocalSkillStateSource {
         self,
         document: &EntityDoc,
         next: &LocalSkillStateFact,
-    ) -> Result<LocalSkillStateAdmission> {
+    ) -> Result<LocalSkillStateAdmission<'vault>> {
         let head: storage::Head = storage::decode(&self.head)?;
         let document_id = EntityId::from_hex(&head.document)?;
         if document.birth().entity != self.entity.to_hex()
@@ -112,11 +114,12 @@ impl LocalSkillStateSource {
     }
 }
 
-impl LocalSkillStateAdmission {
+impl LocalSkillStateAdmission<'_> {
     /// Recheck the real old source before a persistence continuation consumes
     /// this owner. A head or native-history replacement cannot reuse it.
-    pub(super) fn recheck_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+    pub(super) fn recheck_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
         let source = &self.source;
+        let vault = source.vault;
         if storage::record_head_bytes(&vault.store, txn, &source.entity)?.as_deref()
             != Some(source.head.as_slice())
         {
@@ -128,6 +131,27 @@ impl LocalSkillStateAdmission {
             return Err(invalid());
         }
         Ok(())
+    }
+
+    pub(in crate::entity_doc) fn vault(&self) -> &Vault {
+        self.source.vault
+    }
+
+    pub(in crate::entity_doc) fn require_document(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        document: &EntityDoc,
+    ) -> Result<std::collections::BTreeSet<EntityId>> {
+        self.recheck_in_txn(txn)?;
+        if *entity != self.source.entity
+            || document.birth().entity != entity.to_hex()
+            || document.birth().at != self.source.birth_at
+            || inspect(document)? != self.inventory
+        {
+            return Err(invalid());
+        }
+        self.writer_tokens()
     }
 
     /// Uses come from the same complete admitted inventory, not a second
