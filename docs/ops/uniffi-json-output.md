@@ -241,3 +241,13 @@ section order, scores and all non-claim item variants retain the whole record
 codec. Required null remains present; optional null scope remains absent.
 Correction replies stay on their existing finite codec. Native reads, policy,
 input conversion, typed client calls and hooks are unchanged.
+
+
+`vault.inspection.resolve` and `vault.lenses.resolve` consume the optional
+resolved entity body before converting finite inspection or selection metadata.
+A missing item stays missing. Missing or null body JSON still reads as absent;
+a present item with no body stays present. Provenance, state, handle, narrowing
+receipt, selection reach and cursor bytes retain the existing record codec.
+Native read checks, exact-frame resolution, inputs and typed client calls do
+not change. Exported `pack_json` remains opaque text; this conversion never
+parses or rewrites JSON carried inside a string.

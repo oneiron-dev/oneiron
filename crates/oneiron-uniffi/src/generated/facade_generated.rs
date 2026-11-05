@@ -1614,7 +1614,7 @@ export_facade! {
 "vault.inspection.resolve" => fn vault_inspection_resolve(&self, input: InspectionResolveRequest) -> InspectionResolved = |client| {
     let input: oneiron::lens::InspectionResolveRequest = crate::codec::lower_record("vault.inspection.resolve", input)?;
     let output = client.vault_inspection_resolve(&input)?;
-    crate::codec::lift_record("vault.inspection.resolve", &output)
+    Lift::lift(output)
 };
 "vault.shared.propose_delete" => fn vault_shared_propose_delete(&self, input: SharedVaultRequest) -> PendingAuthorityAct = |client| {
     let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.propose_delete", input)?;
@@ -2984,7 +2984,7 @@ export_facade! {
 "vault.lenses.resolve" => fn vault_lenses_resolve(&self, input: LensSelectionResolveRequest) -> LensSelectionResolved = |client| {
     let input: oneiron::lens::LensSelectionResolveRequest = crate::codec::lower_record("vault.lenses.resolve", input)?;
     let output = client.vault_lenses_resolve(&input)?;
-    crate::codec::lift_record("vault.lenses.resolve", &output)
+    Lift::lift(output)
 };
 "vault.lenses.result_set.action" => fn vault_lenses_result_set_action(&self, input: LensResultSetActionRequest) -> LensResultSetActionResult = |client| {
     let input: oneiron::lens::LensResultSetActionRequest = crate::codec::lower_record("vault.lenses.result_set.action", input)?;
