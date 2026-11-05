@@ -20744,6 +20744,197 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.mail.pack.install",
+      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.connect",
+      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.",
+      "input": "crate::mail_pack::MailSourceConnectRequest",
+      "output": "crate::mail_pack::MailSourceConnectReceipt",
+      "call": "memory.mail_sources_connect(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.list",
+      "description": "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::mail_pack::MailSourceView>",
+      "call": "memory.mail_sources_list()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.settings.set",
+      "description": "Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address.",
+      "input": "crate::mail_pack::MailSourceSettingsRequest",
+      "output": "crate::mail_pack::MailSourceView",
+      "call": "memory.mail_sources_settings_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.members.set",
+      "description": "Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on.",
+      "input": "crate::mail_pack::MailSourceMembersRequest",
+      "output": "crate::mail_pack::MailSourceView",
+      "call": "memory.mail_sources_members_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.audience_events",
+      "description": "Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins.",
+      "input": "crate::mail_pack::MailSourceRef",
+      "output": "Vec<crate::mail_pack::SourceAudienceEventView>",
+      "call": "memory.mail_sources_audience_events(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.share",
+      "description": "Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox.",
+      "input": "crate::mail_pack::MailThreadShareRequest",
+      "output": "crate::mail_pack::MailThreadShareReceipt",
+      "call": "memory.mail_threads_share(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.unshare",
+      "description": "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving.",
+      "input": "crate::mail_pack::MailThreadShareRequest",
+      "output": "crate::mail_pack::MailThreadShareReceipt",
+      "call": "memory.mail_threads_unshare(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.setting",
+      "description": "Whether org compliance search across mailboxes is on; off by default.",
+      "input": "EmptyRequest",
+      "output": "crate::mail_pack::MailComplianceSettingView",
+      "call": "memory.mail_compliance_setting()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.set",
+      "description": "Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log.",
+      "input": "crate::mail_pack::MailComplianceSetRequest",
+      "output": "crate::mail_pack::MailComplianceSettingView",
+      "call": "memory.mail_compliance_set(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.log",
+      "description": "The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::mail_pack::MailComplianceEventView>",
+      "call": "memory.mail_compliance_log()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.sync_status",
+      "description": "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers.",
+      "input": "crate::mail_pack::MailSourceRef",
+      "output": "crate::mail_pack::MailSyncStatusView",
+      "call": "memory.mail_sources_sync_status(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.inbox",
+      "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
+      "input": "crate::mail_pack::MailInboxRequest",
+      "output": "crate::mail_pack::MailInboxPage",
+      "call": "memory.mail_inbox(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.threads.read",
+      "description": "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with.",
+      "input": "crate::mail_pack::MailThreadRequest",
+      "output": "crate::mail_pack::MailThreadView",
+      "call": "memory.mail_thread(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.compliance.search",
+      "description": "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers.",
+      "input": "crate::mail_pack::MailComplianceSearchRequest",
+      "output": "crate::mail_pack::MailComplianceSearchReply",
+      "call": "memory.mail_compliance_search(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
     }
   ]
 }
