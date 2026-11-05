@@ -611,7 +611,13 @@ pub fn replace_sealed_bundle_pads(
     let Some((stage, bytes)) = staged.filter(|(stage, _)| stage.generation == generation) else {
         return Err(denied());
     };
-    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| denied())?;
+    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|error| {
+        if matches!(&error, Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) {
+            error
+        } else {
+            denied()
+        }
+    })?;
     drop(bytes);
     if pads.generation() != generation {
         return Err(denied());

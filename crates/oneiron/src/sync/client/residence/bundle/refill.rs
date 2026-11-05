@@ -48,6 +48,14 @@ impl ObjectRead {
     }
 }
 
+pub(super) fn object_parse_error(error: crate::Error) -> TransportError {
+    if matches!(&error, crate::Error::Io(io) if io.kind() == std::io::ErrorKind::OutOfMemory) {
+        storage(error)
+    } else {
+        refused()
+    }
+}
+
 /// The fields of a typed answer for a kept pad object whose bytes the home
 /// lacks, as a machine's get and the kit door both send it.
 #[derive(Deserialize)]
