@@ -40809,6 +40809,7 @@
      "path": "src/inference_snapshot/seal.rs",
      "purpose": "Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's…",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -44320,7 +44321,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "re-export": 4,
       "struct": 5
@@ -44397,7 +44398,7 @@
      "path": "src/llm/registry/stored_rows.rs",
      "purpose": "The registry's stored rows",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
