@@ -5,6 +5,7 @@ use super::*;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::shared_vault_write::SharedVaultWrite;
+use crate::claim::ClaimRecordScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
@@ -61,7 +62,7 @@ struct SharedContentWriteSet {
 }
 
 impl ContentWriteSet {
-    fn before(
+    pub(super) fn before(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         actor: &WriteActor,
@@ -127,6 +128,76 @@ impl ContentWriteSet {
                 ids.insert(parent);
             }
         }
+        Self::capture(
+            vault,
+            txn,
+            actor,
+            creation.vault_id,
+            ids,
+            local_puts,
+            derived_parents,
+            native_target,
+        )
+    }
+
+    /// A routed input still meets the original local CLAIM's create-position
+    /// check. For these validated comm claims, the normal blob scope resolver
+    /// uses this same ClaimBody scope; no temporary raw CLAIM is stored.
+    pub(super) fn admit_routed_inputs(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+        bodies: &[(EntityId, crate::claim::ClaimBody)],
+    ) -> Result<()> {
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
+        for (_, body) in bodies {
+            vault.authorize_shared_vault_write_in_txn(
+                txn,
+                shared.vault_id,
+                actor,
+                &SharedVaultWrite::Content(body.record_scope("read")),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Exact head effects, captured before the projector changes any of them.
+    pub(super) fn before_heads(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+        ids: &[EntityId],
+        local_puts: &[EntityId],
+    ) -> Result<Option<Self>> {
+        let Some(creation) = vault.shared_vault_creation_in_txn(txn)? else {
+            return Ok(None);
+        };
+        Self::capture(
+            vault,
+            txn,
+            actor,
+            creation.vault_id,
+            ids.iter().copied().collect(),
+            local_puts.iter().copied().collect(),
+            BTreeSet::new(),
+            None,
+        )
+        .map(Some)
+    }
+
+    fn capture(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+        vault_id: u64,
+        ids: BTreeSet<EntityId>,
+        local_puts: BTreeSet<EntityId>,
+        derived_parents: BTreeSet<EntityId>,
+        native_target: Option<EntityId>,
+    ) -> Result<Self> {
         let mut entries = BTreeMap::new();
         for id in ids {
             let mut before_inputs = None;
@@ -135,7 +206,7 @@ impl ContentWriteSet {
                 authorize_content_write(
                     vault,
                     txn,
-                    creation.vault_id,
+                    vault_id,
                     actor,
                     &SharedVaultWrite::Content(old.clone()),
                     (native_target == Some(id)).then_some(&mut before_inputs),
@@ -156,15 +227,21 @@ impl ContentWriteSet {
             );
         }
         Ok(Self {
-            shared: Some(SharedContentWriteSet {
-                vault_id: creation.vault_id,
-                entries,
-            }),
+            shared: Some(SharedContentWriteSet { vault_id, entries }),
             native_target,
         })
     }
 
-    fn after(
+    pub(super) fn after(
+        mut self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        actor: &WriteActor,
+    ) -> Result<()> {
+        self.after_collecting(vault, txn, actor)
+    }
+
+    fn after_collecting(
         &mut self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
@@ -305,6 +382,6 @@ pub(super) fn apply_actor_ops_collecting(
             content_writes: Some(&effects),
         }),
     )?;
-    effects.after(vault, txn, actor)?;
+    effects.after_collecting(vault, txn, actor)?;
     Ok((pending, effects))
 }
