@@ -16,9 +16,14 @@ its activation setting.
 Thread audience edits retain their existing special erase behavior: the live
 edit keeps its operation and order, but its identifying content and retained
 revisions are rewritten. The explicit lift-and-erase path records the actual
-owner-erase reason; GDPR callers retain the GDPR reason. Their checkpoint
-settlement runs in the same writer as the rewrite. The ordinary record-delete
-rail's GDPR-only audience-edit exception is unchanged.
+owner-erase reason; GDPR callers retain the GDPR reason. Unlike a deleted
+record, this still-live edit must remain in later checkpoints, including its
+content-free access-control operation and order. Its rewrite rolls the active
+checkpoint generation in the same writer. The old generation retires only
+after a kept checkpoint names a later generation containing the sanitized edit.
+The receipt binds this pending old-generation obligation before its retirement
+intent is staged, so an unsealed replacement cannot count as completed erasure.
+The ordinary record-delete rail's GDPR-only audience-edit exception is unchanged.
 
 The initial erase receipt binds staged entity-tree and attachment-occurrence
 checkpoint leaf retirements by their native custody names. A receipt is not
