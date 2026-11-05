@@ -536,8 +536,14 @@ fn open_leaf(
     request: &LeafKeyRequest,
     sealed: &[u8],
     secret: &MachineSecret,
-) -> Option<CredentialLeaf> {
-    let envelope = Envelope::parse(sealed).ok()?;
+) -> Result<Option<CredentialLeaf>> {
+    let envelope = match Envelope::parse(sealed) {
+        Ok(envelope) => envelope,
+        Err(oneiron_crypto::Error::OutOfMemory) => {
+            return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory).into());
+        }
+        Err(_) => return Ok(None),
+    };
     let recipient = WrapRecipient::Machine(request.executor).envelope_recipient();
     let key_id = request.seal_key_id();
     let policy = OpenPolicy {
@@ -551,14 +557,16 @@ fn open_leaf(
         min_epoch: EPOCH,
         argon2_max: Argon2Cost::RFC9106_SECOND,
     };
-    let payload = envelope
-        .open(OpenKey::Hybrid(&secret.secret), &policy)
-        .ok()?;
-    let bytes = payload.strip_prefix(LEAF_LABEL)?;
+    let Ok(payload) = envelope.open(OpenKey::Hybrid(&secret.secret), &policy) else {
+        return Ok(None);
+    };
+    let Some(bytes) = payload.strip_prefix(LEAF_LABEL) else {
+        return Ok(None);
+    };
     let mut leaf: CredentialLeaf = Zeroizing::new([0; 32]);
     if bytes.len() != leaf.len() {
-        return None;
+        return Ok(None);
     }
     leaf.copy_from_slice(bytes);
-    Some(leaf)
+    Ok(Some(leaf))
 }
