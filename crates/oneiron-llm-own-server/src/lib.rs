@@ -213,7 +213,7 @@ impl CheckedStream<'_> {
                 self.parts.get(part_id) != Some(&StreamPart::Reasoning)
             }
             Event::TextEnd { part_id } => return self.end(part_id, StreamPart::Text),
-            Event::ReasoningEnd { part_id } => return self.end(part_id, StreamPart::Reasoning),
+            Event::ReasoningEnd { part_id, .. } => return self.end(part_id, StreamPart::Reasoning),
             Event::ToolCallStart {
                 part_id,
                 call_id,

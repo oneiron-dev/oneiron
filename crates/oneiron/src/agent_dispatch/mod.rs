@@ -94,6 +94,18 @@ mod workflow;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
+pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
+pub use workflow::tool_wait::{
+    WorkflowToolAnswer, WorkflowToolCheckpointWriter, WorkflowToolContinuation, WorkflowToolCursor,
+    WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
+};
+pub(crate) use workflow::tool_wait::{
+    accepts_masked as workflow_tool_checkpoint_accepts_masked,
+    erase_actor_in_txn as erase_workflow_tool_actor_in_txn,
+    erase_source_in_txn as erase_workflow_tool_source_in_txn,
+    requeue_failure_in_txn as requeue_workflow_tool_failure_in_txn,
+    settle_payloads_in_txn as settle_workflow_tool_payloads_in_txn,
+};
 
 pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult};
 

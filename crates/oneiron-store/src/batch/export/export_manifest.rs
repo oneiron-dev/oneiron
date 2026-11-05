@@ -51,4 +51,3 @@ impl ExportSecretsNulledManifest {
         self.structural_placeholders
     }
 }
-

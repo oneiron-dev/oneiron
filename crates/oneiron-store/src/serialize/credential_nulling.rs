@@ -135,4 +135,3 @@ impl<'de> serde::de::Visitor<'de> for JsonVisitor {
         Ok(Json::Members(members))
     }
 }
-

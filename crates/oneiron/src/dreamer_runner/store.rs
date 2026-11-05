@@ -819,6 +819,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
                 turn,
             )?;
+            if let Some(record) = crate::agent_dispatch::requeue_workflow_tool_failure_in_txn(
+                self.vault, txn, &source, &input,
+            )? {
+                return Ok(record);
+            }
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;

@@ -130,6 +130,15 @@ impl Vault {
         // replica holds the WORLD row (fix 7). A soft delete or an archive
         // keeps them: the world restores from old bundles.
         if decoded.is_hard() {
+            // Keep the positive body binding until its native disposition
+            // settles; the source fence then covers absent entity rows too.
+            crate::deletion::checkpoint_payload::settle_workflow_tool_payloads_for_reason_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                decoded.reason,
+            )?;
+            crate::agent_dispatch::erase_workflow_tool_source_in_txn(&self.store, wtxn, id)?;
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
