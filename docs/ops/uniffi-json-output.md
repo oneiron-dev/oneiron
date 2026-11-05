@@ -60,6 +60,12 @@ confidence and salience so their float widths and non-finite behavior stay
 unchanged. All fields, including unsigned validity times, remain present in
 their existing public types.
 
+The bare JSON result of `self.skills.call` also moves directly into the
+existing owned `WireJson` lift after the same typed client call. Its run/host
+input, sandbox, hooks, return contract, carrier and generator census stay
+unchanged. Other opaque output types keep the existing encoding fallback;
+this change does not add record or container conversions.
+
 Every remaining variant and row, including `DetailsOnDevice`, keeps the
 original whole-record `lift_record` fallback. Native getters, the shared
 client and verb hooks are unchanged, and outside these selected conversions
