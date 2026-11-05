@@ -16,7 +16,7 @@ use oneiron_vault_contract::restore::{
 
 use crate::managed::ManagedArgs;
 #[cfg(target_os = "linux")]
-use crate::managed::state_serve::carrier_recipient;
+use crate::managed::state_serve::{carrier_recipient, carrier_recipients_unfinished};
 
 /// An SLH-DSA-SHA2-256s public key's length in bytes.
 const SLHDSA_PUBLIC_LEN: usize = 64;
@@ -169,11 +169,13 @@ pub(in crate::managed) fn fresh_authorizes(
 /// The file a vault VM's carrier delivers `role`'s escrow recipient in, for
 /// a role argv names no file for: the host may send one after this start's
 /// argv was built, and the carrier watch seals to it once the vault serves
-/// (FIX 11078). `None` outside a vault VM.
+/// (FIX 11078). `None` outside a vault VM, and while the carrier has not
+/// published its recipients set whole: the watch checks that set at the
+/// first look that reads it (FIX 7543).
 fn vm_carrier_recipient(managed: &ManagedArgs, role: EscrowRole) -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     if managed.vsock_guest {
-        return Some(carrier_recipient(role));
+        return (!carrier_recipients_unfinished()).then(|| carrier_recipient(role));
     }
     #[cfg(not(target_os = "linux"))]
     let _ = (managed, role);

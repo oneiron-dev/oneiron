@@ -489,3 +489,26 @@ fn clip(text: &str) -> String {
         .take(MAX_DETAIL_CHARS)
         .collect()
 }
+
+/// The hidden file a receiving carrier end keeps in a kind's root while it
+/// publishes a set of more than one change there, or until it finishes one
+/// it did not finish (FIX 7543). The end journals the set's changes before
+/// it makes the first, makes this file, makes the changes one by one and
+/// records them, then removes it: so while it stands, the tree may hold part
+/// of a set, and after a crash it stands until the end's recovery has made
+/// the rest. A reader that reads more than one member of a set waits while
+/// it stands and reads the tree again once it is gone; it never refuses for
+/// it. A set of one change is published by one rename and needs no wait. It
+/// is hidden, so no scan or member name takes it.
+pub const VM_OUTBOX_SET_MARK: &str = ".vm-outbox-set";
+
+/// Whether the kind root `root` holds a set its carrier end is still
+/// publishing or still has to finish ([`VM_OUTBOX_SET_MARK`]): a reader of
+/// more than one of a set's members then waits for a later look.
+pub fn vm_outbox_set_unfinished(root: &std::path::Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(root.join(VM_OUTBOX_SET_MARK)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}

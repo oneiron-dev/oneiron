@@ -104,6 +104,27 @@ credential.
   its socket errs) clears the revision, as a VM without one reads; a
   question still unanswered leaves the last answer standing. Restarting a
   companion that ended is the bootstrap's part.
+- Whole sets (FIX 7543). A receiving end journals each set the other end
+  sent before it makes the set's first change: `set-<kind>.json` in its
+  carrier store names each change in the set's order and the record each
+  member gets, and the staged bodies it names are synced first. A set with
+  more than one change on disk also puts a hidden mark, `.vm-outbox-set`,
+  in the kind's root. Then the end makes the changes, writes the records,
+  removes the mark and deletes the journal, and only then answers the
+  set's transfers `durable`. When a step fails, or the end stops midway,
+  the set is unfinished: its transfers are deferred, the journal, the
+  mark and the staged temporaries stay, and the kind waits. The kind's next
+  turn, or the end's next start, finishes the set from its journal before
+  anything else of the kind runs. Nothing is rolled back or dropped; a put
+  whose staged bytes are gone is logged as `vm_outbox_set_put_lost` and
+  taken again when the other end sends its set again. A reader of more
+  than one member of a set waits while the mark stands and never refuses
+  for it (`oneiron_vault_contract::vm_outbox::vm_outbox_set_unfinished`).
+  In the guest, the engine's escrow recipient look, the cold restore's
+  recipient check and the publisher training outbox's tick wait this way.
+  On the host, the node's shippers of a kind whose sets have more than one
+  member (backups with their checkpoint facts, custody batches, e-sign
+  deliveries, training offers) should wait on the mark in the same way.
 - Copies the carrier never agreed on (FIX 11074). When a member's origin
   retires the agreed version and the other end holds a different copy, that
   end takes the retirement for the agreed version and keeps its copy. It

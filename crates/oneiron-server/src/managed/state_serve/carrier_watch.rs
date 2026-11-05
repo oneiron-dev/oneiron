@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use oneiron_vault_contract::VmOutboxCompanionState as CompanionState;
 use oneiron_vault_contract::restore::{EscrowRole, FreshRecipient};
-use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
+use oneiron_vault_contract::vm_outbox::{VM_GUEST_OUTBOX_DIR, vm_outbox_set_unfinished};
 use tokio::task::JoinHandle;
 
 use self::diverged_ask::DivergedAsks;
@@ -55,7 +55,21 @@ pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
         EscrowRole::Managed => "managed.pub",
         EscrowRole::BreakGlass => "break-glass.pub",
     };
-    Path::new(VM_GUEST_OUTBOX_DIR).join("recipients").join(file)
+    carrier_recipients_dir().join(file)
+}
+
+/// The directory a VM's carrier lays both escrow recipients out in, one set.
+fn carrier_recipients_dir() -> PathBuf {
+    Path::new(VM_GUEST_OUTBOX_DIR).join("recipients")
+}
+
+/// Whether the carrier is still publishing a recipients set, or has still to
+/// finish one, in [`carrier_recipients_dir`] (FIX 7543): a look then reads
+/// neither file and waits for a later one, and a cold restore's check leaves
+/// the carrier's files to that later look. A mark that does not read leaves
+/// the files read as they stand.
+pub(in crate::managed) fn carrier_recipients_unfinished() -> bool {
+    vm_outbox_set_unfinished(&carrier_recipients_dir()).unwrap_or(false)
 }
 
 /// Where the watch's recipient files come from, as its warns word them: a
@@ -111,6 +125,12 @@ pub(super) fn spawn(
             let (state, vault, managed) =
                 (Arc::clone(&state), Arc::clone(&vault), Arc::clone(&managed));
             let looked = tokio::task::spawn_blocking(move || {
+                // A recipients set the carrier has not published whole is
+                // read at a later look, the restore's plan check with it
+                // (FIX 7543).
+                if carrier_recipients_unfinished() {
+                    return (recipients, plan);
+                }
                 let files = [EscrowRole::Managed, EscrowRole::BreakGlass]
                     .map(|role| (role, carrier_recipient(role)));
                 seal_watched_recipients(
@@ -122,9 +142,9 @@ pub(super) fn spawn(
                     plan.as_deref(),
                     RecipientSource::Carrier,
                 );
-                recipients
+                (recipients, None)
             });
-            recipients = looked.await.unwrap_or_default();
+            (recipients, plan_check) = looked.await.unwrap_or_default();
             tokio::select! {
                 () = &mut stopped => return,
                 () = tokio::time::sleep(LOOK_EVERY) => {}
