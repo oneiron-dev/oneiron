@@ -459,10 +459,11 @@ async fn answer(
     } else {
         put(conn, &encoded, sent, here).await?
     };
+    let message = encode(&carried)?;
     // Sending may partially succeed even on an error. Only the serving
     // host's final receipt can confirm what the organ received.
     lines[slot].unanswered = Some(crate::receipt::Unanswered::Unknown);
-    stream.send(&encode(&carried)?).await
+    stream.send(&message).await
 }
 
 fn run_handler(
