@@ -33,6 +33,7 @@
 mod approval;
 mod audience;
 mod detection;
+mod frozen_leg;
 mod home_node;
 mod manual;
 mod outbound_leg;
@@ -125,3 +126,5 @@ use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::IntentDispatchResult;
 #[cfg(test)]
 use crate::saved_query::{EVIDENCE_HASH_LEN, MembershipCause, MembershipTransition};
+
+pub(crate) use frozen_leg::FrozenCampaignLeg;
