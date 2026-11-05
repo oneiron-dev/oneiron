@@ -17,10 +17,15 @@ mod mode;
 mod routes;
 mod usage;
 pub use usage::VaultUsage;
+mod seat_helpers;
 mod seat_host;
 pub mod seat_login;
 mod secret_destinations;
 pub mod staged_input;
+pub use self::seat_helpers::{
+    HELPER_DESTINATION_PREFIX, HelperDestination, HelperReplyDelivery, HelperRunEnd, SeatHelperRun,
+    SeatHelperRuns,
+};
 pub use self::secret_destinations::{
     OwnSecretDelivery, RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX, SecretDestination,
     SecretDestinations, ServedSecretDelivery,

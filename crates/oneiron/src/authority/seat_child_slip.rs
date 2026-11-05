@@ -99,6 +99,51 @@ impl Vault {
         Ok(credential)
     }
 
+    /// Admits one request a seat child signed with its slip (FIX 10624): the
+    /// same holder proof and request challenge as
+    /// [`Self::admit_capability_slip_request`], admitting only a seat-child
+    /// slip whose claim holds, and spending the request's nonce in the same
+    /// writer, so a replayed request is refused.
+    pub fn admit_seat_child_slip_request(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<SeatChildCredential> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
+        let mut txn = self.store.env.write_txn()?;
+        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, request_now)?;
+        let key = &fold
+            .slips
+            .mints
+            .get(&slip.claims.slip_id)
+            .ok_or_else(invalid_authority)?
+            .signer;
+        let credential = slip.verify_seat_child(key, &fold, now, &challenge, signature)?;
+        self.require_live_slip_refs_in_txn(&txn, credential.claims(), now)?;
+        super::slip_replay::record_nonce(
+            self,
+            &mut txn,
+            &slip.current_binding_key(),
+            nonce,
+            timestamp,
+            request_now,
+        )?;
+        txn.commit()?;
+        Ok(credential)
+    }
+
+    /// [`Self::seat_child_holds_in_txn`] in its own snapshot, for a door that
+    /// checks the claim again before it hands a value out.
+    pub fn seat_child_holds(&self, credential: &SeatChildCredential) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.seat_child_holds_in_txn(&txn, credential)
+    }
+
     /// Whether a seat-child credential verified earlier still holds in `txn`
     /// (FIX 10624): its slip live on this vault's clock and fold, its claim
     /// still held. The seat child's doors recheck it in their acting
