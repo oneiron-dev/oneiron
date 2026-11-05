@@ -4,8 +4,8 @@
 //! parks its run on a code consent wait, minted beside the held call in the
 //! same writer. The wait binds the exact pending effect: its run and write
 //! site, the frozen bytes' digest, the original caller and its instrument,
-//! the governing key, grant and manifest. It asks the vault's owner one TASK
-//! question with canon's confirm trio.
+//! the governing key, grant and manifest. It asks every live vault owner one
+//! shared TASK question with canon's confirm trio.
 //!
 //! The owner's answer is its own fact: authenticated from any surface the
 //! owner is authenticated on, revalidated in the answering writer, bound to
