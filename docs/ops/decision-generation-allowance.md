@@ -17,9 +17,12 @@ error and every native settlement in its paid prefix. `NotStarted` is not an abs
 a negative answer, or a zero person probability. In a sequential pack, it retains its
 question ordinal and leaves later questions unstarted.
 
-A captured rule read uses its original offline table and pack method. It starts no
-model generation and consumes no generation allowance; its settlement inventory is empty
-because those native methods admit and send nothing, not because absence proves no work.
+Captured offline, standing host, attribution, and placement rule reads use their original
+single and pack methods. They start no model generation and consume no generation allowance;
+their settlement inventories are empty because those native methods admit and send nothing,
+not because absence proves no work. Attribution still filters its prepared facts against the
+question's options. Placement still uses its already-prepared tree reading; capture does not
+read a new tree or turn that reading into authority.
 
 The allowance is a granted start slot, not proof of provider bytes or token use. A
 native admission after that slot may still fail. Memo recovery starts no generation;
