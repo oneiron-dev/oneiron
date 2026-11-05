@@ -296,7 +296,8 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
                 return Ok(false);
             }
         }
-        Ok(true)
+        self.native_sources
+            .recheck_in_txn(self.selected.vault(), txn)
     }
 
     pub(crate) fn entity(&self) -> Result<EntityId> {
