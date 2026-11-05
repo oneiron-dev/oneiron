@@ -23,8 +23,8 @@ use crate::settings::ReadDestination;
 /// stay committed. On this device the state is the same. Off it, a proposal
 /// filed from a record a world withheld from that destination keeps is left
 /// out of the proposals shown and of every proposal count, as if it were
-/// never filed. Typed-body document, typed-body fork and codebase-snapshot
-/// carriers also name their actual source entity in their row keys. Other
+/// never filed. Typed-body document, typed-body fork, codebase-snapshot and
+/// note-proposal carriers also name their actual source entity in their row keys. Other
 /// side rows and carriers stay unknown. Run, receipt and retry counts omit only
 /// contributors whose actual source entity is known and withheld. Unknown
 /// sources never withhold.
@@ -55,7 +55,9 @@ pub fn secret_lift_as_owner_toward(
 /// The source entity a path actually names. A typed-body document's row key
 /// is that document's entity id, including earlier-frontier proposals filed
 /// by `frontier::keys_of`. A codebase snapshot's key is its CODE_ARTIFACT entity
-/// id. A typed-body fork pairs its source entity with its fork id.
+/// id. A typed-body fork pairs its source entity with its fork id. A note
+/// proposal pairs its owning NOTE with its fork head; the path's outer hex
+/// decodes to that ASCII key and the first id is the source.
 /// Other carrier and side-row keys remain unknown.
 fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
     let path = &proposal.proposal.path;
@@ -68,6 +70,10 @@ fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
         let entity = EntityId::from_hex(source).ok()?;
         EntityId::from_hex(fork).ok()?;
         return Some(entity);
+    }
+    if table == crate::side_table::NOTE_PROPOSAL_DOC.name {
+        let decoded = super::proposals::unhex(hex)?;
+        return super::carriers::note_proposal_source(&decoded);
     }
     if table != crate::side_table::TYPED_BODY_DOC.name
         && table != crate::side_table::CODEBASE_SNAPSHOT.name

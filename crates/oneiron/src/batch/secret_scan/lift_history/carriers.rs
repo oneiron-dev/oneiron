@@ -16,7 +16,7 @@ use super::{Done, LiftCause, Page, hex, table_page};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self as t, SideDb, SideKey, SideTableDecl};
+use crate::side_table::{self as t, HexId, SideDb, SideKey, SideTableDecl};
 
 /// The carriers, in walk order. A cursor's first byte is a carrier's place
 /// here.
@@ -143,7 +143,8 @@ pub(super) fn path(key: &[u8]) -> String {
 
 /// Typed-body documents and codebase snapshots are keyed by their actual
 /// source entity; a typed-body fork pairs that entity with its fork id.
-/// No source is inferred for other carrier formats.
+/// A note proposal pairs its owning NOTE with its fork head; its source is
+/// the first. No source is inferred for other carrier formats.
 pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
     let (decl, row_key) = carrier_of(key)?;
     source_of(decl, row_key)
@@ -155,10 +156,23 @@ fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::E
             SideKey::decode_key(row_key.strip_prefix(decl.prefix)?)?;
         return Some(entity);
     }
+    if std::ptr::eq(decl, &t::NOTE_PROPOSAL_DOC) {
+        return note_proposal_source(row_key.strip_prefix(decl.prefix)?);
+    }
     if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) && !std::ptr::eq(decl, &t::CODEBASE_SNAPSHOT) {
         return None;
     }
     super::records::record_id(row_key.strip_prefix(decl.prefix)?)
+}
+
+/// The owning NOTE a note-proposal row's key leads with: `hex32(note) ":"`
+/// `hex32(head)`. Both halves must decode; only the first is the source.
+pub(super) fn note_proposal_source(key: &[u8]) -> Option<EntityId> {
+    let (note, rest) = key.split_at_checked(32)?;
+    let head = rest.strip_prefix(b":")?;
+    let note = HexId::decode_key(note)?;
+    HexId::decode_key(head)?;
+    Some(note.0)
 }
 
 fn cursor(place: u8, key: &[u8]) -> Vec<u8> {
