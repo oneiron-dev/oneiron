@@ -87,3 +87,29 @@ The source/projection buffers, omitted markers, derived answer and sources,
 composition frames and pins, provider scratch and allocator overhead are not
 covered by this owner. Full working-set admission and Q remain open; no runtime,
 peak-memory or no-hang result is claimed.
+
+## Framed source projection
+
+Evidence collection uses the existing native row-frame geometry under one
+snapshot, policy resolution, held authority and projection receipt. It processes
+all requested pins in order. The body budget still admits the same stored-body
+lengths in that order; missing or bodiless rows remain absent. Each frame's raw
+bodies and decoded field maps drop before its callback returns.
+
+The callback decodes in-hand bodies, hashes omitted bodies, spends down the
+body budget and records retained capacities. The unchanged undecoded-body
+credential scan can sample host memory telemetry inside the held read; no vault
+read or write, hook, model call or memory-queue wait is added there. Citation writes and omitted-marker reference reads
+run after the scoped read closes, interleaved in their original input order,
+including duplicate ids. Omitted markers keep only typed metadata, the original
+body length and its native content hash until that lookup. The evidence owner
+records each newly resolved short-id string's actual capacity once on the same
+lease; it does not recharge prior vector or string capacities.
+
+This reduces the simultaneously retained raw projected bodies from a whole
+cohort to one existing native frame. It does not bound an individual body or
+frame's bytes, admit allocations before growth, or cover references, deferred
+actions, omitted values, answers, provider scratch or allocator overhead. No
+memory growth wait, new count cap, default or timer is added. Full working-set
+admission and Q remain open; this is source behavior, not runtime or peak-memory
+proof.
