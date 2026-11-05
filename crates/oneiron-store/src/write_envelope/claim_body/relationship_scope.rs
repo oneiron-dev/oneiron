@@ -29,6 +29,11 @@ impl RelationshipSet {
         self.ids.len()
     }
 
+    /// The actual capacity of the canonical backing storage.
+    pub fn capacity(&self) -> usize {
+        self.ids.capacity()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }

@@ -32,6 +32,7 @@ pub(crate) fn resolve_core_interlocutor_set(
     read: &oneiron::claim::ScopedRead<'_>,
     controls: Option<&CoreInterlocutorControls>,
     room: Option<&RoomAudience>,
+    memory: Option<&crate::machine::MachineMemory>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
     let room_reader = room.and_then(|room| room.reader);
     if controls.is_none() && room.is_none() && auth.is_owner_grade() {
@@ -125,7 +126,12 @@ pub(crate) fn resolve_core_interlocutor_set(
                 )
             })?;
             let contact = if readable {
-                vault.get_counterparty_contact(&principal_id)
+                match memory {
+                    Some(memory) => {
+                        vault.get_counterparty_contact_with_memory(&principal_id, memory)
+                    }
+                    None => vault.get_counterparty_contact(&principal_id),
+                }
             } else {
                 Ok(None)
             };
@@ -175,9 +181,9 @@ pub(crate) fn resolve_core_interlocutor_set(
     // every speaker of a call live in the room, named or not (FIX 1388 C1).
     match room {
         Some(room) => vault
-            .resolve_interlocutors_in_room_under(&input, read, read_rosters, room.room)
+            .resolve_interlocutors_in_room_under(&input, read, read_rosters, room.room, memory)
             .map(|set| room.live.merged_into(set)),
-        None => vault.resolve_interlocutors_under(&input, read, read_rosters),
+        None => vault.resolve_interlocutors_under(&input, read, read_rosters, memory),
     }
     .map(Some)
     .map_err(|error| {

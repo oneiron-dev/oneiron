@@ -4,6 +4,7 @@ use super::codec::{
     counterparty_contact_body_key, decode_counterparty_contact_value,
     encode_counterparty_contact_body, is_counterparty_contact_claim_predicate,
 };
+use super::read_memory::ContactClaim;
 use super::storage::{
     CONTACT_INDEX, contact_deleted_in_txn, contact_ids_with_live_head_in_txn,
     counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
@@ -20,6 +21,7 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RecordError, Result};
+use crate::host_memory::MachineMemory;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::store::Store;
@@ -393,14 +395,17 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
-    counterparty_contact_record_from_heads(contact_claim_bodies_in_txn(vault, rtxn, contact_id)?)
+    counterparty_contact_record_from_heads(contact_claim_bodies_in_txn(
+        vault, rtxn, contact_id, None,
+    )?)
 }
 
 fn contact_claim_bodies_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
-) -> Result<Vec<crate::claim::ClaimBody>> {
+    memory: Option<&MachineMemory>,
+) -> Result<Vec<ContactClaim>> {
     let mut bodies = Vec::new();
     let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     let mut duplicate = false;
@@ -418,7 +423,7 @@ fn contact_claim_bodies_in_txn(
                 continue;
             };
             duplicate = std::mem::replace(&mut seen[index], true);
-            bodies.push(body);
+            bodies.push(ContactClaim::new(body, memory));
         }
     }
     Ok(bodies)
@@ -440,11 +445,20 @@ pub(super) fn live_counterparty_contact_heads_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
+    live_counterparty_contact_heads_with_memory_in_txn(vault, rtxn, contact_id, None)
+}
+
+fn live_counterparty_contact_heads_with_memory_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+    memory: Option<&MachineMemory>,
+) -> Result<Option<CounterpartyContactRecord>> {
     if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
         return Ok(None);
     }
-    let bodies = contact_claim_bodies_in_txn(vault, rtxn, contact_id)?;
-    if !bodies.iter().any(is_live_contact_head) {
+    let bodies = contact_claim_bodies_in_txn(vault, rtxn, contact_id, memory)?;
+    if !bodies.iter().any(|body| is_live_contact_head(body)) {
         return Ok(None);
     }
     counterparty_contact_record_from_heads(bodies).map(Some)
@@ -459,7 +473,18 @@ pub(super) fn counterparty_contact_in_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<Option<CounterpartyContactRecord>> {
-    let Some(mut record) = live_counterparty_contact_heads_in_txn(vault, rtxn, contact_id)? else {
+    counterparty_contact_with_memory_in_claims_in_txn(vault, rtxn, contact_id, None)
+}
+
+pub(super) fn counterparty_contact_with_memory_in_claims_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+    memory: Option<&MachineMemory>,
+) -> Result<Option<CounterpartyContactRecord>> {
+    let Some(mut record) =
+        live_counterparty_contact_heads_with_memory_in_txn(vault, rtxn, contact_id, memory)?
+    else {
         return Ok(None);
     };
     fold_party_opt_out_heads_in_txn(vault, rtxn, &mut record)?;
@@ -495,17 +520,20 @@ pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
             continue;
         };
         if raw.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            bodies.push(crate::claim::decode_claim_body(&raw.body, true)?);
+            bodies.push(ContactClaim::new(
+                crate::claim::decode_claim_body(&raw.body, true)?,
+                None,
+            ));
         }
     }
-    if !bodies.iter().any(is_live_contact_head) {
+    if !bodies.iter().any(|body| is_live_contact_head(body)) {
         return Ok(None);
     }
     counterparty_contact_record_from_heads(bodies).map(Some)
 }
 
 fn counterparty_contact_record_from_heads(
-    bodies: Vec<crate::claim::ClaimBody>,
+    bodies: Vec<ContactClaim>,
 ) -> Result<CounterpartyContactRecord> {
     let mut heads: Vec<Option<Value>> = vec![None; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
     for body in bodies {
@@ -523,7 +551,7 @@ fn counterparty_contact_record_from_heads(
                 "counterparty contact claim family has two live heads for one predicate",
             )));
         }
-        heads[index] = Some(body.value);
+        heads[index] = Some(body.into_value());
     }
 
     let mut entries = vec![(
