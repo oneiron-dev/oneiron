@@ -45,6 +45,7 @@ mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 mod support;
+mod task_settlement;
 mod team_submit;
 mod type_diagnostics;
 mod types;

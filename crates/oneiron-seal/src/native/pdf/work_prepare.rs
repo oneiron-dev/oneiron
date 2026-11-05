@@ -132,12 +132,24 @@ pub(crate) fn prepare_in(
         .map_err(|err| lopdf_error(limits, err))?
         .as_reference()
         .map_err(|err| lopdf_error(limits, err))?;
-    pages(&source, pages_id, BTreeMap::new(), &mut seen, &mut input_pages, 0, limits)?;
+    pages(
+        &source,
+        pages_id,
+        BTreeMap::new(),
+        &mut seen,
+        &mut input_pages,
+        0,
+        limits,
+    )?;
     if input_pages.is_empty() {
         return Err(WorkError::Invalid(InputInvalidCode::MalformedPdf));
     }
     // organ: lent by the host, checked engine-side (`fields` already filtered `f.item == item`).
-    if request.fields.iter().any(|f| f.geometry.page as usize > input_pages.len()) {
+    if request
+        .fields
+        .iter()
+        .any(|f| f.geometry.page as usize > input_pages.len())
+    {
         return Err(WorkError::Invalid(InputInvalidCode::InvalidGeometry));
     }
     let original_sha256: [u8; 32] = Sha256::digest(original).into();
@@ -157,13 +169,17 @@ pub(crate) fn prepare_in(
     let mut contents = PageContents::default();
     // Every page's content opens inside this one shared stream; the page's
     // own streams follow it by reference, and its closing stream ends it.
-    limits.ledger.admit_len::<u8>(2).map_err(WorkError::Memory)?;
+    limits
+        .ledger
+        .admit_len::<u8>(2)
+        .map_err(WorkError::Memory)?;
     object_insert(limits.ledger)?;
     let open = out.add_object(Stream::new(Dictionary::new(), b"q\n".to_vec()));
     for (index, page) in input_pages.iter().enumerate() {
         let media = pdf_box(
             &source,
-            page.get(b"MediaBox".as_slice()).ok_or(WorkError::Invalid(InputInvalidCode::MalformedPdf))?,
+            page.get(b"MediaBox".as_slice())
+                .ok_or(WorkError::Invalid(InputInvalidCode::MalformedPdf))?,
             limits,
         )?;
         let geometry = page_geometry(&source, page, limits)?;
@@ -179,7 +195,9 @@ pub(crate) fn prepare_in(
         let mut ops = flatten(
             &source,
             page.get(b"Annots".as_slice()),
-            &mut |out: &mut Document, value: &Object, depth: usize| copier.copy(out, value, depth, limits),
+            &mut |out: &mut Document, value: &Object, depth: usize| {
+                copier.copy(out, value, depth, limits)
+            },
             &mut out,
             &mut resources,
             limits,
@@ -212,8 +230,13 @@ pub(crate) fn prepare_in(
             let copied = copier.copy(&mut out, &Object::Reference(id), 0, limits)?;
             push(limits.ledger, &mut page_streams, copied)?;
         }
-        let encoded = Content { operations: ops }.encode().map_err(|err| lopdf_error(limits, err))?;
-        limits.ledger.admit_len::<u8>(encoded.len()).map_err(WorkError::Memory)?;
+        let encoded = Content { operations: ops }
+            .encode()
+            .map_err(|err| lopdf_error(limits, err))?;
+        limits
+            .ledger
+            .admit_len::<u8>(encoded.len())
+            .map_err(WorkError::Memory)?;
         let mut close: Vec<u8> = Vec::new();
         reserve(limits.ledger, &mut close, b"\nQ\nn\n".len() + encoded.len())?;
         close.extend_from_slice(b"\nQ\nn\n");
@@ -223,14 +246,24 @@ pub(crate) fn prepare_in(
         limits.ledger.release_admitted(wide(encoded_len));
         object_insert(limits.ledger)?;
         let close_id = out.add_object(Stream::new(Dictionary::new(), close));
-        push(limits.ledger, &mut page_streams, Object::Reference(close_id))?;
-        limits.ledger.admit_len::<Object>(4).map_err(WorkError::Memory)?;
+        push(
+            limits.ledger,
+            &mut page_streams,
+            Object::Reference(close_id),
+        )?;
+        limits
+            .ledger
+            .admit_len::<Object>(4)
+            .map_err(WorkError::Memory)?;
         let media_array: Vec<Object> = media.iter().map(|v| Object::Real(*v as f32)).collect();
-        limits.ledger.admit_len::<Object>(4).map_err(WorkError::Memory)?;
+        limits
+            .ledger
+            .admit_len::<Object>(4)
+            .map_err(WorkError::Memory)?;
         let crop_array: Vec<Object> = crop.iter().map(|v| Object::Real(*v as f32)).collect();
         dictionary_built(limits.ledger, 6, 42, 4)?;
         let mut new_page = dictionary! { "Type" => "Page", "Parent" => parent,
-            "MediaBox" => media_array, "CropBox" => crop_array, "Resources" => resources, "Contents" => page_streams };
+        "MediaBox" => media_array, "CropBox" => crop_array, "Resources" => resources, "Contents" => page_streams };
         dictionary_insert(limits.ledger, 6)?;
         new_page.set("Rotate", i64::from(geometry.rotation));
         dictionary_insert(limits.ledger, 8)?;
@@ -285,7 +318,9 @@ pub(crate) fn prepare_in(
     }
     let mut writer = BoundedOutput::new(limits);
     if out.save_to(&mut writer).is_err() {
-        return Err(writer.failure().unwrap_or(WorkError::Invalid(InputInvalidCode::TooLarge)));
+        return Err(writer
+            .failure()
+            .unwrap_or(WorkError::Invalid(InputInvalidCode::TooLarge)));
     }
     Ok(WorkPrepared {
         bytes: writer.into_bytes(),
@@ -299,7 +334,10 @@ pub(crate) fn prepare_in(
 /// Read actual inherited page boxes/rotation for editor and signing overlays,
 /// as the engine's `inspect_in` (`E/render.rs:392-417`): the strict load, the
 /// signature gate, the page walk, and one geometry per page.
-pub(crate) fn inspect_in(bytes: &[u8], limits: &WorkLimits<'_>) -> Result<Vec<PageGeometry>, WorkError> {
+pub(crate) fn inspect_in(
+    bytes: &[u8],
+    limits: &WorkLimits<'_>,
+) -> Result<Vec<PageGeometry>, WorkError> {
     let source = load(bytes, limits)?;
     reject_signatures(&source, limits)?;
     let mut input = Vec::new();
@@ -311,7 +349,15 @@ pub(crate) fn inspect_in(bytes: &[u8], limits: &WorkLimits<'_>) -> Result<Vec<Pa
         .map_err(|err| lopdf_error(limits, err))?
         .as_reference()
         .map_err(|err| lopdf_error(limits, err))?;
-    pages(&source, pages_id, BTreeMap::new(), &mut seen, &mut input, 0, limits)?;
+    pages(
+        &source,
+        pages_id,
+        BTreeMap::new(),
+        &mut seen,
+        &mut input,
+        0,
+        limits,
+    )?;
     if input.is_empty() {
         return Err(WorkError::Invalid(InputInvalidCode::MalformedPdf));
     }
@@ -332,7 +378,12 @@ const PAGE_TREE_FANOUT: usize = 8191;
 /// under `root`, nesting intermediate nodes when they outgrow one node, as
 /// the engine's `page_tree` (`E/render.rs:423-452`). Every fresh node,
 /// `Parent` update, and vector growth is admitted first.
-fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>, limits: &WorkLimits<'_>) -> Result<(), WorkError> {
+fn page_tree(
+    out: &mut Document,
+    root: ObjectId,
+    kids: Vec<Object>,
+    limits: &WorkLimits<'_>,
+) -> Result<(), WorkError> {
     let total = kids.len() as i64;
     let mut level: Vec<(Object, i64)> = Vec::new();
     reserve(limits.ledger, &mut level, kids.len())?;
@@ -341,7 +392,11 @@ fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>, limits: &Wor
     }
     while level.len() > PAGE_TREE_FANOUT {
         let mut next: Vec<(Object, i64)> = Vec::new();
-        reserve(limits.ledger, &mut next, level.len().div_ceil(PAGE_TREE_FANOUT))?;
+        reserve(
+            limits.ledger,
+            &mut next,
+            level.len().div_ceil(PAGE_TREE_FANOUT),
+        )?;
         for group in level.chunks(PAGE_TREE_FANOUT) {
             let node = out.new_object_id();
             let mut count = 0;
@@ -350,7 +405,10 @@ fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>, limits: &Wor
             for (kid, leaves) in group {
                 let id = kid.as_reference().map_err(|err| lopdf_error(limits, err))?;
                 // The `Parent` key already exists; the set clones 6 key bytes then drops them.
-                limits.ledger.admit_len::<u8>(6).map_err(WorkError::Memory)?;
+                limits
+                    .ledger
+                    .admit_len::<u8>(6)
+                    .map_err(WorkError::Memory)?;
                 out.get_object_mut(id)
                     .map_err(|err| lopdf_error(limits, err))?
                     .as_dict_mut()
@@ -377,7 +435,10 @@ fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>, limits: &Wor
     }
     dictionary_built(limits.ledger, 3, 13, 5)?;
     object_insert(limits.ledger)?;
-    out.objects.insert(root, dictionary! { "Type" => "Pages", "Count" => total, "Kids" => ordered }.into());
+    out.objects.insert(
+        root,
+        dictionary! { "Type" => "Pages", "Count" => total, "Kids" => ordered }.into(),
+    );
     Ok(())
 }
 
@@ -393,7 +454,11 @@ struct BoundedOutput<'a> {
 
 impl<'a> BoundedOutput<'a> {
     fn new(limits: &'a WorkLimits<'a>) -> Self {
-        Self { buf: Vec::new(), limits, failed: None }
+        Self {
+            buf: Vec::new(),
+            limits,
+            failed: None,
+        }
     }
 
     fn failure(&self) -> Option<WorkError> {
@@ -425,7 +490,9 @@ impl std::io::Write for BoundedOutput<'_> {
                 return Err(std::io::Error::other("memory"));
             }
             let old_bytes = layout_bytes::<u8>(old_capacity).unwrap_or(0);
-            self.limits.ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+            self.limits
+                .ledger
+                .release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
         }
         self.buf.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -439,7 +506,10 @@ impl std::io::Write for BoundedOutput<'_> {
 /// A lopdf read failure as the organ reads it: a kept memory refusal as
 /// itself, anything else as a malformed PDF, never the reverse.
 fn lopdf_error(limits: &WorkLimits<'_>, err: lopdf::Error) -> WorkError {
-    limits.ledger.refusal_of(&err).map_or(WorkError::Invalid(InputInvalidCode::MalformedPdf), WorkError::Memory)
+    limits.ledger.refusal_of(&err).map_or(
+        WorkError::Invalid(InputInvalidCode::MalformedPdf),
+        WorkError::Memory,
+    )
 }
 
 /// A length as the ledger counts bytes.
@@ -448,17 +518,28 @@ fn wide(bytes: usize) -> u64 {
 }
 
 fn floor(bytes: usize) -> SealMemoryRefusal {
-    SealMemoryRefusal::Floor { needed: u64::try_from(bytes).unwrap_or(u64::MAX), available: 0 }
+    SealMemoryRefusal::Floor {
+        needed: u64::try_from(bytes).unwrap_or(u64::MAX),
+        available: 0,
+    }
 }
 
 fn layout_bytes<T>(len: usize) -> Option<usize> {
-    len.checked_mul(size_of::<T>()).filter(|bytes| *bytes <= isize::MAX as usize)
+    len.checked_mul(size_of::<T>())
+        .filter(|bytes| *bytes <= isize::MAX as usize)
 }
 
 /// Fallibly grow one vector under the call's operation ledger, with the
 /// same double-capacity growth and old-buffer release as `admitted`.
-fn reserve<T>(ledger: &MemoryLedger, output: &mut Vec<T>, additional: usize) -> Result<(), WorkError> {
-    let needed = output.len().checked_add(additional).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
+fn reserve<T>(
+    ledger: &MemoryLedger,
+    output: &mut Vec<T>,
+    additional: usize,
+) -> Result<(), WorkError> {
+    let needed = output
+        .len()
+        .checked_add(additional)
+        .ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     if needed <= output.capacity() {
         return Ok(());
     }
@@ -466,7 +547,9 @@ fn reserve<T>(ledger: &MemoryLedger, output: &mut Vec<T>, additional: usize) -> 
     let target = old_capacity.saturating_mul(2).max(needed);
     let bytes = layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     ledger.admit_len::<T>(target).map_err(WorkError::Memory)?;
-    output.try_reserve_exact(target - output.len()).map_err(|_| WorkError::Memory(floor(bytes)))?;
+    output
+        .try_reserve_exact(target - output.len())
+        .map_err(|_| WorkError::Memory(floor(bytes)))?;
     let old_bytes = layout_bytes::<T>(old_capacity).unwrap_or(0);
     ledger.release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
@@ -488,23 +571,34 @@ const fn btree_entry_bytes<K, V>() -> usize {
 
 /// One fresh `Dictionary` entry: key bytes plus a BTree entry share.
 fn dictionary_insert(ledger: &MemoryLedger, key_len: usize) -> Result<(), WorkError> {
-    let bytes = btree_entry_bytes::<Vec<u8>, Object>().checked_add(key_len).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
+    let bytes = btree_entry_bytes::<Vec<u8>, Object>()
+        .checked_add(key_len)
+        .ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)
 }
 
 /// One fresh `Document` object: the objects-map entry share. The object's
 /// heap (stream bytes, dictionaries) is admitted where it is built.
 fn object_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
-    ledger.admit_len::<u8>(btree_entry_bytes::<ObjectId, Object>()).map_err(WorkError::Memory)
+    ledger
+        .admit_len::<u8>(btree_entry_bytes::<ObjectId, Object>())
+        .map_err(WorkError::Memory)
 }
 
 /// One fresh dictionary built whole via `dictionary!`: `entries` shares plus
 /// the map node and the key and inline-name heap bytes it holds (pattern:
 /// `work_burn`'s image-dict admission).
-fn dictionary_built(ledger: &MemoryLedger, entries: usize, key_bytes: usize, name_bytes: usize) -> Result<(), WorkError> {
-    let bytes = btree_entry_bytes::<Vec<u8>, Object>().checked_mul(entries)
+fn dictionary_built(
+    ledger: &MemoryLedger,
+    entries: usize,
+    key_bytes: usize,
+    name_bytes: usize,
+) -> Result<(), WorkError> {
+    let bytes = btree_entry_bytes::<Vec<u8>, Object>()
+        .checked_mul(entries)
         .and_then(|shares| shares.checked_add(btree_node_bytes::<Vec<u8>, Object>()))
-        .and_then(|shares| shares.checked_add(key_bytes)).and_then(|shares| shares.checked_add(name_bytes))
+        .and_then(|shares| shares.checked_add(key_bytes))
+        .and_then(|shares| shares.checked_add(name_bytes))
         .ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     ledger.admit_len::<u8>(bytes).map_err(WorkError::Memory)
 }

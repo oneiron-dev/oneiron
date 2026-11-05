@@ -41,7 +41,7 @@ pub use read_set::{
 };
 pub(crate) use room::scope_worlds;
 pub use room::{
-    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RoomStretch, RosterParty, room_scope,
 };
 pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{

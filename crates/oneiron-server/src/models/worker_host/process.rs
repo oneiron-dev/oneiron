@@ -58,24 +58,32 @@ pub(super) struct ProcessWorker {
 
 impl ProcessWorker {
     /// Starts `command` as the leader of a new process group and takes
-    /// custody of it: one task waits on and reaps it. On Linux the worker
-    /// gets the terminate signal if this process dies first, so no orphan
-    /// keeps its port and its device.
+    /// custody of it: one task waits on and reaps it. On Linux it arms the
+    /// existing parent-death terminate signal before exec and checks that
+    /// the spawning process has not already disappeared.
     pub(super) fn spawn(
         mut command: tokio::process::Command,
         health: String,
         native: Option<PathBuf>,
         stats: Option<StatsRoute>,
     ) -> std::io::Result<Self> {
+        let client = client()?;
         command.process_group(0).kill_on_drop(false);
         #[cfg(target_os = "linux")]
-        // SAFETY: the closure runs in the child between fork and exec and
-        // makes one prctl call, which is async-signal-safe; it takes no lock
-        // and allocates nothing.
+        let parent = rustix::process::getpid();
+        #[cfg(target_os = "linux")]
+        // SAFETY: between fork and exec this closure only makes raw process
+        // syscalls and constructs OS-code errors, without locks or allocation.
         unsafe {
-            command.pre_exec(|| {
+            command.pre_exec(move || {
                 rustix::process::set_parent_process_death_signal(Some(Signal::TERM))
-                    .map_err(std::io::Error::from)
+                    .map_err(std::io::Error::from)?;
+                if rustix::process::getppid() != Some(parent) {
+                    let _ = rustix::process::kill_process(rustix::process::getpid(), Signal::TERM);
+                    // Forbid exec even if the terminate signal is masked or ignored.
+                    return Err(std::io::Error::from(rustix::io::Errno::SRCH));
+                }
+                Ok(())
             });
         }
         let child = command.spawn()?;
@@ -84,7 +92,6 @@ impl ProcessWorker {
             #[cfg(target_os = "macos")]
             None,
         )?;
-        let client = client()?;
         Ok(Self {
             state,
             exit,

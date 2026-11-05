@@ -333,8 +333,7 @@ fn reserve<T>(
     }
     let old_capacity = output.capacity();
     let target = old_capacity.saturating_mul(2).max(needed);
-    let bytes =
-        layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
+    let bytes = layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     ledger.admit_len::<T>(target).map_err(WorkError::Memory)?;
     output
         .try_reserve_exact(target - output.len())

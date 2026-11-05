@@ -217,6 +217,7 @@ fn own_full_slip(
     if !credential.is_full_vault_owner_grade()
         || claims.holder_ref != owner.actor.to_hex()
         || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
+        || claims.trusted_contact.is_some()
     {
         return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             "credential is not this owner's own full slip",

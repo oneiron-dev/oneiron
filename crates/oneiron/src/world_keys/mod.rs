@@ -62,7 +62,7 @@ pub use self::bundle::{
     retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
-pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant};
+pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
 #[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
 pub use self::doors::WorldKeyStatus;

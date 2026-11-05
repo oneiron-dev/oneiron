@@ -781,7 +781,11 @@ impl Vault {
             safety,
             unresolved,
             archive_manifests,
-            root_policy: super::checkpoint_policy::checkpoint_root_policy_of(&view, posture)?,
+            root_policy: super::checkpoint_policy::checkpoint_root_policy_of(
+                &view,
+                posture,
+                self.checkpoint_policy_selection_available(),
+            )?,
             building_pin: pin,
             parent: None,
         };

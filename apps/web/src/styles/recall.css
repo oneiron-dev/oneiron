@@ -1,0 +1,215 @@
+/* ── recall — the search door. the question is the title, the answer is a
+   printed page that shows its work: prose with cited spans, the ledger of
+   what made the cut, what was withheld and why (FLOWS §3 #1, §3c 1–40).
+   nothing here is a card inside the sheet: the sheet is the print. ── */
+
+main.pane.recall {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.recall .pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* ── the ask IS the h1: a serif field with no box. Enter runs it. ── */
+.recall .pane-head { display: block; }
+.recall .ask {
+  display: block; width: 100%; max-width: 44ch;
+  font-family: var(--serif); font-size: 22px; font-weight: 550;
+  letter-spacing: -0.01em; line-height: 1.3;
+  color: var(--silver-1);
+  background: transparent; border: 0; padding: 0; margin: 0;
+  resize: none; overflow: hidden;
+  field-sizing: content;
+  caret-color: var(--safelight);              /* the caret is touch */
+}
+.recall .ask::placeholder { color: var(--silver-4); font-weight: 500; }
+.recall .ask:focus { outline: none; }
+
+/* the sample asks · the vault's quickfilter chip, page-scoped (3–4px rung) */
+.recall .asks { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.recall .asks .label { margin-right: 6px; }
+.recall .chip {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--silver-3); padding: 3px 9px;
+  border: 1px solid transparent; border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+.recall .chip:hover, .recall .chip:focus-visible { color: var(--silver-1); }
+.recall .chip.on { color: var(--silver-1); background: var(--bg-well); }
+
+/* ── the empty door (rule 40): the flock, one line, the two sample doors ── */
+.recall-empty { display: flex; align-items: center; gap: 18px; padding: 18px 4px 6px; }
+.recall-empty .spot { width: 150px; height: auto; }
+.recall-empty .lead { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.recall-empty .line { font-family: var(--serif); font-size: 15px; color: var(--silver-2); line-height: 1.5; max-width: 40ch; }
+.recall-empty .doors { display: flex; gap: 4px; margin-left: -9px; }
+
+/* ── the answer · a developed print. instrument region: the eyebrow says
+   who rendered it and as of when; the as-of is a door into the vault. ── */
+.answer { display: flex; flex-direction: column; gap: 20px; max-width: 80ch; }
+.answer .eyebrow {
+  display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--silver-4);
+}
+.answer .eyebrow .aname { letter-spacing: 0.12em; }
+.answer .eyebrow .sep { color: var(--silver-4); }
+.answer .eyebrow a { transition: color 160ms ease; }
+.answer .eyebrow a:hover, .answer .eyebrow a:focus-visible { color: var(--silver-1); }
+
+/* the prose: serif, the voice; confidence is the ink of each cited span */
+.a-prose {
+  font-family: var(--serif); font-size: 15.5px; line-height: 1.65;
+  color: var(--silver-1); max-width: 62ch;
+}
+.cite {
+  font: inherit; color: inherit; padding: 0; margin: 0;
+  border-bottom: 1px dotted var(--silver-4);
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.cite:hover, .cite:focus-visible { color: var(--silver-1); border-bottom-color: var(--silver-2); }
+.cite.on { border-bottom-style: solid; border-bottom-color: var(--silver-2); }
+
+/* sections inside the print: serif head, a quiet toggle (rule 10) —
+   the count exists only when the rows are hidden (rule 16) */
+.a-sect { display: flex; flex-direction: column; }
+.a-sect .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 6px; cursor: pointer; }
+.a-sect .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.a-sect .head:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 5px; }
+.a-sect .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.a-sect .head:hover .fold-hint, .a-sect .head:focus-visible .fold-hint { opacity: 1; }
+.a-sect.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.a-sect .head .meta-line { margin-left: auto; display: none; }
+.a-sect.closed .head .meta-line { display: inline; }
+.a-sect.closed .a-body { display: none; }
+
+/* the ledger of what made the cut: dividers are space (rule 6); rows
+   highlight on the soft 5px ends; a click selects the row, and the
+   cited span above goes solid */
+.recall .ledger-wrap { overflow-x: auto; }
+.recall table.ledger td { border-top: 0; height: auto; padding: 6px 8px; vertical-align: baseline; }
+.recall table.ledger th { padding: 6px 8px 10px; }
+.recall table.ledger th:first-child, .recall table.ledger td:first-child { padding-left: 6px; }
+.recall table.ledger .c-occ, .recall table.ledger .c-lrn { width: 96px; }
+.recall table.ledger .c-world { width: 84px; }
+.recall table.ledger .c-src { width: 118px; }
+.recall table.ledger tbody tr { cursor: pointer; }
+/* two tiers, the inbox's: the hand is a soft wash, the SELECTED row is the
+   well — otherwise a cite lands on a row you cannot tell from the hover */
+@media (hover: hover) {
+  .recall table.ledger tbody tr:hover td { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+  .recall table.ledger tbody tr:hover td:first-child { border-radius: 5px 0 0 5px; }
+  .recall table.ledger tbody tr:hover td:last-child { border-radius: 0 5px 5px 0; }
+}
+.recall table.ledger tr.selected td { background: var(--bg-well); }
+.recall table.ledger tr.selected td:first-child { border-radius: 5px 0 0 5px; }
+.recall table.ledger tr.selected td:last-child { border-radius: 0 5px 5px 0; }
+.recall table.ledger tbody tr:focus-visible { outline: 2px solid var(--safelight); outline-offset: -2px; border-radius: 5px; }
+.cut .when {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--silver-3);
+  white-space: nowrap; font-feature-settings: "tnum" 1;
+}
+.cut .tc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--silver-2); flex: none; }
+.cut .tc-dot.hollow { background: none; border: 1.5px solid var(--silver-3); }
+.cut .world { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--silver-4); }
+.cut a.src { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); transition: color 160ms ease; white-space: nowrap; }
+.cut a.src:hover, .cut a.src:focus-visible { color: var(--safelight); }   /* every mono token is a door */
+/* the demo row: two clocks months apart. the gap prints as a hindsight
+   mark on the learned clock; the row's title tells the story */
+.cut tr.hindsight .when.learned { color: var(--silver-2); }
+.cut .gap { font-family: var(--mono); font-size: 10px; color: var(--silver-4); margin-left: 6px; letter-spacing: 0.04em; }
+
+/* withheld, and why — load-bearing, printed quiet: silver-3/4 ink,
+   no hairlines, one line each */
+.withheld { display: flex; flex-direction: column; }
+.wh-line { display: flex; align-items: baseline; gap: 12px; padding: 6px 8px 6px 6px; }
+.wh-why {
+  flex: none; width: 132px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--silver-4);
+}
+.wh-what { font-family: var(--serif); font-size: 13.5px; line-height: 1.45; color: var(--silver-3); }
+.wh-what.superseded { color: var(--silver-2); }      /* opacity .45 = the lifecycle treatment */
+.wh-what.conf-4 { color: var(--silver-4); }
+.wh-num { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--silver-4); font-feature-settings: "tnum" 1; white-space: nowrap; }
+.wh-line .act { margin-left: auto; font-size: 11px; }
+.wh-line .act.quiet { color: var(--silver-4); }
+
+/* the explain line: the house mind reads the answer back to you, then
+   signs it. the summary is a door (it opens the receipt). */
+.recall .explain .x-text { color: var(--silver-3); font-size: 14px; }
+.recall .explain .x-text:hover { color: var(--silver-2); }
+.recall .explain .x-text:not([role]) { cursor: default; }   /* the thin voice is not a door */
+.recall .explain .x-text:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 5px; }
+
+/* the acts, and the receipt that unfolds under them (glance tier: data only) */
+.a-foot { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.a-foot .meta-line { margin-left: 0; }
+.receipt { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.receipt.open { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
+.receipt > .r-inner { min-height: 0; overflow: hidden; }
+.r-inner .r-body { display: flex; flex-direction: column; gap: 4px; padding-top: 2px; }
+.r-inner .meta-line { font-size: 11px; }
+.r-inner .r-note { font-family: var(--serif); font-size: 13px; color: var(--silver-3); line-height: 1.5; max-width: 62ch; }
+
+/* the thin state: one proposed row waits in the inbox */
+.thin-row { display: flex; align-items: baseline; gap: 9px; padding: 6px 8px 6px 6px; max-width: 62ch; }
+.thin-row .dot { flex: none; transform: translateY(-1px); }
+.thin-row .claim { flex: 1; min-width: 0; font-size: 14px; }
+.thin-row .act { flex: none; }
+
+/* develop-on-run: the print exposes in, region by region, once per ask.
+   remount keys the replay; reduced motion prints instantly. */
+@keyframes develop {
+  from { opacity: 0; filter: blur(2px); transform: translateY(3px); }
+  to   { opacity: 1; filter: none; transform: none; }
+}
+.answer > * { animation: develop 240ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+.answer > :nth-child(2) { animation-delay: 50ms; }
+.answer > :nth-child(3) { animation-delay: 110ms; }
+.answer > :nth-child(4) { animation-delay: 160ms; }
+.answer > :nth-child(5) { animation-delay: 200ms; }
+.answer > :nth-child(6) { animation-delay: 230ms; }
+.answer > :nth-child(7) { animation-delay: 250ms; }
+@media (prefers-reduced-motion: reduce) {
+  .answer > * { animation: none; }
+  .receipt { transition: none; }
+  .a-sect .head .fold-hint { transition: none; }
+}
+
+/* An optional, still scene belongs only to the pre-question door. The
+   existing sheet ink/paper is fully opaque under ALL text, including the
+   ask and sample chips. None keeps the original layout via display:contents. */
+.recall-entry { display: contents; }
+main.recall.has-scene { position: relative; isolation: isolate; }
+.recall-scene-backdrop { position: absolute; inset: 0; pointer-events: none; }
+.recall-scene-backdrop > div { position: absolute; inset: 0; background: center / cover no-repeat; }
+.recall.has-scene .pane-body { position: relative; }
+.recall.has-scene .recall-entry {
+  display: flex; flex-direction: column; gap: 14px; flex: none;
+  width: min(620px, 100%); margin: auto;
+  padding: 22px; border-radius: var(--sheet-radius);
+  background: var(--bg-elevated);
+}
+.recall.has-scene .ask::placeholder { color: var(--silver-2); }
+.recall.has-scene .ask:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: 5px; }
+.recall.has-scene .recall-empty { flex-wrap: wrap; }
+.recall.has-scene .recall-empty .lead { flex: 1; min-width: min(200px, 100%); }
+.recall.has-scene .recall-empty .line { text-wrap: pretty; }
+.recall.has-scene .recall-empty .doors { flex-wrap: wrap; }
+.recall.has-scene .chip { color: var(--silver-2); }
+@media (max-width: 600px) {
+  .recall.has-scene .pane-body { padding: 16px 12px; }
+  .recall.has-scene .recall-entry { padding: 18px 16px; }
+  .recall.has-scene .recall-empty { gap: 12px; padding-inline: 0; }
+  .recall.has-scene .recall-empty .spot { width: 110px; }
+}
+@media (pointer: coarse) {
+  .recall.has-scene .chip { min-height: 44px; }
+}

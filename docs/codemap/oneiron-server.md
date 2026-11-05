@@ -126,7 +126,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/weave_lens.rs` | src | m | 4 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
 | `src/ai_host/workers.rs` | src | s | 3 crate-vis | — | The workers a started host runs on its seats: the Dreamer and the workflow pump, and the MACRO declaration… |
 | `src/ai_host/workflows.rs` | src | m | 5 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
-| `src/api/ai/chat.rs` | src | L | 19 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
+| `src/api/ai/chat.rs` | src | L | 20 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
 | `src/api/ai/chat/admission.rs` | src | m | 1 crate-vis | — | Chat turn admission and setup |
 | `src/api/ai/chat/answer.rs` | src | m | 6 crate-vis | — | Chat answer opening and request construction |
 | `src/api/ai/chat/assertions.rs` | src | s | 5 crate-vis | — | A chat reply's typed assertions (OF-063, FIX 3416, Engine ruling (a)): the records the reply cited or… |
@@ -134,6 +134,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/ai/chat/delivery.rs` | src | m | 3 crate-vis | — | Chat response delivery and producer driving |
 | `src/api/ai/chat/hook_ask.rs` | src | s | 2 crate-vis | — | The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in… |
 | `src/api/ai/chat/hooks.rs` | src | s | 7 crate-vis | — | Chat generation and witness hook boundaries |
+| `src/api/ai/chat/model_call.rs` | src | s | 6 crate-vis | — | Model-call evidence from the actual answering leg, independent of delivery |
 | `src/api/ai/chat/recall.rs` | src | s | 6 crate-vis | — | The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the… |
 | `src/api/ai/chat/segments.rs` | src | m | 9 crate-vis | — | A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the call's messages in the order the turn… |
 | `src/api/ai/chat/segments/actions.rs` | src | s | 4 crate-vis | — | A reused turn action's fresh session metadata and post-save successor |
