@@ -194,7 +194,7 @@ impl PipelineBuilder<'_> {
                                 Error::InvariantViolation("retrieval policy replay encode")
                             })?;
                         if let Some(memory) = attempt.replay_inputs_memory.as_mut() {
-                            memory.track_config(&inputs.config);
+                            memory.track_config(inputs);
                         }
                     }
                     return Ok((attempt, Some(trace)));

@@ -257,7 +257,7 @@ impl Store {
             ]
             .into_iter()
             .flatten()
-            .fold(0_u64, |bytes, value| {
+            .fold(inputs.known_config_backing_bytes(), |bytes, value| {
                 bytes.saturating_add(value.capacity() as u64)
             });
             memory.materialized(0, bytes);
@@ -269,11 +269,9 @@ impl Store {
                     (record.result_ids.capacity() as u64)
                         .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
                 )
-                .saturating_add(
-                    (record.score_breakdown.capacity() as u64).saturating_mul(
-                        std::mem::size_of::<super::types::RetrievalScoreBreakdown>() as u64,
-                    ),
-                );
+                .saturating_add((record.score_breakdown.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<super::types::RetrievalScoreBreakdown>() as u64,
+                ));
             memory.materialized(0, bytes);
         }
         let record = ProvisionalRetrievalRun {
