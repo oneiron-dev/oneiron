@@ -354,6 +354,26 @@ impl NativeClient {
         self.inner.last_receipt_ref()
     }
 
+    /// The engine `[limits]` rows this client's own vault crossed, as the
+    /// host kept them: one entry per row that asked, as JSON. `None` on a
+    /// remote, attached, or rebound view; an empty list where no row crossed
+    /// yet. The PID gate error propagates.
+    fn native_limit_questions(&self) -> PyResult<Option<String>> {
+        self.inner
+            .native_limit_questions()
+            .map_err(raise)?
+            .map(|rows| {
+                let values: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|row| {
+                        serde_json::json!({"row": row.row, "bound": row.bound, "measured": row.measured})
+                    })
+                    .collect();
+                encode(&values)
+            })
+            .transpose()
+    }
+
     /// Resends the call a `PENDING_ASK` refusal answered: `verb` with the
     /// same input, under the invocation id the refusal's `hook` names
     /// (ARCH-0080 §3, OF-580). `pending_json` is that refusal as its
@@ -4109,6 +4129,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.off_record.notes.create", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_artifacts_save(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.artifacts.save")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.off_record.artifacts.save", input)
             })
             .map_err(raise)?;
         encode(&output)
