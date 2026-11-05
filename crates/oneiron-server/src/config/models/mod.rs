@@ -36,6 +36,7 @@ mod levels;
 mod media;
 mod planner;
 mod provider;
+pub mod sessions;
 pub mod snapshots;
 #[cfg(test)]
 mod tests;
@@ -58,7 +59,7 @@ pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
 pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
-    ResponseFormatWire, ResponsesSocket,
+    ResponseFormatWire, ResponsesSocket, SiwcProvider,
 };
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
@@ -112,6 +113,8 @@ pub(crate) struct ModelsFile {
     #[serde(default)]
     training: training::TrainingFile,
     snapshots: Option<snapshots::SnapshotPolicyFile>,
+    #[serde(default)]
+    sessions: sessions::SessionsFile,
     #[serde(default)]
     workers: BTreeMap<String, workers::WorkerFile>,
 }
@@ -234,6 +237,9 @@ pub struct ModelsConfig {
     /// The trainer connectors (`[models.training]`); none by default.
     pub training: TrainingSettings,
     pub snapshots: snapshots::SnapshotPolicy,
+    /// Early computation of a session's next turn (`[models.sessions]`,
+    /// I1 = C).
+    pub sessions: sessions::SessionPreparePolicy,
     /// The model workers this server supervises or probes
     /// (`[models.workers]`), in id order; none by default.
     pub workers: Vec<WorkerConfig>,
@@ -320,16 +326,18 @@ pub struct ChatSettings {
     pub turn_opener: TurnOpener,
 }
 
-/// `[models.chat] turn_opener`: what closes a chat turn whose context board
-/// rides, after its query part (ARCH-0067 §2: the log closes with a
-/// now-time turn opener the model completes; I1 = C turn order).
+/// `[models.chat] turn_opener`: what closes a chat turn's call and a queued
+/// Continue's or Retry's, after the board's query part when the board rides,
+/// else right after the newest user message (ARCH-0067 §2: the log closes
+/// with a now-time turn opener the model completes; I1 = C turn order).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnOpener {
     /// The engine's now-time line, sampled once as the turn is admitted.
     #[default]
     Clock,
-    /// None: the turn ends at its board's query part.
+    /// None: the call ends at its board's query part, or at the newest user
+    /// message.
     Off,
 }
 
@@ -616,6 +624,7 @@ impl ModelsFile {
             planner,
             training,
             snapshots: self.snapshots.unwrap_or_default().resolve()?,
+            sessions: self.sessions.resolve(),
             workers,
         };
         if let Some(file) = self.decision_read {

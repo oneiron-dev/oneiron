@@ -6,7 +6,7 @@ mod comm_input;
 mod comm_projection;
 mod commit;
 mod edges;
-mod ops;
+use oneiron_store::batch::builder::ops;
 mod preflight;
 mod puts;
 mod reference_read;
