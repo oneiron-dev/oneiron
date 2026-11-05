@@ -1,7 +1,7 @@
 //! Core half of `store::text_index`: its store-layer items live in `oneiron_store::text_index` and are
 //! re-exported here; the items below stay in the engine.
 
-pub use oneiron_store::text_index::*;
+pub(crate) use oneiron_store::text_index::*;
 
 pub(crate) use crate::config::bm25::{Bm25Config, FieldLengthPolicy};
 pub(crate) use codec::read_total_docs;
