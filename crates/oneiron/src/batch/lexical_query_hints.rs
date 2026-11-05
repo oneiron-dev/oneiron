@@ -472,11 +472,12 @@ pub(super) struct DeletedLexicalQueryHints {
 }
 
 pub(super) fn delete_lexical_query_hint_claims_for_target(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     keep: &HashSet<EntityId>,
 ) -> Result<DeletedLexicalQueryHints> {
+    let store = write.store;
     let mut result = DeletedLexicalQueryHints::default();
     let mut pending_targets = VecDeque::from([*target]);
     let mut visited_targets = HashSet::new();
@@ -493,7 +494,7 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
                 continue;
             }
             let (existed, had_vector, had_graph_mutation, neighbors) =
-                deindex_entity_without_lexical_query_hint_cascade(store, wtxn, &hint_id)?;
+                deindex_entity_without_lexical_query_hint_cascade(write, wtxn, &hint_id)?;
             if existed {
                 pending_targets.push_back(hint_id);
                 result.deleted.push((hint_id, neighbors));
