@@ -26,6 +26,7 @@ use super::keys::{
     MANIFEST, REVISION_INDEX, code_symbol_entity_id, code_symbol_revision_index_key,
     code_symbol_revision_index_prefix, delete_index_rows_for_id, id_from_index_key,
 };
+use super::manifest_reads::code_symbol_manifest_ids;
 use super::rust_source::PreparedCodeSymbolGraph;
 use super::text_diff::symbol_line_range;
 use super::types::{
@@ -101,6 +102,14 @@ impl Vault {
             );
             REVISION_INDEX.put(&self.store, &mut wtxn, &key, &())?;
         }
+        // The manifest's symbols join its snapshot's repository scope (FIX 4300).
+        let symbols = code_symbol_manifest_ids(&manifest)?;
+        crate::codebase::put_scope_symbol_rows_in_txn(
+            &self.store,
+            &mut wtxn,
+            code_artifact_id,
+            &symbols,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -225,6 +234,13 @@ impl Vault {
             );
             REVISION_INDEX.put(&self.store, wtxn, &key, &())?;
         }
+        // The manifest's symbols join its snapshot's repository scope (FIX 4300).
+        crate::codebase::put_scope_symbol_rows_in_txn(
+            &self.store,
+            wtxn,
+            code_artifact_id,
+            &symbol_ids,
+        )?;
         Ok(())
     }
 
@@ -450,7 +466,7 @@ impl Vault {
     }
 }
 
-fn code_symbol_definition(
+pub(super) fn code_symbol_definition(
     repo_ref: &RepoRef,
     symbol: &CodeSymbolRevision,
     chunks: &[CodeChunk],
@@ -513,6 +529,10 @@ pub(crate) fn delete_code_symbol_manifest_in_txn(
                 );
                 REVISION_INDEX.delete(store, wtxn, &key)?;
             }
+            // Its symbols leave the snapshot's repository scope, unless
+            // another retained snapshot of that scope names them (FIX 4300).
+            let symbols = code_symbol_manifest_ids(&manifest)?;
+            crate::codebase::delete_scope_symbol_rows_in_txn(store, wtxn, id, symbols)?;
         }
         None => {
             delete_index_rows_for_id(store, wtxn, id)?;
@@ -529,7 +549,7 @@ fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<
     Ok(Some(raw.entity_type))
 }
 
-fn validate_code_artifact_target(
+pub(super) fn validate_code_artifact_target(
     store: &Store,
     rtxn: &RoTxn<'_>,
     code_artifact_id: &EntityId,
