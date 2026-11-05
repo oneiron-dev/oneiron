@@ -14,6 +14,7 @@ pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_diagnostic;
+mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
