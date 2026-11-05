@@ -3339,7 +3339,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inference_snapshot/lifecycle.rs` | src | s | 3 fn · 1 re-export · 5 crate-vis | — | Inference snapshot lifecycle vault doors |
 | `src/inference_snapshot/mod.rs` | src | s | 1 mod · 4 re-export · 2 crate-vis | — | A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped… |
 | `src/inference_snapshot/retention.rs` | src | m | 5 struct · 11 fn · 1 const · 1 crate-vis | SnapshotBudget, SnapshotCandidate, SnapshotLedger, SnapshotReservation, SnapshotUsage | Each vault's sealed-snapshot budget (DESIGN-V2 §7 quotas, V2-R3): the bytes its sealed bodies hold on disk… |
-| `src/inference_snapshot/seal.rs` | src | m | 1 struct · 5 fn · 1 re-export · 2 crate-vis | SealedSnapshot | Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's… |
+| `src/inference_snapshot/seal.rs` | src | m | 1 struct · 5 fn · 1 re-export · 3 crate-vis | SealedSnapshot | Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's… |
 | `src/inference_snapshot/store.rs` | src | m | 2 struct · 8 fn · 2 crate-vis | SnapshotPublish, SnapshotReconcile | The sealed snapshot store (DESIGN-V2 §7, V2-R3): each snapshot's body sealed under its own data key in a… |
 | `src/ingest/admission.rs` | src | m | 3 struct · 8 fn · 6 crate-vis | ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen | Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging |
 | `src/ingest/audience.rs` | src | m | 2 struct · 2 enum · 5 fn · 3 const · 2 crate-vis | ImportAudience, ImportAudienceCluster, ImportAudienceOption, ImportAudienceState | Import audience topics (OF-492) |
@@ -7031,7 +7031,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/uds/tests.rs` | test | s | — | — | Source-authored socket tests |
 | `src/voice_cascade/uds/tests/bridge_tests.rs` | test | s | — | — | — |
 | `src/voice_cascade/uds/tests/socket_tests.rs` | test | s | — | — | — |
-| `src/voice_cascade/voxcpm2.rs` | src | m | 6 struct · 1 enum · 1 trait · 13 fn · 1 const · 1 mod · 2 re-export | RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Operation, VoxCpm2Pcm, VoxCpm2Queue, VoxCpm2Work, WarmTarget | VoxCPM2's warm, host-owned rendering seam |
+| `src/voice_cascade/voxcpm2.rs` | src | m | 6 struct · 1 enum · 1 trait · 14 fn · 1 const · 1 mod · 2 re-export | RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Operation, VoxCpm2Pcm, VoxCpm2Queue, VoxCpm2Work, WarmTarget | VoxCPM2's warm, host-owned rendering seam |
 | `src/voice_cascade/voxcpm2/http.rs` | src | m | 1 struct · 1 enum · 4 fn | VoxCpm2Event, VoxCpm2HttpQueue | Loopback wire to a separately deployed, always-warm CUDA worker |
 | `src/voice_cascade/voxcpm2/http/tests.rs` | test | s | — | — | — |
 | `src/voice_cascade/voxcpm2/pcm.rs` | src | s | 2 struct · 6 fn · 2 crate-vis | PcmSpool, VoxCpm2PcmBody | One render's PCM16LE result as it streams in from the worker (C058), here and on the own-server VoxCPM2… |
