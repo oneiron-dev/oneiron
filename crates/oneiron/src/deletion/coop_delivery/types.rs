@@ -23,6 +23,35 @@ pub struct CooperativeDeletionRetention {
     pub retention_class: String,
 }
 
+/// Exact value-map keys on one covered CLAIM copy. Keys are literal,
+/// never dotted paths, inferred names, source/scope fields or replacements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CooperativeClaimValueRedaction {
+    pub record: EntityId,
+    pub value_fields: Vec<String>,
+}
+
+/// A local selected-field action, not a peer/export erasure proof.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CooperativeLocalRedaction {
+    pub applied_by: EntityId,
+    pub applied_at: u64,
+    pub result: crate::vault::entity_revision::LocalClaimValueRedaction,
+}
+
+/// The recipient owner attests that they already told the requester,
+/// outside the engine, before these restrictions lifted. This is NOT an
+/// engine-delivery receipt and carries no message content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CooperativeRestrictionLiftAttestation {
+    pub records: Vec<EntityId>,
+    pub attested_by: EntityId,
+    pub attested_at: u64,
+}
+
 /// The recipient owner's menu (BIZ-LEGAL-0004 B2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,13 +89,17 @@ pub struct CooperativeDeletionDisposition {
     pub recorded_at: u64,
     /// The customer hold a legal hold choice placed or kept (FIX 2924).
     pub hold_ids: Vec<EntityId>,
-    /// Selected records left out of the hold or retention, hex: non-copies,
-    /// or (for retention) no longer present in this vault.
+    /// Selected records left out of the hold, retention or restriction:
+    /// non-copies, or (for retention/restriction) no longer present here.
     pub excluded: Vec<String>,
     /// A delete choice's operation and each record's state (FIX 2926).
     pub delete_operation: Option<CooperativeDeleteOperation>,
     /// The copies retained here under the owner's recorded basis and class.
     pub retention: Option<CooperativeDeletionRetention>,
+    /// Copies this answer placed or refreshed under storage-only restriction.
+    pub restricted: Vec<EntityId>,
+    /// Selected local CLAIM field/history actions. Peer scope stays open.
+    pub local_redactions: Vec<CooperativeLocalRedaction>,
 }
 
 /// One filed ask, for the recipient owner's review.
@@ -93,6 +126,12 @@ pub struct IncomingCooperativeDeletion {
     /// Every customer hold an answer to this ask placed or kept, a later
     /// choice's and an earlier one's alike (FIX 2924).
     pub courtesy_hold_ids: Vec<EntityId>,
+    /// Records this ask has restricted; markers say which remain active.
+    pub courtesy_restriction_records: Vec<EntityId>,
+    /// Prior external-notice attestations, kept across later choices.
+    pub restriction_lifts: Vec<CooperativeRestrictionLiftAttestation>,
+    /// Local selected-field receipts retained across later choices.
+    pub local_redactions: Vec<CooperativeLocalRedaction>,
 }
 
 /// What the owner chose for one filed ask.
@@ -110,6 +149,14 @@ pub struct CooperativeDeletionAnswer {
     pub hold: Vec<EntityId>,
     /// Under retain-under-basis, the copies, basis code and retention class.
     pub retention: Option<CooperativeDeletionRetention>,
+    /// Under restrict-pending-review, copies to place or refresh. Other
+    /// restrictions remain until explicitly lifted with prior-notice attestation.
+    pub restrict: Vec<EntityId>,
+    /// The owner attests the requester was already told externally before
+    /// lifting these copies' restrictions under this ask only.
+    pub restriction_notice_given: Vec<EntityId>,
+    /// Under Redact, exact value-map fields on covered CLAIM copies.
+    pub redact: Vec<CooperativeClaimValueRedaction>,
 }
 
 /// What became of one record of a delete choice.

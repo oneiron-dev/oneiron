@@ -46,8 +46,13 @@ impl Vault {
     /// copies still present here, with the owner's basis and retention-class
     /// codes; non-copies and missing records are left out. Its existing B2
     /// clamp keeps retained copies out of shared retrieval. Other non-delete
-    /// choices keep their reason code and review date; review dates do not
-    /// schedule reminders or change retention.
+    /// choices keep their reason code and review date. A restrict choice
+    /// places an independent storage-only state; only explicit owner-attested
+    /// prior external notice lifts this ask's restrictions. A later choice
+    /// alone never lifts them. Review dates do not
+    /// schedule reminders or change retention. Redact can remove exact
+    /// value-map keys from covered ordinary CLAIM copies and their local
+    /// retained history. Its receipts do not claim peer/export convergence.
     pub fn answer_cooperative_deletion_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -68,6 +73,32 @@ impl Vault {
                 .ok_or_else(|| invalid("no such ask"))?;
             let mut hold_ids = Vec::new();
             let mut excluded = Vec::new();
+            let restricted =
+                if answer.kind == CooperativeDeletionDispositionKind::RestrictPendingReview {
+                    let (covered, left_out) =
+                        present_copies_for_ask(self, txn, pact_id, &filed, &answer.restrict)?;
+                    excluded.extend(left_out.iter().map(EntityId::to_hex));
+                    covered
+                } else {
+                    Vec::new()
+                };
+            super::restrict::apply_in_txn(
+                self,
+                txn,
+                pact_id,
+                nonce,
+                &mut filed,
+                actor,
+                answer,
+                &restricted,
+                now,
+            )?;
+            let (local_redactions, redaction_excluded) =
+                super::redact::apply_in_txn(self, txn, pact_id, &filed, actor, answer, now)?;
+            excluded.extend(redaction_excluded.iter().map(EntityId::to_hex));
+            filed
+                .local_redactions
+                .extend(local_redactions.iter().cloned());
             if answer.kind == CooperativeDeletionDispositionKind::LegalHold {
                 let (hold, left_out) =
                     hold_for_ask(self, txn, owner, pact_id, nonce, &filed, &answer.hold)?;
@@ -118,6 +149,8 @@ impl Vault {
                 excluded,
                 delete_operation,
                 retention,
+                restricted,
+                local_redactions,
             });
             INCOMING.put(&self.store, txn, &key, &filed)?;
             Ok(filed)
@@ -285,6 +318,25 @@ fn check_answer(answer: &CooperativeDeletionAnswer, now: u64) -> Result<()> {
         }
     }
     check_hold_records(answer)?;
+    if answer.kind != CooperativeDeletionDispositionKind::Redact && !answer.redact.is_empty() {
+        return Err(invalid("only a redact choice selects value fields"));
+    }
+    if answer
+        .redact
+        .iter()
+        .any(|selection| selection.value_fields.is_empty())
+    {
+        return Err(invalid(
+            "a field redaction selects at least one exact value key",
+        ));
+    }
+    if answer.kind == CooperativeDeletionDispositionKind::RestrictPendingReview {
+        if answer.restrict.is_empty() {
+            return Err(invalid("a restrict choice names the copies to restrict"));
+        }
+    } else if !answer.restrict.is_empty() {
+        return Err(invalid("only a restrict choice places restrictions"));
+    }
     match (&answer.kind, &answer.retention) {
         (CooperativeDeletionDispositionKind::RetainUnderBasis, Some(selection)) => {
             if selection.records.is_empty() {
@@ -315,8 +367,8 @@ fn is_code(code: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// Records only the selected copies this ask covers that still exist in
-/// the answer's writer. Retention records no content and changes no hold.
+/// Records only the selected copies still present in the answer's writer.
+/// Retention records no content and changes no hold or restriction.
 fn retention_for_ask(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -324,7 +376,26 @@ fn retention_for_ask(
     filed: &IncomingCooperativeDeletion,
     selection: &CooperativeDeletionRetention,
 ) -> Result<(CooperativeDeletionRetention, Vec<EntityId>)> {
-    let records = first_occurrences(&selection.records);
+    let (kept, excluded) = present_copies_for_ask(vault, txn, pact_id, filed, &selection.records)?;
+    Ok((
+        CooperativeDeletionRetention {
+            records: kept,
+            basis_code: selection.basis_code.clone(),
+            retention_class: selection.retention_class.clone(),
+        },
+        excluded,
+    ))
+}
+
+/// The selected, present recipient copies this ask covers in this writer.
+pub(super) fn present_copies_for_ask(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pact_id: &[u8; 32],
+    filed: &IncomingCooperativeDeletion,
+    records: &[EntityId],
+) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+    let records = first_occurrences(records);
     let worlds: Option<Vec<EntityId>> = filed
         .worlds
         .iter()
@@ -360,14 +431,7 @@ fn retention_for_ask(
             excluded.push(record);
         }
     }
-    Ok((
-        CooperativeDeletionRetention {
-            records: kept,
-            basis_code: selection.basis_code.clone(),
-            retention_class: selection.retention_class.clone(),
-        },
-        excluded,
-    ))
+    Ok((kept, excluded))
 }
 
 /// A legal hold choice names the records it holds, each once; every other
