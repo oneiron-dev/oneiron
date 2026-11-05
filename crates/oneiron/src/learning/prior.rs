@@ -14,11 +14,13 @@ use crate::side_table::{self, Named, SideTable};
 use super::cell::{LearningCell, LearningPredicate, TypeRef};
 use super::estimate::{EstimateForm, EstimateValue, Prior, PriorOrigin};
 use super::evidence::{CellRow, ensure_cell_in_txn};
+use super::frozen::StoredPrior;
+use super::judge::conversions_in_txn;
 use super::project::project_cell_in_txn;
-use super::read::read_learning_in_txn;
+use super::read::{read_learning_in_txn, stored_prior_from_read_in_txn};
 
 /// A cell's stored prior. Key: the cell digest.
-pub(crate) const PRIOR: SideTable<[u8; 32], Prior, Named> =
+pub(crate) const PRIOR: SideTable<[u8; 32], StoredPrior, Named> =
     SideTable::new(&side_table::LEARNING_PRIOR);
 
 /// Stores the prior `cell` starts from and re-projects it.
@@ -41,7 +43,12 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
     prior.validate()?;
     vault.with_write_txn_grouped(|wtxn| {
         let digest = ensure_cell_in_txn(vault, wtxn, cell, prior.value.form())?;
-        PRIOR.put(&vault.store, wtxn, &digest, prior)?;
+        PRIOR.put(
+            &vault.store,
+            wtxn,
+            &digest,
+            &StoredPrior::plain(prior.clone()),
+        )?;
         project_cell_in_txn(vault, wtxn, &digest, now)?;
         Ok(())
     })
@@ -73,7 +80,8 @@ pub(crate) fn capture_borrowed_prior_in_txn(
         return Ok(());
     }
     ensure_cell_in_txn(vault, wtxn, cell, form)?;
-    PRIOR.put(&vault.store, wtxn, &digest, &read.estimate.prior)
+    let prior = stored_prior_from_read_in_txn(vault, wtxn, &read)?;
+    PRIOR.put(&vault.store, wtxn, &digest, &prior)
 }
 
 /// The prior in force for a registered cell: [`prior_for_cell_in_txn`] over
@@ -103,6 +111,19 @@ pub(crate) fn prior_for_cell_in_txn(
     of: &str,
     digest: &[u8; 32],
 ) -> Result<Prior> {
+    let prior = stored_prior_for_cell_in_txn(vault, txn, cell, form, of, digest)?;
+    let conversions = conversions_in_txn(vault, txn)?;
+    Ok(prior.project(&conversions))
+}
+
+pub(super) fn stored_prior_for_cell_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    form: EstimateForm,
+    of: &str,
+    digest: &[u8; 32],
+) -> Result<StoredPrior> {
     let spec = match cell.predicate {
         LearningPredicate::Setting => cell
             .setting_key
@@ -114,22 +135,23 @@ pub(crate) fn prior_for_cell_in_txn(
         && let Some((value, weight_runs)) =
             learning_setting::owner_seed_in_txn(vault, txn, spec, cell)?
     {
-        return Ok(Prior {
+        return Ok(StoredPrior::plain(Prior {
             origin: PriorOrigin::Seed,
             value: point_value(form, of, value),
             weight_runs,
             from: Some(format!("setting row {}", spec.key)),
-        });
+        }));
     }
     if let Some(prior) = PRIOR.get(&vault.store, txn, digest)?
-        && prior.value.form() == form
+        && prior.prior.value.form() == form
     {
         return Ok(prior);
     }
-    match spec {
-        Some(spec) => shipped_setting_prior(vault, txn, form, of, spec),
-        None => Ok(Prior::shipped(form)),
-    }
+    let prior = match spec {
+        Some(spec) => shipped_setting_prior(vault, txn, form, of, spec)?,
+        None => Prior::shipped(form),
+    };
+    Ok(StoredPrior::plain(prior))
 }
 
 fn shipped_setting_prior(
