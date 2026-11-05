@@ -48,9 +48,8 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
-use oneiron::learning::TypeRef;
 use oneiron::llm::run_admission::forget_work_parent;
-use oneiron::self_heal::audit::{AttemptConfession, ObjectiveConfession};
+use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::task_verb::RunnerDoneAnswer;
 use tokio::sync::{Notify, broadcast, watch};
 
@@ -280,8 +279,7 @@ fn pump_once(
             let mut retryable = false;
             let mut held = None;
             let mut parked = false;
-            let mut confession = None;
-            let progress = dispatcher.run_workflow_step_output(
+            let progress = dispatcher.run_workflow_step_output_with_confession(
                 *root,
                 LEASE_OWNER,
                 now_secs(),
@@ -352,19 +350,7 @@ fn pump_once(
                                 Some(confessed) => confessed,
                                 None => output.objectives.into_iter().map(unanswered).collect(),
                             };
-                            confession = step
-                                .input
-                                .target
-                                .agent_definition_ref()
-                                .ok()
-                                .filter(|_| !objectives.is_empty())
-                                .map(|subject| AttemptConfession {
-                                    attempt: step.attempt.id,
-                                    subject,
-                                    type_ref: TypeRef::from(&step.input.type_ref),
-                                    objectives,
-                                });
-                            Ok(output.bytes)
+                            Ok((output.bytes, objectives))
                         }
                         // The meter ran out inside the model call: held as
                         // at the boundary, from the checkpoint before the
@@ -431,14 +417,6 @@ fn pump_once(
                     }
                 }
             });
-            // A leaf that completed durably is sealed, and so stays in the
-            // random-audit pool, even when advancing its wrapper did not
-            // (FIX 9466).
-            if let Some(confession) = confession
-                && leaf_completed(vault, confession.attempt)
-            {
-                seal(vault, &confession);
-            }
             // The held leaf waits paused; its workflow waits with it until
             // the owner resumes the hold. The notice rides the hold, and
             // goes to the owners now.
@@ -614,15 +592,6 @@ fn ask_project_questions(
                 return;
             }
         }
-    }
-}
-
-/// Seals the leaf that just completed with its confession. A refusal (the
-/// leaf did not settle with a result and an executor, or the confession
-/// does not hold) is logged; the completed work stands.
-fn seal(vault: &Vault, confession: &AttemptConfession) {
-    if let Err(error) = vault.record_attempt_confession(confession, now_secs()) {
-        tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
     }
 }
 

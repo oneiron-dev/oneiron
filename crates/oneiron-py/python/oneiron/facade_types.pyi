@@ -16635,6 +16635,7 @@ class UnsupportedCapability(TypedDict):
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
+    code: NotRequired[str | None]
 class FatalLlmErrorInvalidRequestDetail(TypedDict):
     InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):
@@ -16881,7 +16882,7 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
-ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+ManifestKind = Literal["skill_index", "skill", "actor_claim", "workflow_context_row"]
 RevisionRef = list[int]
 class ManifestEntry(TypedDict):
     kind: ManifestKind

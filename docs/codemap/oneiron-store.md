@@ -154,9 +154,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/provenance/text_commit.rs` | src | s | 2 struct · 1 fn | RowProvenance, TextCommitReceipt | Durable per-commit text provenance |
 | `src/write_envelope/skill_record/admission.rs` | src | s | 1 fn | — | Pure runtime admission invariant over one stored skill record |
 | `src/write_envelope/skill_record/codec.rs` | src | m | 5 fn | — | MessagePack encode and decode for SKILL bodies and dependencies |
+| `src/write_envelope/skill_record/fork_pin.rs` | src | s | 2 fn | — | Retained parent document/frontier provenance for a skill fork's birth |
 | `src/write_envelope/skill_record/identity.rs` | src | s | 1 struct · 6 fn · 3 const | SkillContentHash | Canonical skill identity: content hash, tree hash, and hub cross-check |
 | `src/write_envelope/skill_record/lifecycle.rs` | src | s | 2 enum · 7 fn | SkillGovernanceTier, SkillLifecycle | SKILL lifecycle machine and governance-tier axis |
-| `src/write_envelope/skill_record/mod.rs` | src | s | 7 mod · 9 re-export · 1 crate-vis | — | Stored skill records, canonical identity, call contracts and pure validation |
+| `src/write_envelope/skill_record/mod.rs` | src | s | 7 mod · 10 re-export · 1 crate-vis | — | Stored skill records, canonical identity, call contracts and pure validation |
 | `src/write_envelope/skill_record/record.rs` | src | s | 2 struct · 7 fn · 23 const | SkillDependency, SkillRecord | SKILL record types with pinned wire keys and size bounds |
 | `src/write_envelope/skill_record/resident.rs` | src | s | 2 fn · 1 const | — | Immutable resident ownership encoded in a skill record |
 | `src/write_envelope/skill_record/role.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SkillCallContract, SkillRole | Skill roles and the executable call contract |
