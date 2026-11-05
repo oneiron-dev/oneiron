@@ -21,7 +21,8 @@ mod loopback;
 mod relay_workers;
 // A guest's socket() makes its entry and the end the guest receives.
 mod sockets;
-// A guest stream's relays to its remote and to the host's DNS.
+// A guest stream's relays, to its remote or the host's DNS, hold their room
+// on the host floor and their socket's entry (FIX 6301).
 mod stream_relay;
 
 pub(crate) struct Supervisor {
@@ -401,27 +402,17 @@ fn operate(
                 if peer.is_none() {
                     return Err(io::Error::from_raw_os_error(libc::EISCONN));
                 }
+                // The relay takes its room and starts before the guest's
+                // end leaves the entry, which it holds (FIX 6301).
                 if target.port() == 53 {
-                    state.relay.authorize_datagram(*target)?;
-                    let peer = peer
-                        .take()
-                        .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                    *socket
-                        .target
-                        .lock()
-                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    stream_relay::relay_dns(peer, *target, Arc::clone(state));
+                    stream_relay::connect_dns(state, &socket, &mut peer, *target)?;
                 } else {
-                    let (stream, gated) = state.relay.connect_stream(*target)?;
-                    let peer = peer
-                        .take()
-                        .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                    *socket
-                        .target
-                        .lock()
-                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    stream_relay::relay_stream(peer, stream, *target, gated, Arc::clone(state));
+                    stream_relay::connect_remote(state, &socket, &mut peer, *target)?;
                 }
+                *socket
+                    .target
+                    .lock()
+                    .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
             }
         }
         Operation::Send {
