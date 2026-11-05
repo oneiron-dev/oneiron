@@ -21,9 +21,9 @@ use crate::write_envelope::{
 
 pub use crate::write_envelope::claim_body::{
     CLAIM_BODY_KEYS, ClaimBody, ClaimSubject, CursorSpan, EvidenceKind, EvidenceRef,
-    RelationshipScope, SessionClaimBundle, SessionClaimBundleClaim, decode_claim_body,
-    meet_relationship_scopes, relationship_scope_includes, relationship_scope_of,
-    relationship_scope_transcript,
+    RelationshipScope, RelationshipSet, SessionClaimBundle, SessionClaimBundleClaim,
+    decode_claim_body, meet_relationship_scopes, relationship_scope_includes,
+    relationship_scope_of, relationship_scope_transcript,
 };
 pub(crate) use crate::write_envelope::claim_body::{
     CLAIM_FIELDS_FULL, CLAIM_FIELDS_MINIMAL, CLAIM_FIELDS_STANDARD, EDGE_REF_LEN,

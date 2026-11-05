@@ -59,7 +59,7 @@ fn bucket_key(input: &ConsolidationRootBucket) -> Result<super::ConsolidationBuc
             .map(|ids| {
                 ids.iter()
                     .map(|id| EntityId::from_hex(id))
-                    .collect::<std::result::Result<BTreeSet<_>, _>>()
+                    .collect::<std::result::Result<crate::claim::RelationshipSet, _>>()
             })
             .transpose()?,
         project: EntityId::from_hex(&input.project)?,

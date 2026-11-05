@@ -26,7 +26,7 @@ pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
 pub use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
 pub use made_by::MadeByClass;
 pub use relationship_scope::{
-    RelationshipScope, meet_relationship_scopes, relationship_scope_includes,
+    RelationshipScope, RelationshipSet, meet_relationship_scopes, relationship_scope_includes,
     relationship_scope_of, relationship_scope_transcript,
 };
 pub use relationship_scope::{decode_relationship_scope, encode_relationship_scope};
