@@ -78,9 +78,10 @@ use a separate automatic selection. When an entity's known world dependencies ar
 to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
 and the document rows the native checkpoint getter assigns wholly to it. The same native ownership
 check covers NOTE heads, head-document indexes and overrides, typed-body heads and head snapshots,
-office source pointers, blob artifact current heads, and media vectors with their device provenance.
-Forks, proposal snapshots, receipts, bundles, pins, exports, version histories and media refusals keep
-their existing treatment. Attachment occurrence
+office source pointers, blob artifact current heads, media vectors with their device provenance,
+and committed codebase snapshot rows. Forks, proposal snapshots, receipts, bundles, pins, exports,
+blob version histories, code revisions and media refusals keep their existing treatment, as do codebase
+indexes and custody reports. Attachment occurrence
 rows whose native body getter binds every part to that record are also left out, including
 their body descriptors and digest-holder rows, before body files are counted. A shared body
 file still travels when another included row names it; its digest is never a world identity.
