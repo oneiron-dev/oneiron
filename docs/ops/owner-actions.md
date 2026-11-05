@@ -89,6 +89,13 @@ unacknowledged work, not disposable cache rows. Their world projection must pres
 not just drop a queued payload. Shared document proposals keep their other owners' fragments.
 Authority-log rows and non-payload links stay intact.
 
+An unpromoted residence read cache also leaves the automatic image when its blob exactly
+matches a core row already proved all-Off and its native opened window, document frame and
+touch row are valid. Its two payload rows, opened marker and touch row leave together, so a
+later open can refetch rather than fail on a marker with no bytes. A cache with no core row,
+stale or malformed bytes, mixed or unknown placement, or a promoted window stays unchanged.
+The thin index, live cache, pending journals and promotion markers are not pruned by a backup.
+
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
 Unknown or mixed world placement keeps its existing behavior. Other body or response references,
 delete-bearing or unclassified queued updates, other mixed carriers and exterior custody
