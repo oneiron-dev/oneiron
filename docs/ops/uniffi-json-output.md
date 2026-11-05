@@ -152,3 +152,10 @@ answer consumes decisions in its required batch. All decisions and manifest
 JSON are consumed before a finite error can return. A missing replay stays
 missing, while a present replay with no decisions stays present. Desktop-answer
 outputs and unselected input conversions are unchanged.
+
+
+`self.identity.settle` consumes a `NeedsPerson` card directly into `WireJson`.
+Its required null card stays present. The same settled entity, unknown state,
+deciding ask and person-choice ask remain intact, with the same public record,
+input, native settlement and typed client call. JSON held inside card strings
+stays opaque text. No identity or action-admission rule changes.
