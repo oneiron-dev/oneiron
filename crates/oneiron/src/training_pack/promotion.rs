@@ -144,7 +144,11 @@ pub(crate) fn undo_training_role_swap_in_txn(
     if let Some(current) = ROLES.get(&vault.store, txn, &key)?
         && current.run == *id
     {
-        if let Some(previous) = previous_role_swap_in_txn(vault, txn, &current, incumbent)? {
+        if let Some((previous, mut previous_run)) =
+            previous_role_swap_in_txn(vault, txn, &current, incumbent)?
+        {
+            previous_run.state = TrainingState::Bound;
+            RUNS.put(&vault.store, txn, &previous.run, &previous_run)?;
             ROLES.put(&vault.store, txn, &key, &previous)?;
         } else {
             ROLES.delete(&vault.store, txn, &key)?;
@@ -158,14 +162,15 @@ pub(crate) fn undo_training_role_swap_in_txn(
     RUNS.put(&vault.store, txn, id, &run)
 }
 
-/// The actual replaced receipt is restored only while its original binding,
-/// checkpoint and native Bound run still match the real incumbent space.
+/// Recover the exact replaced receipt and run while their binding, checkpoint
+/// and live custody still match the real incumbent space. Undoing a later swap
+/// may have demoted a reused run; restoring this receipt binds that run again.
 fn previous_role_swap_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     current: &RoleSwapReceipt,
     incumbent: Option<&str>,
-) -> Result<Option<RoleSwapReceipt>> {
+) -> Result<Option<(RoleSwapReceipt, TrainingRun)>> {
     let (Some(id), Some(previous), Some(incumbent)) =
         (current.previous_swap, current.previous.as_ref(), incumbent)
     else {
@@ -192,8 +197,10 @@ fn previous_role_swap_in_txn(
     let Some(run) = RUNS.get(&vault.store, txn, &receipt.run)? else {
         return Ok(None);
     };
-    if run.state != TrainingState::Bound
-        || run.plan.target.role_binding() != Some((receipt.role, &receipt.binding))
+    if !matches!(
+        run.state,
+        TrainingState::Returned | TrainingState::Scored | TrainingState::Bound
+    ) || run.plan.target.role_binding() != Some((receipt.role, &receipt.binding))
         || !run
             .result
             .as_ref()
@@ -202,7 +209,7 @@ fn previous_role_swap_in_txn(
     {
         return Ok(None);
     }
-    Ok(Some(receipt))
+    Ok(Some((receipt, run)))
 }
 
 /// Every training run as `txn` reads it, in id order. Read-only.
