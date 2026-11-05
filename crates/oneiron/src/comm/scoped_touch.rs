@@ -132,9 +132,12 @@ pub(super) fn capture_scoped_touch_source(
     let world = body.world.unwrap_or_else(crate::claim::base_world_id);
     let claim =
         CommClaim::from_claim_body(body).map_err(super::generic_put_routing::source_event_error)?;
+    let sensitivity = crate::claim::claim_sensitivity_band(body)
+        .filter(|sensitivity| *sensitivity <= 3)
+        .ok_or(Error::InvalidClaimBody("scoped comm source sensitivity"))?;
     let canonical = claim
         .value
-        .claim_body()
+        .claim_body_with_sensitivity(sensitivity)
         .map_err(super::generic_put_routing::source_event_error)?;
     if !matches!(&claim.value, CommClaimValue::LastTouch { .. })
         || !same_touch_context_except_position(body, &canonical)
@@ -143,8 +146,6 @@ pub(super) fn capture_scoped_touch_source(
             "unsupported scoped comm source context",
         ));
     }
-    let sensitivity = crate::claim::claim_sensitivity_band(body)
-        .ok_or(Error::InvalidClaimBody("scoped comm source sensitivity"))?;
     let birth = rmp_serde::to_vec_named(birth.base_form().as_ref())
         .map_err(|_| Error::InvariantViolation("comm touch birth encoding failed"))?;
     let mut digest = blake3::Hasher::new();
@@ -218,11 +219,15 @@ pub(super) fn touch_slot_body(
     value: &CommClaimValue,
     source: Option<&ScopedTouchSource>,
 ) -> super::claims::CommResult<ClaimBody> {
-    let mut body = value.claim_body()?;
-    if let Some(source) = source {
-        if Some(source.sensitivity) != crate::claim::claim_sensitivity_band(&body) {
+    let mut body = if let Some(source) = source {
+        if source.sensitivity > 3 {
             return Err(super::claims::CommError::InvalidRecord);
         }
+        value.claim_body_with_sensitivity(source.sensitivity)?
+    } else {
+        value.claim_body()?
+    };
+    if let Some(source) = source {
         body.world = Some(source.world);
         body.scope_facet = source.facet;
         body.scope_project = source.project;

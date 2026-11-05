@@ -315,7 +315,17 @@ fn take_batch_puts_in_txn(
                 false,
             )?;
             if bound_births.is_some() {
-                let projected = CommClaim::from_claim_body(&body)?.value.claim_body()?;
+                let value = CommClaim::from_claim_body(&body)?.value;
+                let projected = if birth.is_some() && predicate == PREDICATE_COMM_LAST_TOUCH {
+                    let Some(sensitivity) = crate::claim::claim_sensitivity_band(&body)
+                        .filter(|sensitivity| *sensitivity <= 3)
+                    else {
+                        continue;
+                    };
+                    value.claim_body_with_sensitivity(sensitivity)?
+                } else {
+                    value.claim_body()?
+                };
                 let same_world = body.world.unwrap_or_else(crate::claim::base_world_id)
                     == projected.world.unwrap_or_else(crate::claim::base_world_id);
                 let same_context = if birth.is_some() && predicate == PREDICATE_COMM_LAST_TOUCH {
