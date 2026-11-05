@@ -1974,6 +1974,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skill_hubs_clawhub_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.clawhub.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skill_hubs_publishers_admit(
         &self,
         input: serde_json::Value,

@@ -1497,6 +1497,8 @@ class Oneiron:
     class _VaultSkillHubsClawhubVerbs:
         def search(self, spec: Facade.ClawHubSearchRequest) -> Facade.ClawHubSearchReply:
             """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
+        def import_(self, spec: Facade.ClawHubImportRequest) -> Facade.ClawHubImportReply:
+            """Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."""
     class _VaultSkillHubsPublishersVerbs:
         def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
             """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
