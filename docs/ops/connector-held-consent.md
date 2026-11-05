@@ -11,6 +11,10 @@ standing grant. The authenticated owner's later confirmation uses the existing
 decision-ask grant confirmation door. The existing connector consent and
 approve-once doors remain available.
 
+Actor erasure clears an ask's consent attachment when its typed action subject
+or disclosure audience names that actor. It does not rewrite the bound or reopen
+an answered or withdrawn question. Attachments that name no erased actor stay.
+
 The pending call keeps the attachment alongside its current approval metadata.
 A changed attachment is a new approval question, even when the request digest is
 unchanged. Its question version distinguishes an attached consent effect from a
