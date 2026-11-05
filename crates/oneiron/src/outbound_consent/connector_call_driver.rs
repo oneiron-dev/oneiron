@@ -121,9 +121,8 @@ fn web_tool_input_schema(tool: WebTool) -> crate::Result<Value> {
         WebTool::Search => schemars::schema_for!(WebSearchInput),
         WebTool::Fetch => schemars::schema_for!(WebFetchInput),
     };
-    let object = serde_json::to_value(schema).map_err(|_| {
-        Error::InvalidConfig("web connector: the input schema is not JSON".into())
-    })?;
+    let object = serde_json::to_value(schema)
+        .map_err(|_| Error::InvalidConfig("web connector: the input schema is not JSON".into()))?;
     Ok(serde_json::json!({ "anyOf": [{ "type": "string" }, object] }))
 }
 
