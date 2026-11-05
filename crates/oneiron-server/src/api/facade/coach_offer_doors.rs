@@ -7,11 +7,11 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::skill_optimize::{offer_doors, offer_pilot};
 use std::sync::Arc;
 
-/// While this holds, pilot complete and get list the rows a pilot's frozen
-/// sets keep (FIX 5761): its measurement's. False (as before): they list
-/// none, so no off-device answer they gave changes. Prepare forwards its
-/// release's rows whatever this says (FIX 8171).
-const PILOT_ROWS_NARROW_ANSWERS: bool = false;
+/// Pilot complete and get forward their frozen source rows to the existing
+/// answer-release checks (FIX 5761, FIX 10495). Unknown sets remain unknown;
+/// completing the pilot still commits before its reply is released. Prepare
+/// always forwards its release's rows (FIX 8171).
+const PILOT_ROWS_NARROW_ANSWERS: bool = true;
 
 async fn owned<T: Send + 'static>(
     server: &Arc<SyncServer>,
@@ -58,8 +58,8 @@ async fn owned_sourced<T: Send + 'static>(
     (answer, rows)
 }
 
-/// A pilot door's answer beside its listing as before, or, while
-/// [`PILOT_ROWS_NARROW_ANSWERS`] holds, the pilot's frozen set (FIX 5761).
+/// A pilot answer beside its frozen source set (FIX 5761, FIX 10495), or
+/// its control-only listing when [`PILOT_ROWS_NARROW_ANSWERS`] is disabled.
 fn pilot_listed<T>(
     (answer, before): Listed<T>,
     pilot: impl FnOnce(&T) -> Option<Vec<oneiron::EntityId>>,
@@ -134,7 +134,7 @@ pub(crate) async fn vault_coach_training_offers_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferAnswerRequest,
-) -> Listed<oneiron::skill_optimize::OfferAnswerRecord> {
+) -> Listed<offer_doors::OfferAnswerReply> {
     owned_control(
         server,
         auth,
