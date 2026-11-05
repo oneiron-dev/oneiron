@@ -79,7 +79,11 @@ async fn read_sized<R: AsyncRead + Unpin>(
 ) -> io::Result<Zeroizing<Vec<u8>>> {
     let len = bounded(len, max)?;
     // Sized once, so no reallocation leaves an unwiped copy behind.
-    let mut bytes = Zeroizing::new(vec![0; len]);
+    let mut bytes = Zeroizing::new(Vec::new());
+    bytes
+        .try_reserve_exact(len)
+        .map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
+    bytes.resize(len, 0);
     reader.read_exact(&mut bytes).await?;
     Ok(bytes)
 }
@@ -174,7 +178,7 @@ async fn read_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Zeroizing
         if body.len() + chunk.len() > MAX_STREAM {
             return Err(io::ErrorKind::InvalidData.into());
         }
-        push_wiped(&mut body, &chunk);
+        push_wiped(&mut body, &chunk)?;
     }
     Ok(body)
 }
