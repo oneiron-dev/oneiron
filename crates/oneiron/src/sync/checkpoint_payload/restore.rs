@@ -205,7 +205,8 @@ fn open_slot(
         }
         let actors = opened_actors(slot, copy, opened)?;
         let whole = actors.len() == slot.holes.len();
-        let Some(filled) = root_fill(root, key, value, &actors)? else {
+        let holes: BTreeSet<&str> = slot.holes.iter().map(String::as_str).collect();
+        let Some(filled) = root_fill(root, key, value, &actors, &holes)? else {
             return Ok(None);
         };
         check(root, key, &filled)?;

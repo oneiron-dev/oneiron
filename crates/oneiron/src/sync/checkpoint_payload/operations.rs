@@ -490,7 +490,7 @@ fn prove(
             .iter()
             .map(|(field, actor)| (field.as_str(), *actor))
             .collect();
-        let filled = root_fill(&plan.root, &plan.key, &split.no_one, &opened);
+        let filled = root_fill(&plan.root, &plan.key, &split.no_one, &opened, &fields);
         if !distinct || !matches!(filled, Ok(Some(filled)) if filled == stored.as_slice()) {
             return Err(not_proved());
         }
