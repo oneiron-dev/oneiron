@@ -63,23 +63,3 @@ pub(in crate::vault::entity_revision) fn retained_rows_in_txn(
     }
     Ok(rows)
 }
-
-/// The row revisions `id`'s entity document took over at its birth, each
-/// with the frontier it names there: a retained revision whose key is not
-/// the reference of its own frontier, as `capture_entity_document` keeps
-/// the row's live and indexed ones. A native document revision is that
-/// reference, and is not one.
-pub(in crate::vault::entity_revision) fn row_aliases_in_txn(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Vec<(RevisionRef, Vec<u8>)>> {
-    let mut aliases = Vec::new();
-    for row in FRONTIER.iter_from(store, txn, id.as_bytes())? {
-        let ((_, revision), frontier) = row?;
-        if reference(id, &frontier).0 != revision {
-            aliases.push((RevisionRef(revision), frontier));
-        }
-    }
-    Ok(aliases)
-}
