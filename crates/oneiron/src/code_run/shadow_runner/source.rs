@@ -29,7 +29,6 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::secret_rotation::ArtifactTaintState;
-use crate::store::result_body_reader::{CodeRunResultBodyReader, Source};
 use crate::store::result_memory::ResultHold;
 use crate::store::{BodySink, LINE_INDEX_BLOCK_BYTES};
 use crate::{EntityId, LlmRequest, Result, Vault};
@@ -422,9 +421,8 @@ fn freeze_bodies(
     Ok(Ok(frozen))
 }
 
-/// Copies a body into an owned snapshot while its one row/key snapshot,
-/// custody guard and before-snapshot pin still hold. No current-vault read
-/// is needed when an arm later imports this spool.
+/// Copies one immutable body under its custody guard and before-snapshot
+/// pin. Each short range transaction ends before admission is asked again.
 fn freeze_body_spool(
     vault: &Vault,
     output: &CodeRunRawOutput,
@@ -433,49 +431,28 @@ fn freeze_body_spool(
     crate::code_run::codec::validate_raw_output(output)?;
     let _custody = vault.store.gate_custody_read_guard()?;
     let _pin = vault.pin_result_body(output.raw_blake3);
-    if !admits()? {
-        return Ok(Err(admitted::lapsed()));
-    }
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(reader) = vault.code_run_result_body_reader_in_txn(&rtxn, output)? else {
-        return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
-    };
-    let CodeRunResultBodyReader {
-        source,
-        _pin: _reader_pin,
-        ..
-    } = reader;
     let mut sink = BodySink::spooling(vault.store.body_dir()?, 0);
-    match source {
-        Source::Inline(row) => {
-            for frame in row
-                .get(1..)
-                .unwrap_or_default()
-                .chunks(LINE_INDEX_BLOCK_BYTES as usize)
-            {
-                if !admits()? {
-                    return Ok(Err(admitted::lapsed()));
-                }
-                sink.write(frame)?;
-            }
+    let mut offset = 0_u64;
+    loop {
+        if !admits()? {
+            return Ok(Err(admitted::lapsed()));
         }
-        Source::File(file) => {
-            let mut offset = 0_u64;
-            while offset < output.raw_len {
-                if !admits()? {
-                    return Ok(Err(admitted::lapsed()));
-                }
-                let take = usize::try_from((output.raw_len - offset).min(LINE_INDEX_BLOCK_BYTES))
-                    .map_err(|_| {
-                    crate::Error::ArithmeticOverflow("shadow frozen body frame")
-                })?;
-                let frame = file.read_range(offset, take)?;
-                if frame.len() != take {
-                    return Err(crate::Error::CorruptedIndex("shadow frozen body length"));
-                }
-                sink.write(&frame)?;
-                offset += take as u64;
-            }
+        let take = usize::try_from((output.raw_len - offset).min(LINE_INDEX_BLOCK_BYTES))
+            .map_err(|_| crate::Error::ArithmeticOverflow("shadow frozen body frame"))?;
+        let frame = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault.read_code_run_raw_output_range_in_txn(&rtxn, output, offset, take)?
+        };
+        let Some(frame) = frame else {
+            return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
+        };
+        if frame.len() != take {
+            return Err(crate::Error::CorruptedIndex("shadow frozen body length"));
+        }
+        sink.write(&frame)?;
+        offset += take as u64;
+        if offset == output.raw_len {
+            break;
         }
     }
     if sink.digest()? != output.raw_blake3 {
