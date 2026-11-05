@@ -3,6 +3,10 @@
 //! reaches are dropped, rows and journal entries both, so neither a
 //! composed read nor a promotion serves a vector of an older copy. They are
 //! a recomputable cache: the room's next media pass embeds the copy anew.
+//!
+//! A delete or erase of a record drops them the same way (FIX 9398): a
+//! promotion keeps the room's copies of the vectors it replayed, byte-equal
+//! to base's, and base's go with the record, so the room's must go too.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -11,7 +15,9 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
 
 use super::super::journal::JournalEntry;
-use super::super::keyspace::{OverlayKeyspace, OverlayMutation, OverlayState, drop_overlay_row};
+use super::super::keyspace::{
+    KeyspaceState, OverlayKeyspace, OverlayMutation, OverlayState, OverlayValue, drop_overlay_row,
+};
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::{OverlayLifecycleState, SessionOverlay};
 
@@ -21,14 +27,17 @@ impl SessionOverlay {
     /// every `MediaVector` journal entry of one of `ids`. Puts, texts, edges,
     /// turn ownership and every other entry stay.
     ///
-    /// It runs inside the writer that changed the marks, before that writer
-    /// commits, as a conservative invalidation: an aborted writer costs a
-    /// refill, never content. A segment this thread has installed on the
-    /// overlay loses the same staged rows and entries; another thread's
-    /// segment, whose base write committed before this writer began, is
-    /// published first, so an older commit cannot bring a dropped row back.
-    /// It never refuses the writer: an overlay already gone is left as it
-    /// is.
+    /// It runs inside the writer that changed the marks, or that deletes or
+    /// erases one of `ids` (FIX 9398), before that writer commits, as a
+    /// conservative invalidation: an aborted writer costs a refill, never
+    /// content, and a dropped copy of a promoted record reads through to
+    /// base's own. A room that holds none of them is left untouched: its
+    /// state is not copied and its charge not recomputed. A segment this
+    /// thread has installed on the overlay loses the same staged rows and
+    /// entries; another thread's segment, whose base write committed before
+    /// this writer began, is published first, so an older commit cannot
+    /// bring a dropped row back. It never refuses the writer: an overlay
+    /// already gone is left as it is.
     ///
     /// # Errors
     /// Only a poisoned overlay lock.
@@ -77,7 +86,11 @@ impl SessionOverlay {
         if lifecycle.state == OverlayLifecycleState::Gone {
             return Ok(());
         }
-        let mut next = self.state.load_full().as_ref().clone();
+        let current = self.state.load_full();
+        if !same_thread && !holds_rows(&current, keys, &stale) {
+            return Ok(());
+        }
+        let mut next = current.as_ref().clone();
         drop_rows(&mut next, keys, &stale);
         self.state.store(Arc::new(next));
         drop(lifecycle);
@@ -86,6 +99,28 @@ impl SessionOverlay {
         self.charge_now();
         Ok(())
     }
+}
+
+/// Whether `state` stages a vault-meta row or a bookkeeping mark at one of
+/// `keys`, or holds a `stale` journal entry: what [`drop_rows`] would drop.
+fn holds_rows(
+    state: &OverlayState,
+    keys: &BTreeSet<Vec<u8>>,
+    stale: &impl Fn(&JournalEntry) -> bool,
+) -> bool {
+    let slot = OverlayKeyspace::VaultMeta.slot();
+    let staged = match state.keyspaces[slot].as_ref() {
+        KeyspaceState::Single { rows, .. } => keys
+            .iter()
+            .any(|key| matches!(rows.get(key.as_slice()), Some(OverlayValue::Present(_)))),
+        KeyspaceState::DupSort { .. } => false,
+    };
+    staged
+        || state
+            .bookkeeping
+            .get(&slot)
+            .is_some_and(|marked| keys.iter().any(|key| marked.contains(key)))
+        || state.journal.iter().any(|entry| stale(&**entry))
 }
 
 /// Drops the vault-meta rows at `keys`, their bookkeeping marks and every

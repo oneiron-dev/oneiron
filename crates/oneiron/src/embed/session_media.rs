@@ -15,8 +15,15 @@
 //! vector per write and outside every room write: a room's ASSETs and text records find their
 //! media vectors in the room before they are promoted. Its egress and route checks are the base
 //! backfill's, judged on the room's view.
+//!
+//! A promotion keeps the room's copies of the vectors it replayed, byte-equal to base's. A delete
+//! or erase of the record drops them in every room in the same writer as base's
+//! ([`drop_room_media_copies_in_txn`], FIX 9398), so no room serves a vector of a record that
+//! is gone.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+use heed::RwTxn;
 
 use super::device::media_device_row_key;
 use super::media::{
@@ -38,6 +45,7 @@ use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
 use crate::session_overlay::{
     JournalEntry, JournalRole, JournalScope, OverlayKeyspace, RouteTarget,
 };
+use crate::store::Store;
 use crate::temporal::TimeRange;
 
 /// What the embed pass over live rooms saw a space's model refuse by content, per room, kept by
@@ -478,4 +486,36 @@ impl Vault {
         }
         Ok((pending, turns))
     }
+}
+
+/// Drops, in every live room and retained sealed stretch, `id`'s staged media vector and device
+/// rows in each space `wtxn` declares and its `MediaVector` journal entries, in `wtxn`, the
+/// writer that deletes or erases it beside base's own ([`super::delete_media_vectors_in_txn`]),
+/// FIX 9398. A promotion keeps the room's copies of the vectors it replayed, so without this
+/// they would outlive the record until the room closes, and a later promotion of an entry staged
+/// after the cut would write one back. A room whose overlay lock is poisoned serves no read; it
+/// keeps its rows until it closes.
+///
+/// # Errors
+/// A store failure of `wtxn`.
+pub(crate) fn drop_room_media_copies_in_txn(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let overlays = store.off_record_sessions.live_overlay_handles();
+    if overlays.is_empty() {
+        return Ok(());
+    }
+    let ids = BTreeSet::from([*id]);
+    let keys = super::space::repo_projection::media_row_keys_in(store, wtxn, &ids)?;
+    for overlay in overlays {
+        if let Err(error) = overlay.invalidate_repo_media_copies(&keys, &ids) {
+            tracing::warn!(
+                error = %error,
+                "a room keeps its staged media copies of a deleted record until it closes"
+            );
+        }
+    }
+    Ok(())
 }
