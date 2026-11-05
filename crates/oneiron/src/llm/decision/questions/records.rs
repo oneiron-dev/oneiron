@@ -183,6 +183,36 @@ pub fn question_call_budget(vault: &Vault, explicit: Option<u64>) -> Result<std:
     Ok(std::time::Duration::from_millis(ms))
 }
 
+/// A caller's own clock, else the vault's owner or fitted question-budget
+/// override, else `fallback` unchanged. This keeps a host's shipped clock
+/// distinct from the question catalog's seed.
+///
+/// # Errors
+///
+/// Storage errors; an undecodable setting row.
+pub fn question_call_budget_with_fallback(
+    vault: &Vault,
+    explicit: Option<std::time::Duration>,
+    fallback: std::time::Duration,
+) -> Result<std::time::Duration> {
+    if let Some(explicit) = explicit {
+        return Ok(explicit);
+    }
+    let txn = vault.store.env.read_txn()?;
+    let override_ms = crate::learning_setting::setting_override_in_txn(
+        &vault.store,
+        &txn,
+        &QUESTION_CALL_BUDGET_MS,
+    )?;
+    Ok(match override_ms {
+        Some(ms) => std::time::Duration::from_millis(
+            ms.round()
+                .clamp(QUESTION_CALL_BUDGET_MS.min, QUESTION_CALL_BUDGET_MS.max) as u64,
+        ),
+        None => fallback,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionRecord {
@@ -255,6 +285,8 @@ pub struct AnswerProposal {
     /// The host rule row the answer was read from, as id@revision (FIX 2974); none when no
     /// rule row answered.
     pub rule: Option<HostRuleRef>,
+    /// Provider-reported cost at the answered rung, when known.
+    pub cost_per_thousand: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

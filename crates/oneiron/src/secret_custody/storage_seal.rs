@@ -1,5 +1,5 @@
 //! A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored
-//! custody schema 2 (CALLS `KS-6 credential schema 2`), the value sealed
+//! custody schema 4, with required model-reveal policy and the value sealed
 //! under its own erasable custody key, one per credential generation
 //! (`crate::store` `credential_value_leaf_in_txn`).
 //!
@@ -20,8 +20,8 @@
 //!   never a row at rest: a checkpoint image carries each row as it rests,
 //!   sealed (KS-6 part 2, [`image`], CALLS `KS-6 image value form`).
 //!
-//! A record read from storage comes back stamped as its DTO is, so every
-//! carrier built from it is byte for byte main's.
+//! A record read from storage comes back stamped as its DTO is. The
+//! record's model-reveal policy travels in each native carrier.
 //!
 //! A read that needs the value opens it ([`read_opened_in_txn`]) in the
 //! caller's writer, or under the custody read guard its caller took before
@@ -53,7 +53,8 @@ pub(crate) use self::image::{
 };
 
 pub(crate) use self::connector_resume::{
-    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+    open_connector_resume_in_txn, read_back_connector_resume_for_activation,
+    retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
 use super::types::{

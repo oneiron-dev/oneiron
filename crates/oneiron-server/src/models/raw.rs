@@ -3,6 +3,8 @@
 //! run's gate.
 use std::sync::Arc;
 
+use futures_util::StreamExt;
+
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
     BudgetLine, HostAccount, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, PayerPerson,
@@ -10,7 +12,7 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::{
     BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture,
-    LlmRequest, LlmStreamResult, ModelId,
+    LlmRequest, LlmStream, LlmStreamResult, ModelId,
 };
 
 use super::{ModelRouter, OfferLadder, ServedOffer};
@@ -193,7 +195,18 @@ impl LlmBackend for InjectedRuns {
             .raw
             .call(&request, Arc::clone(&self.receipts))
             .ok_or(FatalLlmError::InvalidRequest)?;
-        ladder.stream(&run, request, None)
+        let Some(planned) = self.planned.clone() else {
+            return ladder.stream(&run, request, None);
+        };
+        let (stream, mut answered) = ladder.stream_recorded(&run, request, None)?;
+        Ok(LlmStream::new(stream.map(move |event| {
+            // The producer sends the settled binding before its Done, even
+            // when it is one queued item ahead. No separate task drives it.
+            if let Ok(binding) = answered.try_recv() {
+                planned.answered(&run, binding.rung.model);
+            }
+            event
+        })))
     }
 }
 
