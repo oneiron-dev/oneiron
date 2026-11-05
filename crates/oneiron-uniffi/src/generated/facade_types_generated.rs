@@ -53205,6 +53205,8 @@ pub enum ManifestKind {
     Skill,
     #[serde(rename = "actor_claim")]
     ActorClaim,
+    #[serde(rename = "workflow_context_row")]
+    WorkflowContextRow,
 }
 
 /// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
