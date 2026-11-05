@@ -27,12 +27,22 @@
 //! its cutoff and records how the night ended. No trainer recipe is wired
 //! on any host yet, so every night holds with `no_trainer_recipe`, nothing
 //! trains, and every target serves stock.
+//!
+//! A host serves a binding on its own managed worker through
+//! [`DrafterServingRuntime`] (FIX 14976, `serving`): it reads each target's
+//! plan, materialises a version's sealed load set into the vault's private
+//! `drafter-serving/` directory (`load_set`), restarts its worker with that
+//! draft, and records the transition once the new incarnation proves the
+//! draft's identity. Every door that moves a binding tells the host after
+//! commit.
 
 mod custody;
 mod doors;
 mod erase;
+mod load_set;
 mod nightly;
 mod policy;
+mod serving;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,7 +62,12 @@ pub use doors::{
     list_drafters_as_owner, revert_drafter_as_agent, revert_drafter_as_owner,
 };
 pub(crate) use erase::{erase_drafter_actor_in_txn, erase_drafters_for_source_in_txn};
+pub use load_set::{SEALED_CHUNK_BYTES, drafter_file_name_is_plain, drafter_load_set_blake3};
 pub use policy::{DrafterPolicy, DrafterPolicySetRequest, set_drafter_policy_as_owner};
+pub use serving::{
+    DrafterLoadSetPlan, DrafterMaterialized, DrafterServedView, DrafterServingPlan,
+    DrafterServingPlans, DrafterServingRuntime, DrafterUnservedReason,
+};
 pub use types::*;
 
 /// The verb an agent's Grant lists to read the vault's drafter versions.

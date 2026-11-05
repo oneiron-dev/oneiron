@@ -22,12 +22,18 @@
 //! `models/native_exl3`), its qualification asks there, and its activity
 //! poll reads its stats there.
 //!
+//! A vault's own drafter (FIX 14976) is handed to a managed EXL3 worker by
+//! the same row replacement, with the vault's private load set as the
+//! draft, and only where this process launches the worker for its one vault
+//! (`drafter_binding`). The hosted row stays the configured one.
+//!
 //! The media workers, VoxCPM2 speech and local ASR, are supervised the same
 //! way (FIX 8318, `media_worker`): a media rung's call holds its worker's
 //! lease from before its admission through its renders, its partial
 //! settlement or its cancellation, and the worker runs one inference at a
 //! time.
 mod bundle;
+mod drafter_binding;
 mod install;
 mod launch_manifest;
 mod launcher;
@@ -62,6 +68,9 @@ use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 use serde_json::Value as JsonValue;
 
+pub(super) use drafter_binding::{
+    DraftSeat, clear_vault_drafts, draft_seat, launch_records, replace_draft, vault_drafts,
+};
 #[cfg(unix)]
 pub(super) use session::open_turn;
 pub(crate) use session::{
@@ -93,6 +102,10 @@ struct Hosted {
     worker: InferenceWorker,
     /// A managed launch's record slot, which names its native socket.
     slot: Option<Arc<LaunchSlot>>,
+    /// The vault's own draft its supervisor launches with in place of the
+    /// row's stock one (FIX 14976, `drafter_binding`); `None` for stock. The
+    /// row itself stays the configured one.
+    draft: Option<Arc<crate::models::VaultLoadSet>>,
 }
 
 impl Hosted {
@@ -609,6 +622,7 @@ pub(super) fn configure(
                         provider: provider.clone(),
                         worker: worker.clone(),
                         slot,
+                        draft: None,
                     };
                     match workers.insert(row.id.clone(), hosted) {
                         Some(old) => {
@@ -627,6 +641,9 @@ pub(super) fn configure(
             statuses.push(worker.status());
         }
     }
+    // FIX 14976: a row started, or replaced with stock, may serve a served
+    // vault's drafter binding; each vault's drafter host serves it again.
+    let moved = !started.is_empty() || !replaced.is_empty();
     for worker in started {
         host.begin(&worker);
     }
@@ -640,6 +657,9 @@ pub(super) fn configure(
                 host.begin(&new);
             });
         }
+    }
+    if moved {
+        super::drafter_serving::workers_configured();
     }
     statuses
 }

@@ -245,6 +245,8 @@ pub enum DrafterActor {
     Agent(EntityId),
     /// The Coach, on the nightly runner.
     Coach,
+    /// The host that serves the vault's bindings on its own worker.
+    Host,
     /// A source erase.
     Erase,
     /// An actor since erased.
@@ -344,6 +346,15 @@ pub enum DrafterEventKind {
     },
     /// The owner's policy at a new revision.
     Policy { revision: u64 },
+    /// A new worker incarnation proved it serves `target`'s binding at
+    /// `generation`: stock, or a version, with the draft identity its
+    /// answers name (`draft_weights_digest`).
+    Served {
+        target: DrafterTarget,
+        serving: DrafterServing,
+        generation: u64,
+        draft_digest: Option<String>,
+    },
 }
 
 /// One content-free drafter event, kept for the owner's history and the

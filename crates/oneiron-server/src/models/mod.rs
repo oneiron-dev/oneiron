@@ -41,6 +41,7 @@ mod decision_read;
 mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
+mod drafter_serving;
 mod driven;
 mod exl3_evidence;
 #[cfg(test)]
@@ -123,6 +124,10 @@ pub use status::{
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+// FIX 14976: each served vault's drafter bindings, served on this process's
+// own managed EXL3 worker.
+pub use drafter_serving::VaultLoadSet;
+pub(crate) use drafter_serving::install_drafter_serving;
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{

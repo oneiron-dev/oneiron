@@ -16,6 +16,7 @@
 //! eviction runs here.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -31,6 +32,27 @@ use crate::store::key_custody::{
 
 /// The context an artifact's 16-byte id derives its key incarnation under.
 const DRAFTER_INCARNATION_CONTEXT: &str = "oneiron/drafter-artifact/erasable-incarnation/v1";
+
+/// The directory under the vault root that sealed drafter artifacts live in.
+const DRAFTER_ARTIFACT_DIR: &str = "drafter-artifacts";
+
+/// The directory under the vault root that a serving host materialises a
+/// drafter's plaintext load set in (FIX 14976).
+const DRAFTER_SERVING_DIR: &str = "drafter-serving";
+
+impl Store {
+    /// This vault's sealed drafter artifacts, `drafter-artifacts/` under the
+    /// root it opened at: sealed files only, never a key.
+    pub(crate) fn drafter_artifact_dir(&self) -> PathBuf {
+        self.owner._registered_path.path.join(DRAFTER_ARTIFACT_DIR)
+    }
+
+    /// This vault's materialised drafter plaintext, `drafter-serving/` under
+    /// the root it opened at: what a serving worker loads, never a key.
+    pub(crate) fn drafter_serving_dir(&self) -> PathBuf {
+        self.owner._registered_path.path.join(DRAFTER_SERVING_DIR)
+    }
+}
 
 /// The incarnation of the key that seals artifact `artifact`.
 fn incarnation(artifact: &[u8; 16]) -> [u8; 32] {

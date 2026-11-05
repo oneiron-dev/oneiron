@@ -3431,8 +3431,8 @@ evaluator scores it and no loader serves its head, so it holds with
 Each vault retrains its own small draft model at night on its own
 conversations, rooms with other people included. The drafter never leaves the
 vault. Retraining is on by default and the owner can switch it off. Today the
-engine holds the records, the doors, the erase path and the nightly job. It
-does not train yet.
+engine holds the records, the doors, the erase path, the nightly job and the
+serving binding. It does not train yet.
 
 What exists now:
 
@@ -3481,9 +3481,57 @@ What exists now:
   (`no_trainer_recipe`), because no trainer recipe is wired on any host. A
   night never reports a successful empty retrain, and every target keeps
   serving stock.
+- **Sealed files.** A version's sealed files sit under the vault's
+  `drafter-artifacts/<artifact id>/`, one per load-set file, each a run of
+  frames (`u32` length, then one sealed chunk of 64 KiB, the last chunk
+  shorter). `DrafterSealing::seal_file` writes one. A file name is one plain
+  name: letters, digits, `.`, `_` and `-`.
+- **Serving.** The server serves each target's binding (stock, or a retained
+  version at a binding generation) on its own managed EXL3 worker. It does
+  this by a supervised restart; there is no hot swap. For a version, the
+  server opens the sealed load set through the version's own key into a fresh
+  private directory, `drafter-serving/<load set digest>-<random>/` under the
+  vault (mode 0700). It checks every file's length and BLAKE3. Then the
+  worker's row gets a new supervisor that loads that directory as its draft
+  (`--draft-dir`). That launch checks every file again, refuses any extra
+  file, and checks that the version's target model and tokenizer are the
+  worker's. The old worker drains and stops first. The server records the
+  change (a `served` event) only when the new worker answers with the
+  expected draft identity. The same write checks the binding generation, the
+  policy and the erase state again, so a revert or an erase that lands
+  meanwhile wins. A load set that does not verify, or a worker that does not
+  qualify with it, puts stock back until the binding moves again. The global
+  house config, the shared model install, its cache and the stock weights are
+  never changed.
+- **Where it applies.** Only a server process that launches the managed
+  worker for its own one vault (plain or embedded `serve`) applies a binding.
+  A managed per-vault process calls a worker that another process launched
+  for every vault, so there the status says `unsupported_shared_worker`. An
+  external worker is the operator's: `unsupported_external_worker`. A
+  llama.cpp worker: `unsupported_runtime`. When a second vault is served in
+  the same process, every private draft goes back to stock.
+- **Draft identity.** Every EXL3 launch manifest names its draft
+  (`draft_weights_digest`): `load-set-blake3:<hex>` for a vault's own
+  version, `manifest-sha256:<install record>` for the stock draft. Every
+  answer's identity echoes it, so each call's `CacheIdentity` names the draft
+  that ran. The worker probe fails a worker that answers with another draft.
+  A new worker is a new epoch, so its sessions start fresh. Kept snapshots
+  hold no draft state, so they stay usable.
+- **Triggers.** A revert, a policy set and an erase tell the server after
+  their commit; so does an unlock. A vault lock puts stock back and removes
+  the plaintext directories before the vault key drops. A pass also removes
+  every directory whose version may no longer serve. Start-up removes every
+  leftover directory, and the first pass runs once each managed EXL3 worker
+  has launched. A missed notice is caught at the next one or at the next
+  start-up.
+- **Status.** `vault.drafters.status` has `served`: one row per bound
+  target, with what serves now (stock or a version), the binding generation,
+  the draft identity, the worker and its epoch, whether a restart is under
+  way, and the reason when the binding is not applied. A drafter target names
+  the worker's backend model digest, its tokenizer digest and `exl3`.
 
 What does not exist yet: the corpus export from the vault's conversations,
 the trainer script and its recipe for the house serving family, the held-out
 evaluator with its token-identity check, automatic activation and rollback,
-the vault-scoped serving worker that loads a version, and the drafter section
-of the morning report.
+a binding for managed workers that one hosted process serves to several
+vaults, and the drafter section of the morning report.
