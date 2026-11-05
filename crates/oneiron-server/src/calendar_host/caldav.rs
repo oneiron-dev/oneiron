@@ -3,7 +3,9 @@ use std::io::Read;
 use std::sync::Arc;
 
 use oneiron::Vault;
-use oneiron::calendar::connectors::door::CalendarConnectorRegistration;
+use oneiron::calendar::connectors::door::{
+    CalendarConnectorOperation, CalendarConnectorRegistration,
+};
 use oneiron::calendar::{
     CalDavDiscovery, CalDavWire, CalendarConnectorError, RemoteCalendarChange,
     RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt, RemoteWriteRequest,
@@ -19,7 +21,7 @@ const MAX_RESPONSE: u64 = 16 * 1024 * 1024;
 
 pub(crate) struct HttpCalDav {
     vault: Arc<Vault>,
-    owner: AuthenticatedOwner,
+    operation: CalendarConnectorOperation,
     row: CalendarConnectorRegistration,
     client: Client,
     base: Url,
@@ -43,9 +45,15 @@ impl HttpCalDav {
             Url::parse(&row.endpoint).map_err(|_| failure("configure", "invalid endpoint"))?;
         let client =
             super::client().map_err(|_| failure("configure", "HTTP client unavailable"))?;
+        let operation =
+            CalendarConnectorOperation::new(&vault, owner, row.clone()).map_err(|_| {
+                CalendarConnectorError::CredentialUnavailable {
+                    secret_ref: row.seat.config.secret_ref.clone(),
+                }
+            })?;
         Ok(Self {
             vault,
-            owner,
+            operation,
             row,
             client,
             base,
@@ -68,6 +76,73 @@ impl HttpCalDav {
         Ok(url)
     }
 
+    pub(crate) fn operation(&self) -> &CalendarConnectorOperation {
+        &self.operation
+    }
+
+    fn with_credential<T>(
+        &self,
+        apply: impl FnOnce(&[u8]) -> Result<T, CalendarConnectorError>,
+    ) -> Result<T, CalendarConnectorError> {
+        let effector = format!("calendar.caldav:{}", self.row.seat.config.seat_ref);
+        let mut apply = Some(apply);
+        let mut outcome = None;
+        let result = self.vault.inject_secret_at_door(
+            &self.row.seat.config.secret_ref,
+            &effector,
+            &mut |credential: &[u8]| {
+                self.operation.revalidate(&self.vault)?;
+                outcome = Some(apply.take().expect("one credential application")(
+                    credential,
+                ));
+                Ok(())
+            },
+        );
+        if let Some(outcome) = outcome {
+            return outcome;
+        }
+        result.map_err(|_| CalendarConnectorError::CredentialUnavailable {
+            secret_ref: self.row.seat.config.secret_ref.clone(),
+        })?;
+        Err(failure("request", "credential door did not send"))
+    }
+
+    fn send(
+        &self,
+        credential: &[u8],
+        method: Method,
+        url: Url,
+        body: Vec<u8>,
+        content_type: &str,
+        expected: Option<&str>,
+        create: bool,
+        depth: bool,
+    ) -> Result<Response, CalendarConnectorError> {
+        let auth = super::authorization(credential).map_err(|_| {
+            CalendarConnectorError::CredentialUnavailable {
+                secret_ref: self.row.seat.config.secret_ref.clone(),
+            }
+        })?;
+        let mut request = self
+            .client
+            .request(method, url)
+            .header(reqwest::header::AUTHORIZATION, auth)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body);
+        if depth {
+            request = request.header("Depth", "1");
+        }
+        if let Some(etag) = expected {
+            request = request.header(reqwest::header::IF_MATCH, etag);
+        }
+        if create {
+            request = request.header(reqwest::header::IF_NONE_MATCH, "*");
+        }
+        request
+            .send()
+            .map_err(|_| failure("request", "CalDAV request failed"))
+    }
+
     fn request(
         &self,
         method: Method,
@@ -78,51 +153,19 @@ impl HttpCalDav {
         create: bool,
         depth: bool,
     ) -> Result<Response, CalendarConnectorError> {
-        let url = self.url(href)?;
-        let effector = format!("calendar.caldav:{}", self.row.seat.config.seat_ref);
-        let mut sent = None;
-        let result = self.vault.inject_secret_at_door(
-            &self.row.seat.config.secret_ref,
-            &effector,
-            &mut |credential: &[u8]| {
-                // Recheck live owner and installed seat after custody admission,
-                // immediately before egress; the value door released its writer.
-                oneiron::calendar::connectors::door::check_installed_connector(
-                    &self.vault,
-                    &self.owner,
-                    &self.row,
-                )?;
-                let auth = super::authorization(credential)?;
-                let mut request = self
-                    .client
-                    .request(method.clone(), url.clone())
-                    .header(reqwest::header::AUTHORIZATION, auth)
-                    .header(reqwest::header::CONTENT_TYPE, content_type)
-                    .body(body.clone());
-                if depth {
-                    request = request.header("Depth", "1");
-                }
-                if let Some(etag) = expected {
-                    request = request.header(reqwest::header::IF_MATCH, etag);
-                }
-                if create {
-                    request = request.header(reqwest::header::IF_NONE_MATCH, "*");
-                }
-                sent = Some(
-                    request
-                        .send()
-                        .map_err(|_| failure("request", "CalDAV request failed")),
-                );
-                Ok(())
-            },
-        );
-        if let Some(sent) = sent {
-            return sent;
-        }
-        result.map_err(|_| CalendarConnectorError::CredentialUnavailable {
-            secret_ref: self.row.seat.config.secret_ref.clone(),
-        })?;
-        Err(failure("request", "credential door did not send"))
+        self.with_credential(|credential| {
+            let url = self.url(href)?;
+            self.send(
+                credential,
+                method,
+                url,
+                body,
+                content_type,
+                expected,
+                create,
+                depth,
+            )
+        })
     }
 
     fn report(
@@ -266,12 +309,13 @@ impl CalDavWire for HttpCalDav {
                 .child(DAV, "status")
                 .is_some_and(|n| matches!(n.text.split_whitespace().nth(1), Some("404" | "410")));
             if deleted {
-                if let Some(uid) = oneiron::calendar::connectors::calendar_remote_uid_for_href(
-                    &self.vault,
-                    &self.row.seat.config.system,
-                    &self.row.seat.config.calendar_ref,
-                    &href,
-                )? {
+                if let Some(uid) =
+                    oneiron::calendar::connectors::calendar_remote_uid_for_href_for_operation(
+                        &self.vault,
+                        &self.operation,
+                        &href,
+                    )?
+                {
                     changes.push(RemoteCalendarChange::Delete { href, uid });
                 }
                 continue;
@@ -328,46 +372,49 @@ impl CalDavWire for HttpCalDav {
         discovery: &CalDavDiscovery,
         request: &RemoteWriteRequest,
     ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
-        let href = match &request.href {
-            Some(href) => {
-                if request.expected_etag.is_none() {
-                    return Err(failure("write", "existing resource has no ETag"));
+        self.with_credential(|credential| {
+            let href = match &request.href {
+                Some(href) => {
+                    if request.expected_etag.is_none() {
+                        return Err(failure("write", "existing resource has no ETag"));
+                    }
+                    self.url(href)?
                 }
-                self.url(href)?
-            }
-            None => {
-                let mut url = self.url(&discovery.calendar_href)?;
-                let filename = format!("{}.ics", blake3::hash(request.uid.as_bytes()).to_hex());
-                url.path_segments_mut()
-                    .map_err(|_| failure("write", "invalid calendar collection"))?
-                    .pop_if_empty()
-                    .push(&filename);
-                url
-            }
-        };
-        let feed = parse_ics_feed(&request.ics)?;
-        let hash = feed
-            .events
-            .first()
-            .ok_or_else(|| failure("write", "resource has no VEVENT"))?
-            .content_hash;
-        let response = self.request(
-            Method::PUT,
-            href.as_str(),
-            request.ics.clone(),
-            "text/calendar; charset=utf-8",
-            request.expected_etag.as_deref(),
-            request.href.is_none(),
-            false,
-        )?;
-        self.receipt(
-            response,
-            href.to_string(),
-            &request.uid,
-            request.sequence,
-            hash,
-            request.expected_etag.as_deref(),
-        )
+                None => {
+                    let mut url = self.url(&discovery.calendar_href)?;
+                    let filename = format!("{}.ics", blake3::hash(request.uid.as_bytes()).to_hex());
+                    url.path_segments_mut()
+                        .map_err(|_| failure("write", "invalid calendar collection"))?
+                        .pop_if_empty()
+                        .push(&filename);
+                    url
+                }
+            };
+            let feed = parse_ics_feed(&request.ics)?;
+            let hash = feed
+                .events
+                .first()
+                .ok_or_else(|| failure("write", "resource has no VEVENT"))?
+                .content_hash;
+            let response = self.send(
+                credential,
+                Method::PUT,
+                href.clone(),
+                request.ics.clone(),
+                "text/calendar; charset=utf-8",
+                request.expected_etag.as_deref(),
+                request.href.is_none(),
+                false,
+            )?;
+            self.receipt(
+                response,
+                href.to_string(),
+                &request.uid,
+                request.sequence,
+                hash,
+                request.expected_etag.as_deref(),
+            )
+        })
     }
 
     fn delete_vevent(
@@ -379,17 +426,22 @@ impl CalDavWire for HttpCalDav {
         uid: &str,
         sequence: u32,
     ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
-        let expected = expected_etag.ok_or_else(|| failure("delete", "delete requires an ETag"))?;
-        let href = self.url(href)?.to_string();
-        let response = self.request(
-            Method::DELETE,
-            &href,
-            Vec::new(),
-            "text/calendar",
-            Some(expected),
-            false,
-            false,
-        )?;
-        self.receipt(response, href, uid, sequence, [0; 32], Some(expected))
+        self.with_credential(|credential| {
+            let expected =
+                expected_etag.ok_or_else(|| failure("delete", "delete requires an ETag"))?;
+            let url = self.url(href)?;
+            let href = url.to_string();
+            let response = self.send(
+                credential,
+                Method::DELETE,
+                url,
+                Vec::new(),
+                "text/calendar",
+                Some(expected),
+                false,
+                false,
+            )?;
+            self.receipt(response, href, uid, sequence, [0; 32], Some(expected))
+        })
     }
 }

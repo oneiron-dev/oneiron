@@ -214,7 +214,8 @@ impl Vault {
                 );
             }
         }
-        let dry_run_forced = candidate.prepared.destructive_hint();
+        let dry_run_forced = candidate.prepared.destructive_hint()
+            && candidate.prepared.arguments().contains_key("dry_run");
         if dry_run_forced {
             full_arguments.remove("dry_run");
         }
