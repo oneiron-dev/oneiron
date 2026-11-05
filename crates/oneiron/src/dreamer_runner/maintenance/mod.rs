@@ -16,6 +16,7 @@ pub mod coach;
 pub mod coach_diagnostic;
 pub mod coach_heal;
 pub mod coach_learning;
+mod coach_prompt_repair;
 mod coach_repair;
 mod coach_research;
 mod coach_resolution;
