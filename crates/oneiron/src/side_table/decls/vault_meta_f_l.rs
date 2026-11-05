@@ -404,9 +404,6 @@ side_tables! {
     /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
-    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
-    /// zero bytes for the claim-free gate partition) + id16 (hold).
-    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
     /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
     /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
     /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names
