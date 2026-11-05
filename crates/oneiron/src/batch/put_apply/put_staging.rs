@@ -42,6 +42,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: &[u8],
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
@@ -59,6 +60,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
+    payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
