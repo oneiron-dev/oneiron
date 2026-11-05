@@ -297,10 +297,20 @@ pointer after its first free, preserving the outer cleanup without a second
 free. The standalone `mid2l` capacity-slot API and the environment's separate
 integer scratch array stay unchanged.
 
+Transaction-control blocks and their inline tails also use a uniform physical
+prefix at both native calloc sites, including unaccounted startup allocations.
+The native `MDB_ntxn`, `MDB_db`, cursor pointer and sequence types supply the
+union's alignment. Its actual `sizeof` and the original requested block size
+are admitted before calloc. A child supplies its parent's current account;
+the header initializes and materializes immediately before caller control.
+Every owning free in setup, abort, child commit and environment close frees
+the physical block before releasing its stored ticket. Reset, renew and root
+reuse keep the block. Original zeroing, tail offsets, borrowed arrays, flags,
+mutex and commit/abort paths stay unchanged; no startup block is retrocharged.
+
 This is not complete FIX8125, native disk accounting, whole-heap coverage or
-runtime proof. Other ID2/ID3 control arrays, startup scratch, transaction
-control, decrypted-read stash, mmap and other metadata copies remain outside
-this allocation scope.
+runtime proof. Other ID2/ID3 control arrays, startup scratch, decrypted-read stash, mmap
+and other metadata copies remain outside this allocation scope.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 
