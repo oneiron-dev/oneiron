@@ -3964,7 +3964,7 @@ export_facade! {
 "vault.artifacts.proposals" => fn vault_artifacts_proposals(&self, input: ArtifactRefRequest) -> Vec<PendingProposalView> = |client| {
     let input: oneiron::blob_artifact::ArtifactRefRequest = crate::codec::lower_record("vault.artifacts.proposals", input)?;
     let output = client.vault_artifacts_proposals(&input)?;
-    crate::codec::lift_record("vault.artifacts.proposals", &output)
+    Lift::lift(output)
 };
 "vault.artifacts.waits" => fn vault_artifacts_waits(&self, input: ArtifactRefRequest) -> Vec<OrganWaitView> = |client| {
     let input: oneiron::blob_artifact::ArtifactRefRequest = crate::codec::lower_record("vault.artifacts.waits", input)?;
@@ -4039,7 +4039,7 @@ export_facade! {
 "vault.artifacts.propose_output" => fn vault_artifacts_propose_output(&self, input: NativeOutputRequest) -> PendingProposalView = |client| {
     let input: oneiron::blob_artifact::NativeOutputRequest = crate::codec::lower_record("vault.artifacts.propose_output", input)?;
     let output = client.vault_artifacts_propose_output(&input)?;
-    crate::codec::lift_record("vault.artifacts.propose_output", &output)
+    Lift::lift(output)
 };
 "vault.artifacts.keep" => fn vault_artifacts_keep(&self, input: ProposalSettleRequest) -> KeptProposal = |client| {
     let input: oneiron::blob_artifact::ProposalSettleRequest = crate::codec::lower_record("vault.artifacts.keep", input)?;
