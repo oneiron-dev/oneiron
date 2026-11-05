@@ -9,7 +9,6 @@ use crate::disclosure::DisclosureMode;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::WorldScope;
-use crate::serialize::{SerializeConfig, serialize_pack_with_telemetry};
 use crate::store::retrieval_values::RetrievalWithTelemetry;
 
 use super::super::edge_walk::{EdgeWalkOptions, EdgeWalkResult, load_entity_edges, walk_edges};

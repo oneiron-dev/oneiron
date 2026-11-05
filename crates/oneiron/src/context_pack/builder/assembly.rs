@@ -52,7 +52,7 @@ pub(crate) struct PackRunStatus {
     pub(crate) cited_messages: std::collections::HashMap<EntityId, Vec<EntityId>>,
 }
 
-impl<'a> ContextPackBuilder<'a> {
+impl ContextPackBuilder<'_> {
     /// Runs retrieval and returns the opt-in stored-profile companion section.
     /// The profile is one more row of the pack: the pack's disclosure clamp
     /// and reader admit it as they admit any row, and a profile either
