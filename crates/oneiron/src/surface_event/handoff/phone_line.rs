@@ -36,7 +36,7 @@ impl Vault {
                 correlation_id.clone(),
                 "voice",
                 identity.address_or_handle(),
-                super::SurfaceCounterpartyStamp::unparsed("voice", key),
+                crate::surface_event::SurfaceCounterpartyStamp::unparsed("voice", key),
                 now,
                 true,
             )
