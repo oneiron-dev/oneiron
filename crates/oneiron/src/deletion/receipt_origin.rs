@@ -146,15 +146,18 @@ fn verified_attesting_pair_in_txn(
         .then_some((attested_client, attested_pk)))
 }
 
-/// Requeues the sweep each erase receipt the predecessor `predecessor`
-/// (client id, device key) attested still owes, once the owner named this
+/// Owes again what each erase receipt the predecessor `predecessor` (client
+/// id, device key) attested still waits on, once the owner named this
 /// install its successor (FIX 11135): an initial receipt whose sweep was
-/// queued, with no linked completion, that no pending `h:` row and no owed
-/// `hc:` compaction covers. A sweep run before the naming skipped such a
-/// receipt as another device's and retired its job; a fresh job over the
-/// receipt's own scope lets the next sweep scrub again and complete it, its
-/// deadline still counted from the erase's request. Returns how many jobs it
-/// queued.
+/// queued, with no linked completion, that no pending `h:` row of its exact
+/// scope (the one a finalize completes it from) and no owed `hc:` compaction
+/// covers. A pass run before the naming skipped such a receipt as another
+/// device's and retired what it waited on. Each gets back the obligation its
+/// erase made: an erased audience edit, which stays live, the compaction of
+/// the window carrying it (FIX 10234), so the next pass completes it without
+/// a hard erase; any other receipt a fresh job over its own scope, its
+/// deadline still counted from the erase's request. Returns how many it owed
+/// again.
 ///
 /// # Errors
 ///
@@ -211,90 +214,87 @@ pub(crate) fn requeue_successor_sweeps_in_txn(
                 Ok(None) | Err(Error::CorruptedIndex("redaction audit receipt body")) => {}
                 Err(err) => return Err(err),
             }
-            let needed: BTreeSet<&String> = receipt.scope.entity_ids.iter().collect();
-            if job_scopes
-                .iter()
-                .any(|scope| needed.iter().all(|entity| scope.contains(*entity)))
-            {
+            // A finalize completes a receipt only from a job of its exact
+            // scope, so a wider one covers nothing here.
+            let needed: BTreeSet<String> = receipt.scope.entity_ids.iter().cloned().collect();
+            if job_scopes.contains(&needed) {
                 continue;
             }
             #[cfg(feature = "sync")]
             if compacting.contains(&id) {
                 continue;
             }
-            if verified_attesting_pair_in_txn(vault, txn, &id, &receipt)? == Some(predecessor) {
-                owed.push(receipt);
+            if verified_attesting_pair_in_txn(vault, txn, &id, &receipt)? != Some(predecessor) {
+                continue;
             }
+            owed.extend(owed_again_in_txn(vault, txn, id, receipt)?);
         }
         owed
     };
-    for receipt in &owed {
-        let extras = HardEraseSweepExtras {
-            capture_failures: receipt.capture_failures.clone(),
-            ..HardEraseSweepExtras::default()
-        };
-        vault.enqueue_hard_erase_sweep_in_txn(
-            wtxn,
-            receipt.scope.clone(),
-            extras,
-            now,
-            receipt.requested_at,
-        )?;
+    for obligation in &owed {
+        match obligation {
+            Owed::Sweep(receipt) => {
+                let extras = HardEraseSweepExtras {
+                    capture_failures: receipt.capture_failures.clone(),
+                    ..HardEraseSweepExtras::default()
+                };
+                vault.enqueue_hard_erase_sweep_in_txn(
+                    wtxn,
+                    receipt.scope.clone(),
+                    extras,
+                    now,
+                    receipt.requested_at,
+                )?;
+            }
+            #[cfg(feature = "sync")]
+            Owed::Compaction(id, window) => {
+                super::owed_window_compaction::owe_window_compaction_for_receipt_in_txn(
+                    vault, wtxn, window, id,
+                )?;
+            }
+        }
     }
     Ok(owed.len())
 }
 
-/// Whether the attesting pair `attested` (client id, device key) is this
-/// device's: its own cached pair `own`, or a predecessor whose succession in
-/// force, as this install counts the owner's acts, names this install's
-/// machine (FIX 11135). An install with no machine id succeeds no one.
-fn attesting_pair_is_this_device_in_txn(
+/// What one inherited receipt waits on again.
+enum Owed {
+    /// A hard-erase sweep over the receipt's own scope.
+    Sweep(RedactionAuditReceipt),
+    /// The compaction of the window carrying the erased audience edit the
+    /// receipt at `.0` names (FIX 10234).
+    #[cfg(feature = "sync")]
+    Compaction(EntityId, crate::sync::types::WindowKey),
+}
+
+/// What the receipt `receipt`, stored at `id`, waits on again: the
+/// obligation its erase made. An erased audience edit stays a live TURN, so
+/// its erase owed the compaction of the window carrying it, never a hard
+/// erase; a build without sync windows owed it nothing (`None`). Any other
+/// receipt owes the sweep over its own scope.
+fn owed_again_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    own: (u64, [u8; 32]),
-    attested: (u64, &[u8; 32]),
-) -> Result<bool> {
-    let (client, key) = attested;
-    if (client, *key) == own {
-        return Ok(true);
-    }
-    let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
-        return Ok(false);
+    id: EntityId,
+    receipt: RedactionAuditReceipt,
+) -> Result<Option<Owed>> {
+    let edit = match receipt.scope.entity_ids.as_slice() {
+        [edit] => EntityId::from_hex(edit)?,
+        _ => return Ok(Some(Owed::Sweep(receipt))),
     };
-    let fold = vault.authority_view_readonly_in_txn(txn)?;
-    Ok(fold.device_successor(client, key)? == Some(machine))
-}
-
-/// The client id a receipt's `att_client` spells: 16 lowercase hex digits,
-/// as the mint writes it; `None` for any other text.
-fn client_from_hex(hex: &str) -> Option<u64> {
-    if hex.len() != 16 || !is_lower_hex(hex) {
-        return None;
+    let row = crate::vault::live_entity_row_in_txn(&vault.store, txn, &edit)?;
+    if !crate::workspace_roster::is_audience_edit_row(&row) {
+        return Ok(Some(Owed::Sweep(receipt)));
     }
-    u64::from_str_radix(hex, 16).ok()
-}
-
-/// The device key a receipt's `att_pk` spells: 64 lowercase hex digits;
-/// `None` for any other text.
-fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
-    let mut bytes = [0u8; 32];
-    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
-        return None;
+    #[cfg(feature = "sync")]
+    {
+        let raw = vault.get_raw_in(txn, &edit)?.ok_or(Error::EntityNotFound)?;
+        let window = crate::sync::residence::residence_window_for_blob(&raw)?;
+        Ok(Some(Owed::Compaction(id, window)))
     }
-    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    #[cfg(not(feature = "sync"))]
+    {
+        let _ = id;
+        Ok(None)
     }
-    Some(bytes)
-}
-
-/// The signature a lowercase-hex `att_sig` spells; `None` for any other text.
-fn signature_from_hex(hex: &str) -> Option<Signature> {
-    let mut bytes = [0u8; 64];
-    if hex.len() != bytes.len() * 2 || !is_lower_hex(hex) {
-        return None;
-    }
-    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(Signature::from_bytes(&bytes))
 }
