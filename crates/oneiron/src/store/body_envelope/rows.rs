@@ -33,8 +33,9 @@ pub(crate) const BODY_KEYS: SideTable<[u8; 32], BodyKeyRow, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_KEY);
 
 /// Every instance a digest was bound under that its row no longer names, or
-/// may stop naming: one an inline/file switch displaced, its successor, and
-/// one the collector released (FIX 6023). Ids only.
+/// may stop naming: one an inline/file switch displaced, its successor, one
+/// the collector released (FIX 6023), or one a restore left unlanded (FIX
+/// 11417). Ids only.
 pub(crate) const BODY_INSTANCES: SideTable<([u8; 32], [u8; 16]), Vec<u8>, Raw> =
     SideTable::new(&side_table::PROVENANCE_BODY_INSTANCE);
 
@@ -342,9 +343,9 @@ pub(crate) fn remembered_body_instances_in_txn(
         .collect())
 }
 
-/// Deletes the instance row of the body `digest`, in the collector or erase
-/// transaction that releases its final holder: the instance it named, so
-/// its file goes after the commit; `None` for a body with no row.
+/// Deletes the instance row of the body `digest` once its final holder is
+/// released, in a collector, erase or restore transaction: the instance it
+/// named, so its file goes after the commit; `None` for a body with no row.
 ///
 /// # Errors
 ///

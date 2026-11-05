@@ -172,12 +172,14 @@ impl Vault {
         // result body with its line index, an ASSET's file raw (FIX 3677),
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
+        let mut unlanded_bodies = Vec::new();
         carried_bodies::restore(
             &vault,
             &mut image,
             bodies,
             &mut room,
             (body_custody.as_ref(), &retired),
+            &mut unlanded_bodies,
         )
         .map_err(Rejected::landing)?;
         // A queue row landed from its carried bytes goes unleased, as the
@@ -201,6 +203,11 @@ impl Vault {
             if let Some(opened) = opened {
                 super::payload::restore_opened_in_txn(&vault.store, txn, opened, &retired_digests)?;
             }
+            crate::code_run::retire_unlanded_inline_body_keys_in_txn(
+                &vault.store,
+                txn,
+                &unlanded_bodies,
+            )?;
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.

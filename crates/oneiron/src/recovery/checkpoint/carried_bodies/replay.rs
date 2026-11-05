@@ -278,6 +278,7 @@ pub(super) fn land(
     image: &mut CheckpointImage,
     read: &ReadParts,
     retired: &BTreeSet<[u8; 16]>,
+    unlanded: &mut Vec<[u8; 32]>,
 ) -> Result<()> {
     let destinations = destinations(&image.inline_bodies);
     if destinations.is_empty() {
@@ -319,7 +320,11 @@ pub(super) fn land(
             None => rested.extend(crate::code_run::drop_step_start_in_rows(rows, row)?),
         }
     }
-    crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)
+    crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)?;
+    // Their body rows are gone; remove only their unheld inline key rows
+    // after the restored rows and payload land in the same writer.
+    unlanded.extend(rested.difference(&landed).copied());
+    Ok(())
 }
 
 /// The value of the row `key` among sorted `rows`.
