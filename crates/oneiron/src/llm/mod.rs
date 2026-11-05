@@ -143,6 +143,8 @@ pub use oneiron_model::llm::{
     SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
     SnapshotDigest, SnapshotMiss,
 };
+// I1 = C: the prepared tail of the worker session wire.
+pub use oneiron_model::llm::{PreparedUse, SessionPrepare, SessionPrepared};
 // DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
 pub use oneiron_model::llm::{
     AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
