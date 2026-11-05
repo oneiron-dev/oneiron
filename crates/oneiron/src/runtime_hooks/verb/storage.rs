@@ -293,16 +293,15 @@ impl SessionHookKeep {
         let Some(overlay) = self.with_live(vault, key, |kept| Arc::clone(&kept.overlay)) else {
             return Ok(HookRecordsKept::NotKept(SessionHookNotKept::NoRetention));
         };
-        HookRecordsKept::of(
-            vault
-                .with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    let view = vault.store.session_view(Arc::clone(&overlay))?;
-                    rows(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
-                    Ok(segment)
-                })
-                .and_then(TxnSegmentGuard::commit),
-        )
+        HookRecordsKept::of(vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                let view = vault.store.session_view(Arc::clone(&overlay))?;
+                rows(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
+                Ok(segment)
+            },
+            TxnSegmentGuard::commit,
+        ))
     }
 
     /// Reads `key`'s kept records through the keep's composed view; `None`

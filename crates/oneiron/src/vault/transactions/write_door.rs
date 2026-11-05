@@ -56,8 +56,23 @@ impl Vault {
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<T>,
         after_commit: impl FnOnce(T) -> crate::error::Result<U>,
     ) -> crate::error::Result<U> {
+        self.write_txn_door_after_commit(Callback::Audited, write, after_commit)
+    }
+
+    /// The same publication point for an engine write with a typed error
+    /// and its original grouped or opaque callback discipline.
+    pub(crate) fn write_txn_door_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        write: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         self.write_txn_door_classed_after_commit(
-            Callback::Audited,
+            callback,
             BackupWriteClass::Content,
             write,
             after_commit,
