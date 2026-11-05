@@ -44,8 +44,10 @@ fn envelope_reference(
             if doc_raw(&doc)? != raw {
                 return Err(Error::CorruptedIndex("NOTE physical envelope history"));
             }
-            let revision = reference(id, &doc.oplog_frontiers().encode());
-            retain_frontier(store, txn, id, revision, &doc)?;
+            let revision = reference(id, raw);
+            if !FRONTIER.contains(store, txn, &(*id, revision.0))? {
+                retain_frontier(store, txn, id, revision, &doc)?;
+            }
             revision
         }
         None => {
@@ -122,8 +124,10 @@ pub(super) fn capture_note_envelope(
         }
     };
     write_doc_row(&doc, new_raw)?;
-    let row = reference(id, &doc.oplog_frontiers().encode());
-    retain_frontier(store, txn, id, row, &doc)?;
+    let row = reference(id, new_raw);
+    if !FRONTIER.contains(store, txn, &(*id, row.0))? {
+        retain_frontier(store, txn, id, row, &doc)?;
+    }
     save_doc(store, txn, id, &doc)?;
     let next_encoded = FrontierEntry::Note {
         slot,
