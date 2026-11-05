@@ -8,4 +8,3 @@ pub fn contains_private_key(text: &str) -> bool {
         line.starts_with("-----BEGIN ") && line.ends_with("PRIVATE KEY-----")
     })
 }
-
