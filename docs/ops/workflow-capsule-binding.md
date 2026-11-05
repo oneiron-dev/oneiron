@@ -14,6 +14,12 @@ call leaves an unfinalized capsule. Capture and finalization failures do not
 fail live work. The existing capsule writer still rejects erased actors and
 keeps an already finalized binding.
 
+Durable tool continuations keep the existing `capture_completed` cursor. A
+resumed tool tail does not stage or finalize a later round as its initial call.
+After the first successful answer, the exact returned binding finalizes the
+owned handle before that existing cursor is saved as completed. Checkpoint,
+hook-wait and retry records otherwise keep their current behavior.
+
 Contribution forks and strict shadow calls admit the captured model through the
 current native route, then restore the capsule's frozen route prompt on that
 call-local, one-picked-rung ladder. This also handles an owner fallback whose
