@@ -2305,7 +2305,7 @@ export interface FacadeResults {
   "vault.artifacts.body.deck.gate": Facade.DeckGateView;
   "vault.artifacts.body.deck.oracle": Facade.DeckGateView;
   "vault.artifacts.body.deck.preview": Facade.DeckPreview;
-  "vault.artifacts.append": Facade.BlobVersionView;
+  "vault.artifacts.append": Facade.BlobVersionAppendOutcome;
   "vault.artifacts.read": Facade.BlobContent | null;
   "vault.consolidation.enqueue": Facade.DreamerAttemptRef;
   "vault.consolidation.status": Facade.DreamerAttemptView | null;
@@ -3552,7 +3552,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.body.deck.gate": { description: "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.oracle": { description: "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.preview": { description: "The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.artifacts.append": { description: "Appends one version of bytes to a blob artifact's append-only chain.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.append": { description: "Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.read": { description: "Reads one version of a blob artifact's bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.enqueue": { description: "Enqueues one consolidation attempt and returns its durable job reference.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.status": { description: "Reads the status of one consolidation attempt by its durable job reference.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -5511,7 +5511,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             preview: (input: Facade.DeckPreviewRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.preview">[K] => invoke("vault.artifacts.body.deck.preview", input, options, newInvocation()),
           },
         },
-        /** Appends one version of bytes to a blob artifact's append-only chain. */
+        /** Appends a checked blob version: landed on the chain, or proposed beside the live artifact for Keep. */
         append: (input: Facade.AppendBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.append">[K] => invoke("vault.artifacts.append", input, options, newInvocation()),
         /** Reads one version of a blob artifact's bytes. */
         read: (input: Facade.ReadBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.read">[K] => invoke("vault.artifacts.read", input, options, newInvocation()),
