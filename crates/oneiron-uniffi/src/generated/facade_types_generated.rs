@@ -46591,6 +46591,12 @@ pub struct ArtifactAskOutcome {
     pub abstained: Vec<UnitAbstention>,
     #[serde(rename = "refused")]
     pub refused: Vec<UnitRefusal>,
+    #[serde(
+        rename = "next_sheet_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `oneiron::verbs::act_answer::ActAnswer` with `T` = `ArtifactAskOutcome`.
@@ -53184,6 +53190,8 @@ pub enum ManifestKind {
     Skill,
     #[serde(rename = "actor_claim")]
     ActorClaim,
+    #[serde(rename = "workflow_context_row")]
+    WorkflowContextRow,
 }
 
 /// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
@@ -56029,6 +56037,12 @@ pub struct ArtifactAskRecord {
     pub details_omitted: Option<bool>,
     #[serde(rename = "units", default, skip_serializing_if = "Option::is_none")]
     pub units: Option<Vec<ArtifactUnitReceipt>>,
+    #[serde(
+        rename = "next_sheet_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `oneiron::receipt::questions::QuestionAnswer`.

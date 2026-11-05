@@ -14675,6 +14675,7 @@ class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
+    next_sheet_row: NotRequired[int | None]
 class ArtifactAdmitSubmit(TypedDict):
     ask: ArtifactAskSubmit
     decisions: list[TypedDecision]
@@ -16882,7 +16883,7 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
-ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+ManifestKind = Literal["skill_index", "skill", "actor_claim", "workflow_context_row"]
 RevisionRef = list[int]
 class ManifestEntry(TypedDict):
     kind: ManifestKind
@@ -17787,6 +17788,7 @@ class ArtifactAskRecord(TypedDict):
     parent_proposal_ref: NotRequired[str | None]
     details_omitted: NotRequired[bool]
     units: NotRequired[list[ArtifactUnitReceipt]]
+    next_sheet_row: NotRequired[int | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):

@@ -354,6 +354,10 @@ pub struct ArtifactAskOutcome {
     pub proposed: Option<PendingProposalView>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
+    /// First selected sheet row not completed; narrow the original range
+    /// from this row and use a fresh run_ref to ask the remainder. This is
+    /// an explicit partial result, not an automatic or durable queue.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// `vault.artifacts.admit`'s input: one artifact ask whose provider output
@@ -975,6 +979,7 @@ impl Memory<'_> {
                         abstained: Vec::new(),
                         refused: Vec::new(),
                         read_rows: Vec::new(),
+                        next_sheet_row: None,
                     }
                 } else {
                     vault.ask_folder_items_into_sheet(
@@ -1018,6 +1023,7 @@ impl Memory<'_> {
             proposed,
             abstained: run.abstained,
             refused: run.refused,
+            next_sheet_row: run.next_sheet_row,
         };
         Ok((outcome, run.read_rows))
     }
