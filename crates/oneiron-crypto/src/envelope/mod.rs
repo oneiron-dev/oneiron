@@ -166,7 +166,7 @@ pub enum Purpose {
     /// A noncanonical default CLAIM source and its settled vector, sealed to one
     /// own machine. The caller binds its sending machine, window and delivered
     /// payload as extra associated data; source and model stay inside the seal.
-    HomeClaimVector = 31,
+    HomeClaimVector = 32,
 }
 
 impl Purpose {
@@ -201,7 +201,7 @@ impl Purpose {
             27 => Self::CheckpointHostOrderHolds,
             28 => Self::CheckpointHostOrderHoldsKey,
             29 => Self::WorldSideRow,
-            31 => Self::HomeClaimVector,
+            32 => Self::HomeClaimVector,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
