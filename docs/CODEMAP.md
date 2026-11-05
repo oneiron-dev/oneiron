@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6409 | 895 | 144 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6415 | 895 | 142 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 58 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 20 | 5 | 0 |
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
-| [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 49 | 12 | 0 |
+| [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 51 | 12 | 0 |
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1534 | 182 | 48 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
@@ -134,7 +134,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `counterparty_contact` | dir | 11 | m | yes | Counterparty contact record substrate (OF-347 CID-7) |
 | `credential_door` | dir | 11 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `critic` | file+dir | 15 | m | — | Multi-critic review node primitives |
-| `deletion` | dir | 59 | L | yes | ARCH-0038 deletion/redaction contract types |
+| `deletion` | dir | 61 | L | yes | ARCH-0038 deletion/redaction contract types |
 | `delivery_window` | dir | 7 | s | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 13 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 29 | L | yes | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
@@ -151,7 +151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_settle` | dir | 16 | XL | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 35 | L | yes | — |
 | `engine_executor` | dir | 49 | L | — | Engine-native JS code-mode executor |
-| `engine_store_hooks` | file | 1 | L | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
+| `engine_store_hooks` | file+dir | 2 | L | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
 | `entity_doc` | dir | 42 | L | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file | 1 | s | — | Entity ids, world ids and the presentation-id grammar |
 | `failure_ladder` | dir | 19 | m | yes | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
@@ -179,7 +179,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `inference_snapshot` | dir | 6 | m | yes | A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped… |
 | `ingest` | dir | 62 | m | yes | Ingest source registry and source-local normalization |
 | `interlocutor` | file+dir | 2 | L | yes | Interlocutor resolution substrate (OF-365 ILD-1) |
-| `learning` | dir | 16 | m | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
+| `learning` | dir | 17 | m | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
 | `learning_setting` | file+dir | 7 | m | — | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
 | `learning_setting_choice` | file | 1 | m | — | The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's… |
 | `learning_setting_doors` | file | 1 | m | — | The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a… |
@@ -258,7 +258,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skill_scan` | file+dir | 2 | m | — | Deterministic static skill scanning and the activation risk consult |
 | `slim` | file+dir | 6 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `speculative` | file+dir | 2 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
-| `store` | dir | 486 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `store` | dir | 487 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `subject_model` | file+dir | 16 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 10 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 9 | L | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
@@ -278,7 +278,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `thread_passport` | file+dir | 8 | m | yes | Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02) |
 | `training_pack` | dir | 11 | m | yes | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
 | `typed_body` | file+dir | 9 | m | yes | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
-| `vault` | dir | 49 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
+| `vault` | dir | 50 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 25 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `vault_live_rows` | file | 1 | s | yes | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
 | `vault_shape` | dir | 26 | L | yes | Vault shape as code (ARCH-0070): the setup plane held in one hand |
@@ -786,9 +786,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `api` | file+dir | 2 | m | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
+| `buffers` | file | 1 | m | Shared output buffers; native accounting constructors are feature-gated |
 | `error` | file | 1 | s | Stable seal error classes and codes (ONE-1837 §6) |
 | `memory` | file | 1 | m | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
-| `native` | dir | 45 | m | Native implementation modules (feature `native`) |
+| `native` | dir | 46 | m | Native implementation modules (feature `native`) |
 | `organ` | file+dir | 2 | m | The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ… |
 
 ## oneiron-server
