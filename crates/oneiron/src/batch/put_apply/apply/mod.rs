@@ -43,6 +43,8 @@ mod rewrite;
 
 #[cfg(feature = "sync")]
 pub(in crate::batch) use native_skill::PendingNativeSkillPut;
+#[cfg(feature = "sync")]
+pub(crate) use native_skill::AdmittedRecordDocumentPut;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(
