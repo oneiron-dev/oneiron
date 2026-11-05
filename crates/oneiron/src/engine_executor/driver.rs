@@ -9,7 +9,7 @@ use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::result_memory::{ResultHold, ResultShare};
 use crate::{BudgetLease, Error, LlmBackend, Vault};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Engine-native executor driver.
 pub struct EngineNativeExecutor<'a> {
@@ -39,7 +39,7 @@ pub struct EngineNativeExecutor<'a> {
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
-    next_witness_order: AtomicU32,
+    next_witness_order: AtomicU64,
     /// TEST-ONLY (ONE-1929): fails the run once at the moment BETWEEN the
     /// terminal replay commit and the implicit bubble, which is the exact
     /// window the checkpointed payload exists to survive.
@@ -75,7 +75,7 @@ impl<'a> EngineNativeExecutor<'a> {
             compaction: None,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
-            next_witness_order: AtomicU32::new(0),
+            next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
         }
@@ -121,7 +121,7 @@ impl<'a> EngineNativeExecutor<'a> {
             compaction: None,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
-            next_witness_order: AtomicU32::new(0),
+            next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
         })
@@ -353,8 +353,7 @@ impl<'a> EngineNativeExecutor<'a> {
     ///
     /// # Errors
     ///
-    /// Same as [`Self::witness_turn`], plus `Error::InvalidConfig` when `order`
-    /// exceeds the witness MESSAGE order ceiling.
+    /// Same as [`Self::witness_turn`].
     pub fn witness_turn_at(
         &self,
         kind: ExecutorUtterance,
@@ -370,12 +369,13 @@ impl<'a> EngineNativeExecutor<'a> {
         // of the returned integer, not publication of any other memory.
         self.next_witness_order
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |order| {
-                if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
-                    None
+                if order <= u64::from(u32::MAX) {
+                    Some(order + 1)
                 } else {
-                    order.checked_add(1)
+                    None
                 }
             })
+            .map(|order| order as u32)
             .map_err(|_| {
                 Error::InvalidConfig(
                     "engine executor compatibility witness order exhausted".to_owned(),
@@ -392,12 +392,6 @@ impl<'a> EngineNativeExecutor<'a> {
         occurred_at: u64,
         order: u32,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
-        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
-            return Err(Error::InvalidConfig(
-                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
-            )
-            .into());
-        }
         self.verify_storage_dispatcher_binding()?;
         let assertions = self.gated_write.take_run_assertions();
         let result = self.storage.witness_executor_utterance_sourced(
@@ -426,12 +420,6 @@ impl<'a> EngineNativeExecutor<'a> {
         occurred_at: u64,
         order: u32,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
-        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
-            return Err(Error::InvalidConfig(
-                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
-            )
-            .into());
-        }
         self.verify_storage_dispatcher_binding()?;
         let assertions = self.gated_write.take_run_assertions();
         let result = self.storage.witness_executor_result_sourced(

@@ -402,6 +402,9 @@ impl Vault {
                 born.as_ref().map(|birth| &birth.made_by),
             )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
+            if header.entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                crate::vault::entity_revision::ensure_document(self, txn, entity)?;
+            }
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
             self.store
@@ -739,7 +742,7 @@ pub(crate) fn record_body_at(
 }
 
 /// A typed read projection of the body and metadata at one document version.
-pub(super) fn body_with_document(
+pub(crate) fn body_with_document(
     field: &TextField,
     body: &[u8],
     doc: &EntityDoc,

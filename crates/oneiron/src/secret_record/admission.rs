@@ -8,7 +8,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::store::Store;
 
 use super::codec::{SECRET_CUSTODY_SEALED_VALUE_KEY, invalid_body};
 use super::types::{
@@ -29,6 +28,8 @@ pub(crate) struct SecretCustodyAdmission {
     pub(crate) name: String,
     /// The custody class.
     pub(crate) class: CustodyClass,
+    /// Whether this record permits plaintext in a model context.
+    pub(crate) model_reveal_allowed: bool,
     /// Lifecycle status.
     pub(crate) status: SecretCustodyStatus,
     /// Rotation generation counter (the S6 staleness signal leases stamp).
@@ -212,9 +213,14 @@ pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<Secre
         Some(_) => return Err(invalid_body("declared_paths must be an array")),
         None => return Err(invalid_body("declared_paths")),
     };
+    let model_reveal_allowed = match required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[13]) {
+        Some(ValueRef::Boolean(allowed)) => *allowed,
+        _ => return Err(invalid_body("model_reveal_allowed")),
+    };
     Ok(SecretCustodyAdmission {
         name,
         class,
+        model_reveal_allowed,
         status,
         rotation_generation,
         bindings,
@@ -227,7 +233,7 @@ pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<Secre
 /// decodes the record where the transaction holds it, so the value bytes are
 /// never copied out.
 pub(crate) fn read_secret_custody_admission_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyAdmission>> {

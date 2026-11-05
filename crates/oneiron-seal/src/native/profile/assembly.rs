@@ -128,7 +128,7 @@ async fn request_signature(
     identity: &SigningIdentity,
     request: SignRevisionRequest,
     signing_input: &[u8],
-) -> Result<Vec<u8>, SealError> {
+) -> Result<crate::memory::Held<Vec<u8>>, SealError> {
     let signed = ctx
         .backend
         .sign_revision(request)
@@ -151,6 +151,12 @@ async fn request_signature(
             });
         }
     };
+    let hold = ctx
+        .limits
+        .memory
+        .hold(bytes.capacity())
+        .map_err(|refusal| refusal.seal_error(SealStage::BackendSign))?;
+    let bytes = crate::memory::Held::new(bytes, hold);
     cms::verify_signature_value(
         identity.algorithm,
         &identity.signer_certificate_der,
@@ -172,7 +178,12 @@ async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
 ) -> Result<Option<tsp::ValidatedToken>, SealError> {
-    let anchors = trust_anchors(ctx.config)?;
+    let anchors = trust_anchors(ctx.config, ctx.limits)
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?
+        .ok_or(SealError::Fatal {
+            stage: SealStage::InputValidation,
+            code: FatalCode::InvalidConfiguration,
+        })?;
     let memory = ctx
         .limits
         .memory
@@ -316,11 +327,19 @@ async fn try_capacity(
         code: FatalCode::PdfInvariantFailed,
     })?;
     let content_digest = pdf::hash_byte_range(&draft.bytes, br)?;
+    // Declare first so the retained buffers drop before their credit.
+    let _issuer_serial_hold;
     let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der)?;
+    _issuer_serial_hold = ctx
+        .limits
+        .memory
+        .hold(issuer.capacity().saturating_add(serial.capacity()))
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;
     // Conservative Vec-capacity peak for cms::attr_signing_cert_v2 /
     // cms::build_signed_data working copies (20I+20S+7C + OIDs/headers/slots).
-    // Issuer/serial prefix heaps excluded (separately filed); draft/token held
-    // separately. Hold spans attrs through patch_contents.
+    // Retained issuer/serial originals, draft and token are held separately;
+    // third-party parse/to_der transients are not covered by these holds.
+    // Hold spans attrs through patch_contents.
     let _cms_hold = {
         let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
         let ilen = issuer.len();
@@ -374,7 +393,8 @@ async fn try_capacity(
     };
     let signature = request_signature(ctx, identity, request, &signing).await?;
     // Downstream signature copies in cms::build_signed_data only (8*Sig+8*H).
-    // Backend-returned signature bytes excluded. Hold spans build through patch.
+    // The backend-returned original owns its separate hold. This hold spans
+    // build through patch.
     let _cms_sig_hold = {
         let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
         let slen = signature.len();
@@ -443,6 +463,15 @@ fn degrade_warning(
         achieved,
         reason,
     }
+}
+
+fn push_warning(
+    ctx: &SealContext<'_>,
+    warnings: &mut Vec<SealWarning>,
+    warning: SealWarning,
+) -> Result<(), SealError> {
+    pdf::admitted::push(ctx.limits, warnings, warning)
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
 }
 
 /// Append the DocTimeStamp revision for B-LTA (§7.6). `Ok(None)` means the
@@ -545,11 +574,11 @@ pub(crate) async fn assemble(
     if token.is_some() {
         achieved = PadesProfile::BaselineT;
     } else if target >= PadesProfile::BaselineT {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::TimestampUnavailable,
-        ));
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(target, achieved, ProfileDegradeReason::TimestampUnavailable),
+        )?;
     }
     let mut bytes = draft.bytes;
     if target >= PadesProfile::BaselineLt && achieved == PadesProfile::BaselineT {
@@ -558,18 +587,26 @@ pub(crate) async fn assemble(
                 bytes = append_dss(&bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;
             }
-            None => warnings.push(degrade_warning(
+            None => push_warning(
+                ctx,
+                &mut warnings,
+                degrade_warning(
+                    target,
+                    achieved,
+                    ProfileDegradeReason::ValidationMaterialUnavailable,
+                ),
+            )?,
+        }
+    } else if target >= PadesProfile::BaselineLt {
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(
                 target,
                 achieved,
                 ProfileDegradeReason::ValidationMaterialUnavailable,
-            )),
-        }
-    } else if target >= PadesProfile::BaselineLt {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::ValidationMaterialUnavailable,
-        ));
+            ),
+        )?;
     }
     if target == PadesProfile::BaselineLta && achieved == PadesProfile::BaselineLt {
         match append_doc_timestamp(&bytes, ctx).await? {
@@ -577,18 +614,26 @@ pub(crate) async fn assemble(
                 bytes = b;
                 achieved = PadesProfile::BaselineLta;
             }
-            None => warnings.push(degrade_warning(
+            None => push_warning(
+                ctx,
+                &mut warnings,
+                degrade_warning(
+                    target,
+                    achieved,
+                    ProfileDegradeReason::DocumentTimestampUnavailable,
+                ),
+            )?,
+        }
+    } else if target == PadesProfile::BaselineLta {
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(
                 target,
                 achieved,
                 ProfileDegradeReason::DocumentTimestampUnavailable,
-            )),
-        }
-    } else if target == PadesProfile::BaselineLta {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::DocumentTimestampUnavailable,
-        ));
+            ),
+        )?;
     }
     // The output grows by whatever its validation material and timestamps
     // need (Rule 5): the host measures that growth against its `[limits]`
