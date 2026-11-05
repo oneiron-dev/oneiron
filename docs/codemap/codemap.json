@@ -25416,7 +25416,7 @@
      "path": "src/deletion/erase/corrupt.rs",
      "purpose": "The audited escape for a corrupt CLAIM's hard erase (FIX 7800, ARCH-0038)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -26795,7 +26795,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_window.rs",
-     "purpose": "One window of plain Micro partitions (FIX 12487): slots pinned and opened in admission order, extraction…",
+     "purpose": "One window of plain Micro or Meso partitions (FIX 12487): slots pinned and opened in admission order…",
      "surface": {
       "crate-vis": 1
      }
@@ -27720,7 +27720,7 @@
      "path": "src/dreamer_consolidation/selection.rs",
      "purpose": "Mechanical candidate selection",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 5
@@ -31438,7 +31438,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/driver/window.rs",
-     "purpose": "One wake pass's partition window (FIX 12487): plain Micro partitions admitted back to back, up to the…",
+     "purpose": "One wake pass's partition window (FIX 12487): plain Micro or Meso partitions admitted back to back, up to…",
      "surface": {
       "crate-vis": 7
      }
@@ -58195,6 +58195,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ports/claim_order.rs",
+     "purpose": "CLAIM origin-write ordering",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ports/claim_read_status.rs",
      "purpose": "Status modes carried by an actor-keyed read lane",
      "surface": {
@@ -58515,7 +58525,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 9
      }
     },
@@ -60539,6 +60549,16 @@
      "purpose": "The parts a checkpoint carries of a replay row and of a step start (FIX 9180, coord-b slice d; L04 option…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/claim_order.rs",
+     "purpose": "The CLAIM origin-write floor carried through an image's raw restore",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -92619,7 +92639,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92689,7 +92709,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 115,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93181,7 +93201,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6521,
+   "source_files": 6523,
    "test_files": 895
   },
   "oneiron-android": {
@@ -99880,7 +99900,7 @@
      "path": "src/record_layout.rs",
      "purpose": "Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred…",
      "surface": {
-      "const": 6,
+      "const": 7,
       "fn": 1,
       "struct": 1
      }
