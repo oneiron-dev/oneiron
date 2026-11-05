@@ -117,8 +117,8 @@ pub(super) fn run_bound(
         .ok()
         .map(|agent| SeatLearningContext {
             project: status.input.project_ref,
-            agent,
-            type_ref: type_ref.clone(),
+            agent: Some(agent),
+            type_ref: Some(type_ref.clone()),
             call_model_choice: status
                 .input
                 .direct_spawn
@@ -298,6 +298,7 @@ pub(super) fn run_bound(
     // FIX 4539: its reader and summary children are held to the list its
     // frozen definition names, as its own seat is.
     seat.listed = definition.models.clone();
+    seat.project = status.input.project_ref;
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
