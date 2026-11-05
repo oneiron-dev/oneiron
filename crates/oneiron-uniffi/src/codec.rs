@@ -57,6 +57,10 @@ mod policy_settings;
 mod proposal_results;
 mod proposals;
 mod results;
+mod saved_queries;
+pub(crate) use saved_queries::{
+    lift_saved_query_evaluation, lift_saved_query_read, lift_saved_query_record,
+};
 mod shape_groups;
 mod shape_plans;
 pub(crate) use shape_groups::lift_shape_groups;
