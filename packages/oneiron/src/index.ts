@@ -469,6 +469,12 @@ export class Oneiron {
       release: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsRelease(input) as Facade.CommitmentView),
       /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
       supersede: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsSupersede(input) as Facade.CommitmentView),
+      reminder_route: {
+        /** Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing. */
+        get: (input: Facade.EmptyRequest = {}): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteGet(input) as Facade.CommitmentReminderRouteReply),
+        /** Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged. */
+        set: (input: Facade.CommitmentReminderRouteSetRequest): Facade.CommitmentReminderRouteReply => this.#call(() => this.#client.vaultCommitmentsReminderRouteSet(input) as Facade.CommitmentReminderRouteReply),
+      },
     },
     reports: {
       /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */

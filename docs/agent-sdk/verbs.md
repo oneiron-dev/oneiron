@@ -13,6 +13,8 @@ both bindings and their export-census tests in one change.
 - `vault.commitments.fulfill`
 - `vault.commitments.release`
 - `vault.commitments.supersede`
+- `vault.commitments.reminder_route.get`
+- `vault.commitments.reminder_route.set`
 - `fetch`
 - `crawl`
 - `report`

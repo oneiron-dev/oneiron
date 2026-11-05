@@ -130,6 +130,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCommitmentsFulfill
         | Row::VaultCommitmentsRelease
         | Row::VaultCommitmentsSupersede
+        | Row::VaultCommitmentsReminderRouteGet
+        | Row::VaultCommitmentsReminderRouteSet
         | Row::VaultPersonasPreview
         | Row::VaultPersonasExport
         | Row::VaultPersonasEdit

@@ -52,6 +52,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.commitments.reminder_route.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.commitments.reminder_route.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+                >(),
+            ),
+            (
                 "fetch",
                 crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
             ),
@@ -7089,6 +7099,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.commitments.fulfill",
     "vault.commitments.release",
     "vault.commitments.supersede",
+    "vault.commitments.reminder_route.get",
+    "vault.commitments.reminder_route.set",
     "fetch",
     "crawl",
     "feedback.preview",
@@ -7960,6 +7972,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.reminder_route.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentReminderRouteReply,
+        >(),
+        "vault.commitments.reminder_route.set" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentReminderRouteReply,
         >(),
         "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
         "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
@@ -10640,6 +10658,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.commitments.supersede" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.reminder_route.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.reminder_route.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19254,6 +19286,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
                 decode(value.clone())?;
         }
+        "vault.commitments.reminder_route.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.commitments.reminder_route.set" => {
+            let _input: crate::memory::commitment_doors::CommitmentReminderRouteSetRequest =
+                decode(value.clone())?;
+        }
         "fetch" => {
             let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
         }
@@ -23602,6 +23641,14 @@ pub fn invoke(
         "vault.commitments.supersede" => {
             encode(vault_commitments_supersede(memory, decode(value)?)?)
         }
+        "vault.commitments.reminder_route.get" => encode(vault_commitments_reminder_route_get(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.commitments.reminder_route.set" => encode(vault_commitments_reminder_route_set(
+            memory,
+            decode(value)?,
+        )?),
         "fetch" => encode(fetch(memory, decode(value)?)?),
         "crawl" => encode(crawl(memory, decode(value)?)?),
         "report" => encode(report(memory, decode(value)?)?),
@@ -26240,6 +26287,23 @@ pub fn vault_commitments_supersede(
 ) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
     memory.commitments_supersede_as(
         &memory.embedded_owner("vault.commitments.supersede")?,
+        input,
+    )
+}
+pub fn vault_commitments_reminder_route_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentReminderRouteReply> {
+    memory.commitments_reminder_route_get_as(
+        &memory.embedded_owner("vault.commitments.reminder_route.get")?,
+    )
+}
+pub fn vault_commitments_reminder_route_set(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentReminderRouteSetRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentReminderRouteReply> {
+    memory.commitments_reminder_route_set_as(
+        &memory.embedded_owner("vault.commitments.reminder_route.set")?,
         input,
     )
 }

@@ -516,6 +516,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_commitments_reminder_route_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.reminder_route.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.commitments.reminder_route.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_reminder_route_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.reminder_route.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.commitments.reminder_route.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn fetch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "fetch")?;
         let output = py

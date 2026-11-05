@@ -8,6 +8,8 @@ pub enum AgentVerb {
     VaultCommitmentsFulfill,
     VaultCommitmentsRelease,
     VaultCommitmentsSupersede,
+    VaultCommitmentsReminderRouteGet,
+    VaultCommitmentsReminderRouteSet,
     Fetch,
     Crawl,
     Report,
@@ -1262,6 +1264,8 @@ impl AgentVerb {
         Self::VaultCommitmentsFulfill,
         Self::VaultCommitmentsRelease,
         Self::VaultCommitmentsSupersede,
+        Self::VaultCommitmentsReminderRouteGet,
+        Self::VaultCommitmentsReminderRouteSet,
         Self::Fetch,
         Self::Crawl,
         Self::Report,
@@ -2519,6 +2523,8 @@ impl AgentVerb {
             Self::VaultCommitmentsFulfill => "vault.commitments.fulfill",
             Self::VaultCommitmentsRelease => "vault.commitments.release",
             Self::VaultCommitmentsSupersede => "vault.commitments.supersede",
+            Self::VaultCommitmentsReminderRouteGet => "vault.commitments.reminder_route.get",
+            Self::VaultCommitmentsReminderRouteSet => "vault.commitments.reminder_route.set",
             Self::Fetch => "fetch",
             Self::Crawl => "crawl",
             Self::Report => "report",
@@ -3809,6 +3815,8 @@ impl AgentVerb {
                 | Self::VaultCommitmentsFulfill
                 | Self::VaultCommitmentsRelease
                 | Self::VaultCommitmentsSupersede
+                | Self::VaultCommitmentsReminderRouteGet
+                | Self::VaultCommitmentsReminderRouteSet
                 | Self::Fetch
                 | Self::Crawl
                 | Self::Report
@@ -5092,6 +5100,8 @@ impl AgentVerb {
                 | Self::VaultCommitmentsFulfill
                 | Self::VaultCommitmentsRelease
                 | Self::VaultCommitmentsSupersede
+                | Self::VaultCommitmentsReminderRouteGet
+                | Self::VaultCommitmentsReminderRouteSet
                 | Self::Fetch
                 | Self::Crawl
                 | Self::Report
@@ -6547,6 +6557,8 @@ impl AgentVerb {
                 | Self::VaultCommitmentsFulfill
                 | Self::VaultCommitmentsRelease
                 | Self::VaultCommitmentsSupersede
+                | Self::VaultCommitmentsReminderRouteGet
+                | Self::VaultCommitmentsReminderRouteSet
                 | Self::Fetch
                 | Self::Crawl
                 | Self::FeedbackPreview
@@ -7698,6 +7710,7 @@ impl AgentVerb {
                 | Self::VaultCommitmentsFulfill
                 | Self::VaultCommitmentsRelease
                 | Self::VaultCommitmentsSupersede
+                | Self::VaultCommitmentsReminderRouteSet
                 | Self::Fetch
                 | Self::Crawl
                 | Self::FeedbackSend
@@ -8467,6 +8480,8 @@ impl AgentVerb {
             Self::VaultCommitmentsFulfill => &["spec"],
             Self::VaultCommitmentsRelease => &["spec"],
             Self::VaultCommitmentsSupersede => &["spec"],
+            Self::VaultCommitmentsReminderRouteGet => &["spec"],
+            Self::VaultCommitmentsReminderRouteSet => &["spec"],
             Self::Fetch => &["spec"],
             Self::Crawl => &["spec"],
             Self::Report => &["spec"],
@@ -9739,6 +9754,8 @@ impl AgentVerb {
             Self::VaultCommitmentsFulfill => &["spec"],
             Self::VaultCommitmentsRelease => &["spec"],
             Self::VaultCommitmentsSupersede => &["spec"],
+            Self::VaultCommitmentsReminderRouteGet => &["spec"],
+            Self::VaultCommitmentsReminderRouteSet => &["spec"],
             Self::Fetch => &["spec"],
             Self::Crawl => &["spec"],
             Self::Report => &["spec"],
@@ -11008,6 +11025,12 @@ impl AgentVerb {
             }
             Self::VaultCommitmentsSupersede => {
                 "Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction."
+            }
+            Self::VaultCommitmentsReminderRouteGet => {
+                "Reads the owner's commitment reminder route and civil clock; null when unset. Approves nothing."
+            }
+            Self::VaultCommitmentsReminderRouteSet => {
+                "Sets (or, with null, clears) the owner's commitment reminder route under the native validation; approved reminders are unchanged."
             }
             Self::Fetch => {
                 "Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links."
