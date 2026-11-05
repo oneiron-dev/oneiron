@@ -170,7 +170,8 @@ impl Vault {
 
 /// Checks common record metadata at its current state, shallow floor and
 /// every retained raw mutation, including inserts hidden by later writes.
-/// Native extension roots and body/source admission remain their owners'.
+/// Other META keys, native extension roots and body/source admission
+/// remain their owners'. This is not a complete document schema check.
 pub(super) fn require_retained_record_metadata(doc: &EntityDoc, field: &TextField) -> Result<()> {
     require_record_metadata_state(&doc.doc, field, doc.birth())?;
     if doc.doc.is_shallow() {
@@ -210,7 +211,8 @@ pub(super) fn require_retained_record_metadata(doc: &EntityDoc, field: &TextFiel
                     require_record_metadata_value(&key, &value, field, doc.birth())?;
                 }
                 loro::JsonOpContent::Map(loro::JsonMapOp::Delete { key })
-                    if is_metadata_field(&key) && !is_record_body_field(field, &key) => {}
+                    if !is_common_record_metadata_key(&key)
+                        || (is_metadata_field(&key) && !is_record_body_field(field, &key)) => {}
                 _ => return Err(invalid("record metadata operation")),
             }
         }
@@ -226,7 +228,7 @@ fn require_record_metadata_state(
     let map = doc.get_map(super::document::META);
     let mut failure = None;
     map.for_each(|key, _| {
-        if failure.is_some() {
+        if failure.is_some() || !is_common_record_metadata_key(key) {
             return;
         }
         let result = match map.get(key) {
@@ -248,6 +250,9 @@ fn require_record_metadata_value(
     field: &TextField,
     birth: &super::Birth,
 ) -> Result<()> {
+    if !is_common_record_metadata_key(key) {
+        return Ok(());
+    }
     let loro::LoroValue::Binary(bytes) = value else {
         return Err(invalid("record metadata value"));
     };
@@ -280,4 +285,8 @@ fn require_record_metadata_value(
 
 fn is_record_body_field(field: &TextField, key: &str) -> bool {
     matches!(field, TextField::MapField(body) if body == key)
+}
+
+fn is_common_record_metadata_key(key: &str) -> bool {
+    matches!(key, super::document::BIRTH | RECORD_FIELDS) || is_metadata_field(key)
 }
