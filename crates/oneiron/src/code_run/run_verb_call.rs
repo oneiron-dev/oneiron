@@ -236,6 +236,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         verb @ (RunVerb::SelfCodeSnapshotsGet
         | RunVerb::SelfCodeSnapshotsRead
         | RunVerb::SelfCodeSymbolsDefinitions
+        | RunVerb::SelfCodeSymbolsNeighbors
         | RunVerb::SelfCodeViewsGet
         | RunVerb::SelfCodeViewsRead
         | RunVerb::SelfCodeMergeQueueObserve

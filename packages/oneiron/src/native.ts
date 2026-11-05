@@ -757,6 +757,7 @@ vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
+vaultCodeSymbolsNeighbors(input: unknown): unknown
 vaultCodeMergeQueueEnqueue(input: unknown): unknown
 vaultCodeMergeQueueStage(input: unknown): unknown
 vaultCodeMergeQueueObserve(input: unknown): unknown
@@ -788,6 +789,7 @@ vaultRepoAnchorBind(input: unknown): unknown
 vaultRepoSnapshotsGet(input: unknown): unknown
 vaultRepoSnapshotsRead(input: unknown): unknown
 vaultRepoSymbolsDefinitions(input: unknown): unknown
+vaultRepoSymbolsNeighbors(input: unknown): unknown
 vaultRepoViewsGet(input: unknown): unknown
 vaultRepoViewsRead(input: unknown): unknown
 vaultRepoMergeQueueObserve(input: unknown): unknown
