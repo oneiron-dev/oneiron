@@ -1606,7 +1606,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codebase/store/index_rows.rs` | src | s | 5 crate-vis | — | Codebase snapshot index insertion, removal and lookup |
 | `src/codebase/store/ingest_writer.rs` | src | m | 3 crate-vis | — | The local-repo import's one checked writer (moved from `store/mod.rs`, FIX 6867 G1 PR2a): the owner's and… |
 | `src/codebase/store/lift.rs` | src | s | 3 crate-vis | — | Codebase snapshots the historical lift sweep reads again (OF-067, Engine ruling D = a) |
-| `src/codebase/store/mod.rs` | src | m | 9 fn · 13 crate-vis | — | Vault persistence for codebase snapshots: ingest methods, transactions, and index keys |
+| `src/codebase/store/mod.rs` | src | m | 9 fn · 14 crate-vis | — | Vault persistence for codebase snapshots: ingest methods, transactions, and index keys |
 | `src/codebase/store/repo_index.rs` | src | s | 2 crate-vis | — | A codebase snapshot's repo-marked files and the symbol graphs derived from them (FIX 7608 slice 3) |
 | `src/codebase/tests.rs` | test | XL | — | — | — |
 | `src/comm/claims.rs` | src | m | 1 struct · 1 enum · 4 fn · 15 re-export · 9 crate-vis | CommClaim, CommClaimValue | Claim family predicates, key vocabulary, typed values, body build/parse/validate |
@@ -6899,7 +6899,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1263 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1264 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
@@ -6960,7 +6960,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/skill_execution.rs` | src | s | 5 struct · 3 fn | SkillPackCreditRequest, SkillPackOutcomeProjection, SkillPackOutcomeRequest, SkillPackReceipt, SkillPackReceiptRequest | Typed owner observations and reads over the existing pack attribution projector |
 | `src/verbs/skill_fit.rs` | src | s | 1 struct · 1 enum · 1 fn | SkillFitChoice, SkillFitSetRequest | The owner's marketplace skill-fit setting (FIX 11089): the rule fit or the owner-asked fit for ordinary… |
 | `src/verbs/skill_fork.rs` | src | s | 2 fn | — | Skill forks through the one fork law (`fork_skill_record_in_txn`): the owner's, and a caller's own within… |
-| `src/verbs/skills.rs` | src | L | 25 struct · 3 enum · 15 fn · 1 re-export · 2 crate-vis | SkillCapabilityView, SkillCodeAutoInstallRequest, SkillConvertReceipt, SkillConvertRequest, SkillForkLineage, SkillGovernanceSetRequest, SkillGovernanceView, SkillHashRuleRequest +20 | Owner-bound library doors over the existing conversion, lifecycle and admission engines |
+| `src/verbs/skills.rs` | src | L | 26 struct · 3 enum · 16 fn · 1 re-export · 2 crate-vis | SkillAdvisoryAskRequest, SkillCapabilityView, SkillCodeAutoInstallRequest, SkillConvertReceipt, SkillConvertRequest, SkillForkLineage, SkillGovernanceSetRequest, SkillGovernanceView +21 | Owner-bound library doors over the existing conversion, lifecycle and admission engines |
 | `src/verbs/standing.rs` | src | m | 10 struct · 1 enum · 9 fn | AgentDreamingRequest, AgentDreamingSetRequest, AgentDreamingView, DreamingModeInput, OwnStandingBlockRequest, StandingBlockConfigureRequest, StandingBlockEditReceipt, StandingBlockEditRequest +3 | Standing-block configuration, gated self-edits and per-agent dreaming choice (BOARD-04) |
 | `src/verbs/support_grant.rs` | src | m | 7 struct · 6 fn | SupportGrantList, SupportGrantListRequest, SupportGrantMintAnswer, SupportGrantMintRequest, SupportGrantRevokeAnswer, SupportGrantRevokeRequest, SupportGrantView | The inputs and answers of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and… |
 | `src/verbs/sync_quarantine.rs` | src | s | 1 struct · 1 fn | SyncHeldEditEvidence | Owner-only retained held-edit evidence from the sync quarantine |
