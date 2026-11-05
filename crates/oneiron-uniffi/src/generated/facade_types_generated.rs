@@ -37681,6 +37681,13 @@ pub enum AnnotationLocator {
         #[serde(rename = "char_end")]
         char_end: u64,
     },
+    #[serde(rename = "file")]
+    File {
+        #[serde(rename = "char_start")]
+        char_start: u64,
+        #[serde(rename = "char_end")]
+        char_end: u64,
+    },
 }
 
 /// `oneiron::anchored_annotation::wire::ArtifactUnitView`.
