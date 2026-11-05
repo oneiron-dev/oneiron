@@ -174,9 +174,9 @@ pub(crate) use owner_routes::owner;
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).
 pub(crate) use self::facade::{
-    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
-    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program,
+    ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
+    ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;

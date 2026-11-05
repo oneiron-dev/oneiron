@@ -27,6 +27,9 @@ use oneiron_contracts::error::OffRecordError;
 pub struct OverlaySnapshot {
     pub(super) state: Arc<OverlayState>,
     pub(super) lease: Lease,
+    /// The write segment whose preview this view was captured from, by its
+    /// install nonce; `None` for a view of the published state (FIX 10004).
+    pub(super) segment: Option<u64>,
 }
 
 pub enum SnapshotLookup {
@@ -65,6 +68,7 @@ impl OverlaySnapshot {
         Ok(Self {
             state: Arc::clone(&self.state),
             lease: self.lease.retain()?,
+            segment: self.segment,
         })
     }
 

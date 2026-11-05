@@ -67,6 +67,7 @@ mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
 mod current_scope;
+mod device_succession;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;

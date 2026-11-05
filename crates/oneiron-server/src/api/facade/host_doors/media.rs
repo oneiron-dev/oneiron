@@ -336,7 +336,14 @@ async fn ai_media_for_run_in_step(
     // key it sent, in its run's partition (FIX 11615).
     let replay = step_replay(attempt, &request).or_else(|| run_replay(run, key, &request));
     super::support::rendered_in_step(
-        server, operation, request, voices, Some(run), None, replay, media_step,
+        server,
+        operation,
+        request,
+        voices,
+        Some(run),
+        None,
+        replay,
+        media_step,
     )
     .await
 }
