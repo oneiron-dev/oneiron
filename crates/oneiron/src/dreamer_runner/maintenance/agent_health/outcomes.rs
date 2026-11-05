@@ -32,6 +32,7 @@ use crate::learning::{
 use crate::{EntityId, Result, Vault};
 
 mod float_setting_fit;
+mod setting_fit;
 
 /// The reviewer cell's axis: a card outcome scores the evaluator's diagnosis.
 const HEALTH_REVIEW_AXIS: &str = "health_review";
@@ -282,6 +283,7 @@ fn project_receipt(
     crate::skill_attribution::health_review::project_health_review_outcome_in_txn(
         vault, txn, card, held,
     )?;
+    setting_fit::project_in_txn(vault, txn, held, now)?;
     float_setting_fit::project_float_setting_fit_in_txn(vault, txn, held, now)
 }
 
