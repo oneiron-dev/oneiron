@@ -11310,11 +11310,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarConnectorConfigureRequest",
       "CalendarConnectorKillRequest",
+      "CalendarConnectorOperation",
       "CalendarConnectorRegistration",
       "CalendarConnectorRequest",
       "CalendarConnectorWriteRequest",
@@ -11323,8 +11324,9 @@
      "path": "src/calendar/connectors/door.rs",
      "purpose": "Owner-installed calendar seats and host iMIP submission, with custody names only",
      "surface": {
-      "fn": 9,
-      "struct": 6
+      "crate-vis": 2,
+      "fn": 12,
+      "struct": 7
      }
     },
     {
@@ -11342,10 +11344,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/calendar/connectors/literal.rs",
+     "purpose": "Exact row-owned calendar preconditions, retained independently of the readable projection",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 4
      }
@@ -11362,10 +11374,20 @@
      "path": "src/calendar/connectors/outbound.rs",
      "purpose": "Conditional writes plus durable outbox and remote-object cursor store",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/connectors/outbound/archived.rs",
+     "purpose": "The retained calendar carriers an archived vault's custody fork needs",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -63986,7 +64008,7 @@
      "path": "src/secret_custody/storage_seal/connector_resume.rs",
      "purpose": "A connector call's durable resume state at rest (FIX 9157): sealed under the call's own erasable custody…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -71394,7 +71416,7 @@
      "path": "src/store/credential_custody.rs",
      "purpose": "The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -73216,7 +73238,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 153,
+      "crate-vis": 154,
       "mod": 123,
       "re-export": 31
      }
@@ -90930,7 +90952,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 73,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92353,7 +92375,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6450,
+   "source_files": 6452,
    "test_files": 895
   },
   "oneiron-android": {
@@ -117999,7 +118021,7 @@
      "path": "src/calendar_host/caldav.rs",
      "purpose": "Real CalDAV discovery, sync-collection and conditional resource writes",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {

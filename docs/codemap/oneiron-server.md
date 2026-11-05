@@ -821,7 +821,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/builtin_host/webhooks.rs` | src | m | 5 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
 | `src/byte_line.rs` | src | m | 12 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
 | `src/calendar_host.rs` | src | s | 1 re-export · 12 crate-vis | — | The calendar host's real CalDAV wire and iMIP submission transport |
-| `src/calendar_host/caldav.rs` | src | m | 2 crate-vis | — | Real CalDAV discovery, sync-collection and conditional resource writes |
+| `src/calendar_host/caldav.rs` | src | m | 3 crate-vis | — | Real CalDAV discovery, sync-collection and conditional resource writes |
 | `src/calendar_host/card_pass.rs` | src | s | 1 crate-vis | — | The host's meeting-card pass (FIX 12004): on the elected home node, each tick delivers the prep packs and… |
 | `src/calendar_host/feed_poll.rs` | src | s | 1 crate-vis | — | The host's ICS feed poll worker (FIX 7846): it claims each due `calendar.ics.poll` row, polls the feed the… |
 | `src/calendar_host/ics.rs` | src | s | 2 crate-vis | — | Conditional ICS GET at the secret-custody door |
