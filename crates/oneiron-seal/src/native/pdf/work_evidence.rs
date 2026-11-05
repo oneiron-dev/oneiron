@@ -238,14 +238,14 @@ pub(crate) fn certificate(
     Ok(())
 }
 
-fn hex(value: &[u8; 32], limits: &WorkLimits<'_>) -> Result<String, WorkError> {
+fn hex(value: &[u8; 32], limits: &WorkLimits<'_>) -> Result<String> {
     admitted(
         value.iter().map(|v| format!("{v:02x}")).collect(),
         limits,
     )
 }
 
-fn escaped(value: &str, limits: &WorkLimits<'_>) -> Result<String, WorkError> {
+fn escaped(value: &str, limits: &WorkLimits<'_>) -> Result<String> {
     admitted(
         value
             .chars()
@@ -271,7 +271,7 @@ fn append_page(
     font: ObjectId,
     operations: Vec<Operation>,
     limits: &WorkLimits<'_>,
-) -> Result<ObjectId, WorkError> {
+) -> Result<ObjectId> {
     let encoded = Content { operations }
         .encode()
         .map_err(|err| lopdf_error(limits, err))?;
@@ -299,7 +299,7 @@ fn append_lines(
     lines: &[String],
     kids: &mut Vec<Object>,
     limits: &WorkLimits<'_>,
-) -> Result<(), WorkError> {
+) -> Result<()> {
     let mut wrapped: Vec<String> = Vec::new();
     for line in lines {
         let clean = escaped(line, limits)?;
@@ -364,7 +364,7 @@ fn canonical_host(authority: &str) -> bool {
 }
 
 /// Admit a fresh string's bytes, then hand it back.
-fn admitted(value: String, limits: &WorkLimits<'_>) -> Result<String, WorkError> {
+fn admitted(value: String, limits: &WorkLimits<'_>) -> Result<String> {
     limits
         .ledger
         .admit_len::<u8>(value.len())
@@ -377,7 +377,7 @@ fn push_detail(
     details: &mut Vec<String>,
     line: String,
     limits: &WorkLimits<'_>,
-) -> Result<(), WorkError> {
+) -> Result<()> {
     limits
         .ledger
         .admit_len::<u8>(line.len())
@@ -417,7 +417,7 @@ fn reserve<T>(
     ledger: &MemoryLedger,
     output: &mut Vec<T>,
     additional: usize,
-) -> Result<(), WorkError> {
+) -> Result<()> {
     let needed = output
         .len()
         .checked_add(additional)
@@ -438,7 +438,7 @@ fn reserve<T>(
     Ok(())
 }
 
-fn push<T>(ledger: &MemoryLedger, output: &mut Vec<T>, value: T) -> Result<(), WorkError> {
+fn push<T>(ledger: &MemoryLedger, output: &mut Vec<T>, value: T) -> Result<()> {
     reserve(ledger, output, 1)?;
     output.push(value);
     Ok(())
@@ -454,7 +454,7 @@ const fn btree_entry_bytes<K, V>() -> usize {
 
 /// One fresh `Document` object: the objects-map entry share. The object's
 /// heap (stream bytes, dictionaries) is admitted where it is built.
-fn object_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
+fn object_insert(ledger: &MemoryLedger) -> Result<()> {
     ledger
         .admit_len::<u8>(btree_entry_bytes::<ObjectId, Object>())
         .map_err(WorkError::Memory)
@@ -464,7 +464,7 @@ fn object_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
 /// Resources, and Font maps, their 40 key bytes, the 4 `Page` name bytes,
 /// and the 3 map nodes. The MediaBox array and stream bytes are admitted
 /// where they are built.
-fn page_dict_insert(ledger: &MemoryLedger) -> Result<(), WorkError> {
+fn page_dict_insert(ledger: &MemoryLedger) -> Result<()> {
     let bytes = btree_entry_bytes::<Vec<u8>, Object>()
         .checked_mul(7)
         .and_then(|shares| {

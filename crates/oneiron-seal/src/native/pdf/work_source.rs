@@ -740,7 +740,7 @@ fn reserve<T>(
     ledger: &MemoryLedger,
     output: &mut Vec<T>,
     additional: usize,
-) -> Result<(), WorkError> {
+) -> Result<()> {
     let needed = output
         .len()
         .checked_add(additional)
@@ -761,7 +761,7 @@ fn reserve<T>(
     Ok(())
 }
 
-fn push<T>(ledger: &MemoryLedger, output: &mut Vec<T>, value: T) -> Result<(), WorkError> {
+fn push<T>(ledger: &MemoryLedger, output: &mut Vec<T>, value: T) -> Result<()> {
     reserve(ledger, output, 1)?;
     output.push(value);
     Ok(())
@@ -776,7 +776,7 @@ const fn btree_entry_bytes<K, V>() -> usize {
 }
 
 /// Admit the nodes of a BTreeMap/BTreeSet before insertion.
-fn btree<K, V>(ledger: &MemoryLedger, entries: usize) -> Result<(), WorkError> {
+fn btree<K, V>(ledger: &MemoryLedger, entries: usize) -> Result<()> {
     let bytes = btree_entry_bytes::<K, V>()
         .checked_mul(entries)
         .and_then(|shares| shares.checked_add(btree_node_bytes::<K, V>()))
