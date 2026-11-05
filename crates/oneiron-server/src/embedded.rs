@@ -154,8 +154,14 @@ async fn serve_prepared<A: AppHost>(
         );
     }
     let cors_layer = crate::commands::build_cors_layer(&server_config)?;
-    let (sync_server, gpu_poller) =
-        crate::commands::build_server(vault, &config, server_config, owner_host).await?;
+    let (sync_server, gpu_poller) = crate::commands::build_server(
+        vault,
+        &config,
+        server_config,
+        owner_host,
+        &crate::config::ServeArgs::default(),
+    )
+    .await?;
     let sync_server = if artifacts.is_some() {
         sync_server.with_artifact_socket()
     } else {

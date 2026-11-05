@@ -72,6 +72,15 @@ impl Vault {
     /// [`Self::archive_provider_event`] names; `None` for any other ref or a
     /// body the vault no longer holds.
     pub fn read_provider_event(&self, payload_ref: &str) -> Result<Option<Vec<u8>>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.read_provider_event_in_txn(&rtxn, payload_ref)
+    }
+
+    pub(crate) fn read_provider_event_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        payload_ref: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let Some((artifact, version)) = payload_ref
             .strip_prefix(PROVIDER_EVENT_REF_PREFIX)
             .and_then(|rest| rest.split_once('@'))
@@ -81,7 +90,7 @@ impl Vault {
         let (Ok(artifact_id), Ok(version)) = (EntityId::from_hex(artifact), version.parse()) else {
             return Ok(None);
         };
-        self.read_blob_artifact_version(&artifact_id, version)
+        self.read_blob_artifact_version_in_txn(rtxn, &artifact_id, version)
     }
 
     /// The message text a provider event's archived body carries: Slack's
@@ -99,6 +108,16 @@ impl Vault {
         channel: &str,
         payload_ref: &str,
     ) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.read_provider_event_text_in_txn(&rtxn, channel, payload_ref)
+    }
+
+    pub(crate) fn read_provider_event_text_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        channel: &str,
+        payload_ref: &str,
+    ) -> Result<Option<String>> {
         let pointer = match channel {
             crate::channel_identity_provider::SLACK_CHANNEL => "/event/text",
             crate::channel_identity_provider::LINE_CHANNEL => "/event/message/text",
@@ -110,7 +129,7 @@ impl Vault {
             }
             _ => return Ok(None),
         };
-        let Some(body) = self.read_provider_event(payload_ref)? else {
+        let Some(body) = self.read_provider_event_in_txn(rtxn, payload_ref)? else {
             return Ok(None);
         };
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {
