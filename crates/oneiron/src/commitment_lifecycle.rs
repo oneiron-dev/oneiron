@@ -156,7 +156,7 @@ pub fn link_brief_fulfillment(
             edge_value,
         )
         .commit_with_target_guard(|txn| {
-            let Some(raw_brief) = vault.get_raw_in(txn, brief_ref)? else {
+            let Some(raw_brief) = vault.get_raw_sealed_in_txn(txn, brief_ref)? else {
                 return Err(Error::InvalidClaimBody(
                     "fulfillment source is not a task brief",
                 ));
