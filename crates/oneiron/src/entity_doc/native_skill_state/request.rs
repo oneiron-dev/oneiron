@@ -98,6 +98,16 @@ impl SkillStateSnapshot {
         Ok(updated)
     }
 
+    /// Fingerprint of the actual immutable physical source at this admission.
+    /// It is evidence of that source, not an erase-stable current-row identity.
+    pub(super) fn source_fingerprint(&self) -> [u8; 32] {
+        *blake3::hash(&self.raw).as_bytes()
+    }
+
+    pub(super) fn prior(&self) -> &SkillRecord {
+        &self.prior
+    }
+
     pub(crate) fn entity(&self) -> EntityId {
         self.entity
     }
