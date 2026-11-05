@@ -7,6 +7,14 @@ selection. The crate-private `load_vault_type_tree_sourced_in_txn` runs that sam
 selection in a caller's existing snapshot or writer; the public wrapper still
 opens one read transaction. Neither grants access or replaces visibility checks.
 
+The crate-private `load_team_type_tree_with_sources_in_txn` instead returns the
+actual tree selected for one project (or the vault), its entity-row inventory and
+the root lookup's audit metadata. It resolves the root once and reads that tree
+once in the caller's snapshot or writer. A consulted default-hub alias/pin makes
+the whole entity-source inventory unknown; the `HubRef` remains audit metadata,
+not a substitute entity ID. Other unknown source cohorts stay unknown. The old
+audit-only `load_team_type_tree_sourced_in_txn` is unchanged.
+
 The project reader records every stored project row and indexed revision
 companion its component, parent and witness decisions read. Its authority fold
 keeps the actual stored log row IDs from its existing scan.
