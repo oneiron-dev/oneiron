@@ -7,8 +7,8 @@
 //! that no success answers. Each one past them makes the address wait,
 //! twice as long as the wait before, from one second up to
 //! `limits.pairing_redeem_wait_ceiling_ms`; while it waits, its redemptions
-//! are refused before their code is read, and a refused one counts for
-//! nothing. A redemption counts as failed from the moment it is admitted,
+//! are refused before their code is read; a refused one adds no attempt
+//! and no wait, but the address has not been quiet. A redemption counts as failed from the moment it is admitted,
 //! so attempts sent at once wait their turns as attempts sent one by one
 //! do. A success forgets the address, and so does
 //! `limits.pairing_redeem_quiet_ms` with no redemption from it. Every
@@ -95,7 +95,7 @@ impl RedeemBackoffRules {
 struct AddressRedemptions {
     /// Redemptions admitted that no success has answered.
     unanswered: u32,
-    /// When it last made one.
+    /// When it last made one, refused or admitted.
     last: Instant,
     /// Until then, its next redemption is refused unread.
     waits_until: Option<Instant>,
@@ -164,6 +164,9 @@ impl PairingRedeemBackoff {
         if let Some(until) = entry.waits_until
             && now < until
         {
+            // A refused redemption adds no attempt and no wait, but it is a
+            // redemption: the address is not quiet.
+            entry.last = now;
             return Err(until - now);
         }
         entry.unanswered = entry.unanswered.saturating_add(1);
