@@ -627,6 +627,7 @@ fn plan_from_quotes(
         .collect();
     let receipt = SpawnPlanReceipt {
         asked: need.clone(),
+        owner_choices: Vec::new(),
         plan,
         alternatives,
         why,
