@@ -239,7 +239,15 @@ impl Vault {
                 row.state = SecretRevealState::Delivered;
                 row.delivered_at = Some(now);
                 row.lease = Some(self.store.clock.entity_id()?);
-                row.collected = Some(RevealCollection::person(asker, now));
+                let print = match asker.exec_run {
+                    Some(_) => crate::store::known_value_index::PersonValuePrint::delivered_in_txn(
+                        &self.store,
+                        txn,
+                        &value,
+                    )?,
+                    None => None,
+                };
+                row.collected = Some(RevealCollection::person(asker, now, print));
                 REVEALS.put(&self.store, txn, reveal, &row)?;
                 Ok(SecretRevealWait {
                     decision: SecretRevealDecision::Granted,
