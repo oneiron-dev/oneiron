@@ -16883,7 +16883,7 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
-ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+ManifestKind = Literal["skill_index", "skill", "actor_claim", "workflow_context_row"]
 RevisionRef = list[int]
 class ManifestEntry(TypedDict):
     kind: ManifestKind
