@@ -1213,7 +1213,7 @@
      "path": "src/agent_dispatch/planner_live/intent/erase.rs",
      "purpose": "A planned intent's erase (Engine 10-22)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -9637,6 +9637,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/versions/checked.rs",
+     "purpose": "Checked append decisions shared by direct and Memory transaction doors",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14899,7 +14909,7 @@
      "path": "src/claim/scoped_read/named_reads.rs",
      "purpose": "Named point reads (FIX 5226): a read whose caller named each target says when a legal non-use order keeps a…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "type": 1
      }
@@ -17069,8 +17079,8 @@
      "path": "src/code_run/live_run.rs",
      "purpose": "A live agent run's attachment to the one credential that may act for it (OF-181)",
      "surface": {
-      "const": 1,
-      "fn": 9,
+      "const": 2,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -24656,7 +24666,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CarrierActorMerge",
@@ -24666,7 +24676,7 @@
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2
      }
     },
@@ -33221,6 +33231,16 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/output_retention.rs",
+     "purpose": "Native-output row preparation and direct-append retention",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -47970,7 +47990,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 4
      }
     },
@@ -48994,6 +49014,7 @@
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
+      "BlobVersionAppendOutcome",
       "BlobVersionView",
       "EntityRefReceipt",
       "HabitCheckinInput",
@@ -49004,6 +49025,7 @@
      "path": "src/memory/structural/types.rs",
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
+      "enum": 1,
       "re-export": 1,
       "struct": 8
      }
@@ -81347,6 +81369,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/revoke_lands/pins.rs",
+     "purpose": "The restrictive targets whose native door parses more than serde",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -82102,7 +82134,7 @@
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 8,
       "struct": 8
@@ -90498,7 +90530,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90960,7 +90992,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91786,7 +91818,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91970,7 +92002,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6417,
+   "source_files": 6420,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106217,6 +106249,7 @@
      "notable": [
       "NapiAdmitImportedClaimInput",
       "NapiBlobArtifactInput",
+      "NapiBlobVersionAppendOutcome",
       "NapiBlobVersionView",
       "NapiCalendarEventRead",
       "NapiCalendarEventView",
@@ -106281,7 +106314,7 @@
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
       "crate-vis": 2,
-      "struct": 61
+      "struct": 62
      }
     },
     {
@@ -130868,6 +130901,7 @@
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
+      "BlobVersionAppendOutcome",
       "BlobVersionView",
       "CitedMessage",
       "ClaimInput",
@@ -130938,7 +130972,7 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 13,
+      "enum": 14,
       "struct": 55
      }
     },
