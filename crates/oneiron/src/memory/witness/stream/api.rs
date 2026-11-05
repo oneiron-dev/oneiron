@@ -176,9 +176,7 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
-        let limit = crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(100))
-            .0
-            .max(1);
+        let limit = input.limit.unwrap_or(100).max(1);
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let result = lane.read_projected(&[PointRead::id(message)], None, |txn, rows| {
             let Some(row) = rows
