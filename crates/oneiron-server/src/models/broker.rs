@@ -295,7 +295,12 @@ impl BrokerBackend {
         let (shape, path, wire_headers, mut body) = match &self.wire {
             Wire::OpenAi(config) => {
                 let wire = build_openai_chat_request(config, request, false)?;
-                (Shape::OpenAiChat, wire.path, wire.headers, wire.body)
+                let shape = if wire.path == "/chat/completions" {
+                    Shape::OpenAiChatUnversioned
+                } else {
+                    Shape::OpenAiChat
+                };
+                (shape, wire.path, wire.headers, wire.body)
             }
             Wire::Anthropic(config) => {
                 let wire = build_anthropic_messages_request(config, request, false)?;

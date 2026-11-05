@@ -17,6 +17,51 @@ use crate::temporal::TimeRange;
 const SHORT_ID_COUNTER: SideTable<[u8; 1], [u8; 8], Raw> =
     SideTable::new(&side_table::SHORT_ID_COUNTER);
 
+/// Per-runtime-kind short-id counter, little-endian `u64` (FIX 7741). Key:
+/// the kind's stable short-id prefix, which its name derives. A pack kind's
+/// type byte is recycled once its slot is collected; this counter is not, so
+/// a kind reinstalled on a fresh byte never reissues a retired short id.
+const SHORT_ID_KIND_COUNTER: SideTable<String, [u8; 8], Raw> =
+    SideTable::new(&side_table::SHORT_ID_KIND_COUNTER);
+
+/// The counter a new short id advances: a fixed kind's by its type byte, a
+/// runtime (pack) kind's by its stable prefix, never by the byte it happens
+/// to hold now (FIX 7741).
+pub(super) enum ShortIdCounter {
+    Type(u8),
+    Kind(String),
+}
+
+impl ShortIdCounter {
+    fn of(entity_type: u8, short_id_prefix: &str) -> Self {
+        if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
+            Self::Kind(short_id_prefix.to_owned())
+        } else {
+            Self::Type(entity_type)
+        }
+    }
+
+    /// The last issued counter; zero before any.
+    fn last(&self, store: &impl ManifestDbs, txn: &heed::RwTxn<'_>) -> Result<u64> {
+        let stored = match self {
+            Self::Type(entity_type) => SHORT_ID_COUNTER.get(store, txn, &[*entity_type])?,
+            Self::Kind(prefix) => SHORT_ID_KIND_COUNTER.get(store, txn, prefix)?,
+        };
+        Ok(stored.map_or(0, u64::from_le_bytes))
+    }
+
+    fn put(&self, store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>, counter: u64) -> Result<()> {
+        match self {
+            Self::Type(entity_type) => {
+                SHORT_ID_COUNTER.put(store, wtxn, &[*entity_type], &counter.to_le_bytes())
+            }
+            Self::Kind(prefix) => {
+                SHORT_ID_KIND_COUNTER.put(store, wtxn, prefix, &counter.to_le_bytes())
+            }
+        }
+    }
+}
+
 pub(super) enum ShortIdPlan {
     UpdateExisting {
         short_id: String,
@@ -24,7 +69,7 @@ pub(super) enum ShortIdPlan {
         content_hash: u8,
     },
     InsertNew {
-        entity_type: u8,
+        counter: ShortIdCounter,
         next_counter: u64,
         short_id: String,
         content_hash: u8,
@@ -77,21 +122,19 @@ pub(super) fn plan_short_id_update_hashed(
         });
     }
 
-    // Per-type counters live in `vault_meta` under the documented
-    // `b"sid_counter:" ‖ type_byte` key scheme (store.rs), NOT as sentinel
-    // rows inside `short_ids` — that table holds only the ARCH-0019 row n3
+    // Counters live in `vault_meta` under the documented
+    // `b"sid_counter:" ‖ type_byte` key scheme (store.rs), or for a runtime
+    // kind `b"sid_kind_counter:" ‖ prefix` (FIX 7741), NOT as sentinel rows
+    // inside `short_ids` — that table holds only the ARCH-0019 row n3
     // mapping `(short_id, content_hash)` -> `entity_id`.
-    let current = match SHORT_ID_COUNTER.get(store, txn, &[entity_type])? {
-        Some(buf) => u64::from_le_bytes(buf),
-        None => 0,
-    };
-
-    let next = current
+    let counter = ShortIdCounter::of(entity_type, short_id_prefix);
+    let next = counter
+        .last(store, txn)?
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("short id counter"))?;
     let short_id = format!("{short_id_prefix}{next}");
     Ok(ShortIdPlan::InsertNew {
-        entity_type,
+        counter,
         next_counter: next,
         short_id,
         content_hash,
@@ -119,12 +162,12 @@ pub(super) fn apply_short_id_plan(
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
         ShortIdPlan::InsertNew {
-            entity_type,
+            counter,
             next_counter,
             short_id,
             content_hash,
         } => {
-            SHORT_ID_COUNTER.put(store, wtxn, &[entity_type], &next_counter.to_le_bytes())?;
+            counter.put(store, wtxn, next_counter)?;
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
     }
