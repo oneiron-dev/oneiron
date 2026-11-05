@@ -210,6 +210,9 @@ pub struct BoardSection {
     /// The rows a fold keeps open in the pinned floor, by id: shown in
     /// every view.
     kept_ids: Vec<crate::EntityId>,
+    /// The detail rows a hook block pins, by typed id (OF-579): no fold or
+    /// share takes them off the board.
+    hook_pinned_ids: Vec<crate::EntityId>,
 }
 
 impl BoardSection {
@@ -271,12 +274,21 @@ impl BoardSection {
             fold_line: None,
             shown_ids: None,
             kept_ids: Vec::new(),
+            hook_pinned_ids: Vec::new(),
         })
+    }
+
+    /// The section with the detail rows a hook block pins, by typed id: a
+    /// layout never folds or fits them away (OF-579).
+    #[must_use]
+    pub fn with_hook_pinned_ids(mut self, ids: Vec<crate::EntityId>) -> Self {
+        self.hook_pinned_ids = ids;
+        self
     }
 
     /// The section's name line as the frame renders it: its name, and on a
     /// folded section its fold line after it.
-    fn header_line(&self) -> String {
+    pub fn header_line(&self) -> String {
         match &self.fold_line {
             Some(line) => format!("{} {line}", self.name),
             None => self.name.clone(),
@@ -325,16 +337,9 @@ impl BoardSection {
     /// section keeps its name, policy and host. It has no detail or count
     /// view left to shed, so the shed ladder never grows it back.
     pub(super) fn folded(&self, line: String, keep: &[crate::EntityId]) -> Self {
-        let mut pinned_rows = self.pinned_rows.clone();
-        let mut kept_ids = Vec::new();
-        for (row, id) in self.detail_rows.iter().zip(&self.row_ids) {
-            if let Some(id) = id.filter(|id| keep.contains(id)) {
-                pinned_rows.push(row.clone());
-                if !kept_ids.contains(&id) {
-                    kept_ids.push(id);
-                }
-            }
-        }
+        let base = self.with_rows_held(keep);
+        let pinned_rows = base.pinned_rows;
+        let kept_ids = base.kept_ids;
         let room = MAX_BOARD_ROW_BYTES.saturating_sub(self.name.len() + 1);
         let line = if line.len() > room {
             one_line_prefix(&line, room)
@@ -355,6 +360,7 @@ impl BoardSection {
             fold_line: Some(line),
             shown_ids: Some(kept_ids.clone()),
             kept_ids,
+            hook_pinned_ids: self.hook_pinned_ids.clone(),
         }
     }
 
@@ -380,21 +386,22 @@ impl BoardSection {
         if self.full_view_tok() <= share_tok {
             return self.clone();
         }
-        let mut fitted = self.clone();
+        let mut fitted = self.with_rows_held(&[]);
         fitted.discovery_rows.clear();
         if fitted.full_view_tok() <= share_tok {
             return fitted;
         }
-        let total = self.detail_rows.len();
+        let base = fitted.clone();
+        let total = base.detail_rows.len();
         let candidate = |shown: usize| -> Vec<String> {
-            let mut rows = self.detail_rows[..shown].to_vec();
+            let mut rows = base.detail_rows[..shown].to_vec();
             if shown < total {
                 rows.push(format!("+{} more", total - shown));
             }
             rows
         };
         let cost = |shown: usize| {
-            section_tok(&self.name, self.pinned_rows.iter().chain(&candidate(shown)))
+            section_tok(&base.name, base.pinned_rows.iter().chain(&candidate(shown)))
         };
         let (mut low, mut high) = (0, total);
         while low < high {
@@ -405,30 +412,71 @@ impl BoardSection {
                 high = mid - 1;
             }
         }
-        let known = !self.row_ids.is_empty();
+        // One typed row may render as several physical rows (a long
+        // snippet): the cut never splits it, so a row is shown whole or not.
+        while low > 0
+            && low < total
+            && base.row_ids.get(low).copied().flatten().is_some()
+            && base.row_ids.get(low) == base.row_ids.get(low - 1)
+        {
+            low -= 1;
+        }
+        let known = !base.row_ids.is_empty();
+        let held = base.kept_ids.clone();
         if low == 0 {
-            fitted.detail_rows = self.count_rows.clone();
+            fitted.detail_rows = base.count_rows.clone();
             fitted.row_ids = Vec::new();
-            fitted.shown_ids = known.then(Vec::new);
+            fitted.shown_ids = known.then(|| held.clone());
             return fitted;
         }
         fitted.detail_rows = candidate(low);
-        fitted.row_ids = if self.row_ids.is_empty() {
-            Vec::new()
-        } else {
-            let mut ids = self.row_ids[..low].to_vec();
+        fitted.row_ids = if known {
+            let mut ids = base.row_ids[..low].to_vec();
             if low < total {
                 ids.push(None);
             }
             ids
+        } else {
+            Vec::new()
         };
-        fitted.shown_ids = known.then(|| fitted.row_ids.iter().flatten().copied().collect());
+        fitted.shown_ids = known.then(|| {
+            let mut shown = held.clone();
+            shown.extend(fitted.row_ids.iter().flatten().copied());
+            shown
+        });
         if rows_tok(&fitted.count_rows) > rows_tok(&fitted.detail_rows) {
             fitted.detail_rows = fitted.count_rows.clone();
             fitted.row_ids = Vec::new();
-            fitted.shown_ids = known.then(Vec::new);
+            fitted.shown_ids = known.then(|| held.clone());
         }
         fitted
+    }
+
+    /// The section with the detail rows a layout must keep shown moved into
+    /// its pinned floor, in their own order: every row a hook block pins,
+    /// and the rows `keep` names. Their ids join `kept_ids`.
+    fn with_rows_held(&self, keep: &[crate::EntityId]) -> Self {
+        let mut held = self.clone();
+        if self.row_ids.is_empty() || (keep.is_empty() && self.hook_pinned_ids.is_empty()) {
+            return held;
+        }
+        held.detail_rows.clear();
+        held.row_ids.clear();
+        for (row, id) in self.detail_rows.iter().zip(&self.row_ids) {
+            match id.filter(|id| keep.contains(id) || self.hook_pinned_ids.contains(id)) {
+                Some(id) => {
+                    held.pinned_rows.push(row.clone());
+                    if !held.kept_ids.contains(&id) {
+                        held.kept_ids.push(id);
+                    }
+                }
+                None => {
+                    held.detail_rows.push(row.clone());
+                    held.row_ids.push(*id);
+                }
+            }
+        }
+        held
     }
 
     /// Foreign-vault sections render outside the authoritative memory wrapper.

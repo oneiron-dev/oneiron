@@ -203,7 +203,8 @@ pub(super) fn mcp_board_state_rows(
 ) -> Vec<String> {
     let mut rows = Vec::new();
     for section in sections {
-        rows.push(section.name().to_owned());
+        // A folded section's name line carries its live fold line.
+        rows.push(section.header_line());
         rows.extend(section.pinned_rows().iter().cloned());
         rows.extend(section.detail_rows().iter().cloned());
     }
@@ -314,7 +315,12 @@ pub(super) fn mcp_board_sections(
     let tasks_section =
         oneiron::context_board::assemble_tasks_section(&tasks, mcp_fanout_rows(server, actor)?)
             .map_err(mcp_board_frame_error)?
-            .with_fold_summary(oneiron::context_board::FoldSummary::total(tasks_total));
+            .with_fold_summary(oneiron::context_board::FoldSummary::total(tasks_total))
+            .with_hook_pinned_ids(
+                pins.iter()
+                    .flat_map(|pin| pin.refs.iter().copied())
+                    .collect(),
+            );
     let mut sections = vec![verb_section, worlds_section];
     let room = mcp_bound_room(server, actor);
     if let Some(memories) =
