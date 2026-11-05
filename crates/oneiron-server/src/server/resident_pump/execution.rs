@@ -522,6 +522,7 @@ fn enter_run(
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
+        .with_bound_run(config.run_id)
         .with_reader_spawn(seat.clone())
         .with_replay_exposures(exposures.to_vec())
         // FIX 6867, FIX 8268: the run's repo proposals take the vault's own review policy.
