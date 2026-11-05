@@ -1,8 +1,12 @@
 //! Exact native values restored only from an owned Store capture.
 
-use loro::{LoroDoc, LoroValue, ValueOrContainer};
+use std::collections::BTreeSet;
 
+use loro::{Frontiers, LoroDoc, LoroValue, UpdateOptions, ValueOrContainer};
+
+use super::super::{EntityDoc, document::BODY, recovery, storage};
 use super::codec::SkillStateFact;
+use super::inspect::{NativeMapInventory, inspect};
 use super::register::{CURRENT, ROOT};
 use crate::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -12,6 +16,16 @@ use crate::store::canonical_document::CanonicalEntityDocument;
 /// The source owns this exact row. It grants no peer, owner or grant standing.
 pub(in crate::entity_doc) struct CanonicalSkillState<'a> {
     row: &'a CanonicalEntityDocument,
+}
+
+/// Owns the actual fresh replay, not a caller-supplied document with matching
+/// signed values. Its only constructor runs the fixed canonical producer.
+pub(in crate::entity_doc) struct CanonicalRebuiltDocument<'a> {
+    source: CanonicalSkillState<'a>,
+    document: EntityDoc,
+    frontiers: Vec<Frontiers>,
+    frontier: Vec<u8>,
+    inventory: NativeMapInventory,
 }
 
 fn invalid() -> Error {
@@ -66,6 +80,19 @@ impl<'a> CanonicalSkillState<'a> {
         Ok(Self { row })
     }
 
+    pub(in crate::entity_doc) fn rebuild(self) -> Result<CanonicalRebuiltDocument<'a>> {
+        let (document, frontiers) = recovery::rebuild_canonical_document(self.row, Some(&self))?;
+        let inventory = inspect(&document)?;
+        let frontier = document.frontier();
+        Ok(CanonicalRebuiltDocument {
+            source: self,
+            document,
+            frontiers,
+            frontier,
+            inventory,
+        })
+    }
+
     pub(in crate::entity_doc) fn write_current(&self, doc: &LoroDoc) -> Result<()> {
         write_selected(doc, self.row.native_skill_state.as_deref())
     }
@@ -91,6 +118,113 @@ impl<'a> CanonicalSkillState<'a> {
             return Err(invalid());
         }
         write_selected(doc, fork.output_native_skill_state.as_deref())
+    }
+}
+
+impl CanonicalRebuiltDocument<'_> {
+    pub(in crate::entity_doc) fn document(&self) -> &EntityDoc {
+        &self.document
+    }
+
+    pub(in crate::entity_doc) fn frontiers(&self) -> &[Frontiers] {
+        &self.frontiers
+    }
+
+    fn require_unchanged(&self) -> Result<()> {
+        // Inspect first: exporting the raw inventory also commits any pending
+        // mutation, so the following frontier comparison includes it.
+        if inspect(&self.document)? != self.inventory || self.document.frontier() != self.frontier {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    pub(in crate::entity_doc) fn require_document(
+        &self,
+        entity: &EntityId,
+        head: &storage::Head,
+    ) -> Result<BTreeSet<EntityId>> {
+        self.require_unchanged()?;
+        let row = self.source.row;
+        let field = match &row.field {
+            None => storage::TextField::Utf8Body,
+            Some(field) => storage::TextField::MapField(field.clone()),
+        };
+        if *entity.as_bytes() != row.entity_id
+            || head.entity != entity.to_hex()
+            || head.document != EntityId::from_bytes(row.document_id)?.to_hex()
+            || head.field != field
+            || self.document.birth().entity != entity.to_hex()
+            || self.document.birth().at != row.birth_at
+        {
+            return Err(invalid());
+        }
+        self.inventory.writer_tokens()
+    }
+
+    /// Rebuild this source's OWN output on its OWN replayed base. No supplied
+    /// snapshot or mutation closure can obtain this continuation.
+    pub(in crate::entity_doc) fn persist_output_in_txn(
+        &self,
+        store: &crate::store::Store,
+        txn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        index: usize,
+    ) -> Result<()> {
+        self.require_unchanged()?;
+        if *entity.as_bytes() != self.source.row.entity_id {
+            return Err(invalid());
+        }
+        let fork = self
+            .source
+            .row
+            .history
+            .as_ref()
+            .and_then(|history| history.forks.get(index))
+            .ok_or_else(invalid)?;
+        let output = fork.output.as_ref().ok_or_else(invalid)?;
+        let base = match fork.base {
+            Some(index) => self
+                .frontiers
+                .get(index as usize)
+                .ok_or_else(invalid)?
+                .encode(),
+            None => Frontiers::default().encode(),
+        };
+        let branch = self.document.fork(&base)?;
+        branch
+            .doc
+            .get_text(BODY)
+            .update(output, UpdateOptions::default())
+            .map_err(|_| invalid())?;
+        EntityDoc::replace_metadata(
+            &branch.doc,
+            fork.output_metadata.as_ref().ok_or_else(invalid)?,
+        )?;
+        self.source.write_output(&branch.doc, index)?;
+        super::super::document::restate_birth(&branch.doc);
+        branch.doc.commit();
+        let snapshot = branch.shallow_snapshot(&base)?;
+        let replayed = EntityDoc::from_snapshot(&snapshot)?;
+        if super::register::current_witness_bytes(&replayed)? != fork.output_native_skill_state {
+            return Err(Error::InvariantViolation(
+                "replayed native SKILL state output differs",
+            ));
+        }
+        // The fixed producer above owns both the inherited operations and its
+        // one selected output write, including a genuine selected None delete.
+        // Record uses from the complete resulting history, not just its winner.
+        let native_tokens = inspect(&replayed)?.writer_tokens()?;
+        if !native_tokens.is_empty() {
+            crate::provenance::record_actor_stamp_uses_in_txn(store, txn, entity, native_tokens)?;
+        }
+        super::super::forks::ENTITY_DOC_FORK_SNAPSHOT.put(
+            store,
+            txn,
+            &EntityId::from_bytes(fork.fork)?.to_hex(),
+            &snapshot,
+        )?;
+        Ok(())
     }
 }
 

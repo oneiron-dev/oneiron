@@ -450,7 +450,6 @@ pub(crate) fn restore_with_source(
     ENTITY_DOC_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PIN.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PURGE_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
-    let birth_actor = doc_actor(row.birth_actor)?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -461,22 +460,24 @@ pub(crate) fn restore_with_source(
         birth_frontier: None,
     };
     let slot = DocumentSlot::from_hex(&head.document)?;
+    let canonical = native.map(|source| source.rebuild()).transpose()?;
+    let ordinary;
+    let (doc, frontiers) = if let Some(rebuilt) = &canonical {
+        (rebuilt.document(), rebuilt.frontiers())
+    } else {
+        ordinary = rebuild_canonical_document(row, None)?;
+        (&ordinary.0, ordinary.1.as_slice())
+    };
+    if let Some(rebuilt) = &canonical {
+        storage::persist_canonical_skill(vault, txn, &entity, &mut head, rebuilt)?;
+    } else {
+        storage::persist(vault, txn, &entity, &mut head, doc, None)?;
+    }
     match &row.history {
         None => {
-            let doc = EntityDoc::rebuild_value(entity, &row.text, birth_actor, row.birth_at)?;
-            EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
-            summary_meta::write(&doc.doc, &row.summary_meta)?;
-            EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-            if let Some(native) = &native {
-                native.write_current(&doc.doc)?;
-            }
-            super::document::restate_birth(&doc.doc);
-            storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
         Some(history) => {
-            let (doc, frontiers) = replay(entity, row, history, native.as_ref())?;
-            storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             if history.shallow {
                 store.port_document_shallow_since_put(
                     txn,
@@ -491,9 +492,9 @@ pub(crate) fn restore_with_source(
                 txn,
                 &entity,
                 history,
-                &doc,
-                &frontiers,
-                native.as_ref(),
+                doc,
+                frontiers,
+                canonical.as_ref(),
             )?;
         }
     }
@@ -548,6 +549,34 @@ fn refuse_loss(
         }
     }
     Ok(())
+}
+
+/// The fixed producer shared by ordinary recovery and the closed native
+/// source owner. No caller-supplied document or mutation closure enters it.
+pub(super) fn rebuild_canonical_document(
+    row: &CanonicalEntityDocument,
+    native: Option<&super::native_skill_state::CanonicalSkillState<'_>>,
+) -> Result<(EntityDoc, Vec<Frontiers>)> {
+    let entity = EntityId::from_bytes(row.entity_id)?;
+    match &row.history {
+        None => {
+            let doc = EntityDoc::rebuild_value(
+                entity,
+                &row.text,
+                doc_actor(row.birth_actor)?,
+                row.birth_at,
+            )?;
+            EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
+            summary_meta::write(&doc.doc, &row.summary_meta)?;
+            EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
+            if let Some(native) = native {
+                native.write_current(&doc.doc)?;
+            }
+            super::document::restate_birth(&doc.doc);
+            Ok((doc, Vec::new()))
+        }
+        Some(history) => replay(entity, row, history, native),
+    }
 }
 
 /// Replays the carried versions into fresh history: an empty birth commit,
@@ -663,7 +692,7 @@ fn bind_rows(
     history: &CanonicalEntityDocumentHistory,
     doc: &EntityDoc,
     frontiers: &[Frontiers],
-    native: Option<&super::native_skill_state::CanonicalSkillState<'_>>,
+    native: Option<&super::native_skill_state::CanonicalRebuiltDocument<'_>>,
 ) -> Result<()> {
     let frontier = |index: u32| -> Result<Vec<u8>> {
         Ok(frontiers
@@ -771,6 +800,10 @@ fn bind_rows(
         };
         ENTITY_DOC_FORK.put(store, txn, &record.fork, &record)?;
         if let Some(output) = &fork.output {
+            if let Some(native) = native {
+                native.persist_output_in_txn(store, txn, entity, index)?;
+                continue;
+            }
             // The output diverges from the replayed base in its own ops, so
             // a later MERGE or SWITCH lands it as the original would.
             let branch = doc.fork(&base)?;
@@ -785,22 +818,9 @@ fn bind_rows(
                     .as_ref()
                     .ok_or(invalid("entity document fork metadata"))?,
             )?;
-            if let Some(native) = native {
-                native.write_output(&branch.doc, index)?;
-            }
             super::document::restate_birth(&branch.doc);
             branch.doc.commit();
             let snapshot = branch.shallow_snapshot(&base)?;
-            if native.is_some() {
-                let replayed = EntityDoc::from_snapshot(&snapshot)?;
-                if super::native_skill_state::current_witness_bytes(&replayed)?
-                    != fork.output_native_skill_state
-                {
-                    return Err(Error::InvariantViolation(
-                        "replayed native SKILL state output differs",
-                    ));
-                }
-            }
             ENTITY_DOC_FORK_SNAPSHOT.put(store, txn, &record.fork, &snapshot)?;
         }
     }
