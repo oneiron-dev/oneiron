@@ -1689,7 +1689,7 @@
      "path": "src/agent_dispatch/workflow/model_context.rs",
      "purpose": "A workflow step's selected memory and chat as model context (FIX 6290)",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -2084,6 +2084,16 @@
      "surface": {
       "crate-vis": 12,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/threads/brief_text.rs",
+     "purpose": "Whole annotation transcripts and capped dispatch briefings",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -4642,7 +4652,7 @@
      "path": "src/authority/owner_key_enrollment_door.rs",
      "purpose": "The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x…",
      "surface": {
-      "fn": 4,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -4856,6 +4866,16 @@
       "enum": 2,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/recovery.rs",
+     "purpose": "Lost-owner authority recovery from material explicitly enrolled before loss",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -9508,7 +9528,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -18860,9 +18880,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/microvm/overlay.rs",
-     "purpose": "The host-side scratch root and the bounded overlay walk that turns guest writes into proposals",
+     "purpose": "The host-side scratch root and the checked overlay walk that turns guest writes into proposals",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -31766,7 +31786,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/evidence_judge.rs",
@@ -31857,7 +31877,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 17,
+      "fn": 18,
       "struct": 6,
       "type": 1
      }
@@ -32262,7 +32282,7 @@
      "path": "src/edit_distance/miner/hunks.rs",
      "purpose": "Per-hunk mining of a partly unclear amendment (FIX 9808)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -32283,7 +32303,7 @@
      "path": "src/edit_distance/miner/mining.rs",
      "purpose": "ED-04 substitution-cluster mining pass",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 8
      }
     },
@@ -33452,6 +33472,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "MeasuredEmbedFill",
       "PendingEmbeddingReconcileReport",
       "PendingEmbeddingReconciler"
      ],
@@ -33459,9 +33480,9 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 13,
-      "fn": 8,
+      "fn": 9,
       "re-export": 12,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -34630,7 +34651,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 3,
       "re-export": 10
      }
@@ -57765,7 +57786,7 @@
      "path": "src/ports/lmdb_query.rs",
      "purpose": "LMDB/session adapters for the read halves",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -68842,6 +68863,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/input.rs",
+     "purpose": "Typed selectors retained in a skill optimization attempt's input",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -68851,7 +68882,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3,
       "struct": 1
      }
@@ -68974,7 +69005,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 3,
       "re-export": 19
      }
@@ -71707,6 +71738,7 @@
      "notable": [
       "EgressDecision",
       "EgressPredicate",
+      "EmbeddedVector",
       "Embedder",
       "EmbedderLocality",
       "EmbeddingMatchEvidence",
@@ -71728,7 +71760,7 @@
       "enum": 3,
       "fn": 7,
       "re-export": 2,
-      "struct": 8,
+      "struct": 9,
       "trait": 3,
       "type": 1
      }
@@ -71786,6 +71818,20 @@
      "purpose": "The found-key notice queue: the custody records whose found-key notice is still due, with when their keys…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TransportError"
+     ],
+     "path": "src/store/framing.rs",
+     "purpose": "Document wire encoding shared by persisted consumers and sync transport",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -73151,7 +73197,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 153,
-      "mod": 122,
+      "mod": 123,
       "re-export": 31
      }
     },
@@ -79321,18 +79367,16 @@
      "kind": "src",
      "notable": [
       "EncodedFrame",
-      "EphemeralWireState",
-      "TransportError"
+      "EphemeralWireState"
      ],
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
       "const": 42,
       "crate-vis": 1,
-      "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 2
      }
     },
@@ -90785,7 +90829,7 @@
      "purpose": "Agent run status is part of the context-board projection vocabulary"
     },
     "anchored_annotation": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90806,7 +90850,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 247,
+     "files": 248,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92024,7 +92068,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92059,7 +92103,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 489,
+     "files": 490,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92297,9 +92341,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 145,
+   "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6445,
+   "source_files": 6449,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109093,7 +109137,7 @@
      "path": "src/lib.rs",
      "purpose": "Portable, pure shape rules shared by the host and the isolated guest",
      "surface": {
-      "const": 10,
+      "const": 8,
       "fn": 1,
       "mod": 1,
       "re-export": 3,
@@ -109120,7 +109164,7 @@
      "path": "src/path.rs",
      "purpose": "Canonical guest-workspace addressing, including byte-counted components",
      "surface": {
-      "const": 4,
+      "const": 3,
       "fn": 4,
       "struct": 1
      }
@@ -123475,7 +123519,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 7,
       "struct": 4,
@@ -123602,7 +123646,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 8,
       "struct": 1
      }
@@ -130828,6 +130872,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/write_envelope/skill_record/fork_pin.rs",
+     "purpose": "Retained parent document/frontier provenance for a skill fork's birth",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SkillContentHash"
      ],
@@ -130862,7 +130916,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 7,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -131384,7 +131438,7 @@
      "purpose": "The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its…"
     },
     "write_envelope": {
-     "files": 72,
+     "files": 73,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -131393,7 +131447,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 158,
+   "source_files": 159,
    "test_files": 4
   },
   "oneiron-uniffi": {
