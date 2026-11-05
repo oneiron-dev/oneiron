@@ -20,4 +20,3 @@ pub fn truncate_with_suffix_prefix(text: &str, prefix_chars: usize, suffix: &str
 pub fn truncation_suffix(original_chars: usize) -> String {
     format!("...(truncated, {original_chars} chars total)")
 }
-
