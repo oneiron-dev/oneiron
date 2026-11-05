@@ -37,6 +37,39 @@ pub trait StoreRecordHooks: Send + Sync {
         now: u64,
     ) -> Result<Vec<EntityId>>;
 
+    /// The engine's `comm::record_comm_send_receipt`.
+    fn record_comm_send_receipt(
+        &self,
+        vault: &crate::Vault,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_actor_send_receipt_in_txn`.
+    fn record_comm_actor_send_receipt_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: EntityId,
+        display_name: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_thread_event`.
+    fn record_comm_thread_event(
+        &self,
+        vault: &crate::Vault,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's soft `comm::run_comm_projector_housekeeping_step`.
+    fn run_comm_projector_housekeeping_step(&self, vault: &crate::Vault);
+
     /// The engine's `identity_topology::validate_identity_topology_event_body_bytes`.
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()>;
 
