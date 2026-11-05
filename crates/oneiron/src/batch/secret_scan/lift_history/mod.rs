@@ -810,11 +810,12 @@ fn settle(
                         current
                             .retry
                             .retain(|(at, held)| !(*at == family && held == key));
+                        let source = accounting::source_in_txn(vault, txn, family, key)?;
                         accounting::add(
                             &vault.store,
                             txn,
                             current.run_id,
-                            accounting::source(family, key),
+                            source,
                             LiftCounts {
                                 failed: 1,
                                 ..LiftCounts::new(family)
@@ -868,11 +869,12 @@ fn settle(
                 .retain(|(at, held)| !(*at == family && held == key));
         }
         if let Some((masked, filed)) = filed {
+            let source = accounting::source_in_txn(vault, txn, family, key)?;
             accounting::add(
                 &vault.store,
                 txn,
                 current.run_id,
-                accounting::source(family, key),
+                source,
                 LiftCounts {
                     masked: u64::from(masked),
                     proposals: u64::from(filed),

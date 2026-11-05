@@ -16,6 +16,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::origin::lfs::LfsOid;
 use crate::settings::ReadDestination;
 
 /// [`secret_lift_as_owner`] for a caller whose rows go to `destination`
@@ -25,7 +26,8 @@ use crate::settings::ReadDestination;
 /// out of the proposals shown and of every proposal count, as if it were
 /// never filed. Typed-body document, typed-body fork, office-body fork, codebase-snapshot and
 /// note-proposal carriers also name their actual source entity in their row keys. Other
-/// side rows and carriers stay unknown. Run, receipt and retry counts omit only
+/// side rows and carriers stay unknown, except live LFS objects whose native
+/// record binds their manifest ASSET in the same snapshot. Run, receipt and retry counts omit only
 /// contributors whose actual source entity is known and withheld. Unknown
 /// sources never withhold.
 ///
@@ -88,6 +90,29 @@ fn proposal_source(proposal: &SecretLiftHistoryProposal) -> Option<EntityId> {
     EntityId::from_hex(hex).ok()
 }
 
+/// Value-derived sources use only the live binding in this snapshot. Once
+/// that row is gone, even a closed proposal stays unknown; no historical
+/// source is reconstructed from its content hash or run totals.
+fn proposal_source_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    proposal: &SecretLiftHistoryProposal,
+) -> Result<Option<EntityId>> {
+    if let Some((table, key)) = proposal
+        .proposal
+        .path
+        .strip_prefix("carrier:")
+        .and_then(|path| path.split_once(':'))
+        && table == crate::side_table::ORIGIN_LFS_OBJECT.name
+    {
+        let Ok(oid) = LfsOid::parse_hex(key) else {
+            return Ok(None);
+        };
+        return vault.lfs_object_source_in_txn(txn, oid);
+    }
+    Ok(proposal_source(proposal))
+}
+
 /// The records some proposal was filed from that a world withheld from
 /// `destination` keeps now, judged in one read.
 fn withheld_sources(
@@ -98,12 +123,12 @@ fn withheld_sources(
     let mut records = BTreeSet::new();
     for row in PROPOSALS.iter_from(&vault.store, txn, &[])? {
         let (_, proposal) = row?;
-        records.extend(proposal_source(&proposal));
+        records.extend(proposal_source_in_txn(vault, txn, &proposal)?);
     }
     if let Some(run) = RUN.get_lenient(&vault.store, txn, &())? {
         records.extend(accounting::sources(&vault.store, txn, run.run_id)?);
         for (family, key) in &run.retry {
-            records.extend(accounting::source(*family, key));
+            records.extend(accounting::source_in_txn(vault, txn, *family, key)?);
         }
     }
     if let Some((_, receipt)) = RECEIPTS
@@ -144,20 +169,19 @@ pub(super) fn status_where(
     let running = RUN
         .get_lenient(&vault.store, &txn, &())?
         .map(|run| -> Result<SecretLiftProgress> {
+            let retrying =
+                run.retry
+                    .iter()
+                    .try_fold(0_u64, |total, (family, key)| -> Result<u64> {
+                        let source = accounting::source_in_txn(vault, &txn, *family, key)?;
+                        Ok(total.saturating_add(u64::from(source.is_none_or(&keep_source))))
+                    })?;
             Ok(SecretLiftProgress {
                 run_id: run.run_id.to_hex(),
                 trigger: run.trigger,
                 requested_at: run.requested_at,
                 family: run.family,
-                retrying: u64::try_from(
-                    run.retry
-                        .iter()
-                        .filter(|(family, key)| {
-                            accounting::source(*family, key).is_none_or(&keep_source)
-                        })
-                        .count(),
-                )
-                .unwrap_or(u64::MAX),
+                retrying,
                 counts: accounting::counts(&vault.store, &txn, run.run_id, false, &keep_source)?,
             })
         })
@@ -174,7 +198,9 @@ pub(super) fn status_where(
     let mut proposals = Vec::new();
     for row in PROPOSALS.iter_from(&vault.store, &txn, &[])? {
         let (key, mut proposal) = row?;
-        if proposal_source(&proposal).is_some_and(|source| !keep_source(source)) {
+        if proposal_source_in_txn(vault, &txn, &proposal)?
+            .is_some_and(|source| !keep_source(source))
+        {
             continue;
         }
         if !proposal.is_open() {
