@@ -308,6 +308,31 @@ pub(crate) fn skill_edit_verdict_in_txn(
         .rfind(|verdict| verdict.proposal == *proposal))
 }
 
+/// The standing verdict and every verdict row decoded on the same snapshot,
+/// including rows rejected by the proposal filter. These are consulted rows,
+/// not the verdict's held-out inputs or a grant to read them.
+pub(crate) fn skill_edit_verdict_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<(Option<HeldOutVerdict>, Vec<EntityId>)> {
+    let verdicts = verdict_rows_in_txn(vault, rtxn)?;
+    let sources = verdicts.iter().map(|verdict| verdict.id).collect();
+    let verdict = verdicts
+        .into_iter()
+        .rfind(|verdict| verdict.proposal == *proposal);
+    Ok((verdict, sources))
+}
+
+/// [`skill_edit_verdict_sourced_in_txn`] on its own read snapshot.
+pub(crate) fn skill_edit_verdict_sourced(
+    vault: &Vault,
+    proposal: &EntityId,
+) -> Result<(Option<HeldOutVerdict>, Vec<EntityId>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    skill_edit_verdict_sourced_in_txn(vault, &rtxn, proposal)
+}
+
 // ---------------------------------------------------------------------------
 // Receipts (a projector in the `Gate` family)
 // ---------------------------------------------------------------------------
