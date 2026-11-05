@@ -1646,17 +1646,21 @@ export class Oneiron {
       /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
       recall: (input: Facade.OffRecordRecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultOffRecordRecall(input) as Facade.MemoryPack),
       notes: {
-        /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+        /** A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
         create: (input: Facade.OffRecordNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultOffRecordNotesCreate(input) as Facade.EntityRefReceipt),
       },
+      artifacts: {
+        /** A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver. */
+        save: (input: Facade.OffRecordArtifactSaveRequest): Facade.OffRecordArtifactSaved => this.#call(() => this.#client.vaultOffRecordArtifactsSave(input) as Facade.OffRecordArtifactSaved),
+      },
       claims: {
-        /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+        /** A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
         upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
       },
       rooms: {
         /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
         status: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStatus(input) as Facade.OffRecordRoomView),
-        /** A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential. */
+        /** A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential. */
         start: (input: Facade.OffRecordRoomStartRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStart(input) as Facade.OffRecordRoomView),
         /** Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant. */
         witness: (input: Facade.OffRecordRoomWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordRoomsWitness(input) as Facade.WitnessReceipt),
@@ -1664,7 +1668,7 @@ export class Oneiron {
         save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
         /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
         save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
-        /** A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
+        /** A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in. */
         export: (input: Facade.OffRecordRoomExportRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
         /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
         suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
@@ -3465,7 +3469,7 @@ export class Oneiron {
       /** Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds. */
       switch_engine: (input: Facade.LiveRunRequest<Facade.SwitchEngineInput>): Facade.BrowserSwitchEngineOutput => this.#call(() => this.#client.selfBrowserSwitchEngine(input) as Facade.BrowserSwitchEngineOutput),
     },
-    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
+    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles. */
     fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
     /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
     compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
