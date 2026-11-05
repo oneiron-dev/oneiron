@@ -723,7 +723,12 @@ fn settle_one(
                 DocumentRow::ShallowSince,
             )?;
             h.document = record.fork.clone();
-            storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
+            storage::move_pointer(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &entity,
+                &h.document,
+            )?;
             storage::persist(vault, txn, &entity, &mut h, &live, None)?;
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
