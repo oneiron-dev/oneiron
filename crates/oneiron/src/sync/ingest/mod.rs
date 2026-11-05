@@ -32,9 +32,9 @@ pub(in crate::sync) use self::own_device::with_own_device_import;
 pub use self::own_device::with_own_device_push;
 pub(crate) use self::peer_import::forget_stale_peer_origins;
 pub(in crate::sync) use self::peer_import::{
-    PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, carried_origin_in_txn,
-    carry_peer_rows, copy_peer_origins, forget_peer_origin, forget_peer_rows, peer_row_in_txn,
-    record_peer_rows,
+    PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, admitted_peer_rows,
+    carried_origin_in_txn, carry_peer_rows, copy_peer_origins, forget_peer_origin,
+    forget_peer_rows, peer_row_in_txn, record_peer_rows,
 };
 pub(in crate::sync) use self::promotion::{
     first_promotion_open, with_first_promotion_open, with_promotion,

@@ -132,13 +132,13 @@ impl Organ for SealOrgan {
             (VERB_INSPECT, INSPECT_SCHEMA),
             (VERB_PREPARE, PREPARE_SCHEMA),
         ]
-            .into_iter()
-            .map(|(name, schema)| VerbSpec {
-                name: name.to_owned(),
-                schema,
-                kinds: Vec::new(),
-            })
-            .collect()
+        .into_iter()
+        .map(|(name, schema)| VerbSpec {
+            name: name.to_owned(),
+            schema,
+            kinds: Vec::new(),
+        })
+        .collect()
     }
 
     fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
@@ -612,9 +612,9 @@ fn prepare(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError>
             WireValue::Checked(_) => 0,
             WireValue::Signature { image_ref } => image_ref.len(),
         };
-        if let Err(err) = admit(
-            ledger.admit_len::<u8>(value_share.saturating_add(id.len()).saturating_add(heap)),
-        ) {
+        if let Err(err) =
+            admit(ledger.admit_len::<u8>(value_share.saturating_add(id.len()).saturating_add(heap)))
+        {
             return failed(err);
         }
         let burned = match value {
