@@ -370,7 +370,12 @@ impl SyncServer {
             )?;
             let rerank = self.door_rerank(effort, actor, class)?;
             let media = self.recall_media(&input.request)?;
-            let ask = HomeRecallAsk::new(&input.request, room.is_some());
+            // Bind the ask last so it drops before its query-storage lease.
+            let (mut ask_memory, ask) = (
+                self.memory.empty_lease(),
+                HomeRecallAsk::new(&input.request, room.is_some()),
+            );
+            ask_memory.materialized(0, ask.query_storage_bytes());
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);

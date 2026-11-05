@@ -42,12 +42,27 @@ them.
 The synchronous run host also records its decoded request's original query
 string capacity through the native recall call, including early errors. The hook
 boundary deep-copies its arguments before decoding, so this allocation is
-separate from the outer arguments. Async-door request strings and home-query
-clones are not included in this charge.
+separate from the outer arguments.
+
+The async recall door also records its decoded request's original query string.
+A private owner holds the request before its lease and travels whole into the
+blocking work. Once the work starts, the request moves into the native recall
+while the lease remains in that work's scope. Unstarted work drops the request
+before its lease. A deadline return does not release the original string's
+charge while the detached work still owns it. The actual facade and agent paths
+deep-copy hook arguments before decoding; the OpenAI-compatible proxy passes a
+fresh query clone. These allocations are separate from their outer arguments.
+
+The async home step separately records the capacity of the query string cloned
+into `HomeRecallAsk`. Its outer future retains that string and its lease while
+local work runs and while the home search borrows it. The string drops before
+the lease on normal completion, early errors, deadline returns and cancellation.
+The blocking local recall never receives this clone. Per-page RPC values and
+serialized copies are distinct allocations outside this charge.
 
 Other input copies, temporary seed vectors, the borrowed `media_seeds` view vector,
 model weights, GPU memory, provider scratch, other recall allocations and a full
 working-set bound remain outside this slice.
-It does not establish queue fairness, pre-growth admission, cancellation, runtime
+It does not establish queue fairness, pre-growth admission, provider cancellation, runtime
 performance or a machine-derived embedding-width floor. The separate semantic
 search request/probe owners are unchanged.
