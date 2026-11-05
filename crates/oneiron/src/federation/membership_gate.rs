@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 pub use crate::batch::shared_vault_write::SharedVaultWrite;
 
 mod write_inputs;
-pub(crate) use write_inputs::SharedVaultWriteInputs;
+pub(crate) use write_inputs::{OwnedSharedVaultWriteInputs, SharedVaultWriteInputs};
 
 fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {

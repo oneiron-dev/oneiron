@@ -91,7 +91,7 @@ pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
-pub(crate) use self::actor_content::apply_actor_ops;
+pub(crate) use self::actor_content::{ContentWriteInputs, apply_actor_ops};
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
