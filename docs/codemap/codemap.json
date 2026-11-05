@@ -3470,7 +3470,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointUnresolved",
@@ -3536,7 +3536,7 @@
      "path": "src/authority/checkpoint_policy_choice.rs",
      "purpose": "The owner's checkpoint root policy door (mesh PR2c, §A 06, K06): he selects which roots attest his authority…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -17483,7 +17483,7 @@
      "purpose": "Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and…",
      "surface": {
       "const": 6,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 8,
       "fn": 19,
       "struct": 21,
@@ -23037,6 +23037,7 @@
       "RoomPosture",
       "RoomPresence",
       "RoomSection",
+      "RoomStretch",
       "RosterParty"
      ],
      "path": "src/context_board/room.rs",
@@ -23045,7 +23046,7 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 3,
-      "struct": 3,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -29148,6 +29149,16 @@
       "fn": 1,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/outcomes/setting_fit.rs",
+     "purpose": "Integer health-threshold checks derived from an owner's frozen card label",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -52318,6 +52329,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/off_record/lifecycle/room/stretches.rs",
+     "purpose": "Live room-stretch identity for member-bound ROOM projections",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/off_record/lifecycle/room_births.rs",
      "purpose": "What a room write stages beside its row (FIX 4280, 4281; Engine 10-22): the row's birth and, for a NOTE, its…",
      "surface": {
@@ -62573,7 +62594,7 @@
      "path": "src/runtime_hooks/apply.rs",
      "purpose": "Applying saved intents (ARCH-0080 §4 Crash-safe outcomes, §6 authority)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -62862,6 +62883,26 @@
      "purpose": "A fact-hook run's body call and what comes of it (ARCH-0080 §4, §6): its `ai.verdict` asks and their pins…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/runner/evaluation.rs",
+     "purpose": "One evaluation, kept intact until its memo and completion tail commit",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/runner/retained.rs",
+     "purpose": "Owned background fact evaluations",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -79921,6 +79962,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/frames/shallow_tail.rs",
+     "purpose": "Rebuild held retained operations without changing a shallow snapshot's root",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -89848,7 +89899,7 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "crate-vis": 3,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -89960,18 +90011,22 @@
      "path": "src/world_keys/bundle/publication.rs",
      "purpose": "Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SealedPublicationGrant"
+     ],
      "path": "src/world_keys/bundle/publication_grant.rs",
      "purpose": "Publication-scoped outer access for the install the owner asked to publish (FIX 4785)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 14,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -92033,7 +92088,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 198,
+     "files": 199,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92432,7 +92487,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92663,7 +92718,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 46,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92873,7 +92928,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 344,
+     "files": 345,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93083,9 +93138,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 147,
+   "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6512,
+   "source_files": 6517,
    "test_files": 895
   },
   "oneiron-android": {
@@ -137654,31 +137709,54 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/host_adapters/desktop.rs",
+     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "ActivatedListener",
-      "AwakeGuard",
-      "AwakePolicy",
       "DesktopHost",
-      "KeepAwake",
       "LaunchdHost",
       "SecretSource",
       "SystemdHost"
      ],
-     "path": "src/lib/host_adapters/desktop.rs",
-     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "path": "src/lib/host_adapters/desktop/hosts.rs",
+     "purpose": "—",
      "surface": {
-      "enum": 4,
-      "fn": 14,
-      "struct": 4
+      "enum": 3,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AwakeGuard",
+      "AwakePolicy",
+      "KeepAwake"
+     ],
+     "path": "src/lib/host_adapters/desktop/keep_awake.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/lib/host_adapters/desktop/power.rs",
+     "path": "src/lib/host_adapters/desktop/keep_awake/power.rs",
      "purpose": "The power source a PluggedIn wake assertion follows (FIX 9547)",
      "surface": {
       "crate-vis": 5
@@ -138321,7 +138399,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 54,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -138330,7 +138408,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 53,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-web-fetch": {
