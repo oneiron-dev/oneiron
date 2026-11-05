@@ -22,6 +22,8 @@ pub(crate) use secret_lift::{
 mod session_checkpoint;
 pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
+// FIX 5426: the caller's view a room write's receipt keeps.
+pub(crate) use self::session_write::{KeptCallerView, kept_caller_view};
 mod spawn_erase;
 mod speech_identity;
 mod type_diagnostics;
@@ -54,6 +56,7 @@ pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
     response_erased_error,
 };
+pub(crate) use self::replay_capsule::retire_replay_bodies_in_rows;
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
@@ -67,7 +70,9 @@ pub(crate) use self::replay_capsule::{
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
-pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
+pub(crate) use self::response_erase::{
+    actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+};
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{
     ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
