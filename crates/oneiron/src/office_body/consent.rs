@@ -278,25 +278,35 @@ impl Vault {
         ask: ProposalAsk,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
-            let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
-                return Ok(());
-            };
-            if record.settlement.is_some() {
-                return Ok(());
-            }
-            let repeated = record.asks.iter().any(|held| held.ask == ask.ask);
-            let refused = record.ask_refused.len();
-            record
-                .ask_refused
-                .retain(|held| held.artifact != ask.artifact);
-            if repeated && record.ask_refused.len() == refused {
-                return Ok(());
-            }
-            if !repeated {
-                record.asks.push(ask);
-            }
-            PROPOSALS.put(&self.store, wtxn, proposal, &record)
+            self.record_office_proposal_ask_in_txn(wtxn, proposal, ask)
         })
+    }
+
+    /// Keep a proposal's ask link in the ask admission's transaction.
+    pub(super) fn record_office_proposal_ask_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        proposal: &EntityId,
+        ask: ProposalAsk,
+    ) -> Result<()> {
+        let Some(mut record) = PROPOSALS.get(&self.store, wtxn, proposal)? else {
+            return Ok(());
+        };
+        if record.settlement.is_some() {
+            return Ok(());
+        }
+        let repeated = record.asks.iter().any(|held| held.ask == ask.ask);
+        let refused = record.ask_refused.len();
+        record
+            .ask_refused
+            .retain(|held| held.artifact != ask.artifact);
+        if repeated && record.ask_refused.len() == refused {
+            return Ok(());
+        }
+        if !repeated {
+            record.asks.push(ask);
+        }
+        PROPOSALS.put(&self.store, wtxn, proposal, &record)
     }
 
     /// Record that ask admission refused one member artifact's holder ask.

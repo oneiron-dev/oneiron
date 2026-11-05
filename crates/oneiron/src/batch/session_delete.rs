@@ -54,15 +54,18 @@ pub(super) fn stage_session_delete(
     )?
     .map(|row| row.map(|edge| edge.target))
     .collect::<Result<Vec<_>>>()?;
+    let mut stale_marks = Vec::new();
     for dependent in inbound_derived {
         if dependent != *id {
             let write_view = view.write_snapshot()?;
-            crate::ports::withdraw_from_lost_source_in_session_txn(
+            if let Some(mark) = crate::ports::withdraw_from_lost_source_in_session_txn(
                 &write_view,
                 wtxn,
                 &dependent,
                 id,
-            )?;
+            )? {
+                stale_marks.push(mark);
+            }
         }
     }
     let write_view = view.write_snapshot()?;
@@ -106,6 +109,10 @@ pub(super) fn stage_session_delete(
     unstage_room_edges(view, wtxn, id)?;
     crate::federation::record_scope::unstage_session_position(view, wtxn, *id)?;
     view.entities.delete(wtxn, id.as_bytes())?;
+    // The marks allocate new keys; use the budget freed by source cleanup.
+    for mark in stale_marks {
+        mark.stage_in_txn(view, wtxn)?;
+    }
     Ok(())
 }
 
