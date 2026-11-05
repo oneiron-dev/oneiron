@@ -499,6 +499,7 @@ pub use open_gates::*;
 pub(crate) use outbound_send_receipt::*;
 pub(crate) use page_bound::{PageLayout, TreeRows};
 pub(in crate::store) use pending_embedding::*;
+pub(crate) use pending_gate_consent::hashed_string_index_matches;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(all(unix, test))]

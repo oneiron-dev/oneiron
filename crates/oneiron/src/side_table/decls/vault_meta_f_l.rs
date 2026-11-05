@@ -146,8 +146,8 @@ side_tables! {
     CRITICAL_CONFIRM_EXPIRY_CURSOR: VaultMeta b"gate_pending:critical_confirm_expiry_cursor:v1" Raw;
     /// Critical confirm list sweep state. Key: ().
     CRITICAL_CONFIRM_LIST_CURSOR: VaultMeta b"gate_pending:critical_confirm_list_cursor:v1" Raw;
-    /// Pending consents grouped by root-group alias. Key: u64be len + string + id16.
-    PENDING_GATE_CONSENT_GROUP_INDEX: VaultMeta b"gate_pending:group_index:v1:" Raw;
+    /// Pending consents grouped by root-group alias. Key: full-string BLAKE3 digest + id16.
+    PENDING_GATE_CONSENT_GROUP_INDEX: VaultMeta b"gate_pending:group_index:v2:" Raw;
     /// Semantic duplicate index of pending consents. Key: bytes32 + id16.
     PENDING_GATE_CONSENT_HASH_INDEX: VaultMeta b"gate_pending:hash_index:v1:" Raw;
     /// Index keys created for a pending consent. Key: id16.
@@ -159,8 +159,8 @@ side_tables! {
     /// `encode_pending_gate_consent_index_state`/
     /// `decode_pending_gate_consent_index_state`.
     PENDING_GATE_CONSENT_INDEX_STATE: VaultMeta b"gate_pending:index_state:v1:" Raw;
-    /// Pending consents grouped by run. Key: u64be len + string + id16.
-    PENDING_GATE_CONSENT_RUN_INDEX: VaultMeta b"gate_pending:run_index:v1:" Raw;
+    /// Pending consents grouped by run. Key: full-string BLAKE3 digest + id16.
+    PENDING_GATE_CONSENT_RUN_INDEX: VaultMeta b"gate_pending:run_index:v2:" Raw;
     /// Pending consent insertion sequence. Key: id16.
     PENDING_GATE_CONSENT_SEQUENCE: VaultMeta b"gate_pending:sequence:v1:" Raw;
     /// Pending-consent sequence high-water mark. Key: ().
@@ -327,8 +327,8 @@ side_tables! {
     ATTEMPT_PARENT_CHILD_INDEX: VaultMeta b"job:parent_child:v1:" Raw;
     /// Retried attempt to its retries, empty markers. Key: parent id16 + child id16.
     ATTEMPT_RETRY_CHILD_INDEX: VaultMeta b"job:retry_child:v1:" Raw;
-    /// Run id to queued attempt ids. Key: u64be len + string + id16.
-    ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v1:" Raw;
+    /// Run id to queued attempt ids. Key: full-string BLAKE3 digest + id16.
+    ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v2:" Raw;
     /// The next tagging marker's sequence number, a part of its derived id, so no marker id is
     /// ever drawn twice, even once a settled marker has left the job ledger. Key: (). Value: u64be.
     TAGGING_MARKER_SEQUENCE: VaultMeta b"job:tagging_marker_seq:v1" Raw;
