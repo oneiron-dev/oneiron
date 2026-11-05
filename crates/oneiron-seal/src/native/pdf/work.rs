@@ -17,6 +17,8 @@
 //! engine-side and its checked output is lent in). Call entries
 //! (`inspect_in`/`prepare_in`) are added with the organ handlers.
 
+use std::sync::Arc;
+
 use crate::api::{SealObservations, SealStage};
 use crate::error::{InputInvalidCode, SealError};
 use crate::memory::{MemoryLedger, SealMemoryRefusal};
@@ -46,7 +48,7 @@ impl WorkError {
 /// `&Stage` in every ported signature.
 pub(crate) struct WorkLimits<'a> {
     /// The operation ledger: decode admission and buffer admission.
-    pub ledger: &'a MemoryLedger,
+    pub ledger: &'a Arc<MemoryLedger>,
     /// The invocation's counts (`Counter::*` via `note`).
     pub observed: &'a SealObservations,
 }

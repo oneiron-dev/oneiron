@@ -30,15 +30,15 @@ use crate::memory::MemoryLedger;
 /// takes is counted and given back when the scope ends, so the call holds
 /// the parse's peak, not its sum.
 struct Scope<'a> {
-    ledger: &'a MemoryLedger,
-    taken: AtomicU64,
+    ledger: &'a Arc<MemoryLedger>,
+    taken: Arc<AtomicU64>,
 }
 
 impl<'a> Scope<'a> {
-    fn new(ledger: &'a MemoryLedger) -> Self {
+    fn new(ledger: &'a Arc<MemoryLedger>) -> Self {
         Self {
             ledger,
-            taken: AtomicU64::new(0),
+            taken: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -52,10 +52,10 @@ impl<'a> Scope<'a> {
 
     /// This scope as the admission lopdf's load asks: takes pass through to
     /// the ledger and count here, releases pass through and stop counting.
-    fn admission(&self) -> Admission<'_> {
+    fn admission(&self) -> Admission {
         Admission {
-            ledger: self.ledger,
-            taken: Some(&self.taken),
+            ledger: Arc::clone(self.ledger),
+            taken: Some(Arc::clone(&self.taken)),
         }
     }
 }
@@ -68,23 +68,23 @@ impl Drop for Scope<'_> {
 
 /// The call's operation ledger as lopdf's decode admission: takes pass
 /// through, and count toward `taken` while a scope holds them.
-struct Admission<'a> {
-    ledger: &'a MemoryLedger,
-    taken: Option<&'a AtomicU64>,
+struct Admission {
+    ledger: Arc<MemoryLedger>,
+    taken: Option<Arc<AtomicU64>>,
 }
 
-impl DecodeAdmission for Admission<'_> {
+impl DecodeAdmission for Admission {
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError> {
-        <MemoryLedger as DecodeAdmission>::admit(self.ledger, bytes)?;
-        if let Some(taken) = self.taken {
+        <MemoryLedger as DecodeAdmission>::admit(self.ledger.as_ref(), bytes)?;
+        if let Some(taken) = self.taken.as_ref() {
             taken.fetch_add(u64::try_from(bytes).unwrap_or(u64::MAX), Ordering::Relaxed);
         }
         Ok(())
     }
 
     fn release(&self, bytes: usize) {
-        <MemoryLedger as DecodeAdmission>::release(self.ledger, bytes);
-        if let Some(taken) = self.taken {
+        <MemoryLedger as DecodeAdmission>::release(self.ledger.as_ref(), bytes);
+        if let Some(taken) = self.taken.as_ref() {
             let wide = u64::try_from(bytes).unwrap_or(u64::MAX);
             while taken
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
@@ -96,7 +96,7 @@ impl DecodeAdmission for Admission<'_> {
     }
 
     fn decoded(&self, bytes: usize) {
-        <MemoryLedger as DecodeAdmission>::decoded(self.ledger, bytes);
+        <MemoryLedger as DecodeAdmission>::decoded(self.ledger.as_ref(), bytes);
     }
 }
 
@@ -167,7 +167,7 @@ pub(crate) fn load(bytes: &[u8], limits: &WorkLimits) -> Result<Document, WorkEr
         }
     }
     let held = Admission {
-        ledger: limits.ledger,
+        ledger: Arc::clone(limits.ledger),
         taken: None,
     };
     let document = load_objects(bytes, limits, held)?;
@@ -190,7 +190,7 @@ pub(crate) fn load(bytes: &[u8], limits: &WorkLimits) -> Result<Document, WorkEr
 fn load_objects(
     bytes: &[u8],
     limits: &WorkLimits,
-    admission: Admission<'_>,
+    admission: Admission,
 ) -> Result<Document, WorkError> {
     let admission: Arc<dyn DecodeAdmission> = Arc::new(admission);
     let mut doc = Document::load_mem_with_options(

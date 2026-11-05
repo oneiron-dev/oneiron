@@ -506,7 +506,7 @@ fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> 
 fn work_limits<'a>(
     asker: &Asker,
     observed: &'a SealObservations,
-    ledger: &'a MemoryLedger,
+    ledger: &'a Arc<MemoryLedger>,
 ) -> WorkLimits<'a> {
     let _ = asker;
     WorkLimits { ledger, observed }
@@ -606,21 +606,23 @@ fn prepare(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError>
     );
     let mut values = std::collections::BTreeMap::new();
     for (id, value) in &args.values {
-        let (burned, heap) = match value {
-            WireValue::Text(text) => (BurnValue::Text(text.clone()), text.len()),
-            WireValue::Checked(checked) => (BurnValue::Checked(*checked), 0),
-            WireValue::Signature { image_ref } => (
-                BurnValue::Signature {
-                    image_ref: image_ref.clone(),
-                },
-                image_ref.len(),
-            ),
+        let heap = match value {
+            WireValue::Text(text) => text.len(),
+            WireValue::Checked(_) => 0,
+            WireValue::Signature { image_ref } => image_ref.len(),
         };
         if let Err(err) = admit(
             ledger.admit_len::<u8>(value_share.saturating_add(id.len()).saturating_add(heap)),
         ) {
             return failed(err);
         }
+        let burned = match value {
+            WireValue::Text(text) => BurnValue::Text(text.clone()),
+            WireValue::Checked(checked) => BurnValue::Checked(*checked),
+            WireValue::Signature { image_ref } => BurnValue::Signature {
+                image_ref: image_ref.clone(),
+            },
+        };
         values.insert(id.clone(), burned);
     }
     let raster_share = entry_share(
