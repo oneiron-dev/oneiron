@@ -29,7 +29,7 @@ pub(crate) enum SpendReserve {
     Reserved {
         debits: Vec<EffectorBudgetDebit>,
         basis: ConnectorSpendBasis,
-        rows: Vec<EffectorBudgetLocation>,
+        rows: Vec<EffectorSpendReservationRow>,
     },
     /// A preauthorizing row has no room for the price: the call is denied,
     /// and a row the owner set to suspend suspended its key. Nothing debits.
@@ -97,9 +97,10 @@ pub(crate) fn reserve_connector_spend_in_txn(
             .iter()
             .filter(|state| state.matched && preauthorizes(state.budget))
         {
-            rows.push(EffectorBudgetLocation {
+            rows.push(EffectorSpendReservationRow {
                 key_ref: *owner,
                 row: state.row,
+                approval: EffectorBudgetApproval::capture(record, state.row)?,
             });
             let Some(price) = row_price(state.budget, price) else {
                 continue;
@@ -139,7 +140,7 @@ pub(crate) fn reserve_connector_spend_in_txn(
     };
     let mut debits = Vec::new();
     if apply {
-        for (owner, _, states) in &mut sets {
+        for (owner, record, states) in &mut sets {
             for state in states
                 .iter_mut()
                 .filter(|state| state.matched && preauthorizes(state.budget))
@@ -155,6 +156,7 @@ pub(crate) fn reserve_connector_spend_in_txn(
                 debits.push(EffectorBudgetDebit {
                     key_ref: *owner,
                     row: state.row,
+                    approval: EffectorBudgetApproval::capture(record, state.row)?,
                     amount: price.minor_units,
                     at: now,
                 });
@@ -193,16 +195,23 @@ pub(crate) struct SpendReconciliation {
 pub(crate) fn reconcile_connector_spend_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    rows: &[EffectorBudgetLocation],
+    rows: &[EffectorSpendReservationRow],
     estimates: &[EffectorBudgetDebit],
     actual: &ConnectorSpendEstimate,
     now: u64,
 ) -> Result<SpendReconciliation> {
     let mut reconciliation = SpendReconciliation::default();
-    for location in rows {
+    for reserved in rows {
+        let location = EffectorBudgetLocation {
+            key_ref: reserved.key_ref,
+            row: reserved.row,
+        };
         let Some(record) = read_connector_key_in_txn(store, wtxn, &location.key_ref)? else {
             continue;
         };
+        if !reserved.approval.matches(&record, location.row) {
+            continue;
+        }
         let Some(budget) = budget_at(&record, location.row) else {
             continue;
         };
@@ -211,13 +220,14 @@ pub(crate) fn reconcile_connector_spend_in_txn(
         }
         let usage_key = (location.key_ref, location.row.usage_key());
         let mut usage = USAGE.get(store, wtxn, &usage_key)?.unwrap_or_default();
-        if let Some(estimate) = estimates
+        if let Some(estimate) = estimates.iter().find(|debit| {
+            debit.key_ref == location.key_ref
+                && debit.row == location.row
+                && debit.approval == reserved.approval
+        }) && let Some(position) = usage
+            .entries
             .iter()
-            .find(|debit| debit.key_ref == location.key_ref && debit.row == location.row)
-            && let Some(position) = usage
-                .entries
-                .iter()
-                .position(|entry| *entry == (estimate.at, estimate.amount))
+            .position(|entry| *entry == (estimate.at, estimate.amount))
         {
             usage.entries.remove(position);
             reconciliation.released.push(*estimate);
@@ -228,6 +238,7 @@ pub(crate) fn reconcile_connector_spend_in_txn(
             reconciliation.written.push(EffectorBudgetDebit {
                 key_ref: location.key_ref,
                 row: location.row,
+                approval: reserved.approval,
                 amount: actual.minor_units,
                 at: now,
             });
@@ -242,7 +253,7 @@ pub(crate) fn reconcile_connector_spend_in_txn(
                 wtxn,
                 &location.key_ref,
                 &record,
-                budget_exhausted_reason(location),
+                budget_exhausted_reason(&location),
                 now,
             )?;
         }

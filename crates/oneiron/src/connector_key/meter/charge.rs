@@ -360,6 +360,7 @@ fn charge_key_budgets(
             debits.push(EffectorBudgetDebit {
                 key_ref: *key_id,
                 row: state.row,
+                approval: EffectorBudgetApproval::capture(key, state.row)?,
                 amount: state.amount,
                 at: now,
             });
