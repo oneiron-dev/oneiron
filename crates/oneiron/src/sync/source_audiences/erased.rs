@@ -23,13 +23,17 @@
 
 use std::collections::BTreeSet;
 
-use loro::{CommitOptions, LoroDoc};
+use loro::json::{JsonOpContent, MapOp};
+use loro::{CommitOptions, ContainerID, ContainerType, LoroDoc, LoroValue, VersionVector};
 
-use super::{Carrier, SOURCE_AUDIENCES_MAP, carriers, encode_policy, holds_map, policy_key};
+use super::{
+    Carrier, SOURCE_AUDIENCES_MAP, carried_heads, carrier, carriers, encode_policy, holds_map,
+    policy_key,
+};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::WindowAddress;
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::source_audience::{self, SourceAudienceKind, SourceAudiencePolicy};
 use crate::sync::bridge::{BRIDGE_ORIGIN, persist_window_update_in_txn};
 use crate::sync::loro_support::{
@@ -64,9 +68,10 @@ pub(crate) fn erase_carriers_in_txn(
         if !holds_map(&doc) {
             continue;
         }
+        let map = doc.get_map(SOURCE_AUDIENCES_MAP);
         let mut doomed = Vec::new();
         let mut redacted = BTreeSet::new();
-        for (map_key, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
+        for (map_key, carried) in carriers(&map) {
             if let Carrier::Policy { id, policy } = carried
                 && (names(&policy, actor)
                     || source_audience::names_erased_actor_in(vault, wtxn, &policy)?)
@@ -75,20 +80,84 @@ pub(crate) fn erase_carriers_in_txn(
                 redacted.insert(id);
             }
         }
-        if doomed.is_empty() {
+        // A revision the live map dropped can still ride the window's
+        // history, or its shallow root: the same pin, scrub and compaction
+        // are owed for it.
+        let in_history = doc.is_shallow() || history_names(&doc, actor);
+        if doomed.is_empty() && !in_history {
             continue;
         }
+        // Each redacted policy's successor: the highest revision carried,
+        // redacted under its own next revision, merged into this vault's
+        // (the erase's own redaction of a held head stands beside it), then
+        // published as this vault now holds it.
+        let heads = carried_heads(&map);
         let mut successors = Vec::new();
         for id in &redacted {
-            if let Some(closure) = source_audience::published_closure_in(vault, wtxn, id)?
-                && let Some((_, head)) = closure.into_iter().find(|(policy, _)| policy == id)
+            if let Some(Some(head)) = heads.get(id) {
+                let candidate = if names(head, actor) {
+                    without_actor(head, actor)?
+                } else {
+                    head.clone()
+                };
+                // A conflict leaves the held policy standing.
+                source_audience::merge_policy_in_txn(vault, wtxn, id, &candidate)?;
+            }
+            if let Some(current) = source_audience::policy_in(vault, wtxn, id)?
+                && !names(&current, actor)
+                && !source_audience::names_erased_actor_in(vault, wtxn, &current)?
             {
-                successors.push((*id, head));
+                successors.push((*id, current));
             }
         }
         rewrite_stored_window_in_txn(vault, wtxn, &key, &doc, &doomed, &successors)?;
     }
     Ok(())
+}
+
+/// `policy` without `actor`, as its own next revision.
+fn without_actor(policy: &SourceAudiencePolicy, actor: &EntityId) -> Result<SourceAudiencePolicy> {
+    let mut redacted = policy.clone();
+    if redacted.created_by == Some(*actor) {
+        redacted.created_by = None;
+    }
+    match &mut redacted.kind {
+        SourceAudienceKind::Source { readers, .. } => {
+            readers.remove(actor);
+        }
+        SourceAudienceKind::Thread { shared_with, .. } => {
+            shared_with.remove(actor);
+        }
+    }
+    redacted.revision = policy
+        .revision
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("source audience policy revision"))?;
+    Ok(redacted)
+}
+
+/// Whether a policy revision naming `actor` was ever inserted in `doc`'s
+/// map, by the history it holds.
+fn history_names(doc: &LoroDoc, actor: &EntityId) -> bool {
+    let container = ContainerID::new_root(SOURCE_AUDIENCES_MAP, ContainerType::Map);
+    let history = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv());
+    history
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| {
+            op.container == container
+                && matches!(
+                    &op.content,
+                    JsonOpContent::Map(MapOp::Insert {
+                        key,
+                        value: LoroValue::Binary(bytes),
+                    }) if matches!(
+                        carrier(key, bytes),
+                        Ok(Carrier::Policy { policy, .. }) if names(&policy, actor)
+                    )
+                )
+        })
 }
 
 /// Whether `policy` names `actor`: a reader, a share or its creator.
@@ -100,11 +169,12 @@ fn names(policy: &SourceAudiencePolicy, actor: &EntityId) -> bool {
         }
 }
 
-/// Deletes the revisions under `doomed` from `doc`, the stored window `key`
-/// rebuilt, writes each of `successors` under its own revision, and stores
-/// the change in `wtxn` as one more pending update of the window, which it
-/// pins history-free and marks for a full resync, every queued send of it
-/// going but the delete-bearing. The history goes when the erasure sweep
+/// Writes each of `successors` under its own revision into `doc`, the
+/// stored window `key` rebuilt, deletes the revisions under `doomed`, and
+/// stores the change in `wtxn` as one more pending update of the window. It
+/// pins the window history-free and marks it for a full resync, every queued
+/// send of it going but the delete-bearing, whether or not the live map
+/// changed: a revision its history keeps goes when the erasure sweep
 /// compacts the window, which this owes it.
 fn rewrite_stored_window_in_txn(
     vault: &Vault,
@@ -116,22 +186,29 @@ fn rewrite_stored_window_in_txn(
 ) -> Result<()> {
     let before = doc.oplog_vv();
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
-    for map_key in doomed {
-        map_delete(&map, map_key)?;
-    }
+    let mut changed = false;
+    // The successors first: a revision goes only once its redaction rides.
     for (id, head) in successors {
         let map_key = policy_key(id, head.revision);
         if map_get_bytes(&map, &map_key).is_none() {
             map_insert_bytes(&map, &map_key, &encode_policy(head)?)?;
+            changed = true;
         }
     }
-    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    let change = export_updates_from(doc, &before)?;
+    for map_key in doomed {
+        map_delete(&map, map_key)?;
+        changed = true;
+    }
     let label = key.as_str().to_owned();
     HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &label, &[1u8])?;
     crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, &label)?;
     WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &label, &[1u8])?;
     crate::sweep::owed::owe_window_compaction_in_txn(vault, wtxn, key)?;
+    if !changed {
+        return Ok(());
+    }
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    let change = export_updates_from(doc, &before)?;
     // Last: the pending update marks the stored state vector stale too.
     persist_window_update_in_txn(vault, wtxn, &label, &change)
 }
