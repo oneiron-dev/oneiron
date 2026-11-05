@@ -54,41 +54,41 @@ pub const CODE_MEMORY_DEFAULT_PULL_LIMIT: usize = 32;
 pub const CODE_MEMORY_MAX_PULL_LIMIT: usize = 256;
 
 impl RawValue for CodeMemorySlot {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::codec::CodecError> {
         Ok(encode_slot(self))
     }
 
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::codec::CodecError> {
         Ok(decode_slot(bytes)?)
     }
 }
 
 impl RawValue for (CodeMemoryLocator, EntityId) {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::codec::CodecError> {
         Ok(encode_attachment_row(&self.0, self.1))
     }
 
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::codec::CodecError> {
         Ok(decode_attachment_row(bytes)?)
     }
 }
 
 impl RawValue for AlwaysOnCodeMemoryContract {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::codec::CodecError> {
         Ok(encode_always_on(self))
     }
 
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::codec::CodecError> {
         Ok(decode_always_on(bytes)?)
     }
 }
 
 impl RawValue for AnchorTransferRecord {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::codec::CodecError> {
         Ok(encode_transfer_record(self))
     }
 
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::codec::CodecError> {
         Ok(decode_transfer_record(bytes)?)
     }
 }

@@ -26,6 +26,8 @@ use oneiron_authority::authority::{WorldKeyId, WrapRecipient};
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+
+use crate::key_custody::head::wire::serde_bytes_vec;
 use oneiron_crypto::HybridPublicKey;
 
 use crate::key_custody::head::wire::EntryWire;

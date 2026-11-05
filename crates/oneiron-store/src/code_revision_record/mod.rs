@@ -5,8 +5,6 @@ use crate::code_document_values::CodeDocumentFrontier;
 pub use crate::code_tree_blob::CodeTreeBlob;
 use oneiron_contracts::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
-pub use tree_inventory::CodeTreeInventory;
-pub use types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
 
 /// One retired path of a tested queue revision: the exact predecessor it
 /// removed, its document if it had one, and the reviewed operation and
