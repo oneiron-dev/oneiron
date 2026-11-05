@@ -158,30 +158,38 @@ impl AnthropicMessagesTransport for AnthropicHttp {
     }
 }
 
-/// One physical send's native counts and its last attached receipt. Dropping
-/// this state leaves the lease's last partial measurement in place.
+/// One physical send's native counts and the calls its usage names. Dropping
+/// this state leaves each call's last partial measurement on the lease.
 struct InferenceUsage {
-    publisher: InferencePublisher,
+    lease: BudgetLease,
+    calls: Vec<ObservedCall>,
     model: Option<ModelId>,
     input: Option<u64>,
     cache_read: Option<u64>,
     cache_creation: Option<u64>,
     output: Option<u64>,
     saw_native_key: bool,
+}
+
+struct ObservedCall {
+    publisher: InferencePublisher,
     measured: Option<InferenceCallReceipt>,
 }
 
 impl InferenceUsage {
     fn new(lease: &BudgetLease, model: Option<ModelId>) -> Self {
         Self {
-            publisher: InferencePublisher::begin(lease),
+            lease: lease.clone(),
+            calls: vec![ObservedCall {
+                publisher: InferencePublisher::begin(lease),
+                measured: None,
+            }],
             model,
             input: None,
             cache_read: None,
             cache_creation: None,
             output: None,
             saw_native_key: false,
-            measured: None,
         }
     }
 
@@ -206,8 +214,7 @@ impl InferenceUsage {
             let Some(records) = records.as_array_mut() else {
                 return;
             };
-            let mut measured = None;
-            for record in records {
+            for (index, record) in records.iter_mut().enumerate() {
                 let Ok(mut receipt) =
                     serde_json::from_value::<InferenceCallReceipt>(record.clone())
                 else {
@@ -228,10 +235,7 @@ impl InferenceUsage {
                     }
                 }
                 receipt.model.clone_from(&self.model);
-                measured = Some(receipt);
-            }
-            if let Some(receipt) = measured {
-                self.publish(receipt);
+                self.publish(index, receipt);
             }
             return;
         }
@@ -246,7 +250,10 @@ impl InferenceUsage {
                 .and_then(|total| total.checked_add(creation)),
             _ => None,
         };
-        if logical_prompt_tokens.is_none() && self.output.is_none() && self.measured.is_none() {
+        if logical_prompt_tokens.is_none()
+            && self.output.is_none()
+            && self.calls[0].measured.is_none()
+        {
             return;
         }
         let receipt = InferenceCallReceipt {
@@ -266,19 +273,30 @@ impl InferenceUsage {
                 INFERENCE_CALLS_KEY.to_owned(),
                 JsonValue::Array(vec![record]),
             );
-            self.publish(receipt);
+            self.publish(0, receipt);
         }
     }
 
-    fn publish(&mut self, receipt: InferenceCallReceipt) {
-        self.publisher.partial(receipt.clone());
-        self.measured = Some(receipt);
+    fn publish(&mut self, index: usize, receipt: InferenceCallReceipt) {
+        // Native receipt lists are in physical-request order. Keep their raw
+        // positions, including invalid entries, stable across usage updates.
+        while self.calls.len() <= index {
+            self.calls.push(ObservedCall {
+                publisher: InferencePublisher::begin(&self.lease),
+                measured: None,
+            });
+        }
+        let call = &mut self.calls[index];
+        call.publisher.partial(receipt.clone());
+        call.measured = Some(receipt);
     }
 
     fn finish(&self) {
         // The lower decoder also finishes when no delta named a stop reason.
-        if let Some(receipt) = &self.measured {
-            self.publisher.finish(receipt.clone());
+        for call in &self.calls {
+            if let Some(receipt) = &call.measured {
+                call.publisher.finish(receipt.clone());
+            }
         }
     }
 }
