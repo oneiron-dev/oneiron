@@ -396,27 +396,33 @@ pub(super) async fn view(
     let owner = super::owner_routes::owner(&auth, &server).ok();
     let view = blocking_read(move || {
         let vault = server.vault();
-        let reader = if let Some(owner) = owner.as_ref() {
-            let action = super::host_action::host_action_of(vault, &auth)
-                .transpose()
-                .map_err(super::host_action::host_action_refusal)?;
-            let key = vault
-                .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
-                .map_err(|error| core_engine_error("artifact read failed", error))?;
-            Some(vault.scoped_read(key.for_destination(&auth.destination())))
-        } else {
-            None
+        let caveat = caveat_lane(vault, &auth)?.map(|lane| lane.with_artifact_records_cover(&[id]));
+        let view = match caveat.as_ref() {
+            None => vault.blob_artifact_view_for_reader(&id, None, None),
+            // A records caveat covers this artifact's own version rows,
+            // while every other check still judges each row (FIX 8245).
+            Some(lane) => vault.blob_artifact_view_admitted_for_reader(&id, None, lane),
+        }
+        .map_err(|error| core_engine_error("artifact read failed", error))?;
+        if view.is_some() {
+            return Ok(view);
+        }
+        let Some(owner) = owner.as_ref() else {
+            return Ok(None);
         };
-        let view = match caveat_lane(vault, &auth)? {
-            None => vault.blob_artifact_view_for_reader(&id, owner.as_ref(), reader.as_ref()),
-            // A tree the lane does not admit whole reads as absent. A
-            // records caveat that names the artifact covers its own version
-            // rows for the records check alone (FIX 8245): every other check
-            // still judges each of them.
-            Some(lane) => {
-                let lane = lane.with_artifact_records_cover(&[id]);
-                vault.blob_artifact_view_admitted_for_reader(&id, owner.as_ref(), &lane)
-            }
+        let action = super::host_action::host_action_of(vault, &auth)
+            .transpose()
+            .map_err(super::host_action::host_action_refusal)?;
+        let key = vault
+            .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+            .map_err(|error| core_engine_error("artifact read failed", error))?;
+        let reader = vault
+            .scoped_read(key.for_destination(&auth.destination()))
+            .with_artifact_records_cover(&[id]);
+        let view = if caveat.is_some() {
+            vault.blob_artifact_view_admitted_for_reader(&id, Some(owner), &reader)
+        } else {
+            vault.blob_artifact_view_for_reader(&id, Some(owner), Some(&reader))
         };
         view.map_err(|error| core_engine_error("artifact read failed", error))
     })
@@ -560,26 +566,31 @@ async fn export(
                 return Ok(None);
             }
         }
-        let reader = if let Some(owner) = owner.as_ref() {
+        let file = vault
+            .export_blob_artifact_for_reader(&id, Some(pinned), sight, None, None)
+            .map_err(failed)?;
+        let file = if file.is_some() {
+            file
+        } else if let Some(owner) = owner.as_ref() {
             let action = super::host_action::host_action_of(vault, &auth)
                 .transpose()
                 .map_err(super::host_action::host_action_refusal)?;
             let key = vault
                 .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
-                .map_err(|error| core_engine_error("artifact export failed", error))?;
-            Some(vault.scoped_read(key.for_destination(&auth.destination())))
+                .map_err(failed)?;
+            let reader = vault.scoped_read(key.for_destination(&auth.destination()));
+            vault
+                .export_blob_artifact_for_reader(
+                    &id,
+                    Some(pinned),
+                    sight,
+                    Some(owner),
+                    Some(&reader),
+                )
+                .map_err(failed)?
         } else {
             None
         };
-        let file = vault
-            .export_blob_artifact_for_reader(
-                &id,
-                Some(pinned),
-                sight,
-                owner.as_ref(),
-                reader.as_ref(),
-            )
-            .map_err(failed)?;
         let by = bound.or(host_owner);
         if let (Some(file), Some(by)) = (&file, by) {
             vault
