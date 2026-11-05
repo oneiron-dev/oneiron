@@ -23,28 +23,32 @@ use oneiron::attempt_queue::AttemptQueue;
 use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-use super::core::SyncServer;
+use super::core::{BroadcastPayload, SyncServer};
 
-/// A serve loop's background tasks: the lifecycle scheduler, then the board
-/// publisher. Stopped together, in that order, once serving ends.
+/// A serve loop's background tasks: the lifecycle scheduler, the board
+/// publisher, and the cloud erase watch. Stopped together, in that order,
+/// once serving ends.
 pub(crate) struct ServeBackground {
     lifecycle: super::lifecycle::LifecycleScheduler,
     board: tokio::task::JoinHandle<()>,
+    cloud_erase_watch: tokio::task::JoinHandle<()>,
 }
 
 impl ServeBackground {
     /// Stops the scheduler, waiting out a housekeeping pass in flight, then
-    /// aborts the publisher and waits for it to end.
+    /// aborts the publisher and the erase watch and waits for both to end.
     pub(crate) async fn stop(self) {
         self.lifecycle.stop().await;
         self.board.abort();
         let _ = self.board.await;
+        self.cloud_erase_watch.abort();
+        let _ = self.cloud_erase_watch.await;
     }
 }
 
 impl SyncServer {
     /// Starts the lifecycle scheduler, its housekeeping passes admitted
-    /// through `admit`, and the board publisher.
+    /// through `admit`, the board publisher, and the cloud erase watch.
     pub(crate) fn spawn_serve_background(
         self: &Arc<Self>,
         admit: super::HousekeepingAdmission,
@@ -52,6 +56,7 @@ impl SyncServer {
         ServeBackground {
             lifecycle: self.spawn_lifecycle_scheduler(admit),
             board: self.spawn_board_publisher(),
+            cloud_erase_watch: self.spawn_cloud_erase_watch(),
         }
     }
 
@@ -68,6 +73,44 @@ impl SyncServer {
                 Arc::clone(&server).publish_board_forever(updates),
                 server.publish_reviews_forever(commits),
             );
+        })
+    }
+
+    /// Starts the cloud device-flow erase watch (FIX 10947 S1): a pending
+    /// flow whose owner's PERSON hard-erase committed ends on the next
+    /// wake instead of staying for a dead owner. It subscribes before it
+    /// returns, so no erase committed after this call is missed, and its
+    /// first pass revalidates only flows held now. Only exact
+    /// handle-plus-actor pairs take, never the global cancel. Owned like
+    /// the board publisher: aborted in [`ServeBackground::stop`].
+    pub(crate) fn spawn_cloud_erase_watch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let mut inbox = self.broadcast_tx.subscribe();
+        let server = Arc::downgrade(self);
+        tokio::spawn(async move {
+            if !revalidate_cloud_flows(&server, None).await {
+                return;
+            }
+            loop {
+                match inbox.recv().await {
+                    Ok(BroadcastPayload::LocalDocs(entities)) => {
+                        if !revalidate_cloud_flows(&server, Some(entities)).await {
+                            return;
+                        }
+                    }
+                    Ok(BroadcastPayload::Resync { .. }) => {
+                        if !revalidate_cloud_flows(&server, None).await {
+                            return;
+                        }
+                    }
+                    Ok(BroadcastPayload::Frame(..)) => {}
+                    Err(RecvError::Lagged(_)) => {
+                        if !revalidate_cloud_flows(&server, None).await {
+                            return;
+                        }
+                    }
+                    Err(RecvError::Closed) => return,
+                }
+            }
         })
     }
 
@@ -188,6 +231,43 @@ impl SyncServer {
             }
         }
     }
+}
+
+/// One cloud erase-watch pass over this server's held device flows:
+/// `None` revalidates every held flow (startup, lag, resync); `Some`
+/// intersects the held actors with the woken entities first. The
+/// snapshot, the committed-marker probes and the exact takes all run on
+/// the blocking pool: never the flows guard across a vault read, and
+/// never sync LMDB work on an async worker. `false` means the server is
+/// gone and the watch ends.
+async fn revalidate_cloud_flows(
+    server: &std::sync::Weak<SyncServer>,
+    filter: Option<Vec<oneiron::EntityId>>,
+) -> bool {
+    let Some(server) = server.upgrade() else {
+        return false;
+    };
+    let outcome = tokio::task::spawn_blocking(move || {
+        let held = server.cloud_registration.snapshot_held_flows();
+        for (handle, actor) in held {
+            if let Some(want) = &filter {
+                if !want.contains(&actor) {
+                    continue;
+                }
+            }
+            server
+                .cloud_registration
+                .take_flow_if_owner_erased(server.vault(), &handle, &actor);
+        }
+    })
+    .await;
+    if let Err(error) = outcome {
+        tracing::warn!(
+            panicked = error.is_panic(),
+            "cloud erase watch pass did not finish"
+        );
+    }
+    true
 }
 
 /// Whether a pumped run's own board reader may be told about `task` now
