@@ -82,7 +82,7 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a call's credential is checked again: a slip revoked mid-call,
 /// or a managed owner no longer the vault's live owner, ends the call
 /// within this.
-const LIVENESS_EVERY: Duration = Duration::from_secs(5);
+pub(super) const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// Brain events the host holds before the brain waits.
 const BRAIN_QUEUE: usize = 256;
 /// A roster ref is a speaker entry's session key, which holds this many

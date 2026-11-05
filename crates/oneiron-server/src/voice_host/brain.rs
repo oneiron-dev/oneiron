@@ -308,9 +308,13 @@ impl ChatBrain {
                 )
                 .map_err(refused)?;
         }
-        let admitted = ai
+        let mut admitted = ai
             .admit_role(vault, CHAT_ROLE, chat_request(&self.seat, messages))
             .map_err(refused)?;
+        if let Some(phone) = &self.bindings.phone {
+            phone.admitted_media_agent(vault).map_err(refused)?;
+            admitted.ladder = Arc::new(admitted.ladder.for_model_list(phone.models())?);
+        }
         let line = format!(
             "voice:{}:{}",
             request.session_ref,
@@ -329,6 +333,10 @@ impl ChatBrain {
         // read from (FIX 6935).
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
+        let run = match &self.bindings.phone {
+            Some(phone) => run.initiated_by(Some(phone.agent())),
+            None => run,
+        };
         let (stream, binding) = admitted
             .ladder
             .stream_recorded(&run, admitted.request.clone(), None)

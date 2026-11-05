@@ -111,6 +111,12 @@ with the native lifecycle, approval and enabled predicate before its instruction
 actual model list leave the read lane. There is no default-agent or empty-list substitute.
 This getter does not activate an answering session.
 
+The call freezes instructions and the native model list from one admitted definition
+body. The phone-bound chat brain and host-call backend attach B as the actual caller on
+their existing funded runs, and filter the native ladder through that same frozen list.
+Credential authority, source provenance and payer identity remain separate. Ordinary
+sessions keep their original callers, routes, policy admission and funding.
+
 The call-local media entry points attach the actual receiving agent to the same
 admitted run and filter its ladder through the frozen native model list, including
 owner-selected fallback rungs. Voice routing filters eligible backend bindings before
