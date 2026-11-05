@@ -43,6 +43,10 @@ pub(super) async fn handle_sync_message(
             super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
                 .map(ControlFlow::Continue)
         }
+        SyncMessage::SealedUpdate(payload) => {
+            super::sealed_updates::handle(server, conn_id, conn_state, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
         SyncMessage::Doc {
             entity,
             kind,
