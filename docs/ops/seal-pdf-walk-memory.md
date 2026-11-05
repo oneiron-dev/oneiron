@@ -17,7 +17,10 @@ keeps its existing invalid outcome on every path.
 
 Not covered here: per-chain `seen` sets, the lexer, CMap and decoder
 heaps, third-party heaps, allocator slack, and retained outputs. No
-whole-heap, compile, or runtime closure is claimed. Credits for these
-containers follow the existing admitted-allocation model and remain on
-the operation ledger until the operation ends, even after a local
-container drops. Scoped credit return for repeated walks remains open.
+whole-heap, compile, or runtime closure is claimed. FIX 14217: these
+walk containers return their own credits when they drop. `walk::pages`
+yields its output held (`Held`) until the caller drops it, and its open
+levels and walked set return their net bytes on the success path;
+`revision_ends` yields its ends held, and returns their net bytes on
+its ordinary no-proof exits. Refusal exits are unchanged: the operation
+ends and every reservation returns with it.
