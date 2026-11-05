@@ -15,9 +15,9 @@
 //! through `vault.diagnostics()` with no further change.
 
 use crate::failure_signals::FailureSignalCounts;
-use crate::store::gate_metrics::GateMetrics;
 use crate::store::attempt_cleanup::AttemptQueueCleanupMetrics;
 use crate::store::attempt_cleanup::AttemptQueueCleanupMetricsSnapshot;
+use crate::store::gate_metrics::GateMetrics;
 use crate::store::text_index::diagnostics::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
 
 use super::replay_only_commits::ReplayOnlyCommits;

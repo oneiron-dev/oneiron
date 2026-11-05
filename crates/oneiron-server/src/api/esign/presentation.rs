@@ -176,14 +176,9 @@ pub(super) async fn editor_script() -> Response {
     )
         .into_response()
 }
-/// `POST /sign/geometry`'s body limit with no editor header: the route's
-/// `DefaultBodyLimit`, which the capability-free door also reads its body
-/// within (FIX 12304).
-pub(super) const GEOMETRY_BODY_BYTES: usize = 16 * 1024 * 1024;
-
 /// `POST /sign/geometry`: byte-only inspection, no template parse, blob
 /// write, or outbound effects. With no editor header it is the door it was:
-/// the PDF under the route's 16 MiB body limit ([`GEOMETRY_BODY_BYTES`]) and
+/// the PDF under the route's 16 MiB body limit ([`ANONYMOUS_GEOMETRY_BODY_BYTES`]) and
 /// `EditorBudget`'s window, inspected as an admitted editor's is (FIX
 /// 12230); the length it declares, or that limit when it declares none, is
 /// leased before its body is read into it (FIX 12304), and its parse waits
@@ -206,14 +201,14 @@ pub(super) async fn upload_geometry(
         EditorIngress::Anonymous => {
             let (parts, body) = request.into_parts();
             let permit = parts.extensions.get::<Arc<OwnedSemaphorePermit>>().cloned();
-            let limit = GEOMETRY_BODY_BYTES as u64;
+            let limit = ANONYMOUS_GEOMETRY_BODY_BYTES as u64;
             let leased = match super::ingress::declared_length(&parts.headers) {
                 Some(declared) if declared > limit => return super::ingress::body_past_limit(),
                 Some(declared) => declared,
                 None => limit,
             };
             let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
-            let lease =
+            let mut lease =
                 match tokio::task::spawn_blocking(move || memory.lease(leased, deadline)).await {
                     Ok(Ok(lease)) => lease,
                     Ok(Err(refusal)) => return super::ingress::memory_refused(refusal),
@@ -223,6 +218,7 @@ pub(super) async fn upload_geometry(
                 Ok(pdf) => pdf,
                 Err(response) => return response,
             };
+            lease.materialized(leased, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
             let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
             return match tokio::task::spawn_blocking(move || {
                 let _permit = permit;

@@ -63,6 +63,8 @@ pub(super) fn inspected_from_vault(
             Err(_) => return Err(super::refused()),
         }
     };
+    let reserved = lease.bytes();
+    lease.materialized(reserved, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
     inspected(lease, deadline, &pdf, stream_decode_bytes)
 }
 
