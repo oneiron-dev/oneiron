@@ -45,8 +45,9 @@ reserve does not change. An embedded host may lend no disk floor.
 
 The disk claim admits the exact encoded metadata and raw payload lengths after
 the transaction's consume-once and deletion preflights, before either put. It
-stays held through the grouped commit. Only a successful durable return marks it
-landed; errors release the pending claim. A measured floor reports `StorageFull`
+stays held through the grouped commit. The attempt's durable own-commit witness
+marks it landed even if a later postcommit action reports an error. Uncommitted
+errors release the pending claim. A measured floor reports `StorageFull`
 with its measured values. A measurement error remains its original I/O error.
 
 This disk budget covers encoded values, not LMDB keys, pages, splits, freelists
@@ -75,7 +76,31 @@ actual charges instead of keeping retry credit until the environment closes.
 Caller buffers release allocated bytes separately, without consuming native
 pending reservations. All of these transitions use the original machine line.
 
-These are lower-level source APIs. The held writer does not yet attach a native
-page account or replay a denied write. Root commit phase, grouped-writer order,
-native write/disk costs and the excluded native allocations still need their
-own integration. Their presence is not complete FIX8125 or runtime proof.
+## Native held-write attempts
+
+A hosted held write uses the encoder's same shared lease for native dirty-page
+heap buffers. Its opaque write takes its ordinary place on the group queue.
+Detached writes ahead of it commit before the account attaches to a fresh root;
+the leader retains their Vault handles until its final handoff. The child write
+inherits the account, and the root's commit retains it too. Existing unaccounted
+callers keep their original group behavior.
+
+Native callbacks assign only already admitted pending room. A denied allocation
+returns through the entire write door before the caller waits for more room on
+the same lease. Each new attempt repeats the original consume-once, live-artifact
+and positive-deletion checks. Only a real native admission denial, an error and
+no successful own root commit permit a replay. A native malloc failure without
+an admission denial is its ordinary error. The commit witness is set immediately
+after the root commits, before callbacks or fallible postcommit work, so a later
+error never replays already durable rows.
+
+The real mesh stop interrupts these untimed admission waits. The native scope
+finishes only after its writer and growth waits return. The encoded Vec frees
+before its allocated charge is released; cached native buffers keep their own
+charge until their physical free callback.
+
+This covers the native dirty-page malloc request, including its actual heap-only
+prefix. It does not cover IDL/control allocations, encryption stash, mmap, read
+pages, every metadata/overlay copy or native physical-disk/CoW costs. The disk
+claim above still covers encoded values only. This is not complete FIX8125,
+whole-heap coverage or runtime proof.

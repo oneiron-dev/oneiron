@@ -176,6 +176,27 @@ impl Vault {
     /// A ref already settled, already waiting as a proposal, or already
     /// held is refused.
     pub fn hold_organ_wait(&self, wait: &OrganWait, reason: &str) -> Result<OrganWaitView> {
+        self.hold_organ_wait_with_account(wait, reason, None)
+    }
+
+    /// The same held-call write with native dirty-page heap admission. The
+    /// caller admits room and decides any replay outside this entire door,
+    /// using a fresh attempt's durable-commit witness, not its error alone.
+    pub fn hold_organ_wait_accounted(
+        &self,
+        wait: &OrganWait,
+        reason: &str,
+        attempt: &crate::store::native_write::NativeWriteAttempt,
+    ) -> Result<OrganWaitView> {
+        self.hold_organ_wait_with_account(wait, reason, Some(attempt))
+    }
+
+    fn hold_organ_wait_with_account(
+        &self,
+        wait: &OrganWait,
+        reason: &str,
+        attempt: Option<&crate::store::native_write::NativeWriteAttempt>,
+    ) -> Result<OrganWaitView> {
         validate_pending_ref(&wait.run_ref)?;
         if wait.organ.trim().is_empty() || wait.verb.trim().is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -203,7 +224,7 @@ impl Vault {
         let key = settlement_key_parts(&wait.artifact_id, &wait.run_ref);
         let stored_bytes = WAITS.encoded_len(&row)?.saturating_add(row.call_len);
         let mut disk = None;
-        self.with_write_txn_grouped(|wtxn| {
+        let write = |wtxn: &mut heed::RwTxn<'_>| {
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
             }
@@ -222,10 +243,22 @@ impl Vault {
             disk = self.hold_storage_disk(stored_bytes)?;
             CALLS.put_bytes(&self.store, wtxn, &key, &wait.call)?;
             WAITS.put(&self.store, wtxn, &key, &row)
-        })?;
-        if let Some(disk) = disk {
+        };
+        let written = match attempt {
+            Some(attempt) => self.write_txn_door_classed_accounted(
+                crate::store::Callback::Opaque,
+                crate::store::BackupWriteClass::Content,
+                Some(attempt),
+                write,
+            ),
+            None => self.with_write_txn_grouped(write),
+        };
+        if (written.is_ok() || attempt.is_some_and(|attempt| attempt.own_rows_committed()))
+            && let Some(disk) = disk
+        {
             disk.landed();
         }
+        written?;
         Ok(row.view(wait.artifact_id))
     }
 
