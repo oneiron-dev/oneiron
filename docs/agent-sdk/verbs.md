@@ -249,6 +249,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.fork`
 - `vault.skills.rules.set`
 - `vault.skills.code_auto_install.set`
+- `vault.skills.fit.set`
 - `vault.skills.permissions.approve`
 - `vault.skills.optimize.start`
 - `vault.skills.optimize.result`
@@ -366,6 +367,7 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.baseline`
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
+- `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`
 - `vault.federation.burst.disposition`
 - `vault.federation.burst.review`
@@ -436,6 +438,7 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
 - `vault.records.erase_sweep`
+- `vault.outbound_calls.request.erase`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`

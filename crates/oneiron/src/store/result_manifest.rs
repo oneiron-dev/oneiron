@@ -7,9 +7,8 @@ pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
 pub(crate) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:blake3:";
 pub(crate) const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
 
-/// The preview text of a body the secret scan marked.
-pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
-    "[preview withheld: the secret scan found a secret in this result]";
+/// The preview text of a body withheld without a specific reason.
+pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str = "[preview withheld]";
 
 /// Compact preview stored in a replay record beside a raw output handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
