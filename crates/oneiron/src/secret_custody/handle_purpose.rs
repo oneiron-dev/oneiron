@@ -71,7 +71,7 @@ impl Vault {
             let receipt = format!("gate:{}", decision.to_hex());
             let purpose = if let Some(text) = purpose {
                 PURPOSE.put(
-                    &self.store,
+                    self,
                     txn,
                     &custody,
                     &SecretHandlePurpose {
