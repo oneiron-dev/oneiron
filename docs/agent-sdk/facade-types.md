@@ -5544,7 +5544,7 @@ export type RepoSnapshotsReadInput = { repo: EntityId; portable_repo?: RepoPorta
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsReadOutput` */
 export type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string }
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDefinitionsInput` */
-export type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string }
+export type RepoSymbolsDefinitionsInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; name: string }
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDefinitionsOutput` */
 export type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] }
 /** `oneiron::memory::repo_doors::types::RepoViewsGetInput` */

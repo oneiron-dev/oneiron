@@ -159,6 +159,17 @@ impl Vault {
         target: &RepoTarget,
         intent: RepoAccessIntent,
     ) -> Result<RepoRunAdmission> {
+        self.admit_repo_run_target_in_txn(txn, binding, target, intent, None)
+    }
+
+    fn admit_repo_run_target_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        target: &RepoTarget,
+        intent: RepoAccessIntent,
+        portable: Option<&RepoPortableId>,
+    ) -> Result<RepoRunAdmission> {
         let Some((record, task)) = binding.lease.leased_task_in_txn(self, txn)? else {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         };
@@ -169,14 +180,14 @@ impl Vault {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         }
         let (actor, class) = (binding.actor.entity_ref(), binding.actor.actor_class());
-        let admitted = match intent {
-            RepoAccessIntent::Read => {
-                self.admit_repo_read_in_txn(txn, actor, class, target.repo, target)?
-            }
-            RepoAccessIntent::Edit => {
-                self.admit_repo_edit_in_txn(txn, actor, class, target.repo, target)?
-            }
-        };
+        let admitted = self.admit_repo_in_txn(
+            txn,
+            actor,
+            class,
+            target.repo,
+            portable,
+            Some((target, intent)),
+        )?;
         let membership = match admitted {
             Ok(membership) => membership,
             Err(refused) => return Ok(Err(refused)),
@@ -214,7 +225,8 @@ impl Vault {
         };
         let selected = resolved.unwrap_or(fallback);
         let target = repo_target(selected, git_ref, paths);
-        let admitted = self.admit_repo_run_in_txn(txn, binding, &target, intent)?;
+        let admitted =
+            self.admit_repo_run_target_in_txn(txn, binding, &target, intent, portable)?;
         Ok((selected, resolved.is_some(), admitted))
     }
 }

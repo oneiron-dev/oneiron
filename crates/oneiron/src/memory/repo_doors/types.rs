@@ -60,7 +60,13 @@ pub struct RepoSnapshotsReadInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSymbolsDefinitionsInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
     pub snapshot: String,
