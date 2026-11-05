@@ -35,6 +35,7 @@ pub mod code_document_values;
 pub mod code_import_manifest;
 pub mod code_memory_values;
 pub mod code_promotion_gap;
+pub mod code_repo_registration;
 pub mod code_revision_identity;
 pub mod code_revision_record;
 pub mod code_snapshot;
