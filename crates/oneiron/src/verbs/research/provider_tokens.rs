@@ -38,6 +38,8 @@ pub struct ResearchProviderTokenSnapshotWire {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResearchProviderRunTokenObservationWire {
     pub instance: String,
+    /// Actual executed caller, when its native lease supplied one; not authority.
+    pub owner_attempt: Option<String>,
     pub entry_recorded: bool,
     pub model_future_returned: bool,
 }
@@ -61,6 +63,8 @@ impl From<crate::llm::ProviderTokenMeasurement> for ResearchProviderTokenMeasure
 pub struct ResearchProviderLeaseTokenObservationWire {
     /// Actual RunReceipt instance, in hex. This is not an AttemptId.
     pub instance: String,
+    /// This permit's executed caller, not an attribution of scope aggregates.
+    pub owner_attempt: Option<String>,
     pub lease: String,
     pub admitted_receipt: bool,
     pub dispatched_receipt: bool,
@@ -136,6 +140,9 @@ pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopePr
                                             instance: crate::entity_id::bytes_to_hex_lower(
                                                 lease.instance.as_bytes(),
                                             ),
+                                            owner_attempt: lease.owner_attempt.map(|attempt| {
+                                                crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
+                                            }),
                                             lease: lease.lease,
                                             admitted_receipt: lease.admitted_receipt,
                                             dispatched_receipt: lease.dispatched_receipt,
@@ -173,6 +180,9 @@ pub(super) fn read(vault: &Vault, root: AttemptId) -> Option<Vec<ResearchScopePr
                                             instance: crate::entity_id::bytes_to_hex_lower(
                                                 run.instance.as_bytes(),
                                             ),
+                                            owner_attempt: run.owner_attempt.map(|attempt| {
+                                                crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
+                                            }),
                                             entry_recorded: run.entry_recorded,
                                             model_future_returned: run.model_future_returned,
                                         })

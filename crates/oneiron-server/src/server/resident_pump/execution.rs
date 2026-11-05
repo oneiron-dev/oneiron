@@ -552,9 +552,12 @@ fn enter_run(
         ))
         // FIX 7181: the operator's own Git door base wins over the run's.
         .with_git_door_base(door.git_door_base());
-    let meter = spend
+    let mut meter = spend
         .map(|scope| ScopeMeter::open(vault, scope))
         .transpose()?;
+    if let Some(meter) = &mut meter {
+        meter.lease.set_owner_attempt(status.attempt.id);
+    }
     // The line the entry's model calls spend on: its scope's meter and the
     // payer it bills, else the provider's.
     let line = match &meter {
