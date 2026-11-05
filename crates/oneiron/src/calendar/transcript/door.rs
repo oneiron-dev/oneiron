@@ -85,8 +85,12 @@ impl Memory<'_> {
                 // import MACHINE's system-class policy; the NOTE is born in
                 // its source's world.
                 let world = super::source_world(vault, source)?;
-                let receipt =
-                    self.author_take_in_world(TakeTarget::Subject(source), text, world)?;
+                let receipt = self.author_take_in_world_at(
+                    TakeTarget::Subject(source),
+                    text,
+                    world,
+                    input.arrived_at_ms / 1_000,
+                )?;
                 TranscriptIngestOutcome::NoteFallback {
                     note_ref: EntityId::from_hex(&receipt.id_hex)?,
                 }
@@ -148,6 +152,7 @@ impl Memory<'_> {
                             machine,
                         },
                         false,
+                        Some(&current),
                     )?;
                     if let (Some(meeting), TranscriptIngestOutcome::Session { session_ref, .. }) =
                         (meeting, &outcome)

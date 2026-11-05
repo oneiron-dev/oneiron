@@ -324,6 +324,9 @@ impl Vault {
         crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
             crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
         )?;
+        let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut *wtxn, *id);
+        crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
+        crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = captured.refs() {
@@ -336,7 +339,7 @@ impl Vault {
         if let Some(corrupt) = captured.corrupt() {
             changed_documents.extend(self.scrub_corrupt_capture_in_txn(wtxn, corrupt, false)?);
         }
-        if let Some((request_id, tombstone_reason)) =
+        let recovered_authority_act = if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
         {
             let completed_local_authority =
@@ -352,7 +355,10 @@ impl Vault {
                     "remote replay completed a staged local deletion authority record"
                 );
             }
-        }
+            completed_local_authority.and_then(|(_, act)| act)
+        } else {
+            None
+        };
         let applied_at = mutation_recorded_at;
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
@@ -379,13 +385,26 @@ impl Vault {
             sweep_extras(&captured),
         )?;
         if let Some(request) = decoded.request_id.as_ref() {
-            // A local shared act claimed this request before its purge was
-            // interrupted: this recovery's receipt is that act's receipt.
-            self.bind_recovered_act_receipt_in_txn(
-                wtxn,
-                &uuid::Uuid::from_bytes(*request).to_string(),
-                receipt_id.to_hex(),
-            )?;
+            let request_text = uuid::Uuid::from_bytes(*request).to_string();
+            let recovered_act = recovered_authority_act
+                .map(EntityId::from_bytes)
+                .transpose()?
+                .map(|act| act.to_hex());
+            if let Some(act) = recovered_act.as_deref()
+                && self.pending_authority_act_in_txn(wtxn, act)?.is_some()
+            {
+                // Only an original act still present can be claimed. An owner
+                // may have withdrawn it after interrupted publication; replay
+                // then keeps the ordinary receipt binder, not a recreated act.
+                self.claim_completed_authority_act_in_txn(
+                    wtxn,
+                    act,
+                    request_text,
+                    Some(receipt_id.to_hex()),
+                )?;
+            } else {
+                self.bind_recovered_act_receipt_in_txn(wtxn, &request_text, receipt_id.to_hex())?;
+            }
             clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
         }
         Ok((

@@ -131,7 +131,7 @@ fn regenerates_target_step(
         return Ok(false);
     };
     let Ok(capsule) = target_step(
-        step_replay_capsules_in_txn(vault, txn, attempt)?,
+        &step_replay_capsules_in_txn(vault, txn, attempt)?,
         candidate.target,
     ) else {
         return Ok(false);

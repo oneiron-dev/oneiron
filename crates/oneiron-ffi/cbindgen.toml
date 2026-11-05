@@ -14,7 +14,8 @@ header = """
  * to free(), and do not free the same value twice.
  *
  * Boundary validation: EntityId inputs must be exactly 16 bytes. Text queries
- * are capped at 8 KiB and dimensions at 16384; a search limit is served whole.
+ * are capped at 8 KiB; dimensions are the vault's configured width with no
+ * ceiling; a search limit is served whole.
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
@@ -73,6 +74,7 @@ include = [
   "oneiron_vault_bind",
   "oneiron_vault_free",
   "oneiron_vault_health_json",
+  "oneiron_vault_native_limit_questions",
   "oneiron_vault_put_entity",
   "oneiron_vault_batch_put_entities",
   "oneiron_vault_get_entity",
