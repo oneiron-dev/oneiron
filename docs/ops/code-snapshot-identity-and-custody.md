@@ -1,7 +1,8 @@
 # Code snapshot identity and custody views
 
-A committed local import uses the repository discovered by Git. Passing a folder
-inside that repository still imports the enclosing commit tree, not a subtree.
+A full owner or trusted local import uses the repository discovered by Git.
+Passing a folder inside that repository still imports the enclosing commit tree,
+not a subtree.
 The snapshot's local repository path names that discovered worktree root (or the
 Git directory of a bare repository). If the discovered worktree cannot be
 canonicalized, the same discovered Git directory keeps commit-only imports
@@ -11,9 +12,13 @@ before. No repository registration, grant
 or editable whitelist is created by an import.
 
 The local repository path is data identity. It does not replace the caller's
-native owner or run admission. Run imports still select only the paths their
-existing grant admits and re-check that admission in the final writer. Custody
-uses the same snapshot identity when it anchors absolute file declarations.
+native owner or run admission. Run imports retain the exact existing admitted
+repository namespace: changing it would break their pinned read's repository
+match. They still select only the paths their existing grant admits and re-check
+that admission in the final writer. Custody uses the same snapshot identity when
+it anchors absolute file declarations. Normalizing a run's admitted namespace
+and custody root together remains separate work; no read alias or broader grant
+is introduced here.
 
 The custody lift can quarantine a file of a snapshot that was stored earlier.
 Its stored manifest and fork hash stay unchanged. The mount reads that file as
