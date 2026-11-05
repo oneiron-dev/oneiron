@@ -71,9 +71,9 @@ impl Vault {
             // A credential erase this write stages finishes after it (KS-6 part 2).
             let credentials_before = crate::store::credential_erases_staged();
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-            let (result, postcommit) = {
+            let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+            let result = {
                 let _active_write_txn = crate::store::active_write_txn_guard();
-                let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
                 // A key this write's mask found raises its notice here.
                 match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)
@@ -83,7 +83,7 @@ impl Vault {
                             .map_err(E::from)?;
                         Ok(result)
                     }) {
-                    Ok(result) => (result, vad_scope.finish()),
+                    Ok(result) => result,
                     Err(err) => return Rows::Discard(Err(err)),
                 }
             };
@@ -94,6 +94,7 @@ impl Vault {
             {
                 return Rows::Discard(Err(E::from(err)));
             }
+            let postcommit = vad_scope.finish();
             // FIX 7957: each row this write changed leaves its window a
             // durable marker, so a crash before the live mirror loses no edit.
             #[cfg(feature = "sync")]
