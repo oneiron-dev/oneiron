@@ -12,13 +12,14 @@
 //! table keeps their press apart, filed under the family its pinned target
 //! names, and leaves that field, its codec and its validation untouched.
 //!
-//! The press is written once the admission that spent it and inserted the
-//! Pending row has committed, in a writer of its own
-//! ([`keep_press_after_admission`]): a press that does not write is logged
-//! and the admission stands, so its send proceeds as before this table. A
-//! retry of that row reads it under the same retry context; the Gate reuses
-//! it only while the retry's own pinned digest is the kept one. A row that
-//! does not read, or was never written, leaves the retry on its existing
+//! Supported ordinary and native campaign admissions keep their primary
+//! proof in the same writer as the press spend and Pending insert. Other
+//! admission paths keep it after the admission has committed, in a writer
+//! of its own ([`keep_press_after_admission`]): a press that does not write
+//! is logged and the admission stands, so its send proceeds as before this
+//! table. A retry reads the proof under the same retry context; the Gate
+//! reuses it only while the retry's own pinned digest is the kept one. A row
+//! that does not read, or was never written, leaves the retry on its existing
 //! path, as before this table.
 
 use super::types::{AdmittedApproval, IntentId, IntentLedgerError};
@@ -73,8 +74,8 @@ const PINNED_APPROVAL: SideTable<IntentId, [u8; 34], Raw> =
 
 pub(crate) use crate::consent::approval_proof::{PinnedApproval, PinnedApprovalFamily};
 
-/// Keeps `approval` beside its Pending row, in a writer of its own once the
-/// admission that spent it has committed ([`keep_press_after_admission`]).
+/// Keeps `approval` beside its Pending row in the caller's writer, either
+/// the admission writer or [`keep_press_after_admission`]'s later writer.
 /// `None` keeps nothing.
 ///
 /// # Errors
@@ -87,8 +88,8 @@ pub(crate) fn keep_pinned_approval_in_txn(
     let Some(approval) = approval else {
         return Ok(());
     };
-    // FIX 6835 P1: the admission committed before this writer opened, so an
-    // erase of the request may have committed in between and already dropped
+    // FIX 6835 P1: for a post-commit keep, an erase of the request may
+    // have committed before this writer opened and already dropped
     // any press beside it; recheck the ledger row here and skip the put when
     // its request is erased or absent. A missing press only re-asks on retry.
     let intent_id = approval.proof.intent_id();

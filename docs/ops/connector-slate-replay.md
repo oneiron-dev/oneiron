@@ -17,6 +17,8 @@ permission, the dedupe touch, and transport. No default, timeout, budget, or
 slate-setting value changes.
 
 Scoped MCP `always ask` keeps its existing exact-call approve-once flow.
-Ordinary connector `always ask` replay remains an open part of FIX 990; this
-change does not add a hold without an approve-once path. It does not change
-prepare, consent, the recovery driver, or a provider's transport.
+Supported ordinary communication, calendar, feedback HTTP-bundle, non-mirror
+Linear and native campaign targets use the exact-call owner question and
+approve-once paths described in [ordinary outbound approvals](ordinary-outbound-approval.md).
+Other ordinary formats remain an open part of FIX 990; no hold is added without
+an approve-once path. Recovery drivers and provider transports are retained.

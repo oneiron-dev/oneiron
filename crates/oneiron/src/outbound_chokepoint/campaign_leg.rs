@@ -7,7 +7,7 @@ use crate::campaign::enrollment::{
     CampaignLegCall, CampaignLegHold, admit_frozen_campaign_leg_in_txn,
 };
 use crate::outbound_intent_ledger::{
-    IntentDispatchResult, IntentId, IntentLedgerError, IntentLedgerRecord, OutboundCallClass,
+    IntentDispatchResult, IntentLedgerError, IntentLedgerRecord, OutboundCallClass,
 };
 
 pub(super) fn hold_in_txn(
