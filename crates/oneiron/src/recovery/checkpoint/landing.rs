@@ -11,7 +11,7 @@ use heed::types::Bytes;
 use super::test_hooks::{RestoreStep, fail_at};
 use super::{
     CheckpointImage, Custody, ForkedCustody, RESTORE_EPOCH, RecoveryWriteBudget, Rejected,
-    RestoreEpoch, RestoreReason, RestoreReport, artifact, carried_bodies, codec_error, rebuild,
+    RestoreEpoch, RestoreReason, RestoreReport, carried_bodies, codec_error, rebuild,
     response_rows, write_budget,
 };
 use crate::store::{DB_MANIFEST, MadeDestination};
@@ -42,9 +42,7 @@ impl Vault {
     /// other is typed by its kind.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn restore_image(
-        mut image: CheckpointImage,
-        checkpoint_id: String,
-        mut bodies: artifact::SealedBodies<'_>,
+        checkpoint: super::image::AuthenticatedCheckpoint<'_>,
         destination: &Path,
         config: VaultConfig,
         reason: RestoreReason,
@@ -53,6 +51,7 @@ impl Vault {
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
+        let (mut image, checkpoint_id, mut bodies, _) = checkpoint.into_landing_parts();
         validate_image_rows_before_destination(&image)?;
         // The compartments its payload is sealed in, carried apart from the
         // image (KS7-5).

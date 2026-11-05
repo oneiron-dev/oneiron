@@ -505,20 +505,20 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         // The copy keeps the image's generations; the capture carries the others' bundles
         // (FIX 11824).
-        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
-        let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
+        let mut image = read_image(path, key)?;
+        let live = source.capture(&CopyGenerations::of_rows(
+            &image.image().databases["sync_state"],
+        ))?;
         // What the source erased, those after the cut too (FIX 4753).
         let erased = source.erased_ids();
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
-        host_holds::carry(&mut image.databases, live.host_holds())?;
+        image.carry_host_holds(&live)?;
         // A pad its forked custody lacks or cannot read comes from the
         // source's live row (KS-5).
-        let pads = source.live_pads(&image);
+        let pads = source.live_pads(image.image());
         let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
-            bodies,
             destination,
             config,
             RestoreReason::Restore,
@@ -750,24 +750,21 @@ impl Vault {
         // too: the restored rows must not name those actors (FIX 3655).
         let erased = crate::deletion::hard_erased_ids_in(current)?;
         let installed = current.installed_pack_sources()?;
-        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
+        let mut image = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements,
         // and its pad objects are captured in the read that carried them.
-        let (home_table_notes, current_pads) =
-            authority_plane::carry_current_authority(&mut image.databases, current)?;
+        let (home_table_notes, current_pads) = image.carry_current_authority(current)?;
         // A Live family's response row came with it, and its binding: the
         // image's copy is passed over (KS-2B2).
-        response_rows::supersede_live(&mut image, current)?;
+        image.supersede_live_responses(current)?;
         // And its host orders, which no image carries.
-        host_holds::carry_current(&mut image.databases, current)?;
+        image.carry_current_host_holds(current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
         let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
-            bodies,
             destination,
             config,
             RestoreReason::Restore,
