@@ -4,9 +4,10 @@
 //! (`api::body_spool`), under the server's one disk floor (`transfers.disk`,
 //! kept at `limits.disk_reserve_bytes`), as the signing doors spool theirs.
 //! A surface's frame of numbered envelopes (FIX 5521) is read as one envelope
-//! is. Only that floor, or a disk that refuses a write for want of room,
-//! stops it, and the answer says capacity (`disk_capacity`); its size never
-//! does (CALLS OWNER_CUSTODY_BODY_SPOOL). The sealed input is decoded from
+//! is. That floor or a disk write that runs out of room answers capacity
+//! (`disk_capacity`); body size never refuses it (CALLS OWNER_CUSTODY_BODY_SPOOL).
+//! The raw spool buffer also uses the process memory line, whose allocation
+//! failure is not a disk failure. The sealed input is decoded from
 //! its base64 into a file of its own as the spool is read, never one string
 //! in memory. The body is ciphertext sealed to the holder, and both files
 //! are gone once dropped. It carries no carrier key (FIX 7402): while the
@@ -91,10 +92,12 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
 }
 
 /// A body the floor or the disk had no room for says capacity, in the
-/// custody change's words; any other failure is the body's.
+/// custody change's words. Memory admission keeps its own response; a body
+/// that did not arrive keeps its existing failure.
 fn refusal(unspooled: Unspooled) -> ApiError {
     match unspooled {
         Unspooled::NoRoom => body_spool::no_room(NO_ROOM, NO_ROOM_REMEDY),
         Unspooled::Failed => body_spool::not_whole(),
+        refused @ Unspooled::MemoryRefused(_) => refused.refusal(),
     }
 }
