@@ -63,7 +63,9 @@ pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
 
 /// Recheck immediately before release. Requests, ACKs and a publication's
 /// Refused receipt carry no text; every state, update, operation and other
-/// receipt is subject to the same policy.
+/// receipt is subject to the same policy. A marked repo source's own frames
+/// never leave (FIX 10872): sync is masked even to owner devices (FIX
+/// 7608), so its text crosses only as its copy lineage, under its copy id.
 pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8]) -> bool {
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
@@ -88,7 +90,25 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
     (|| -> Result<bool> {
         let _accepting = vault.device_only_acceptance();
         let txn = vault.store.env.read_txn()?;
+        if marked_source_in_txn(vault, &txn, document.entity)? {
+            return Ok(true);
+        }
         text_withheld_for(vault, &txn, document.entity, Withhold::Peer(peer))
     })()
     .unwrap_or(true)
+}
+
+/// Whether `id` is a marked repo source here: a snapshot ASSET whose blob a
+/// secret mark names (FIX 10872). Its frames carry the raw source's own
+/// operations, which no peer may receive; a mark that does not decode keeps
+/// its blob marked, and a read that fails withholds.
+fn marked_source_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+    if vault.get_entity_type_in_txn(txn, &id)? != Some(crate::registry::ENTITY_TYPE_ASSET) {
+        return Ok(false);
+    }
+    Ok(
+        crate::origin::secret_projection::index::RepoIndexMarks::read_scoped_in_txn(vault, txn)?
+            .source_of(&id)
+            .is_some(),
+    )
 }
