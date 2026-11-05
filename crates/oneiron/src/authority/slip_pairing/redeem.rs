@@ -5,7 +5,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 
 use super::code::pairing_row_key;
 use super::principal::canonical_id;
-use super::re_pairing::re_paired_standing;
+use super::re_pairing::{held_machine_possession, re_paired_standing};
 use super::*;
 use crate::authority::machine_answers::AnswerAct;
 use crate::authority::slip_vault::{random_slip_id, require_host};
@@ -286,6 +286,10 @@ impl Vault {
         {
             return Ok((standing, true));
         }
+        // A held machine's class-only revision proves its key over this
+        // redemption too (FIX 11715): its logged enrolment proof is no fresh
+        // evidence, so without it the redemption refuses and writes nothing.
+        held_machine_possession(&fold, request, possession)?;
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
         if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {

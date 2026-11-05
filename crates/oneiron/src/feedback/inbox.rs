@@ -147,6 +147,7 @@ impl Vault {
                 bundle,
             };
             NOTES.put(&self.store, txn, &seq, &note)?;
+            super::triage::queue_intake_in_txn(self, txn, received_at)?;
             Ok(seq)
         })
     }

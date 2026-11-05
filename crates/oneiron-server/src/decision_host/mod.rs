@@ -181,6 +181,7 @@ pub struct DecisionHost {
     /// row's), so an older read never lands last.
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
+    auto_check: Option<(String, EntityId)>,
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
     connector_slate: Option<ConnectorSlateSettings>,
@@ -233,6 +234,7 @@ impl DecisionHost {
             think_start: None,
             person_refresh: Arc::default(),
             auto_checker: None,
+            auto_check: None,
             image_pick: None,
             booking_parse: None,
             connector_slate: None,
@@ -272,14 +274,14 @@ impl DecisionHost {
             // No house read: the ladder's paired is none, and the bound
             // big model tracks it (FIX 11466).
             self.update_big_paired(None);
-            return self;
+            return self.rebuild_auto_check();
         };
         let Some(probe) = door.probe() else {
             tracing::warn!(
                 "the decision read's recipe names no paired question; the escalation rung stays empty"
             );
             self.update_big_paired(None);
-            return self;
+            return self.rebuild_auto_check();
         };
         // Q2: the house read asks it jointly; a generated read asks the
         // ladder's beside each of its questions.
@@ -330,7 +332,7 @@ impl DecisionHost {
         // (FIX 1557); a rebuild binds it to the new one, or none (FIX 11466).
         self.update_big_paired(paired.clone());
         let Some(paired) = paired else {
-            return self;
+            return self.rebuild_auto_check();
         };
         // The read takes the ladder's person question, which it reads apart.
         let gate = HouseGate {
@@ -350,7 +352,7 @@ impl DecisionHost {
                 tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
         }
-        self
+        self.rebuild_auto_check()
     }
 
     /// The bound big model reads `paired` jointly from now on: a house-read
@@ -533,13 +535,20 @@ impl DecisionHost {
     /// The write gate's auto check through this ladder, worded `wording`,
     /// for `principal`.
     fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
-        self.auto_checker = wording.zip(principal).map(|(wording, principal)| {
+        self.auto_check = wording
+            .zip(principal)
+            .map(|(wording, principal)| (wording.to_owned(), principal));
+        self.rebuild_auto_check()
+    }
+
+    fn rebuild_auto_check(mut self) -> Self {
+        self.auto_checker = self.auto_check.as_ref().map(|(wording, principal)| {
             BoundedAutoChecker::new(AutoCheckDecisions {
                 ladder: self.ladder.clone(),
-                principal,
+                principal: *principal,
                 dial: self.dial(DecisionRung::Big),
                 bands: self.bands.clone(),
-                wording: wording.to_owned(),
+                wording: wording.clone(),
                 notes: Arc::new(self.notes.clone()),
                 calibrated: None,
             })
