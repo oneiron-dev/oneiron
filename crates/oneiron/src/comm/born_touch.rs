@@ -120,6 +120,7 @@ impl DeferredBornTouches {
                         occurred_at: event.occurred_at,
                         projected: false,
                         original_head: Some(touch.id),
+                        source_position: None,
                     };
                     put_comm_record_in_txn(vault, txn, id, &record)
                         .map_err(super::generic_put_routing::source_event_error)?;

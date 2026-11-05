@@ -32,7 +32,9 @@ bound batch paths. Other explicit births, STOPs, thread events, noncanonical
 scope/context, and other unsupported cases retain the fully gated raw path.
 Ordinary no-birth source projection is unchanged.
 
-`COMM_RECORD` now has the required `original_head` key: an entity id for this
-TouchAsserted case, `nil` otherwise. Deploy matching engine/server binaries
+`COMM_RECORD` has the required `original_head` key: an entity id for this
+TouchAsserted case, `nil` otherwise. Its required `source_position` key remains
+`nil` on this canonical path; the scoped source foundation is described in
+`comm-scoped-touch-source.md`. Deploy matching engine/server binaries
 at the normal authorized release. There is no migration, old-format reader,
 new configuration, policy cap, or numeric default.
