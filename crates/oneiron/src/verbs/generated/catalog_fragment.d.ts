@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1284 code-mode rows (1244 host rows, 40 run rows), 4546 declarations.
+// Census: 1284 code-mode rows (1244 host rows, 40 run rows), 4550 declarations.
 // Replies: 1098 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -370,7 +370,9 @@ declare namespace Sdk {
   type TaskCallReceipt = { handle: TaskHandle; related: TaskHandle[]; outcome: TaskOutcome; receipt_ref?: string | null; lifecycle?: TaskLifecycleRecord | null; idempotent_replay: boolean };
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
-  type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null };
+  type FoldKind = "repl_output";
+  type FoldedOutput = { step: number; handles: string[]; ids: string[] };
+  type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[]; kind?: FoldKind | null; note?: string | null; outputs?: FoldedOutput[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type Care = "light" | "medium" | "high" | "xhigh" | "max";
   type BriefIntent = { need: string; care?: Care | null };
   type SpawnPins = { model?: string | null; width?: number | null; pattern?: string | null; budget?: number | null };
@@ -431,7 +433,7 @@ declare namespace Sdk {
   type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null };
   type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "soft_rejected" | "resume_point_recorded" | "reserve_spent" | "landed" | "force_cancelled";
   type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none";
-  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality";
+  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality" | "erased_payload";
   type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number };
   type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null };
   type BudgetHoldState = "warned" | "held" | "resumed";
@@ -3323,7 +3325,7 @@ declare namespace Sdk {
   type ModelStreamSubscribe = { stream_key: string };
   type ModelStreamSubscribed = { stream_ref: string; stream_key: string; handle: string; status: ModelStreamStatus };
   type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null };
-  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
+  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string; signature?: string | null } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus };
   type ModelStreamDetach = { stream_key: string; handle: string };
   type ModelStreamDetached = { stream_ref: string; stream_key: string; handle: string; detached: boolean };
@@ -4346,8 +4348,8 @@ declare namespace Sdk {
   type RunAttached = { live_run: string };
   type FoldUnfoldRequest = { live_run: string; fold: string };
   type FoldHistoryRequest = { live_run: string; from: number; limit: number };
-  type FoldSpan = { fold: string; from: number; through: number };
-  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
+  type FoldSpan = { fold: string; from: number; through: number; kind?: FoldKind | null };
+  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type FoldUnfold = { fold: number; at: number };
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
@@ -4500,8 +4502,10 @@ declare namespace Sdk {
   type MemoryEdgeInput = { src: string; kind: string; tgt: string; weight?: number | null };
   type MemoryEdgeOutput = { src: EntityId; kind: string; tgt: EntityId };
   type FoldMarkOptions = { note?: string | null };
-  type FoldMarkInput = number[] | [number[], FoldMarkOptions];
-  type FoldMarked = { fold: string; from: number; through: number; pending: boolean };
+  type FoldStepRef = number | string;
+  type FoldByKind = { kind: FoldKind; from?: FoldStepRef | null; through?: FoldStepRef | null; before?: FoldStepRef | null; note?: string | null };
+  type FoldMarkInput = number[] | [number[], FoldMarkOptions] | FoldByKind;
+  type FoldMarked = { fold: string; from: number; through: number; pending: boolean; kind?: FoldKind | null };
   type FoldCompactInput = { note?: string | null };
   type FoldCompactAsked = { pending: string[]; applies: string };
   type FoldUnfoldInput = { fold: string };
@@ -4942,7 +4946,7 @@ declare namespace self {
     /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
     wakes(input: Sdk.LiveRunRequest<Sdk.BoardWakeRequest>): Promise<Sdk.BoardWakeReply | StoredResult>;
   };
-  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>;
+  const fold: { (span: readonly [number, number], options?: { note?: string | null }): Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>; (input: Sdk.FoldByKind): Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>; };
   const folds: ((input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>) & {
     /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
     describe(input: Sdk.FoldUnfoldRequest): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
