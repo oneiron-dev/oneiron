@@ -17,6 +17,7 @@ pub(in crate::sync) use import_guard::with_import_guard;
 mod review_doors;
 mod types;
 pub use types::*;
+mod payload;
 mod peer_health;
 mod queue;
 mod review_bundle;
