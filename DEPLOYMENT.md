@@ -474,6 +474,36 @@ seat_host = true    # the default; false leaves queued CLI attempts to another r
 GH_TOKEN = "cli:gh"
 ```
 
+A secret reaches a run's process only when the run declares it. The repo's
+`.oneiron/secret-manifest.toml`, at the commit the run's checkout pins, names
+the secret and the environment variable it is read as (`env_name`). The host
+mints one T1 grant per declared secret whose variable it offers, before the
+CLI starts, and revokes it when the CLI is done (FIX 10624). A declared
+secret the vault refuses fails the run before it starts. The process's
+environment never changes while it runs.
+
+`[runtime.helper_destinations]` serves a value a tool asks for mid-run,
+through git's credential-helper protocol. Each entry names the secret, the
+effector the owner's binding names, and the exact git context and username
+it answers. A run whose pinned manifest declares the secret gets a slip bound
+to its claim. git then calls `oneiron credential-helper` for that context,
+and the helper asks this host over loopback (`POST
+/v1/seat/credential-helper`). The value goes back to git alone, never into
+the CLI's environment. The host clears every other helper for that context,
+so no other helper stores the value. The slip ends with the claim, and the
+grants are revoked at the run's end. The table is empty by default, so no
+helper is offered.
+
+```toml
+[runtime.helper_destinations.github]
+secret = "GITHUB_TOKEN"     # the custody name the manifest declares
+effector = "cli:git"        # the owner's binding must admit T1 for it
+protocol = "https"
+host = "github.com"
+username = "x-access-token"
+# path = "owner/repo"       # optional: answer one repository's path alone
+```
+
 ## Prompt layout
 
 A vault's `[models] prompt_layout` key chooses where a turn's context
