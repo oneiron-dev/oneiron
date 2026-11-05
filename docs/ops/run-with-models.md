@@ -3577,8 +3577,17 @@ What exists now:
   way, and the reason when the binding is not applied. A drafter target names
   the worker's backend model digest, its tokenizer digest and `exl3`.
 
+- **Morning report.** A regular proactivity digest carries a drafter line
+  (group `coach.drafter`, view `vault.drafters.status`) with every drafter
+  event no digest carried yet, read from the event history, not from the
+  bindings that stand now. A version activated and rolled back overnight is
+  still reported. Qualifications, activations, rollbacks, reverts and erases
+  are items of their own, and each one makes a digest due. Nights that
+  trained nothing are counted by outcome and reason (`held:no_trainer_recipe`,
+  `skipped:policy_off`) and ride a digest that is due anyway. The owner's own
+  policy changes are not reported back.
+
 What does not exist yet: the trainer script and its recipe for the house
 serving family, the held-out evaluator with its token-identity check,
 automatic activation and rollback, a binding for managed workers that one
-hosted process serves to several vaults, the corpus sweep at housekeeping, and
-the drafter section of the morning report.
+hosted process serves to several vaults, and the corpus sweep at housekeeping.
