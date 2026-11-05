@@ -426,6 +426,20 @@ pub(super) fn settle_ambiguous_alternative_task_in_txn(
     mut receipt: crate::receipt::ReceiptRecord,
     now: u64,
 ) -> Result<(), Error> {
+    let queue = AttemptQueue::new(vault);
+    let complete = CompleteAttempt {
+        id: attempt.id,
+        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+        attempt_count: attempt.attempt_count,
+        now,
+    };
+    // A TASK a peer delivered is stronger than an uncertain local stop.
+    if super::connector_task::connector_send_task_outcome_in_txn(vault, wtxn, task.task_ref)?
+        == Some(ConnectorSendTaskOutcome::Delivered)
+    {
+        queue.complete_in_txn(wtxn, complete)?;
+        return Ok(());
+    }
     super::receipt_fields::append_connector_task_window_receipt(&mut receipt, task);
     receipt.outcome = "ambiguous".to_owned();
     let wrote = persist_admitted_send_receipt_in_txn(
@@ -448,15 +462,7 @@ pub(super) fn settle_ambiguous_alternative_task_in_txn(
         },
         now,
     )?;
-    AttemptQueue::new(vault).complete_in_txn(
-        wtxn,
-        CompleteAttempt {
-            id: attempt.id,
-            lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-            attempt_count: attempt.attempt_count,
-            now,
-        },
-    )?;
+    queue.complete_in_txn(wtxn, complete)?;
     Ok(())
 }
 

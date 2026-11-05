@@ -230,11 +230,18 @@ impl Vault {
                 complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
-            let request = connector_dispatch_request(task_ref, &task, &attempt, now, drain_clock);
+            let mut request =
+                connector_dispatch_request(task_ref, &task, &attempt, now, drain_clock);
             // FIX 11029: an ambient alternative admitted for this interrupt
             // decides the route; the interrupt does not go after it.
             match alternative_route::route_bound_alternative(
-                self, sink, &queue, &attempt, &task, &request, now,
+                self,
+                sink,
+                &queue,
+                &attempt,
+                &task,
+                &mut request,
+                now,
             )? {
                 alternative_route::RoutedAttempt::Interrupt => {}
                 alternative_route::RoutedAttempt::Went => {
