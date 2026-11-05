@@ -86,17 +86,7 @@ pub(super) fn leg_ask(
     consequence_id: AttemptId,
     retain: bool,
 ) -> LegAsk {
-    let live = CampaignLegFacts {
-        query_ref: event.query_ref,
-        campaign_ref: event.campaign_ref,
-        entity_ref: event.entity_ref,
-        epoch: event.epoch,
-        program_ref: step.program_ref,
-        step_ref: step.step_ref,
-        consequence_id: *consequence_id.as_bytes(),
-        call_seq: outbound.call_seq,
-        payload_digest: outbound_payload_digest(outbound),
-    };
+    let live = live_target(event, step, outbound, consequence_id);
     let key = (
         live.consequence_id,
         live.call_seq,
@@ -168,12 +158,65 @@ fn retained(vault: &Vault, key: &([u8; 16], u64, [u8; 32])) -> Retained {
     let Ok(txn) = vault.store.env.read_txn() else {
         return Retained::Unusable;
     };
-    match RETAINED.get(&vault.store, &txn, key) {
+    retained_in_txn(vault, &txn, key)
+}
+
+fn live_target(
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+    consequence_id: AttemptId,
+) -> CampaignLegFacts {
+    CampaignLegFacts {
+        query_ref: event.query_ref,
+        campaign_ref: event.campaign_ref,
+        entity_ref: event.entity_ref,
+        epoch: event.epoch,
+        program_ref: step.program_ref,
+        step_ref: step.step_ref,
+        consequence_id: *consequence_id.as_bytes(),
+        call_seq: outbound.call_seq,
+        payload_digest: outbound_payload_digest(outbound),
+    }
+}
+
+fn retained_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &([u8; 16], u64, [u8; 32]),
+) -> Retained {
+    match RETAINED.get(&vault.store, txn, key) {
         Ok(None) => Retained::Absent,
         Ok(Some(value)) => decode(key, &value).map_or(Retained::Unusable, |(facts, event_ref)| {
             Retained::Same(facts, event_ref)
         }),
         Err(_) => Retained::Unusable,
+    }
+}
+
+pub(super) fn leg_ask_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+    consequence_id: AttemptId,
+) -> LegAsk {
+    let live = live_target(event, step, outbound, consequence_id);
+    let key = (
+        live.consequence_id,
+        live.call_seq,
+        request_digest(&live, step, outbound),
+    );
+    match retained_in_txn(vault, txn, &key) {
+        Retained::Same(target, first_event_ref) if target == live => LegAsk {
+            target,
+            first_event_ref: Some(first_event_ref),
+        },
+        Retained::Same(..) | Retained::Unusable | Retained::Absent => LegAsk {
+            target: live,
+            first_event_ref: None,
+        },
     }
 }
 

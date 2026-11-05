@@ -104,12 +104,24 @@ pub(super) fn campaign_envelope_bytes(
     step: &CampaignProgramStep,
     outbound: &CampaignProgramOutbound,
 ) -> Result<CampaignEnvelopeBytes> {
+    let txn = vault.store.env.read_txn()?;
+    campaign_envelope_bytes_in_txn(vault, &txn, event, step, outbound)
+}
+
+pub(super) fn campaign_envelope_bytes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+) -> Result<CampaignEnvelopeBytes> {
     let Some(target) =
-        super::target::resolve_campaign_member_target(vault, event.entity_ref, step)?
+        super::target::resolve_campaign_member_target_in_txn(vault, txn, event.entity_ref, step)?
     else {
         return Ok(CampaignEnvelopeBytes::UnresolvableTarget);
     };
-    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches(
+    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches_in_txn(
+        txn,
         step.program_ref,
         step.step_ref,
         outbound.call_seq,
@@ -395,14 +407,28 @@ pub fn enrollment_outbound_approval_digest(
     vault: &Vault,
     payload: &CampaignEnrollmentAttemptPayload,
 ) -> crate::error::Result<Option<crate::consent::EffectDigest>> {
-    let event = campaign_enrollment_event(vault, payload.membership_event_ref)?
-        .ok_or(Error::EntityNotFound)?;
-    let step = resolve_program_step(vault, payload, &event)?;
+    let txn = vault.store.env.read_txn()?;
+    enrollment_outbound_approval_digest_in_txn(vault, &txn, payload)
+}
+
+pub(super) fn enrollment_outbound_approval_digest_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &CampaignEnrollmentAttemptPayload,
+) -> crate::error::Result<Option<crate::consent::EffectDigest>> {
+    let event = super::detection::campaign_enrollment_event_and_hold_in_txn(
+        vault,
+        txn,
+        payload.membership_event_ref,
+    )?
+    .map(|(event, _)| event)
+    .ok_or(Error::EntityNotFound)?;
+    let step = super::runner::resolve_program_step_in_txn(vault, txn, payload, &event)?;
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(None);
     };
     let consequence_id = enrollment_consequence_id(&event, &step)?;
-    let ask = super::approval::leg_ask(vault, &event, &step, outbound, consequence_id, false);
+    let ask = super::approval::leg_ask_in_txn(vault, txn, &event, &step, outbound, consequence_id);
     let gate = enrollment_gate_input(&step, outbound, &event, ask.target);
     Ok(crate::gate::external_effect_approval_digest(&gate))
 }
