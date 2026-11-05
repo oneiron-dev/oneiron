@@ -403,6 +403,7 @@ impl DecisionProvider for HeuristicRung<'_> {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             },
             None => ProviderDecision {
                 answer: DecisionAnswer::Abstain,
@@ -410,6 +411,7 @@ impl DecisionProvider for HeuristicRung<'_> {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             },
         })
     }

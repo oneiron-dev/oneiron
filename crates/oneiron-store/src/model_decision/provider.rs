@@ -19,6 +19,10 @@ pub struct ProviderDecision {
     /// model: a seat rung that served the call, its fallback included (FIX 2730). It
     /// keeps the provider pin's rung and version, and the receipt names it instead.
     pub served: Option<ProviderPin>,
+    /// Cost per thousand units from this answer's own measurement. An outer `None`
+    /// uses the provider's rate; `Some(None)` records an unknown measured cost and
+    /// must not fall back to a rate for a different model.
+    pub cost_per_thousand: Option<Option<f64>>,
 }
 
 /// A yes/no reading beside the answer ("does this need more thinking?" or "ask a

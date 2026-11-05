@@ -165,6 +165,7 @@ impl DecisionAsk {
                 paired: prior.paired.as_ref().map(unbind),
                 person: prior.person.as_ref().map(unbind),
                 served: None,
+                cost_per_thousand: None,
             }),
             prior_provider: self.prior.as_ref().map(|prior| prior.provider.clone()),
             queue_pin: self.queue_pin.clone(),
