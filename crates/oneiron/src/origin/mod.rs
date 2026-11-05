@@ -41,7 +41,7 @@ mod mirror_wake;
 pub(crate) use mirror_census::history_lfs_objects;
 pub(crate) use mirror_wake::OriginMirrorWake;
 pub mod publish;
-pub(crate) mod receive_scan_verdict;
+pub(crate) use oneiron_store::origin::receive_scan_verdict;
 pub mod registration;
 mod repo_import;
 pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};

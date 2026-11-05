@@ -1,6 +1,6 @@
 //! Exact stored skill package values, envelope codecs and source parsing.
 
-pub(crate) mod capability;
+pub(crate) use oneiron_store::skill_package::capability;
 pub(crate) mod codec;
 pub(crate) mod folder;
 pub(crate) use oneiron_store::skill_package::package;
