@@ -8481,14 +8481,18 @@ export type RunAttached = { live_run: string }
 export type FoldUnfoldRequest = { live_run: string; fold: string }
 /** `oneiron::compaction::folds::FoldReply` */
 export type FoldReply<T> = T | { error: string }
+/** `oneiron::compaction::fold_kinds::FoldKind` */
+export type FoldKind = "repl_output"
+/** `oneiron::compaction::fold_kinds::FoldedOutput` */
+export type FoldedOutput = { step: number; handles: string[]; ids: string[] }
 /** `oneiron::compaction::folds::FoldDescription` */
-export type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null }
+export type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[]; kind?: FoldKind | null; note?: string | null; outputs?: FoldedOutput[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null; kind?: FoldKind | null }
 /** `oneiron::code_run::fold_api::FoldHistoryRequest` */
 export type FoldHistoryRequest = { live_run: string; from: number; limit: number }
 /** `oneiron::compaction::folds::FoldSpan` */
-export type FoldSpan = { fold: string; from: number; through: number }
+export type FoldSpan = { fold: string; from: number; through: number; kind?: FoldKind | null }
 /** `oneiron::compaction::folds::FoldPending` */
-export type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null }
+export type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null; kind?: FoldKind | null }
 /** `oneiron::compaction::folds::FoldList` */
 export type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean }
 /** `oneiron::compaction::folds::FoldUnfold` */
@@ -8896,9 +8900,9 @@ export type MemorySupersedeInput = { newId: string; oldId: string; now: number }
 /** `oneiron::code_run::run_verbs::MemoryWriteOutput` */
 export type MemoryWriteOutput = { id: EntityId }
 /** `oneiron::code_run::fold_api::FoldMarkRequest` */
-export type FoldMarkRequest = { live_run: string; from: number; through: number; note?: string | null }
+export type FoldMarkRequest = { live_run: string; from: number; through: number; note?: string | null; kind?: FoldKind | null }
 /** `oneiron::compaction::folds::FoldMarked` */
-export type FoldMarked = { fold: string; from: number; through: number; pending: boolean }
+export type FoldMarked = { fold: string; from: number; through: number; pending: boolean; kind?: FoldKind | null }
 /** `oneiron::code_run::fold_api::FoldCompactRequest` */
 export type FoldCompactRequest = { live_run: string; note?: string | null }
 /** `oneiron::compaction::folds::FoldCompactAsked` */
