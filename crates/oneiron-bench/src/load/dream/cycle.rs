@@ -220,6 +220,65 @@ pub(super) fn recall_loop(
     ticks
 }
 
+/// How the wait for a still Dreamer after the cycle ended.
+#[derive(Debug, Serialize)]
+pub(super) struct StillWait {
+    /// The Dreamer stayed still for `QUIET` (no attempt running, its tallies
+    /// unchanged, no new stage or pass line) before the cycle's bound ran
+    /// out.
+    pub(super) reached: bool,
+    /// How long the wait took, in ms.
+    pub(super) waited_ms: f64,
+    /// The status read last.
+    pub(super) status: DreamerStatus,
+}
+
+/// Waits until `deadline` for the Dreamer to stay still for `QUIET`. The
+/// round can end while other Dreamer work still runs (Micro rounds, sieve
+/// rungs, maintenance), and the recalls in the `AFTER` that follows measure
+/// that work too; recalls taken once it is still do not.
+pub(super) fn await_still(
+    agent: &Agent,
+    http: &Client,
+    base: &str,
+    tail: &mut Tail,
+    scan: &mut Scan,
+    origin: Instant,
+    deadline: Instant,
+) -> StillWait {
+    let started = Instant::now();
+    let mut changed = Instant::now();
+    let mut seen_lines = scan.stages.len() + scan.passes.len();
+    let mut now_status = status(agent, http, base).unwrap_or_default();
+    let mut step = 0_u64;
+    loop {
+        let reached = changed.elapsed() >= QUIET && now_status.still();
+        if reached || Instant::now() >= deadline {
+            return StillWait {
+                reached,
+                waited_ms: ms_between(started, Instant::now()),
+                status: now_status,
+            };
+        }
+        std::thread::sleep(STEP);
+        step += 1;
+        scan.read(tail, origin);
+        let lines = scan.stages.len() + scan.passes.len();
+        if lines != seen_lines {
+            seen_lines = lines;
+            changed = Instant::now();
+        }
+        if step.is_multiple_of(4)
+            && let Ok(read) = status(agent, http, base)
+        {
+            if read.tallies() != now_status.tallies() || read.state != now_status.state {
+                changed = Instant::now();
+            }
+            now_status = read;
+        }
+    }
+}
+
 /// How the wait for the round ended.
 #[derive(Debug, Serialize)]
 pub(super) struct Waited {

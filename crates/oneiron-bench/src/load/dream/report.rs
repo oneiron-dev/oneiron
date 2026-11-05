@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::super::stats::{Sample, Summary};
-use super::cycle::{self, DreamerStatus, Tick};
+use super::cycle::{self, DreamerStatus, StillWait, Tick};
 use super::proof::Tried;
 use super::server_log::{Fields, Scan, Seen, number};
 use super::{AFTER, Cycle, Run, Seeded, turns};
@@ -21,6 +21,10 @@ pub(super) struct Measured<'a> {
     pub(super) source: &'static str,
     pub(super) tried: &'a [Tried],
     pub(super) status_after: Option<DreamerStatus>,
+    /// The wait for a still Dreamer after the cycle, and the recalls taken
+    /// once it was still (none when it never was inside the bound).
+    pub(super) still: &'a StillWait,
+    pub(super) after_still: Option<Summary>,
 }
 
 /// Fields that stay text though they may read as numbers.
@@ -195,6 +199,10 @@ fn recalls_json(m: &Measured<'_>) -> Value {
         "during": window(ticks, t0, end),
         // The loop stops `AFTER` past the end, give or take one step.
         "after": window(ticks, end, end + after_ms + 1000.0),
+        // Taken once the Dreamer stayed still, inside the cycle's bound:
+        // the after-cycle recall with no Dreamer work beside it.
+        "still_wait": m.still,
+        "after_still": m.after_still,
         "loop": ticks_json,
     })
 }
@@ -224,7 +232,9 @@ pub(super) fn report(m: &Measured<'_>) -> Value {
     });
     let found = m.tried.iter().filter(|t| t.found).count();
     let reason = m.cycle.waited.reason.as_str();
+    // A close that queued no Meso round ran no cycle to end.
     let ended = reason != "timeout"
+        && reason != "no_meso_round"
         && !reason.starts_with("dreamer_idle")
         && !reason.starts_with("end_refused");
     let during = window(&m.cycle.ticks, t0, end);
