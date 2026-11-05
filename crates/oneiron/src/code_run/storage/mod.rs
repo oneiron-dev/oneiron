@@ -56,6 +56,7 @@ pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
     response_erased_error,
 };
+pub(crate) use self::replay_capsule::retire_replay_bodies_in_rows;
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{

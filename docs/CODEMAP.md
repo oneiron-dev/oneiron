@@ -14,9 +14,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6377 | 895 | 152 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6375 | 895 | 153 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
-| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 60 | 1 | 0 |
+| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 61 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness drivers | 153 | 18 | 1 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 20 | 5 | 0 |
@@ -56,10 +56,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 4 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1583 | 182 | 48 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1584 | 182 | 49 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 529 | 4 | 0 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 631 | 4 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 13 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 55 | 1 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 13 | 1 | 0 |
@@ -79,7 +79,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 23 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 13 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 78 | L | yes | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 252 | L | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 253 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 24 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 178 | XL | yes | — |
 | `blob_artifact` | dir | 77 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -106,7 +106,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_document` | dir | 14 | m | yes | Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested… |
 | `code_memory` | file+dir | 7 | m | — | Symbol-anchored memory slots, transfers and scoped pulls |
 | `code_revision` | dir | 26 | m | yes | Code revisions, tested forks and reviewed import promotion |
-| `code_run` | dir | 181 | XL | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_run` | dir | 182 | XL | yes | Host-side skeleton for first-party `self.*` code-mode calls |
 | `code_sandbox` | dir | 47 | L | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 13 | m | yes | Code-symbol manifests, semantic changes and producing-operation views |
 | `code_view` | dir | 5 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
@@ -241,11 +241,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `secret_custody` | dir | 83 | L | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `secret_lease` | dir | 13 | m | yes | ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single… |
 | `secret_manifest` | file+dir | 2 | s | — | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
-| `secret_record` | dir | 6 | s | — | Secret custody record vocabulary, body codecs, and stored policy-floor resolution |
+| `secret_record` | dir | 6 | s | — | Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are… |
 | `secret_rotation` | file+dir | 4 | m | yes | Core half of `secret_rotation`: its store-layer items live in `oneiron_store::secret_rotation` and are… |
 | `secret_snapshot` | file+dir | 2 | s | yes | Snapshot-time secret custody filtering (ARCH-0069 S4/S5) |
 | `self_heal` | dir | 51 | m | yes | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
-| `serialize` | dir | 26 | m | — | Context-pack serialization |
+| `serialize` | dir | 25 | m | — | Context-pack serialization |
 | `session_lifecycle` | file+dir | 4 | L | yes | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… |
 | `settings` | file+dir | 8 | m | yes | Persisted customization settings and client-visible change events |
 | `share` | file+dir | 7 | L | yes | Revocable brief read grants |
@@ -261,7 +261,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `slim` | file+dir | 6 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `source_audience` | dir | 2 | m | — | Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A… |
 | `speculative` | file+dir | 2 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
-| `store` | dir | 383 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `store` | dir | 380 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `subject_model` | file+dir | 16 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 10 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 9 | L | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
@@ -308,7 +308,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `authority` | dir | 44 | m | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `authority` | dir | 45 | m | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `channel_address` | file | 1 | m | Identity-bearing address VALUES, and the canonical assignment key |
 | `channel_identity_manifest` | file | 1 | s | Channel identity capability manifests (OF-347 CID-4) |
 | `channel_identity_shape` | file | 1 | s | ChannelIdentity addressability shapes with wire serde |
@@ -870,7 +870,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `residence_machines` | file | 1 | s | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `runtime` | dir | 29 | m | Runtime configuration, host services, and shared time helpers |
 | `saved_query_sweep` | file | 1 | m | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
-| `server` | dir | 79 | L | Sync server state and maintenance jobs, split by concern |
+| `server` | dir | 80 | L | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |
 | `slide_render` | file | 1 | m | The host's review renderer (ARCH-0077 "Review images"): LibreOffice Impress headless exports the deck to… |
 | `test_credentials` | file | 1 | m | Request fixtures mint real logged slips before crossing the production router |
@@ -901,9 +901,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `active_write_txn` | file | 1 | s | The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure… |
 | `agent_birth_identity` | file | 1 | s | The derived id of the asset that carries a birthed agent's captured source |
-| `agent_definition_codec` | file+dir | 2 | s | Store-layer modules of core `store::agent_definition_codec`; core re-exports each one at its old path |
+| `agent_definition_codec` | file+dir | 3 | s | Store-layer modules of core `store::agent_definition_codec`; core re-exports each one at its old path |
 | `agent_model` | file | 1 | s | One model on an agent's model list (FIX 4472): the revision-pinned model and the owner's words on when the… |
+| `agent_record` | file | 1 | s | Stored agent descriptors, schema keys and byte-observation thresholds |
 | `artifact_hosting` | file+dir | 4 | s | Store-layer modules of core `artifact_hosting`; core re-exports each one at its old path |
+| `attempt_archive_mark` | file | 1 | s | An attempt's cleanup mark (`VAULT_CLEANUP_ATTEMPT_ARCHIVE`), keyed by id16: a cleanup run's archive mark on… |
 | `attempt_cleanup` | file | 1 | s | Per-store attempt cleanup reports and content-free counters |
 | `attempt_hold` | file | 1 | s | Reserved actor tokens for queued-attempt holds |
 | `attempt_id` | file | 1 | s | Stable queued-attempt identifiers and their raw storage representation |
@@ -911,21 +913,25 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `attempt_lease` | file | 1 | s | Lease-owner validation for queued-work storage ports |
 | `attempt_payload_route` | file | 1 | s | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
 | `attempt_read_producer` | file | 1 | s | Named producers of a queued attempt's recorded input rows |
+| `attempt_record_codec` | file+dir | 2 | s | Store-layer modules of core `store::attempt_record_codec`; core re-exports each one at its old path |
 | `attempt_result` | file | 1 | s | Validated durable result references for queued work |
 | `attempt_retention` | file | 1 | s | Owner-retained queue kind and identifier range classification |
+| `attempt_run_signal` | file | 1 | s | The durable branch signal and ask rows an attempt row carries: each branch-addressed control signal and its… |
 | `attempt_state` | file | 1 | s | Persisted queued-attempt lifecycle states and their pure predicates |
 | `authority_rows` | file | 1 | s | Authority-log rows carried beside a row being imported |
 | `base_agent` | file | 1 | s | Fixed base-agent principal rows and their immutable write guards |
-| `batch` | file+dir | 33 | m | Store-layer modules of core `batch`; core re-exports each one at its old path |
+| `batch` | file+dir | 43 | m | Store-layer modules of core `batch`; core re-exports each one at its old path |
 | `batch_op` | file | 1 | s | The batch op vocabulary: one write a batch applies, as the engine's batch builder records it |
-| `blob_artifact` | file+dir | 22 | m | Store-layer modules of core `blob_artifact`; core re-exports each one at its old path |
+| `blob_artifact` | file+dir | 24 | m | Store-layer modules of core `blob_artifact`; core re-exports each one at its old path |
+| `body_envelope` | file+dir | 2 | s | Store-layer modules of core `store::body_envelope`; core re-exports each one at its old path |
 | `build_cache` | file+dir | 2 | s | Store-layer modules of core `build_cache`; core re-exports each one at its old path |
 | `bundle_generations` | file | 1 | s | Bundle generation identity, upload cadence and retirement selection |
 | `channel_class` | file | 1 | s | Canonical recipient-facing channel classes |
 | `checkout_task` | file | 1 | s | Checkout task classes and their lease-reclaim policy |
 | `checkpoint_host_recipient` | file | 1 | s | Host recipient and sealing policy for checkpoint legal-hold members |
-| `checkpoint_payload` | file+dir | 4 | s | Store-layer modules of core `store::checkpoint_payload`; core re-exports each one at its old path |
+| `checkpoint_payload` | dir | 5 | s | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |
 | `claim_lineage` | file | 1 | s | Claim source lineage, evidence taint, and stored value projections |
+| `claim_refinement_control` | file | 1 | s | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
 | `claim_source_ranking` | dir | 1 | m | PACK data for provenance-aware claim ordering |
 | `claim_vad_payment` | file | 1 | s | Per-handle claim VAD payment wake state and attached-worker lifetime |
 | `code_artifact_body` | file | 1 | m | Code artifact body values and the pinned MessagePack codec |
@@ -935,10 +941,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_memory_values` | dir | 3 | m | Symbol-anchored memory values, deterministic union rules and row codecs |
 | `code_promotion_gap` | file | 1 | s | Reasons a tested revision lacks reviewed promotion |
 | `code_revision_identity` | file | 1 | s | Deterministic aggregation-session, tested-revision and provenance identifiers |
-| `code_revision_record` | dir | 1 | s | Code revision records, canonical codecs and pure complete-tree vocabulary |
+| `code_revision_record` | dir | 4 | s | Code revision records, canonical codecs and pure complete-tree vocabulary |
 | `code_snapshot` | file+dir | 6 | m | Store-layer modules of core `store::code_snapshot`; core re-exports each one at its old path |
 | `code_tree_blob` | file | 1 | s | Untouched blob references and submodule mode in tested code trees |
-| `compaction` | file+dir | 2 | s | Store-layer modules of core `compaction`; core re-exports each one at its old path |
+| `compaction` | file+dir | 3 | s | Store-layer modules of core `compaction`; core re-exports each one at its old path |
 | `config` | file+dir | 10 | m | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `connector_key_status` | file | 1 | s | Connector-key lifecycle status and its pinned wire strings |
 | `consent_bound` | file | 1 | m | Consent bound vocabulary, normalization and containment |
@@ -958,22 +964,26 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `critical_confirm_record` | file | 1 | s | The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the… |
 | `critical_confirm_retry` | file | 1 | s | The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion… |
 | `custody_retirement_status` | file | 1 | s | Completion marker for acknowledged custody retirement |
-| `deletion` | file+dir | 10 | s | Store-layer modules of core `deletion`; core re-exports each one at its old path |
-| `diagnostic_record` | file+dir | 5 | s | Store-layer modules of core `store::diagnostic_record`; core re-exports each one at its old path |
+| `deadline_jobs` | file | 1 | s | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
+| `deletion` | file+dir | 15 | m | Store-layer modules of core `deletion`; core re-exports each one at its old path |
+| `derivation` | file | 1 | s | Account-sealed hosted derivations |
+| `diagnostic_record` | file+dir | 8 | m | Store-layer modules of core `store::diagnostic_record`; core re-exports each one at its old path |
 | `dispatch_attempt_kind` | file | 1 | s | Durable queue kind discriminators for foreign-agent and surface-event dispatch |
 | `document_segments` | file | 1 | s | Structural document segments used by indexing and birth fingerprints |
 | `dreamer_attempt_kind` | file | 1 | s | Queue discriminators and wire constants used by stored Dreamer attempts |
 | `dreamer_attempt_payload` | file | 1 | s | Dreamer attempt payload envelope and its MessagePack codec |
+| `dreamer_wake_policy` | file | 1 | s | The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and its parts: the recipe dials, the… |
+| `embedding` | file | 1 | m | Embedding space, input, provenance and host-provider vocabulary |
 | `embedding_vocabulary` | file | 1 | s | Embedding vocabulary the store layer writes: the input modality of a kind slot, the text-hash length, and… |
-| `entity_doc` | file+dir | 7 | s | Store-layer modules of core `entity_doc`; core re-exports each one at its old path |
+| `entity_doc` | file+dir | 8 | s | Store-layer modules of core `entity_doc`; core re-exports each one at its old path |
 | `esign_rate_thresholds` | file | 1 | s | The e-sign send-rate thresholds a policy manifest resolves to |
 | `executor_speech_identity` | file | 1 | s | The deterministic ids of a durable executor run's speech turn and compaction session, and the domain-tagged… |
 | `extraction_work` | file | 1 | s | Scheduling class carried by stored extraction markers |
 | `file_secret_marks` | file | 1 | s | Value-free file-mask paths, read visibility, and byte-span transformations |
-| `gate_decision` | file+dir | 4 | s | Store-layer modules of core `store::gate_decision`; core re-exports each one at its old path |
+| `gate_decision` | file+dir | 6 | s | Store-layer modules of core `store::gate_decision`; core re-exports each one at its old path |
 | `gate_reason` | file | 1 | m | Gate outcomes, stable reason codes, and pure metric classification |
-| `git_wire` | file+dir | 20 | m | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
-| `graph_fs` | file+dir | 4 | s | Store-layer modules of core `graph_fs`; core re-exports each one at its old path |
+| `git_wire` | file+dir | 23 | m | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
+| `graph_fs` | file+dir | 5 | m | Store-layer modules of core `graph_fs`; core re-exports each one at its old path |
 | `graph_version` | file | 1 | s | The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian… |
 | `heap_drop` | file | 1 | s | Counts reported by rebuildable index and window heap drops |
 | `home_handoff_custody` | file+dir | 2 | s | Store-layer modules of core `store::home_handoff_custody`; core re-exports each one at its old path |
@@ -982,10 +992,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `housekeeping_schedule` | file | 1 | s | Housekeeping sweep identifiers, cadence policy, and pass budget values |
 | `human_task` | file+dir | 2 | s | Store-layer modules of core `human_task`; core re-exports each one at its old path |
 | `identity_hints` | file | 1 | s | Per-kind declared identity fields (human-facing identity hints) |
-| `inbox` | file+dir | 3 | s | Store-layer modules of core `inbox`; core re-exports each one at its old path |
+| `inbox` | file+dir | 4 | s | Store-layer modules of core `inbox`; core re-exports each one at its old path |
 | `index_keys` | file | 1 | s | Byte layouts of the edge, temporal and type index keys |
 | `inference_context` | file | 1 | s | Host-bound inference identity and extraction context |
-| `key_custody` | file+dir | 13 | m | Store-layer modules of core `store::key_custody`; core re-exports each one at its old path |
+| `key_custody` | file+dir | 17 | m | Store-layer modules of core `store::key_custody`; core re-exports each one at its old path |
 | `key_material` | file | 1 | s | Guarded key derivation, OS entropy, and the world-key refusal constructor |
 | `known_value_index` | file+dir | 3 | m | Store-layer modules of core `store::known_value_index`; core re-exports each one at its old path |
 | `l2_evidence` | file | 1 | s | Bounded, vault-owned cache of score-free context evidence |
@@ -996,15 +1006,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `loro_tombstones` | file | 1 | s | The tombstones-map reads a delete-wins gate makes: presence and values of every key that names an entity… |
 | `manifest_origin_keys` | file | 1 | s | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
 | `materialization_event` | file | 1 | s | Commit-bound materialization revisions and read invalidation data |
-| `merge_queue` | file+dir | 3 | s | Store-layer modules of core `merge_queue`; core re-exports each one at its old path |
+| `merge_queue` | file+dir | 6 | s | Store-layer modules of core `merge_queue`; core re-exports each one at its old path |
 | `model_decision` | dir | 13 | m | Model-independent typed decision vocabulary and pure policy values |
+| `model_description_rows` | file | 1 | s | The description rows model routing keeps: the owner's description policy (`LLM_DESCRIPTION_POLICY`) with its… |
 | `model_score_diff` | file | 1 | s | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `model_step_record` | file | 1 | s | Durable model-step claim vocabulary and progression values |
 | `model_step_response_carriage` | file | 1 | s | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
+| `model_step_submission` | file | 1 | s | A public model-step submission row (`MODEL_STEP_SUBMISSION`, FIX 9929) and the public step types it keeps… |
 | `model_stream_row` | file | 1 | s | The durable row of one shared model stream (`MODEL_STREAM`): its owner, stable key, frozen request and… |
 | `note_kind` | file | 1 | s | Shipped NOTE kind defaults and syntactic kind-name rules |
-| `open_gates` | file+dir | 2 | m | Store-layer modules of core `store::open_gates`; core re-exports each one at its old path |
-| `origin` | file+dir | 28 | m | Store-layer modules of core `origin`; core re-exports each one at its old path |
+| `open_gates` | file+dir | 3 | m | Store-layer modules of core `store::open_gates`; core re-exports each one at its old path |
+| `origin` | file+dir | 38 | m | Store-layer modules of core `origin`; core re-exports each one at its old path |
 | `outbound_outcome` | file | 1 | s | Stable outcome vocabulary for outbound dispatch observations |
 | `outbound_trigger` | file | 1 | s | Source tags and trigger envelopes for outbound intent records |
 | `overlay_bookkeeping` | file | 1 | s | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
@@ -1018,20 +1030,25 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `plugin_section_predicate` | file | 1 | s | Stored plugin-section install claim predicate |
 | `policy_record` | file | 1 | s | Stored policy metadata and pure decision input vocabulary |
 | `policy_scoped_grant` | file | 1 | s | One scoped grant row of a policy manifest, as the manifest fold decodes it |
-| `ports` | file+dir | 7 | s | Store-layer modules of core `ports`; core re-exports each one at its old path |
+| `ports` | file+dir | 8 | s | Store-layer modules of core `ports`; core re-exports each one at its old path |
 | `principal_record` | file | 1 | s | Recorded principal standing and refusal vocabulary |
 | `project_depth_record` | file | 1 | s | A project's depth birth record, as a POLICY_MANIFEST contribution carries it |
 | `proposal_observation_record` | file | 1 | s | The policy source behind a proposal submission's advisory threshold, as the proposal observation records it |
+| `proposal_spool` | file | 1 | s | Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650) |
+| `query_health` | file | 1 | s | Each swept saved query's health (FIX 11250): one row per query the host's evaluator wakes, written at every… |
 | `query_memo_codec` | file | 1 | s | — |
 | `query_memos` | file | 1 | s | Standing-query memo values, exact codecs and response-carriage ownership |
 | `reaction_predicate` | file | 1 | s | Reaction outcome predicate stored by event-outcome projections |
 | `reader_fold_receipt` | file | 1 | s | Stored reader-fold receipts and their occurrence vocabulary |
 | `receipt_identity` | file | 1 | s | The identity marker carried after receipt attribution is erased |
+| `receipt_row` | file | 1 | m | Receipt row fields, query values, and deterministic ordering |
 | `receive_scan` | file | 1 | s | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `record_links` | dir | 2 | m | Pure parsing of record links in Markdown text |
+| `record_ref` | file | 1 | s | Typed record references and bounded record display labels |
 | `record_references` | file | 1 | s | Named record-reference values and pure pointer traversal |
 | `recovery_kit` | dir | 2 | m | Offline recovery-kit values, passphrases, piece formats and pure codecs |
 | `recovery_write_budget` | file | 1 | s | Host-lent disk floor for checkpoint and recovery writes |
+| `reference_refusal` | file | 1 | s | Content-free reference-refusal facts and their receipt projection |
 | `refinement_carrier` | file | 1 | s | Raw refinement carrier framing used by value scans |
 | `replay_only_commits` | file | 1 | s | The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the… |
 | `replica_edge_key` | file | 1 | s | The CRDT map key of an edge in a window document |
@@ -1043,28 +1060,36 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `repo_provenance_trailer` | file | 1 | s | Repository provenance trailer grammar and exact entity-reference parsing |
 | `restore_admission` | file | 1 | s | Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a… |
 | `result_body_erasure` | file | 1 | s | The typed unavailable a read of erased reply content answers with |
+| `result_body_pins` | file | 1 | s | Reader pins: a result body a reader holds is never deleted |
+| `result_body_rows` | file | 1 | s | The raw result body rows (`CODE_RUN_RAW_OUTPUT`): each row keyed by its body's content handle, where its… |
 | `result_manifest` | file | 1 | s | Result-body manifests, occurrence identifiers and their format bounds |
+| `result_memory` | file | 1 | s | The memory code-mode result bodies may hold (OF-190 B++) |
 | `retained_memory` | file | 1 | s | Host-owned retained-memory accounting for in-memory storage |
+| `retrieval_deadline` | file | 1 | s | Deadline state shared by store-backed decision and retrieval stages |
 | `retrieval_policy` | file+dir | 2 | s | Store-layer modules of core `store::retrieval_policy`; core re-exports each one at its old path |
 | `retrieval_signal` | file | 1 | s | The retrieval signals a run scores entities by: which channel ranked a result |
 | `retrieval_telemetry` | file+dir | 3 | s | Store-layer modules of core `store::retrieval_telemetry`; core re-exports each one at its old path |
+| `retrieval_values` | file | 1 | s | Retrieval result values and transaction-local candidate admission contracts |
+| `revision_ref` | file | 1 | s | A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a… |
 | `root_directory` | file | 1 | s | Descriptor-bound directory identity shared by store opens and writer leases |
 | `run_write_token` | file | 1 | s | A leased agent run's write identity, as the engine's run-write envelope carries it with each write |
 | `sandbox_credential` | file | 1 | s | Opaque credential handles and the read-only credential call ABI |
+| `sandbox_import` | file | 1 | s | Guest-linked host import names and effect classes |
 | `sandbox_path` | file | 1 | s | The stable /mnt guest namespace: mounts, virtual paths and host-path resolution |
 | `scan_checks` | file | 1 | s | Scan-crossing evidence and the store's waiting crossings |
 | `scan_count` | file+dir | 2 | s | Store-layer modules of core `store::scan_count`; core re-exports each one at its old path |
 | `scan_kind` | file | 1 | m | The engine scans whose tables grow with use (rule 5); their list, codes, thresholds and tags are in… |
 | `scan_kind_table` | file | 1 | m | Each engine scan's list, closed code, the threshold it asks past and its row's tag; split from `engine_scan`… |
-| `scope_summary` | file+dir | 2 | m | Store-layer modules of core `scope_summary`; core re-exports each one at its old path |
-| `secret_lease` | file+dir | 6 | s | Store-layer modules of core `secret_lease`; core re-exports each one at its old path |
+| `scope_summary` | file+dir | 4 | m | Store-layer modules of core `scope_summary`; core re-exports each one at its old path |
+| `secret_lease` | file+dir | 7 | s | Store-layer modules of core `secret_lease`; core re-exports each one at its old path |
 | `secret_manifest` | file | 1 | m | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
-| `secret_record` | file+dir | 3 | s | Secret custody floor and binding vocabulary used by the store layer |
+| `secret_name_index` | file | 1 | s | The live secret name index: each live custody record's name, the record it resolves to and the name's… |
+| `secret_record` | dir | 4 | s | Secret custody floor and binding vocabulary used by the store layer |
 | `secret_rotation` | file | 1 | s | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
-| `serialize` | file+dir | 21 | m | Store-layer modules of core `serialize`; core re-exports each one at its old path |
+| `serialize` | file+dir | 29 | m | Store-layer modules of core `serialize`; core re-exports each one at its old path |
 | `session_overlay` | dir | 18 | m | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `setting_seed` | file | 1 | s | Learned numeric setting specifications and shipped seeds |
-| `settings` | file+dir | 4 | m | Store-layer modules of core `settings`; core re-exports each one at its old path |
+| `settings` | file+dir | 5 | m | Store-layer modules of core `settings`; core re-exports each one at its old path |
 | `side_table` | file+dir | 3 | s | Store-layer modules of core `side_table`; core re-exports each one at its old path |
 | `skill_attribution` | file+dir | 2 | s | Store-layer modules of core `skill_attribution`; core re-exports each one at its old path |
 | `skill_hub_predicates` | file | 1 | s | The claim predicates the skill hub attaches |
@@ -1074,10 +1099,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `store_clock` | file+dir | 3 | m | Per-store clock and id source |
 | `structural_kind_registry` | file+dir | 2 | s | Store-layer modules of core `store::structural_kind_registry`; core re-exports each one at its old path |
 | `task_body_checks` | file | 1 | s | Lenient raw TASK terminal and deadline checks used at storage admission |
-| `text_index` | dir | 2 | s | Persisted text-index rows, codecs, analysis and integrity diagnostics |
-| `typed_body` | file+dir | 2 | s | Store-layer modules of core `typed_body`; core re-exports each one at its old path |
-| `vault` | file+dir | 3 | s | Store-layer modules of core `vault`; core re-exports each one at its old path |
-| `vault_cleanup` | file+dir | 2 | m | Store-layer modules of core `vault_cleanup`; core re-exports each one at its old path |
+| `text_index` | dir | 3 | s | Persisted text-index rows, codecs, analysis and integrity diagnostics |
+| `typed_body` | file+dir | 3 | s | Store-layer modules of core `typed_body`; core re-exports each one at its old path |
+| `vault` | file+dir | 5 | s | Store-layer modules of core `vault`; core re-exports each one at its old path |
+| `vault_cleanup` | file+dir | 4 | m | Store-layer modules of core `vault_cleanup`; core re-exports each one at its old path |
 | `vault_page_seal` | file | 1 | s | The page seal a vault's config holds (OF-570): the page key every LMDB page of the vault is sealed under… |
 | `vector_index` | dir | 2 | s | Persisted vector-index metadata and admission vocabulary: the `hnsw_meta` keys and counters, read and bumped… |
 | `vector_insert_plan` | file | 1 | s | Prepared vector-index neighbor choices bound to a read snapshot |
@@ -1087,11 +1112,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `verb_invocation` | file | 1 | s | Stable invocation identity across transport wrappers and runtime hooks |
 | `window_key` | file | 1 | s | Monthly CRDT window keys and their timestamp conversion |
 | `window_protocol` | file | 1 | s | Window payload bounds and local commit origin values |
+| `window_rows` | file | 1 | s | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
 | `witness_message_body` | file | 1 | m | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `workflow_definition` | file | 1 | s | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `world_pad_codec` | file | 1 | s | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `world_registration_keys` | file | 1 | s | Storage keys for foreign-world registration and stale markers |
 | `write_envelope` | file+dir | 73 | m | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 | `writer_hold` | file | 1 | s | Writer closure timing and the Dreamer writer-hold trace |
+| `writer_lease` | file | 1 | m | Process-owner writer lease, shared by the server and embedded SDK |
 
 ## oneiron-uniffi
 
