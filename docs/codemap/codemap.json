@@ -20341,7 +20341,7 @@
       "enum": 1,
       "fn": 10,
       "mod": 2,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 3
      }
     },
@@ -20516,6 +20516,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FoldKind",
+      "FoldedOutput"
+     ],
+     "path": "src/compaction/fold_kinds.rs",
+     "purpose": "Folds by kind (ARCH-0067 §2.2; owner 2026-11-03 20:33, ledger engine-20261103-log-fold-by-kind): the agent…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/compaction/fold_words.rs",
      "purpose": "Where a fold's words go when a record they came from is withdrawn (Docs Q23, Q24)",
@@ -20549,7 +20565,7 @@
      "path": "src/compaction/folds.rs",
      "purpose": "Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 12,
       "struct": 15
@@ -34358,7 +34374,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 34,
       "enum": 1,
       "fn": 5,
       "struct": 2,
@@ -34670,7 +34686,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 62
+      "crate-vis": 63
      }
     },
     {
@@ -92000,7 +92016,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93234,7 +93250,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6526,
+   "source_files": 6527,
    "test_files": 895
   },
   "oneiron-android": {
@@ -134540,6 +134556,7 @@
       "FoldHistoryEpoch",
       "FoldHistoryRequest",
       "FoldHistoryStep",
+      "FoldKind",
       "FoldList",
       "FoldMarkRequest",
       "FoldMarked",
@@ -134554,6 +134571,7 @@
       "FoldUnfold",
       "FoldUnfoldRequest",
       "FoldUnfolded",
+      "FoldedOutput",
       "FolderItemInput",
       "FollowedStateInput",
       "ForceCancelGrounds",
@@ -137456,8 +137474,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1110,
-      "struct": 3380
+      "enum": 1111,
+      "struct": 3381
      }
     },
     {
