@@ -38,6 +38,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::GitWire;
+use crate::git_wire::mutation_commands::canonical_mutation_scope;
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::store::code_snapshot::RepoRef;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -201,6 +202,50 @@ impl Vault {
             .receive_pack_stamp_in_txn(&rtxn, root, operation)?
             .and_then(|stamp| self.validated_ingress_store_in_txn(&rtxn, &stamp, root));
         Ok(if ingress.is_some() { None } else { authority })
+    }
+
+    /// The repository whose retained edit ceiling judges a received push's
+    /// changed files (FIX 4299, review P1 #5919), as its mutation scope,
+    /// with the CODE anchor the push was admitted on. A push under a
+    /// projection ingress proof is judged on the canonical served
+    /// repository, never on the private ingress folder that no
+    /// registration names; as with G1, this holds for every proof stamp,
+    /// so a failed validation never skips the ceiling. Every other push is
+    /// judged on the physical repository at `root`.
+    ///
+    /// # Errors
+    /// A proof stamp with no admitted push, a repository that does not
+    /// resolve, or a store failure.
+    pub(in crate::origin) fn receive_pack_ceiling_repo_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        root: &Path,
+        attribution: &ReceivePackAttribution,
+    ) -> Result<(String, Option<EntityId>)> {
+        let body = self.receive_pack_evidence_in_txn(
+            txn,
+            attribution.provenance_claim_id,
+            RECEIVE_PACK_OUTCOME_PREDICATE,
+        )?;
+        let operation = receive_pack_field(&body, "operation_id")?
+            .as_str()
+            .and_then(|id| EntityId::from_hex(id).ok())
+            .ok_or_else(|| receive_pack_provenance_refused("invalid operation identity"))?;
+        let stamp = self.receive_pack_stamp_in_txn(txn, root, operation)?;
+        let push = stamp.as_ref().and_then(|stamp| stamp.push.as_ref());
+        let anchor = push.and_then(|push| push.code_repo()).map(|code| code.repo);
+        let folder = match &stamp {
+            Some(stamp) if stamp.ingress_proof.is_some() => {
+                let push = push.ok_or_else(|| {
+                    receive_pack_provenance_refused(
+                        "a projection-bound push names no admitted push",
+                    )
+                })?;
+                origin_repo_dir(self, push.served_name())?
+            }
+            _ => root.to_path_buf(),
+        };
+        Ok((canonical_mutation_scope(&folder)?, anchor))
     }
 
     /// Resume's check of a projection-bound intent: its proof validated
