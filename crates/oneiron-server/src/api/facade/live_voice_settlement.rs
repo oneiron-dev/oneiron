@@ -95,7 +95,7 @@ async fn observe(
                 &auth,
                 caller,
                 "connector.call_status",
-                move |_, _, memory| {
+                move |server, _, memory| {
                     let _admission = admission;
                     let status = oneiron::verbs::connector_call_status_read(
                         &memory,
@@ -116,7 +116,7 @@ async fn observe(
                         let call_ref = EntityId::from_hex(&input.call_ref)
                             .map_err(|_| MemoryError::bad_request("call_ref must be 32 hex"))?;
                         let published =
-                            oneiron::code_run::WaitDeliveries::canonical(memory.vault())
+                            oneiron::code_run::WaitDeliveries::canonical(server.vault())
                                 .settled(call_ref)
                                 .map_err(MemoryError::from)?
                                 .is_some();
