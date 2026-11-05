@@ -3835,6 +3835,12 @@ pub struct ShapeReachFact {
     pub channel: String,
     #[serde(rename = "sender")]
     pub sender: String,
+    #[serde(
+        rename = "sender_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sender_name: Option<String>,
     #[serde(rename = "identity")]
     pub identity: String,
     #[serde(rename = "class", default, skip_serializing_if = "Option::is_none")]

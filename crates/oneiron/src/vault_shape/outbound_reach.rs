@@ -23,11 +23,11 @@ const MCP_CHANNEL: &str = "mcp";
 
 /// The channel a contact grant's narrowed path names: the grant covers sends
 /// to one contact on any channel, so the path rides the contact itself.
-const CONTACT_CHANNEL: &str = "contact";
+pub(super) const CONTACT_CHANNEL: &str = "contact";
 
 /// The channel a brief grant's narrowed path names: the grant covers one
 /// brief's verb class, so the path rides the brief itself.
-const BRIEF_CHANNEL: &str = "brief";
+pub(super) const BRIEF_CHANNEL: &str = "brief";
 
 /// The verb a contact grant's narrowed path carries: sends to the contact it
 /// names, as the gate's grant match reads them.
@@ -82,6 +82,7 @@ pub(super) fn scoped_mcp_paths(
                 verb: tool.clone(),
                 channel: MCP_CHANNEL.to_owned(),
                 sender: server.clone(),
+                sender_name: None,
                 identity: grant.grant.to_hex(),
                 class: None,
                 audience: Vec::new(),
@@ -144,6 +145,7 @@ pub(super) fn contact_brief_paths(
                 verb: verb.to_owned(),
                 channel: channel.to_owned(),
                 sender: sender.to_owned(),
+                sender_name: None,
                 identity: grant.grant.to_hex(),
                 class: None,
                 audience: Vec::new(),
