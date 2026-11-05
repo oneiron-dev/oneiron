@@ -247,6 +247,8 @@ pub enum Command {
     /// you run to sign one in. Never takes or shows a vendor token.
     #[command(subcommand)]
     Seat(SeatCommand),
+    /// Print the engine-owned kind/family/zone registry as JSON (no vault required).
+    Registry,
 }
 
 #[derive(Subcommand)]
@@ -1069,5 +1071,6 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
         Command::Seat(SeatCommand::Runners) => commands::seat_runners(),
         Command::Seat(SeatCommand::RunnerPolicy(args)) => commands::seat_runner_policy(*args),
+        Command::Registry => commands::registry(),
     }
 }
