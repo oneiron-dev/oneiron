@@ -117,6 +117,11 @@ struct GraphHistoryCursor {
     link: Option<String>,
     /// The delta links of the folders read to the end so far.
     reached: BTreeMap<String, String>,
+    /// The folders not copied when the anchor was taken that were met copied
+    /// during this round, so their copies are looked up again should they
+    /// end it not copied.
+    #[serde(default)]
+    met_copied: BTreeSet<String>,
 }
 
 /// One mailbox's folders: the well-known ones by name (the root among
@@ -603,13 +608,18 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             };
             // A move of the folder itself is reconciled when the round ends.
             let now_skipped = self.tree_knowing(source, folder)?.skipped(folder)?;
-            // A folder not copied is read for the mail that leaves it.
+            if was_skipped && !now_skipped {
+                cursor.met_copied.insert(folder.clone());
+            }
+            // A folder not copied is read for the mail that leaves it. Mail
+            // added to a folder copied at either end of the round is filed;
+            // the importer copies only what its headers allow.
             let from_skipped = was_skipped || now_skipped;
             for entry in array(&listed, "value") {
                 let provider_id = graph_id(entry.get("id"))?;
                 if entry.get("@removed").is_some() {
                     changes.extend(self.removal(source, provider_id, from_skipped)?);
-                } else if !now_skipped {
+                } else if !(was_skipped && now_skipped) {
                     changes.push(MailHistoryChange::Added(MailMessageRef {
                         provider_id,
                         thread_id: text_of(entry.get("conversationId")),
@@ -635,12 +645,12 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 since: tree.read_at,
             };
             // Folders made since the anchor's folders were read join it,
-            // from then.
+            // from then; one the round found gone stays out.
             for folder in tree.parents.keys() {
                 if reached.folders.len() >= MAX_FOLDERS {
                     break;
                 }
-                if !reached.folders.contains_key(folder) {
+                if !stood.folders.contains_key(folder) && !reached.folders.contains_key(folder) {
                     reached
                         .folders
                         .insert(folder.clone(), delta_link(folder, Some(stood.since))?);
@@ -653,7 +663,9 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 }
                 let now_skipped = tree.skipped(&folder)?;
                 let was_skipped = stood.skipped.contains(&folder);
-                if stood.folders.contains_key(&folder) && !was_skipped && now_skipped {
+                let held_copied = stood.folders.contains_key(&folder)
+                    && (!was_skipped || cursor.met_copied.contains(&folder));
+                if held_copied && now_skipped {
                     // Moved under a folder not copied: each message copied
                     // from it is looked up again.
                     changes.push(MailHistoryChange::LabelGone {
