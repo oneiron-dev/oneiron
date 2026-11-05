@@ -414,7 +414,12 @@ pub(in crate::recovery::checkpoint) fn open_bundle(
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
         let compressed = Envelope::parse(envelope)
-            .map_err(|_| corrupt())?
+            .map_err(|error| match error {
+                oneiron_crypto::Error::OutOfMemory => {
+                    std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                }
+                _ => corrupt(),
+            })?
             .open(OpenKey::SymmetricKek(&kek), &policy)
             .map_err(|_| refused("a checkpoint payload compartment does not open with its key"))?;
         plain.extend_from_slice(

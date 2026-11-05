@@ -219,7 +219,12 @@ impl WorldKeyWrapsRecord {
         }
         let key_id = self.key.envelope_key_id();
         for (recipient, bytes) in &self.wraps {
-            let envelope = Envelope::parse(bytes).map_err(|_| invalid_authority())?;
+            let envelope = Envelope::parse(bytes).map_err(|error| match error {
+                oneiron_crypto::Error::OutOfMemory => {
+                    std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+                }
+                _ => invalid_authority(),
+            })?;
             let header = envelope.header();
             let kem_ok = matches!(
                 header.wrap_params,

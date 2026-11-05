@@ -177,7 +177,7 @@ impl Material {
                     family: family(sample_id),
                     row: &row,
                 };
-                let envelope = Envelope::parse(envelope).map_err(|_| corrupt_voice_row())?;
+                let envelope = Envelope::parse(envelope).map_err(parse_error)?;
                 crate::world_keys::open_side_row(&binding, &content_key, &envelope)
             }
             _ => Err(corrupt_voice_row()),
@@ -215,7 +215,7 @@ impl Material {
                 let (Value::Binary(mint), Value::Binary(envelope)) = (&parts[2], &parts[3]) else {
                     return Err(corrupt_voice_row());
                 };
-                Envelope::parse(envelope).map_err(|_| corrupt_voice_row())?;
+                Envelope::parse(envelope).map_err(parse_error)?;
                 Ok(Self::Sealed {
                     key: WorldKeyId {
                         world: decode_entity_ref(&parts[0])?,
@@ -315,5 +315,14 @@ impl RawValue for StoredSample {
         Ok(Self {
             material: Material::decode(&read_body(bytes)?)?,
         })
+    }
+}
+
+fn parse_error(error: oneiron_crypto::Error) -> crate::error::Error {
+    match error {
+        oneiron_crypto::Error::OutOfMemory => {
+            std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
+        }
+        _ => corrupt_voice_row(),
     }
 }
