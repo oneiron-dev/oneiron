@@ -40,6 +40,7 @@ mod ai_options;
 mod checkpoints;
 mod claims;
 mod core_write;
+mod diagnostics;
 mod key_value;
 mod proposal_results;
 mod proposals;
