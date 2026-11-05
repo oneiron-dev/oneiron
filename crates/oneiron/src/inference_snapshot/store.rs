@@ -42,7 +42,7 @@ use super::seal::{
 };
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::store::key_custody::retirement_in_txn;
+use crate::store::retirement_in_txn;
 use crate::store::{INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES, Store};
 
 /// The vault subkey every snapshot's data key is wrapped under.
