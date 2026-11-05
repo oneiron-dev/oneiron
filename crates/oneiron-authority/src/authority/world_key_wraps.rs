@@ -17,7 +17,7 @@
 //! own; and the recipients its signer permits (`permitted`), sorted, exactly
 //! the ones it seals to.
 
-use oneiron_crypto::{Envelope, Purpose, SuiteId, TAG_LEN, WrapParams, WrapType};
+use oneiron_crypto::{Header, Purpose, SuiteId, TAG_LEN, WrapParams, WrapType};
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -219,13 +219,11 @@ impl WorldKeyWrapsRecord {
         }
         let key_id = self.key.envelope_key_id();
         for (recipient, bytes) in &self.wraps {
-            let envelope = Envelope::parse(bytes).map_err(|error| match error {
-                oneiron_crypto::Error::OutOfMemory => {
-                    std::io::Error::from(std::io::ErrorKind::OutOfMemory).into()
-                }
-                _ => invalid_authority(),
-            })?;
-            let header = envelope.header();
+            let (header, header_len) =
+                Header::parse_prefix(bytes).map_err(|_| invalid_authority())?;
+            if header_len.checked_add(header.ciphertext_len as usize) != Some(bytes.len()) {
+                return Err(invalid_authority());
+            }
             let kem_ok = matches!(
                 header.wrap_params,
                 WrapParams::Hybrid { kem_suite, .. } if kem_suite == SuiteId::KEM_X25519_MLKEM1024_V1
