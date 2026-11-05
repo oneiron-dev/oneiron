@@ -23,6 +23,11 @@ job remains a diagnostic with no run to retry. The public generic point
 detector, other detectors and the existing signed receipt-window witness
 path are unchanged.
 
+This coordinate is retained only when the existing transaction path durably
+keeps its Gate decision. The checker batch path preserves refusal rows; a
+grouped writer that discards its decision on error still has no Gate receipt.
+This change adds no separate persistence path for those existing cases.
+
 The existing sweep still requires a stored Dreamer attempt in its ended,
 failed state before it can file a proposed Retry. A coordinate alone never
 passes that check or runs a repair. Retry policy and the failure ladder are

@@ -92,7 +92,7 @@ pub(super) fn dreamer_attempt_id_from_write_envelope(envelope: &WriteEnvelope) -
             return None;
         }
         let bytes = crate::deletion::parse_hex::<16>(value.as_str()?)?;
-        let attempt = crate::store::AttemptId::from_bytes(&bytes).ok()?;
+        let attempt = crate::store::attempt_id::AttemptId::from_bytes(&bytes).ok()?;
         Some(*attempt.as_bytes())
     })
 }
