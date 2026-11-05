@@ -18,6 +18,9 @@ use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::HexId;
 use crate::sync::SelectedRecordDocument;
 
+mod install;
+pub(super) use install::{AdmittedRecordDocument, InstalledRecordDocument, install_record_document_in_txn};
+
 /// A preparation that wrote neither the pointer nor its document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RecordDocumentStand {
@@ -62,6 +65,9 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             return Ok(RecordDocumentPreparation::TransportEnded);
         }
         let source = selected.head();
+        if source.refinement_origin().is_some() && selected.refinement_source().is_none() {
+            return Ok(RecordDocumentPreparation::Stands(RecordDocumentStand::Conflict));
+        }
         let entity = source.entity()?;
         if crate::ports::removed_in_txn(store, txn, &entity)? {
             return Ok(RecordDocumentPreparation::Stands(
@@ -69,6 +75,8 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             ));
         }
         let incoming = source.document(selected.raw(), selected.snapshot())?;
+        let incoming_inventory =
+            crate::entity_doc::native_skill_state::inspect_inventory(&incoming)?;
         let prior_raw = store.port_entity_raw(txn, &entity)?.map(|raw| raw.to_vec());
         let prior_head = storage::record_head_bytes(store, txn, &entity)?;
         let local = ENTITY_DOC_HEAD.get(store, txn, &HexId(entity))?;
@@ -255,6 +263,15 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
         if !prior_documents.iter().any(|(slot, _)| *slot == destination) {
             prior_documents.push((destination, document_rows_digest(store, txn, destination)?));
         }
+        if let Some(local) = local_snapshot.as_deref() {
+            let local = EntityDoc::from_snapshot(local)?;
+            let local = crate::entity_doc::native_skill_state::inspect_inventory(&local)?;
+            // This scratch selection is still data for the original phases.
+            // Only their closed source continuation may publish the result.
+            crate::entity_doc::native_skill_state::reconcile_settlement(
+                &document, &local, &incoming_inventory,
+            )?;
+        }
         let logical = storage::body_with_document(
             source.field(),
             &selected.raw()[ENTITY_METADATA_HEADER_LEN..],
@@ -368,6 +385,21 @@ impl<'selected, 'carrier> RecordDocumentCandidate<'selected, 'carrier> {
             crate::entity_doc::lift::remark_entity_text_in_txn(vault, txn, &entity, &text)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn applies_to(
+        &self,
+        store: &crate::store::Store,
+        entity: &EntityId,
+        data: &[u8],
+    ) -> bool {
+        std::ptr::eq(store, &self.selected.vault().store)
+            && self.entity().is_ok_and(|selected| selected == *entity)
+            && self.logical_body() == data
+    }
+
+    pub(crate) fn applying_store(&self) -> &crate::store::Store {
+        &self.selected.vault().store
     }
 
     pub(crate) fn entity(&self) -> Result<EntityId> {

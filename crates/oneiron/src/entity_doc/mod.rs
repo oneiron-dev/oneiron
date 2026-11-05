@@ -95,6 +95,7 @@ pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
 pub(crate) use record_carried::{
     CarriedRecordDocument, RecordDocumentCandidate, RecordDocumentPreparation, RecordDocumentStand,
     RefinementOriginSource, export_skill_record_document_in_txn,
+    InstalledRecordDocument, install_record_document_in_txn,
 };
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};

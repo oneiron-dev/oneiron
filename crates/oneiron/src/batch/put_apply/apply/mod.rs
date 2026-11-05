@@ -43,6 +43,8 @@ mod rewrite;
 
 #[cfg(feature = "sync")]
 pub(in crate::batch) use native_skill::PendingNativeSkillPut;
+#[cfg(feature = "sync")]
+pub(crate) use native_skill::AdmittedRecordDocumentPut;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(
@@ -74,6 +76,8 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         incoming_claim_body,
         project_revisions,
         mut portable_agent_source,
+        #[cfg(feature = "sync")]
+        record_refinement,
     } = admission::admit_put(store, wtxn, request, authority_beside, own_device)?;
     let data = owners.normalized_policy.as_deref().unwrap_or(data);
     let data = owners.project.as_deref().unwrap_or(data);
@@ -128,6 +132,10 @@ pub(in crate::batch) fn apply_put_beside<'a>(
     )?;
     #[cfg(feature = "sync")]
     let pending_native_skill_put = PendingNativeSkillPut::capture(store, wtxn, &fixed, data)?;
+    #[cfg(feature = "sync")]
+    let admitted_record_document = AdmittedRecordDocumentPut::after_phases(
+        store, wtxn, &fixed, data, record_refinement,
+    )?;
     audit::audit_and_stage_body(
         store,
         wtxn,
@@ -142,6 +150,10 @@ pub(in crate::batch) fn apply_put_beside<'a>(
             agent_id_pin,
         },
     )?;
+    #[cfg(feature = "sync")]
+    let installed_record_document = admitted_record_document
+        .map(|admitted| crate::entity_doc::install_record_document_in_txn(admitted, wtxn))
+        .transpose()?;
     let applied = projections::stage_put_projections(
         store,
         wtxn,
@@ -158,6 +170,8 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         evicted_shell_sources,
         project_revisions,
         portable_agent_source,
+        #[cfg(feature = "sync")]
+        installed_record_document.as_ref(),
     )?;
     #[cfg(feature = "sync")]
     let applied = AppliedPut {
