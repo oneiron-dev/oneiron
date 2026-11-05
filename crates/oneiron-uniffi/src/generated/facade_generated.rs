@@ -6144,7 +6144,7 @@ export_facade! {
 "self.skills.call" => fn self_skills_call(&self, input: LiveRunRequestSkillCallInput) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::SkillCallInput> = crate::codec::lower_record("self.skills.call", input)?;
     let output = client.self_skills_call(&input)?;
-    crate::codec::encode("self.skills.call", &output)
+    Lift::lift(output)
 };
 "self.focus.refresh" => fn self_focus_refresh(&self, input: LiveRunRequestBoardRefreshRequest) -> BoardFrameReply = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardRefreshRequest> = crate::codec::lower_record("self.focus.refresh", input)?;

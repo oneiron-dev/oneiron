@@ -2321,7 +2321,8 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
-            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            output = 'WireJson'
+            result = 'Lift::lift(output)' if row['output'] == 'serde_json::Value' else f'crate::codec::encode({name}, &output)'
             sides.append('wire')
         census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())
