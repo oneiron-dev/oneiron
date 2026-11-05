@@ -1,6 +1,6 @@
 //! Owned body descriptor vocabulary and its digest wire representation.
 
-use crate::entity_id::EntityId;
+use oneiron_contracts::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// Where a body's bytes live.
@@ -83,19 +83,14 @@ pub struct RetainedResultProvenance {
     pub served_rows: Option<Vec<EntityId>>,
 }
 
-mod hex32 {
+pub mod hex32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
-        bytes: &[u8; 32],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(blake3::Hash::from_bytes(*bytes).to_hex().as_str())
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<[u8; 32], D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
         let value = String::deserialize(deserializer)?;
         blake3::Hash::from_hex(value)
             .map(|hash| *hash.as_bytes())

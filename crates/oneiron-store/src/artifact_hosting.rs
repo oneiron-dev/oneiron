@@ -2,4 +2,5 @@
 
 pub mod door_types;
 pub mod preview;
+pub mod publication_sync;
 pub mod vocabulary;

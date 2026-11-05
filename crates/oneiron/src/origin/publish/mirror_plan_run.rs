@@ -1,13 +1,7 @@
-//! One automatic run over a mirror's plans (FIX 6866 part 2): the mirror's
-//! open plan settles first, and only a mirror with none freezes a new one.
-//!
-//! The caller holds the mirror's push hold for the whole run, so a plan
-//! left claimed by a crash has no child alive when the run reads it. An open
-//! plan's run releases those stale claims, reconciles every unproven ref
-//! (`mirror_plan_reconcile`), sends the batches left (`mirror_plan_dispatch`)
-//! and settles the plan once every ref needs nothing more. A new plan is
-//! frozen (`mirror_plan`) and sent the same way. Every error here ends the
-//! run before anything more goes out; the caller holds it and records why.
+//! Core half of `origin::publish::mirror_plan_run`: its store-layer items live in `oneiron_store::origin::publish::mirror_plan_run` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::origin::publish::mirror_plan_run::*;
 
 use super::mirror_plan::{MirrorRunScope, MirrorSelection};
 use super::mirror_plan_dispatch::ref_outcomes;
@@ -19,9 +13,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::mirror_auto::OriginMirrorHoldCause;
-
-/// The longest failure a run summary names.
-const MIRROR_RUN_MAX_FAILURE_BYTES: usize = 512;
 
 /// Where one plan stands after a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,15 +308,4 @@ fn summarize(
         failure,
         reconcile,
     })
-}
-
-/// A failure cut to [`MIRROR_RUN_MAX_FAILURE_BYTES`] on a character
-/// boundary.
-fn bounded_failure(mut text: String) -> String {
-    let mut cut = text.len().min(MIRROR_RUN_MAX_FAILURE_BYTES);
-    while !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    text.truncate(cut);
-    text
 }

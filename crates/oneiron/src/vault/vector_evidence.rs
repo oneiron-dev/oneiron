@@ -1,49 +1,13 @@
-//! Where a vector hit counts as evidence in the vault's embedding space, as
-//! the host's embedder states it.
+//! Core half of `vault::vector_evidence`: its store-layer items live in `oneiron_store::vault::vector_evidence` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
-use std::sync::PoisonError;
+pub(crate) use oneiron_store::vault::vector_evidence::*;
 
 use crate::Vault;
 use crate::config::VectorEvidenceFloors;
 use crate::error::Result;
-
-/// The floors a context pack's no-match check reads: one pair for every
-/// score, and the pairs a host measured for one kind of item in one
-/// embedding space, which take its place there (EMBED-PACK). A raw cosine
-/// means different things in different spaces, and an item kind can sit
-/// higher or lower in one space than another.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct NoMatchFloors {
-    /// For every score no keyed pair covers.
-    pub(crate) pair: VectorEvidenceFloors,
-    /// By embedding space (the model a vault's vectors are pinned to), then
-    /// by entity type.
-    pub(crate) keyed: BTreeMap<String, BTreeMap<u8, VectorEvidenceFloors>>,
-}
-
-impl NoMatchFloors {
-    pub(super) fn new(pair: VectorEvidenceFloors) -> Self {
-        Self {
-            pair,
-            keyed: BTreeMap::new(),
-        }
-    }
-
-    /// The floors a score in `space` for an item of `kind` is judged by:
-    /// that pair when the host set one, the vault's pair otherwise.
-    pub(crate) fn resolve(&self, space: &str, kind: Option<u8>) -> VectorEvidenceFloors {
-        kind.and_then(|kind| self.keyed.get(space)?.get(&kind))
-            .copied()
-            .unwrap_or(self.pair)
-    }
-
-    /// Whether any kind in `space` has floors of its own, so a score's kind
-    /// has to be known to judge it.
-    pub(crate) fn keys_space(&self, space: &str) -> bool {
-        self.keyed.contains_key(space)
-    }
-}
+use std::collections::BTreeMap;
+use std::sync::PoisonError;
 
 impl Vault {
     /// The floors context packs are judged by now: the configured ones

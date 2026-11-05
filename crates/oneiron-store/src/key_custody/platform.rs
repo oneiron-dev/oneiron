@@ -17,11 +17,11 @@
 use std::fs::{DirBuilder, File, Metadata, OpenOptions};
 use std::path::Path;
 
-use crate::error::Result;
+use oneiron_base::error::Result;
 
 /// Opens without following a link and without leaking the descriptor to a
 /// child; a file it creates is owner-only.
-pub(super) fn secure(options: &mut OpenOptions) -> &mut OpenOptions {
+pub fn secure(options: &mut OpenOptions) -> &mut OpenOptions {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -38,7 +38,7 @@ pub(super) fn secure(options: &mut OpenOptions) -> &mut OpenOptions {
 }
 
 /// A builder for one owner-only directory.
-pub(super) fn dir_builder() -> DirBuilder {
+pub fn dir_builder() -> DirBuilder {
     #[allow(unused_mut)]
     let mut builder = DirBuilder::new();
     #[cfg(unix)]
@@ -52,7 +52,7 @@ pub(super) fn dir_builder() -> DirBuilder {
 /// Whether what `meta` describes is custody's own: a directory or a file
 /// as `is_directory` says, never a link; on Unix also the effective uid's,
 /// owner-only, and a file of one link (`single_link`).
-pub(super) fn owned(meta: &Metadata, is_directory: bool, single_link: bool) -> bool {
+pub fn owned(meta: &Metadata, is_directory: bool, single_link: bool) -> bool {
     let shaped = if is_directory {
         meta.is_dir()
     } else {
@@ -105,7 +105,7 @@ pub fn sync_dir(path: &Path) -> Result<()> {
 /// Syncs the directory held open as `directory` at `path`: through the
 /// held descriptor on Unix, by its path elsewhere, where a flush needs a
 /// handle opened for writing.
-pub(super) fn sync_held(directory: &File, path: &Path) -> Result<()> {
+pub fn sync_held(directory: &File, path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let _ = path;
@@ -121,7 +121,7 @@ pub(super) fn sync_held(directory: &File, path: &Path) -> Result<()> {
 
 /// Holds an exclusive lock on `file` until it closes: one process at a time
 /// reads, compares and replaces what the lock guards.
-pub(super) fn lock_exclusive(file: &File) -> Result<()> {
+pub fn lock_exclusive(file: &File) -> Result<()> {
     #[cfg(unix)]
     {
         rustix::fs::flock(file, rustix::fs::FlockOperation::LockExclusive)
@@ -137,7 +137,7 @@ pub(super) fn lock_exclusive(file: &File) -> Result<()> {
 /// Opens the lock file at `path`, made owner-only when missing, and holds
 /// an exclusive lock on it until the returned file closes. Two opens
 /// exclude each other within one process as across processes.
-pub(super) fn lock_at(path: &Path) -> Result<File> {
+pub fn lock_at(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     let lock = secure(&mut options).open(path)?;
@@ -148,7 +148,7 @@ pub(super) fn lock_at(path: &Path) -> Result<File> {
 /// The identity of a directory custody made, so its cleanup never removes
 /// one that replaced it: device and inode on Unix; off Unix, its creation
 /// time, as no stable call reads a file index there.
-pub(super) fn directory_identity(meta: &Metadata) -> Option<(u64, u64)> {
+pub fn directory_identity(meta: &Metadata) -> Option<(u64, u64)> {
     if !meta.is_dir() || meta.file_type().is_symlink() {
         return None;
     }
@@ -170,9 +170,9 @@ pub(super) fn directory_identity(meta: &Metadata) -> Option<(u64, u64)> {
 }
 
 #[cfg(windows)]
-mod windows {
+pub mod windows {
     /// `FILE_FLAG_OPEN_REPARSE_POINT`: a link opens as itself.
-    pub(super) const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    pub const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     /// `FILE_FLAG_BACKUP_SEMANTICS`: a directory opens as a handle.
-    pub(super) const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    pub const BACKUP_SEMANTICS: u32 = 0x0200_0000;
 }

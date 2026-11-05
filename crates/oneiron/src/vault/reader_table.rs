@@ -1,16 +1,9 @@
-//! The LMDB reader table a vault's environment got, against what it asked for.
+//! Core half of `vault::reader_table`: its store-layer items live in `oneiron_store::vault::reader_table` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::vault::reader_table::*;
 
 use super::Vault;
-
-/// A vault whose LMDB reader table holds fewer slots than its config asked
-/// for (see [`crate::config::READER_SLOTS`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReaderTableShortfall {
-    /// The slots this vault's config asked for.
-    pub requested: u32,
-    /// The slots its reader table holds.
-    pub granted: u32,
-}
 
 impl Vault {
     /// The slots this vault's LMDB reader table holds, read back from LMDB.

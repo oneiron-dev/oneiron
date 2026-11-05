@@ -1,19 +1,9 @@
-//! The run-time kind lookups for PROJECT and its revision companion: the pack
-//! and short-id prefixes they are registered under, read from the store's
-//! in-memory structural kind registrations. `workspace_roster::project`
-//! re-exports each item at its old path.
+//! Core half of `store::project_kind`: its store-layer items live in `oneiron_store::project_kind` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::project_kind::*;
 
 use crate::store::Store;
-
-/// The short-id prefix PROJECT is registered under at run time.
-pub(crate) const PROJECT_SHORT_ID_PREFIX: &str = "pj";
-/// The pack PROJECT is registered under at run time.
-pub(crate) const PROJECT_PACK: &str = "oneiron.project";
-const PACK: &str = PROJECT_PACK;
-
-/// The short-id prefix the revision kind is registered under at run time,
-/// beside PROJECT in PROJECT's pack.
-pub(crate) const PROJECT_REVISION_SHORT_ID_PREFIX: &str = "pv";
 
 pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
     store

@@ -2,3 +2,4 @@
 
 pub mod loro_blocks;
 pub mod repo_rows;
+pub mod side_rows;

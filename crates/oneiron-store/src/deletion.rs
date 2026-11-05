@@ -8,6 +8,7 @@ pub mod coop_succession;
 pub mod delete;
 #[cfg(feature = "sync")]
 pub mod delete_bearing_update;
+pub mod erase;
 pub mod receipt;
 pub mod sweep_queue;
 #[cfg(feature = "sync")]

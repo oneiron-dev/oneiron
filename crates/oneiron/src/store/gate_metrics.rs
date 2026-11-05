@@ -1,11 +1,12 @@
-//! One vault's gate outcome x reason-class counters. The gate's
-//! `GateMetrics::record_decision` counts each decision into them.
+//! Core half of `store::gate_metrics`: its store-layer items live in `oneiron_store::gate_metrics` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+pub(crate) use oneiron_store::gate_metrics::*;
 
 use crate::store::gate_reason::{
     GATE_METRIC_OUTCOME_COUNT, GATE_METRIC_REASON_CLASS_COUNT, GateMetricReasonClass, GateOutcome,
 };
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 /// One vault's gate outcome x reason-class counters.
 ///
@@ -41,30 +42,5 @@ impl GateMetrics {
             }
         }
         GateMetricsSnapshot { counters }
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateMetricCounter {
-    outcome: GateOutcome,
-    reason_class: GateMetricReasonClass,
-    count: u64,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateMetricsSnapshot {
-    counters: Vec<GateMetricCounter>,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-impl GateMetricsSnapshot {
-    #[must_use]
-    pub(crate) fn count(&self, outcome: GateOutcome, reason_class: GateMetricReasonClass) -> u64 {
-        self.counters
-            .iter()
-            .find(|counter| counter.outcome == outcome && counter.reason_class == reason_class)
-            .map_or(0, |counter| counter.count)
     }
 }

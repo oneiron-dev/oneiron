@@ -1,8 +1,8 @@
-//! The permanent origin facts of a refinement candidate: the hash of the
-//! first native Proposed claim or Candidate skill bytes, keyed by entity id,
-//! and the provenance markers that make a claim or skill a refinement. The
-//! skill hub (`skill_hub::refinement_admission`) checks admission against
-//! them; the store's put projections stage them.
+//! Core half of `store::skill_refinement_origin`: its store-layer items live in `oneiron_store::skill_refinement_origin` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::skill_refinement_origin::*;
+
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::store::skill_package::codec::invalid;
@@ -12,27 +12,9 @@ use crate::{EntityId, error::Result};
 // of the first native Proposed bytes, never the body or an approval receipt.
 pub(crate) const CLAIM_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::SKILL_HUB_REFINEMENT_CLAIM_ORIGIN);
+
 pub(crate) const SKILL_ORIGIN: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::SKILL_HUB_REFINEMENT_SKILL_ORIGIN);
-
-pub(crate) fn declares_refinement(body: &crate::write_envelope::claim_body::ClaimBody) -> bool {
-    body.evidence.as_ref().is_some_and(|evidence| {
-        evidence.as_map().is_some_and(|fields| {
-            fields.iter().any(|(key, value)| {
-                key.as_str() == Some("provenance") && value.as_str() == Some("claim-refinement")
-            })
-        })
-    })
-}
-pub(crate) fn declares_skill_refinement(
-    record: &crate::write_envelope::skill_record::SkillRecord,
-) -> bool {
-    record.provenance.as_map().is_some_and(|fields| {
-        fields.iter().any(|(key, value)| {
-            key.as_str() == Some("source") && value.as_str() == Some("shared-skill-delta")
-        })
-    })
-}
 
 /// The ordinary put chokepoint stages the first native Candidate/Proposed
 /// origin after validation, for local and replicated writes alike. Delete

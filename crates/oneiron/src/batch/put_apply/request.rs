@@ -1,5 +1,7 @@
-//! The one typed request `apply_put` takes: the row, the options that govern
-//! how it is admitted, and the borrowed context it is judged against.
+//! Core half of `batch::put_apply::request`: its store-layer items live in `oneiron_store::batch::put_apply::request` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::put_apply::request::*;
 
 use super::BaseWriteOrigin;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
@@ -7,7 +9,6 @@ use crate::entity_id::EntityId;
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
-
 // The proof the sync ingest door gives a replicated MESSAGE put that one of
 // the owner's own machines sent its row's exact bytes (FIX 9600). The batch
 // carries it to the witness check and mints none.
@@ -34,15 +35,6 @@ pub(in crate::batch) struct PutRequest<'a> {
     pub(in crate::batch) context: PutContext<'a>,
 }
 
-/// The row as queued: its id, type byte, timestamps and body.
-pub(in crate::batch) struct PutRow<'a> {
-    pub(in crate::batch) id: EntityId,
-    pub(in crate::batch) entity_type: u8,
-    pub(in crate::batch) occurred: TimeRange,
-    pub(in crate::batch) learned_at: u64,
-    pub(in crate::batch) data: &'a [u8],
-}
-
 /// Every flag a put is admitted under, grouped by what it governs.
 ///
 /// The default is the plain `put_entity` path: a local, unreserved, non-hub
@@ -67,25 +59,6 @@ pub(in crate::batch) struct BodyStorage {
     pub(in crate::batch) asset_file: Option<crate::store::AssetBodyFacts>,
 }
 
-/// Which admit bands the put opens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(in crate::batch) struct Replication {
-    /// Sync replay of a row a peer already authored: skips the local claim
-    /// gate and the local-only birth laws, and (ONE-1141) deindexes the
-    /// loser's BM25F postings on a body-changing overwrite in the same
-    /// transaction (ARCH-0031 amendment).
-    pub(in crate::batch) replicated: bool,
-    /// The D17 reserved `edge.*` predicate namespace on a CLAIM body.
-    pub(in crate::batch) reserved_predicate: bool,
-}
-
-/// The ONE-1736 hub-sync SKILL import inlet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(in crate::batch) struct HubImport {
-    /// The body is an imported SKILL the hub-sync policy door accepted.
-    pub(in crate::batch) sync_imported: bool,
-}
-
 /// How a local CLAIM put meets the claim gate and its decision ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(in crate::batch) struct DecisionRecording {
@@ -102,33 +75,6 @@ pub(in crate::batch) struct DecisionRecording {
     pub(in crate::batch) preflight: Option<GateDecisionId>,
     /// This exact Pending-Auto occurrence belongs to a rollback-only bound probe.
     pub(in crate::batch) pending_auto_probe: Option<crate::batch::gate_mode::PendingAutoProbe>,
-}
-
-/// How the claim gate treats a pending consent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::batch) struct ConsentHandling {
-    /// Persist a consent the gate leaves pending.
-    pub(in crate::batch) persist_pending: bool,
-    /// A consent was already pending for this id when the batch began, so
-    /// this put may resolve it.
-    pub(in crate::batch) can_resolve_pending: bool,
-}
-
-impl Default for ConsentHandling {
-    fn default() -> Self {
-        Self {
-            persist_pending: true,
-            can_resolve_pending: false,
-        }
-    }
-}
-
-/// How the put's body relates to the text index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(in crate::batch) struct TextIndexing {
-    /// A later text op in the same batch covers this id, so a local
-    /// body-changing overwrite leaves deindexing to it.
-    pub(in crate::batch) later_text_op_covers: bool,
 }
 
 impl PutOptions {

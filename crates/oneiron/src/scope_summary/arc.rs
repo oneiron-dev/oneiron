@@ -1,12 +1,7 @@
-//! A conversation's Arc (FIX 7509 P8, ARCH-0026 Dreamer row 4): one stable
-//! summary per conversation path, written from the summary lines of the
-//! closed sittings below it (owner SUMMARY-SOURCE = A), never from its own
-//! earlier body (CLM-009). Facts and conflicts stay on claims.
-//!
-//! The Arc's projection identity is its declaration: the scope, purpose and
-//! requester, never which sittings lie below it, so a new sitting advances
-//! the same projection. What it was written from is its source set
-//! ([`super::arc_sources`]), apart from that identity.
+//! Core half of `scope_summary::arc`: its store-layer items live in `oneiron_store::scope_summary::arc` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::scope_summary::arc::*;
 
 use super::arc_sources::ArcSources;
 use super::codec::{invalid, parse_scope};
@@ -18,18 +13,6 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use heed::RwTxn;
 use rmpv::Value;
 use std::collections::BTreeSet;
-
-/// The declaration key an Arc names its scope under.
-pub(super) const ARC_KEY: &str = "arc";
-/// The purpose an Arc takes.
-pub(super) const ARC_PURPOSE: &str = "milestone_arc_narrative";
-
-/// Whether `input` declares an Arc.
-pub(super) fn is_arc_declaration(input: &Value) -> bool {
-    input
-        .as_map()
-        .is_some_and(|fields| fields.iter().any(|(key, _)| key.as_str() == Some(ARC_KEY)))
-}
 
 /// An Arc's target from its declared scope. An Arc spans sittings, so its
 /// scope restricts to none; a declared path is its own Arc.

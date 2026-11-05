@@ -1,4 +1,7 @@
-//! Where [`super::mnemonic`] finds each recovery phrase in `text` (FIX 1099).
+//! Core half of `batch::secret_scan::shapes::mnemonic_spans`: its store-layer items live in `oneiron_store::batch::secret_scan::shapes::mnemonic_spans` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::secret_scan::shapes::mnemonic_spans::*;
 
 use std::ops::Range;
 
@@ -169,12 +172,6 @@ impl Wrapped {
 struct Group {
     segments: Vec<Seg>,
     multi_word: bool,
-}
-
-struct Seg {
-    indices: Vec<u16>,
-    start: usize,
-    end: usize,
 }
 
 impl Group {

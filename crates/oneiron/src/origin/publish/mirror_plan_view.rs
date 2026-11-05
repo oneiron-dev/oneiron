@@ -1,10 +1,7 @@
-//! The read of one automatic mirror push plan (FIX 7175;
-//! `vault.code.origin.mirror.plan`): what a `schedule` or `full_auto` run
-//! froze, where each of its refs and batches stands, and one page of its
-//! review, as `ORIGIN_MIRROR_WORK` keeps them. The mirror row's automation
-//! status names only the newest plan; this names any plan the mirror keeps.
+//! Core half of `origin::publish::mirror_plan_view`: its store-layer items live in `oneiron_store::origin::publish::mirror_plan_view` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde::{Deserialize, Serialize};
+pub use oneiron_store::origin::publish::mirror_plan_view::*;
 
 use super::mirror_plan_dispatch::ref_outcomes;
 use super::mirror_plan_types::{MirrorBatchClaim, MirrorObservedTip, MirrorRefOutcome};
@@ -14,20 +11,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::mirror_auto::OriginMirrorPendingCheck;
 use crate::origin::mirror_strategy::OriginMirrorSyncStrategy;
-
-/// Reads one automatic plan of a served repository's mirror.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OriginMirrorPlanRequest {
-    pub repo: String,
-    /// The plan; absent: the mirror's open plan, else the one it settled
-    /// last.
-    #[serde(default)]
-    pub plan_id: Option<EntityId>,
-    /// The review page, from 0.
-    #[serde(default)]
-    pub page: u64,
-}
+use serde::{Deserialize, Serialize};
 
 /// The mirror's plans, and the one read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -86,16 +70,6 @@ pub struct OriginMirrorPlanRefView {
     /// The batch it goes in; `None` when it needs no push.
     pub batch: Option<u32>,
     pub outcome: MirrorRefOutcome,
-}
-
-/// One batch of a plan.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OriginMirrorPlanBatchView {
-    pub claim: MirrorBatchClaim,
-    /// Its refs, as indexes into the plan's refs.
-    pub refs: Vec<u32>,
-    /// The redacted cause of its last child that did not succeed.
-    pub detail: Option<String>,
 }
 
 impl Vault {

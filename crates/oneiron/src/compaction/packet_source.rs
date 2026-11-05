@@ -1,11 +1,7 @@
-//! The packet door's source bindings (FIX 4465). A conversation's packet
-//! proves its turns through the witnessed TURN -> SESSION membership rows,
-//! exactly as before. An executor run's log is numbered by its host: its
-//! window's turns are the run's derived speech TURN in the run's derived
-//! compaction session, which no membership row witnesses, and a derived id
-//! is never passed off as a witnessed one. Its packet binds instead to the
-//! run's retained replay record, read again here from the vault the summary
-//! lands in: the span must be steps the run committed.
+//! Core half of `compaction::packet_source`: its store-layer items live in `oneiron_store::compaction::packet_source` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::compaction::packet_source::*;
 
 use super::{
     CompactionPacket, CompactionSnapshotRef, ValidatedCompactionPacket, validate_payload_kind,
@@ -15,34 +11,6 @@ use super::{
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Error, Result};
 use crate::vault::Vault;
-
-/// Where a packet's turns were cut from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompactionSource<'a> {
-    /// A conversation: the witnessed membership checks.
-    Conversation,
-    /// An executor run's host-numbered log.
-    HostLog(CompactionHostLog<'a>),
-}
-
-/// An executor run's retained steps `first..=last`, by its host-derived run
-/// source and its run id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompactionHostLog<'a> {
-    pub run_ref: &'a str,
-    pub run_id: EntityId,
-    pub first: u64,
-    pub last: u64,
-}
-
-/// What a host-log packet was admitted against. The witness keeps it, so a
-/// landing can check the packet is its gated request's own run and span.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HostLogWitness {
-    pub(crate) run_id: EntityId,
-    pub(crate) first: u64,
-    pub(crate) last: u64,
-}
 
 /// The packet door with its source named: a conversation's packet passes
 /// [`super::admit_compaction_packet`] unchanged; a host log's passes the same
