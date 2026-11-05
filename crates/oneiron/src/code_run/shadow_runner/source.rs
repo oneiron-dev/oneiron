@@ -16,10 +16,12 @@
 mod admitted;
 
 pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
+use super::store::ShadowBodyStore;
 use super::types::{
     ShadowBodyRef, ShadowDeterminism, ShadowRequestDigest, ShadowStepIdentity, ShadowUnavailable,
     ShadowUnavailableReason as Reason,
 };
+use crate::batch::secret_scan::BodySpool;
 use crate::code_run::{
     CapsuleRequest, CapsuleRungBinding, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
     ExecutorStepStart, ReplayRoutePin, StepReplayCapsule, StepStartBody, capsule_request,
@@ -27,6 +29,9 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::store::result_body_reader::{CodeRunResultBodyReader, Source};
+use crate::store::result_memory::ResultHold;
+use crate::store::{BodySink, LINE_INDEX_BLOCK_BYTES};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
 /// An arm's source, or why it has none.
@@ -43,7 +48,29 @@ pub(crate) struct FrozenBody {
     pub(crate) output: CodeRunRawOutput,
     pub(crate) state: ArtifactTaintState,
     pub(crate) secret: Option<String>,
-    pub(crate) bytes: Option<Vec<u8>>,
+    pub(crate) bytes: Option<FrozenBodyBytes>,
+}
+
+/// Frozen clean bytes: retained RAM holds its pool charge; a spilled copy
+/// owns its unpublished temp file until the prepared source is dropped.
+pub(crate) enum FrozenBodyBytes {
+    Memory { bytes: Vec<u8>, _hold: ResultHold },
+    Spool(BodySpool),
+}
+
+impl FrozenBody {
+    /// Copies the same frozen bytes into an arm's store, never a live vault.
+    pub(crate) fn seed(&self, store: &ShadowBodyStore) -> Result<()> {
+        match &self.bytes {
+            Some(FrozenBodyBytes::Memory { bytes, .. }) => {
+                store.import(self.output.output_ref(), bytes)
+            }
+            Some(FrozenBodyBytes::Spool(spool)) => {
+                store.import_spool(self.output.output_ref(), spool)
+            }
+            None => Ok(()),
+        }
+    }
 }
 
 /// One captured step, read and frozen for an arm: its request as stored,
@@ -353,6 +380,7 @@ fn freeze_bodies(
     prefix: &CodeRunReplayRecord,
     admits: Admits<'_>,
 ) -> Result<Outcome<Vec<FrozenBody>>> {
+    let share = vault.result_share();
     let mut frozen = Vec::new();
     let mut frozen_bytes = 0_u64;
     for output in crate::engine_executor::shadow_readable_outputs(prefix) {
@@ -364,10 +392,19 @@ fn freeze_bodies(
             if !admits()? {
                 return Ok(Err(admitted::lapsed()));
             }
-            let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
-                return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
+            let bytes = if let Some(hold) = share.hold(output.raw_len, vault.limit_watch()) {
+                let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
+                    return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
+                };
+                FrozenBodyBytes::Memory { bytes, _hold: hold }
+            } else {
+                let spool = match freeze_body_spool(vault, &output, admits)? {
+                    Ok(spool) => spool,
+                    Err(unavailable) => return Ok(Err(unavailable)),
+                };
+                FrozenBodyBytes::Spool(spool)
             };
-            frozen_bytes = frozen_bytes.saturating_add(bytes.len() as u64);
+            frozen_bytes = frozen_bytes.saturating_add(output.raw_len);
             Some(bytes)
         };
         frozen.push(FrozenBody {
@@ -383,6 +420,72 @@ fn freeze_bodies(
         "a shadow step's earlier bodies are frozen"
     );
     Ok(Ok(frozen))
+}
+
+/// Copies a body into an owned snapshot while its one row/key snapshot,
+/// custody guard and before-snapshot pin still hold. No current-vault read
+/// is needed when an arm later imports this spool.
+fn freeze_body_spool(
+    vault: &Vault,
+    output: &CodeRunRawOutput,
+    admits: Admits<'_>,
+) -> Result<Outcome<BodySpool>> {
+    crate::code_run::codec::validate_raw_output(output)?;
+    let _custody = vault.store.gate_custody_read_guard()?;
+    let _pin = vault.pin_result_body(output.raw_blake3);
+    if !admits()? {
+        return Ok(Err(admitted::lapsed()));
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(reader) = vault.code_run_result_body_reader_in_txn(&rtxn, output)? else {
+        return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
+    };
+    let CodeRunResultBodyReader {
+        source,
+        _pin: _reader_pin,
+        ..
+    } = reader;
+    let mut sink = BodySink::spooling(vault.store.body_dir()?, 0);
+    match source {
+        Source::Inline(row) => {
+            for frame in row
+                .get(1..)
+                .unwrap_or_default()
+                .chunks(LINE_INDEX_BLOCK_BYTES as usize)
+            {
+                if !admits()? {
+                    return Ok(Err(admitted::lapsed()));
+                }
+                sink.write(frame)?;
+            }
+        }
+        Source::File(file) => {
+            let mut offset = 0_u64;
+            while offset < output.raw_len {
+                if !admits()? {
+                    return Ok(Err(admitted::lapsed()));
+                }
+                let take = usize::try_from((output.raw_len - offset).min(LINE_INDEX_BLOCK_BYTES))
+                    .map_err(|_| {
+                    crate::Error::ArithmeticOverflow("shadow frozen body frame")
+                })?;
+                let frame = file.read_range(offset, take)?;
+                if frame.len() != take {
+                    return Err(crate::Error::CorruptedIndex("shadow frozen body length"));
+                }
+                sink.write(&frame)?;
+                offset += take as u64;
+            }
+        }
+    }
+    if sink.digest()? != output.raw_blake3 {
+        return Err(crate::Error::CorruptedIndex("shadow frozen body digest"));
+    }
+    let spool = sink.into_spool()?;
+    if spool.len() != output.raw_len {
+        return Err(crate::Error::CorruptedIndex("shadow frozen body length"));
+    }
+    Ok(Ok(spool))
 }
 
 /// Whether `actor`, the actor an arm's source run is for, is gone here
