@@ -11,6 +11,7 @@ use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
     DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, WorkClass,
 };
+use super::capture::SettlementCapture;
 use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
 use super::host::{HostAccount, OfferBinding, PaidConnector, PayerPerson};
@@ -69,6 +70,8 @@ pub struct RunAdmission {
     submit_key: Option<String>,
     /// Host scheduling and physical-custody context for this handle (R4).
     work_context: Option<WorkContext>,
+    /// Capture targets carried only by permits admitted through this handle.
+    pub(super) capture: SettlementCapture,
 }
 
 pub(super) struct RunInner {
@@ -216,6 +219,7 @@ impl RunAdmission {
             initiator: None,
             submit_key: None,
             work_context: None,
+            capture: SettlementCapture::default(),
         }
     }
 
@@ -430,6 +434,7 @@ impl RunAdmission {
             call.request.model.as_str(),
             admitted,
             Some(call.request.model.clone()),
+            &self.capture,
         )
     }
 
@@ -444,8 +449,14 @@ impl RunAdmission {
         let admitted =
             self.inner
                 .admit_connector(&declaration, revision, connector, quantity, self.origin());
-        self.inner
-            .receipt_for(revision, None, &connector.connector, admitted, None)
+        self.inner.receipt_for(
+            revision,
+            None,
+            &connector.connector,
+            admitted,
+            None,
+            &self.capture,
+        )
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,
@@ -678,9 +689,11 @@ impl RunInner {
         subject: &str,
         admitted: Result<RunPermit, RunDenied>,
         model: Option<ModelId>,
+        capture: &SettlementCapture,
     ) -> Result<RunPermit, RunDenied> {
         match admitted {
-            Ok(permit) => {
+            Ok(mut permit) => {
+                permit.capture = capture.clone();
                 if let Some(model) = model {
                     self.lock_calls().insert(
                         permit.lease.id().to_owned(),
@@ -717,6 +730,15 @@ impl RunInner {
     }
 
     pub(super) fn record(&self, revision: u32, event: RunEvent) {
+        self.record_captured(revision, event, &SettlementCapture::default());
+    }
+
+    pub(super) fn record_captured(
+        &self,
+        revision: u32,
+        event: RunEvent,
+        capture: &SettlementCapture,
+    ) {
         let receipt = RunReceipt {
             instance: self.instance,
             occurred_at: std::time::SystemTime::now()
@@ -726,15 +748,17 @@ impl RunInner {
             revision,
             event,
         };
-        if !std::thread::panicking() {
+        let record = || {
+            capture.record(&receipt);
             self.receipts.record(receipt);
+        };
+        if !std::thread::panicking() {
+            record();
             return;
         }
         // A permit's or a dispatch's drop during an unwind: a sink that
         // panics again must not abort the host. The meters are settled by now.
-        let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.receipts.record(receipt);
-        }));
+        let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(record));
         if recorded.is_err() {
             tracing::error!(run = %self.run, "run receipt sink panicked during an unwind");
         }

@@ -146,7 +146,7 @@ impl RunInner {
         reported.extend(provided);
         let inference_calls =
             settled_inference_calls(reported, permit.lease.inference_observations());
-        self.record(
+        self.record_captured(
             permit.revision,
             RunEvent::Settled {
                 lease: permit.lease.id().to_owned(),
@@ -173,6 +173,7 @@ impl RunInner {
                 error: settled.as_ref().err().cloned(),
                 allocation_error: allocation_error.clone(),
             },
+            &permit.capture,
         );
         match (settled, allocation_error) {
             (Err(denied), _) | (Ok(_), Some(denied)) => Err(RunDenied::Budget { denied }),

@@ -459,10 +459,6 @@ impl DecisionModel for BigModel {
         call: &DecisionCall<'_>,
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecision> {
-        // A new capture cannot retroactively wrap a caller's existing run.
-        if call.run.is_some() {
-            return None;
-        }
         let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
             self.decide_with_context(call, Some(context))
         });
@@ -474,9 +470,6 @@ impl DecisionModel for BigModel {
         pack: &DecisionPack<'_>,
         context: &DecisionCallContext<'_>,
     ) -> Option<CapturedDecisionPack> {
-        if pack.run.is_some() {
-            return None;
-        }
         let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
             self.decide_pack_with_context(pack, Some(context))
         });
