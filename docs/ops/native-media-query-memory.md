@@ -112,6 +112,13 @@ neither an unstarted write nor a write error can release the lease before the
 cloned payload. This still covers only those two strings, not the clone's
 config JSON or its other record fields. Existing queue behavior is unchanged.
 
+The detached clone also records the actual slot capacities of its signal,
+result-ID and score-breakdown vectors on that same private lease. Each uses
+its native element size. These are separate buffers created by the record
+clone, not the original pipeline's vectors. The slot charge applies even when
+the cloned record has no replay inputs, provided the caller supplied the line.
+The score-breakdown entries' inner component buffers remain outside this charge.
+
 Other pipeline buffers, remaining trace serialization storage, provider
 storage, construction and return gaps, pre-growth admission and a full
 working-set bound remain open.
