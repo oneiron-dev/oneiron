@@ -124911,7 +124911,7 @@
      "path": "src/models/worker_host/session/registry.rs",
      "purpose": "The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
