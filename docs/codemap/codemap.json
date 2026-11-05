@@ -137709,31 +137709,54 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/host_adapters/desktop.rs",
+     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "ActivatedListener",
-      "AwakeGuard",
-      "AwakePolicy",
       "DesktopHost",
-      "KeepAwake",
       "LaunchdHost",
       "SecretSource",
       "SystemdHost"
      ],
-     "path": "src/lib/host_adapters/desktop.rs",
-     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "path": "src/lib/host_adapters/desktop/hosts.rs",
+     "purpose": "—",
      "surface": {
-      "enum": 4,
-      "fn": 14,
-      "struct": 4
+      "enum": 3,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AwakeGuard",
+      "AwakePolicy",
+      "KeepAwake"
+     ],
+     "path": "src/lib/host_adapters/desktop/keep_awake.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/lib/host_adapters/desktop/power.rs",
+     "path": "src/lib/host_adapters/desktop/keep_awake/power.rs",
      "purpose": "The power source a PluggedIn wake assertion follows (FIX 9547)",
      "surface": {
       "crate-vis": 5
@@ -138376,7 +138399,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 54,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -138385,7 +138408,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 53,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-web-fetch": {
