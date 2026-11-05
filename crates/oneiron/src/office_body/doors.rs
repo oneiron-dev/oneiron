@@ -529,7 +529,7 @@ impl Vault {
         if head.kind == OfficeBodyKind::Docx && request.author.is_none() {
             return self.export_docx_sequential(artifact, request, &head, &author, at);
         }
-        let Some((bytes, changes, recalc, effects)) =
+        let Some((bytes, changes, recalc, recalc_failure, effects)) =
             self.project_body(artifact, &head, &author.landed, at, request.zone)?
         else {
             return Ok(OfficeBodyExport {
@@ -578,6 +578,7 @@ impl Vault {
                 recalc: recalc
                     .as_ref()
                     .map(|stamp| recalc_label(stamp, request.zone)),
+                recalc_failure,
                 recalc_zone: Some(request.zone.clone()),
                 effects,
             };
@@ -610,18 +611,38 @@ impl Vault {
         }
         let at = self.now_recorded_at();
         let limits = self.docedit_package_limits()?;
-        let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at, zone)? {
-            Some((bytes, _, recalc, _)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
-        };
-        let book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
+        let (bytes, recalc, recalc_failure) =
+            match self.project_body(artifact, &head, "preview", at, zone)? {
+                Some((bytes, _, recalc, recalc_failure, _)) => (bytes, recalc, recalc_failure),
+                None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
+            };
+        let mut book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
             .map_err(|error| {
-                super::document_error(error.resource(), "the projected workbook could not be read")
-            })?;
+            super::document_error(error.resource(), "the projected workbook could not be read")
+        })?;
+        if recalc_failure.is_some() {
+            for sheet in &mut book.sheets {
+                for cell in &mut sheet.cells {
+                    if cell.formula.is_some()
+                        || matches!(
+                            cell.locked,
+                            Some(
+                                XlsxLock::SharedFormula
+                                    | XlsxLock::ArrayFormula
+                                    | XlsxLock::DataTable
+                            )
+                        )
+                    {
+                        cell.recalc = Some(XlsxCellRecalc::CachedAfterFailure);
+                    }
+                }
+            }
+        }
         Ok(XlsxPreview {
             frontier: head.frontier,
             book,
             recalc: recalc.as_ref().map(|stamp| recalc_label(stamp, zone)),
+            recalc_failure,
         })
     }
 
@@ -636,9 +657,9 @@ impl Vault {
     }
 
     /// The body at `head` projected onto its imported package: the bytes, the
-    /// change count, the engine that recalculated a workbook and what the
-    /// projection adapted. `None` when the body equals its import, so a no-op
-    /// keeps the original package.
+    /// change count, the engine that recalculated a workbook (or why it did
+    /// not) and what the projection adapted. `None` when the body equals its
+    /// import, so a no-op keeps the original package.
     pub(super) fn project_body(
         &self,
         artifact: &EntityId,
@@ -646,7 +667,15 @@ impl Vault {
         author: &str,
         at: u64,
         zone: &OfficeRecalcZone,
-    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>, Vec<String>)>> {
+    ) -> Result<
+        Option<(
+            Vec<u8>,
+            usize,
+            Option<CalcEngineStamp>,
+            Option<OfficeRecalcFailure>,
+            Vec<String>,
+        )>,
+    > {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
                 "a deck exports through vault.artifacts.body.deck.export, which lands only once its export gate opens",
@@ -690,7 +719,7 @@ impl Vault {
                 .map_err(|error| {
                     docx_error(&error, "the body could not be projected onto its package")
                 })?;
-            return Ok(Some((bytes, changes.len(), None, Vec::new())));
+            return Ok(Some((bytes, changes.len(), None, None, Vec::new())));
         }
         self.project_xlsx_body(
             artifact,
