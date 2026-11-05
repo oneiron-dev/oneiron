@@ -306,7 +306,7 @@ impl SyncClient {
         }
     }
 
-    fn staged_entity_evidence(
+    pub(in crate::sync::client) fn staged_entity_evidence(
         &self,
     ) -> std::result::Result<
         std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
