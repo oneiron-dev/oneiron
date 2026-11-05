@@ -271,6 +271,11 @@ pub const REPO_SECRET_MARK: &[u8] = b"oneiron:repo-secret-mark:v1";
 /// is outside the foreign-world range.
 pub const FILES_WORLD: &[u8] = b"oneiron.files.world.v1";
 
+/// The Clipboard role in each isolated vault (`clipboard`, FIX 12583). Parts:
+/// a u64 little-endian counter, selecting the first non-base local-world id.
+/// Imported worlds still acquire their source-vault-bound foreign identity.
+pub const CLIPBOARD_WORLD: &[u8] = b"oneiron.clipboard.world.v1";
+
 /// One folder source of a Files world (`note::files`, FIX 6942). Parts: the
 /// source install's MACHINE id, its Files world, the canonical folder.
 pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
