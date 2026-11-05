@@ -8,6 +8,8 @@
 //!   confession (OF-544). The engine still lists the objectives first and
 //!   parses the answer; a wording that asks for no `oneiron-confession` block
 //!   is answered with none, and none is recorded.
+//! * `code_fix_class_prompt` / `code_fix_class_prompt_file`: the Coach's
+//!   failure-class question. Its Choice options stay fixed.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,12 +26,16 @@ const DEFAULT_CONFESSION_INSTRUCTION: &str = "When your result is complete, end 
      objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
      confession never costs the score. Nothing follows the closing fence.";
 
+const DEFAULT_CODE_FIX_CLASS: &str = include_str!("../../../prompts/code-fix-class.md");
+
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DreamerWordingFile {
     confession_prompt: Option<String>,
     confession_prompt_file: Option<PathBuf>,
+    code_fix_class_prompt: Option<String>,
+    code_fix_class_prompt_file: Option<PathBuf>,
     commitment_reminder_prompt: Option<String>,
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
@@ -48,6 +54,13 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_CONFESSION_INSTRUCTION.to_owned());
+        let code_fix_class = super::levels::prompt_text(
+            "models.dreamer.wording.code_fix_class_prompt",
+            self.code_fix_class_prompt,
+            self.code_fix_class_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_CODE_FIX_CLASS.to_owned());
         let reminder_instruction = super::levels::prompt_text(
             "models.dreamer.wording.commitment_reminder_prompt",
             self.commitment_reminder_prompt,
@@ -57,6 +70,7 @@ impl DreamerWordingFile {
         .unwrap_or_else(default_reminder_instruction);
         Ok(DreamerWording {
             confession,
+            code_fix_class,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
         })
@@ -67,6 +81,7 @@ impl DreamerWordingFile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerWording {
     confession: String,
+    code_fix_class: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
 }
@@ -77,6 +92,12 @@ impl DreamerWording {
     #[must_use]
     pub fn confession(&self) -> &str {
         &self.confession
+    }
+
+    /// The Coach's failure-class question, with its Choice options supplied separately.
+    #[must_use]
+    pub fn code_fix_class(&self) -> &str {
+        &self.code_fix_class
     }
 
     /// The instruction used to word commitment reminders, not to send them.
@@ -97,6 +118,7 @@ impl Default for DreamerWording {
     fn default() -> Self {
         Self {
             confession: DEFAULT_CONFESSION_INSTRUCTION.to_owned(),
+            code_fix_class: DEFAULT_CODE_FIX_CLASS.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
         }
