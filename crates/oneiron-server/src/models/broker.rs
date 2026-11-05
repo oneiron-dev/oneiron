@@ -359,8 +359,22 @@ impl BrokerBackend {
         &self,
         header: &CallHeader,
         body: &[u8],
+        lease: &BudgetLease,
     ) -> LlmResult<oneiron_broker::BrokerReply> {
-        call_with_key(&self.client, &self.keys, &self.secret, header, body).await
+        if !lease.has_dispatch_release() {
+            return call_with_key(&self.client, &self.keys, &self.secret, header, body).await;
+        }
+        let release = || lease.check_dispatch_release();
+        call_with_key_released(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            header,
+            body,
+            Some(&release),
+            Some(lease),
+        )
+        .await
     }
 
     /// The provider's answer as the adapter reads it, its model labelled as
@@ -640,7 +654,7 @@ impl LlmBackend for BrokerBackend {
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
-            let reply = self.send(&header, &body).await?;
+            let reply = self.send(&header, &body, lease).await?;
             self.answer(
                 reply.outcome,
                 &reply.body,
