@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use super::HubPackage;
 use super::package_codec::invalid;
-use crate::agent_dispatch::team_shape_skill;
+use crate::agent_dispatch::team_shape_root_in_txn;
 use crate::side_table::{self, Raw, SideTable, StagedRow};
 use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 use crate::task_type::{TaskTypeTree, TreeScope};
@@ -401,7 +401,7 @@ fn tree_scoped_to(package: &HubPackage, project_ref: &str) -> bool {
 /// followed forward to its last loadable revision.
 fn team_shape_head_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
     let mut seen = std::collections::BTreeSet::new();
-    let mut cursor = team_shape_skill()?;
+    let mut cursor = team_shape_root_in_txn(vault, txn)?;
     let mut head = None;
     while seen.insert(cursor) {
         let Some(record) = vault.get_skill_record_in_txn(txn, &cursor)? else {

@@ -1350,7 +1350,11 @@ proposals in your run tray. It never closes, moderates or deletes a note. Bind t
 is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
-already going is joined. The sweep reads every note past its cursor, keeps each note revision as
+already going is joined. If that sweep is already running, the request also retains one later
+ordinary sweep, so notes arriving after its last read need not wait for the nightly. Several such
+requests coalesce into that one follow-up. A queued, paused or scheduled sweep already covers the
+request and queues no extra sweep. The returned attempt still names the joined sweep, not its
+later follow-up. The sweep reads every note past its cursor, keeps each note revision as
 evidence and triages it as its own job. A note too long for the Coach model's context window is
 triaged in parts: the whole note is split into parts that each fit, every part is its own job,
 synthesis jobs combine the part answers in order, and the note's own job files the findings once
@@ -1528,6 +1532,23 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Answer a Coach training offer
+
+`POST /v1/owner/coach/training-offers/answer` takes the shown `offer`, its `digest`,
+and an `answer`: `keep_baseline`, `approve_switch`, `approve_train`, `decline` or
+`postpone`. A train approval may also name its prepared `training` choice. The SDK
+verb `vault.coach.training_offers.answer` takes the same offer, digest and answer;
+its training run is authorized separately.
+
+Both replies contain `answer` (the immutable answer record) and `staged` (the
+current embedder binding for that offer). The binding is read after the answer
+commits, not copied into its stored record. `staged` is `null` when no binding row
+exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
+`undone`, including settled moves. The SDK's `vault.coach.training_offers` and
+`.get` views also include `staged`, read anew on each request. An embedder approval
+can therefore be shown as waiting or filling while the old index still serves;
+answering the offer does not mean that its new binding is already applied.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
@@ -1548,6 +1569,10 @@ export checks and overlaps, every swap receipt, every swap question and `serving
 hashes the view showed; a result that moved since is refused as changed. `{"kind":
 "explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
 on its receipt. Either answer closes the run's other open questions.
+
+An evaluated swap needs a present, non-retired cohort and records a Promotion exposure. An
+explicit override records no Promotion exposure, so a missing or retired cohort does not by
+itself block it. Owner, viewed-result, checkpoint and manifest checks still apply.
 
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
