@@ -125,9 +125,10 @@ requires the same authenticated instrument and projected agent on the same vault
 allocating its configured call budget. It constructs one anonymous first-claim party
 labeled only by the new opaque call ref: no owner session, PERSON, roster, room or
 voiceprint. Instructions and model restrictions come from the same admitted definition;
-its native world scope stays on both direct and speculative readers. The payer and
-model caller are the actual agent. Existing configured budget, reserve, suspension and
-render settings are reused, with no-room funding. Media uses the phone-specific door,
+its native world scope stays on both direct and speculative readers. The budget actor
+and model caller are the actual agent; caller attribution does not change the run's
+payer. Existing configured budget, reserve, suspension and render settings are reused.
+No-room funding retains the native vault-owner default. Media uses the phone-specific door,
 not the ordinary owner/device door. This constructor is not connected to a public
 start door or a running call. Native action/model-ceiling qualification and the actual
 answering lifecycle remain open; caller attribution is not credential authority.
