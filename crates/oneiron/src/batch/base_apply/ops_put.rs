@@ -146,7 +146,12 @@ pub(super) fn apply_put_arm(
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
     let applied = apply_put_beside(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {

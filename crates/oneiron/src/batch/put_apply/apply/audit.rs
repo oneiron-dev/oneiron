@@ -11,7 +11,7 @@ pub(super) struct StagedMarkers {
 /// P5: audit the put and stage the body — claim attachments, markers, the
 /// entity body row, and the ASSET body file arm.
 pub(super) fn audit_and_stage_body(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -20,6 +20,7 @@ pub(super) fn audit_and_stage_body(
     previous_skill_record: &Option<crate::write_envelope::skill_record::SkillRecord>,
     markers: StagedMarkers,
 ) -> Result<()> {
+    let store = write.store;
     if body_changed && let Some(body) = dispatch.decoded_claim_body.as_ref() {
         if fixed.replicated {
             store

@@ -6,7 +6,7 @@ use super::authority::observe_authority_put;
 /// claim indexes, authority observation, entity indexes, short ids, and
 /// embeddings — and report the applied put.
 pub(super) fn stage_put_projections(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -22,6 +22,7 @@ pub(super) fn stage_put_projections(
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
 ) -> Result<AppliedPut> {
+    let store = write.store;
     crate::store::skill_refinement_origin::stage_refinement_origin(
         store,
         wtxn,
