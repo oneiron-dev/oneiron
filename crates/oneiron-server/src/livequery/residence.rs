@@ -176,6 +176,9 @@ struct SearchRequest {
     /// selector and caller check below stands.
     #[serde(default)]
     scope: Option<oneiron::sync::residence::ResolvedRecallSelection>,
+    /// A recall clock pin, not a historical grant or storage snapshot.
+    #[serde(default)]
+    as_of: Option<u64>,
     /// A later page of a search served in pages (FIX 8865).
     #[serde(default)]
     page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
@@ -213,6 +216,7 @@ impl SearchRequest {
             self.limit,
             &selector_wire,
             self.scope.as_ref(),
+            self.as_of,
             locality,
             self.page.as_ref(),
             |request| {

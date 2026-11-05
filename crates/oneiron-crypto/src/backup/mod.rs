@@ -23,6 +23,7 @@
 mod checkpoint_fact;
 mod commitment;
 mod host_holds;
+mod host_holds_availability;
 mod inspect;
 mod prelude;
 mod wire;
@@ -42,6 +43,7 @@ pub use self::host_holds::{
     HOST_HOLDS_SEAL_EPOCH, HOST_HOLDS_VERSION, HostHoldsBinding, SealedHostHolds,
     host_holds_recipient_id, open_host_holds_family, open_host_holds_key, seal_host_holds,
 };
+pub use self::host_holds_availability::{HostHoldsAvailability, HostHoldsUnavailable};
 pub use self::inspect::{
     ARTIFACT_SEAL_EPOCH, ARTIFACT_SEAL_SUITE, BackupEvidence, BackupTailEvidence, IMAGE_STREAM,
     MANIFEST_PIECE_STREAM, MANIFEST_STREAM, MAX_FRAME_LEN, inspect_backup, inspect_backup_tail,

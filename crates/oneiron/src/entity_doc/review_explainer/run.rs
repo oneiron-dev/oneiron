@@ -250,7 +250,13 @@ async fn generate(
         .guard
         .admit_for_request(&request)
         .inspect_err(|denied| {
-            vault.budget_denied_hooks(denied, execution.guard, request.model.as_str(), None);
+            vault.budget_denied_hooks(
+                denied,
+                execution.guard,
+                request.model.as_str(),
+                None,
+                crate::runtime_hooks::VerbCallScope::from_model_scope(&request.envelope.scope),
+            );
         })?
         .lease;
     let mut charge = CallCharge {
