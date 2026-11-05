@@ -88,8 +88,18 @@ impl Vault {
         setting.validate()?;
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            let previous = EXCLUDED_CONVERSATIONS
+                .get(&self.store, txn, &())?
+                .unwrap_or_default();
             EXCLUDED_CONVERSATIONS.put(&self.store, txn, &(), setting)?;
-            Ok(())
+            // Words framed before this commit forget the newly excluded
+            // conversations in the same commit (FIX 12551(a)).
+            let newly: BTreeSet<EntityId> = setting
+                .conversations
+                .difference(&previous.conversations)
+                .copied()
+                .collect();
+            crate::dreamer_wake::follower::exclude_in_txn(self, txn, &newly)
         })
     }
 
