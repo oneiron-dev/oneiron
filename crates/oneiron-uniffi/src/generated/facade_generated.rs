@@ -5341,7 +5341,7 @@ export_facade! {
     let output = client.vault_artifacts_body_deck_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.deck.preview", &output)
 };
-"vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
+"vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionAppendOutcome = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;
     let output = client.vault_artifacts_append(&input)?;
     Lift::lift(output)
