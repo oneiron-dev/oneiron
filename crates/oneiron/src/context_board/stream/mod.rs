@@ -24,6 +24,7 @@ pub use self::frames::{
 };
 pub use self::publish::CommittedTaskBoardState;
 pub(crate) use self::publish::task_for_announcement;
+pub(crate) use self::publish::task_body_for_announcement;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
 pub use self::review::PendingDiaryReview;
 pub use self::wake::WakeEnvelope;
