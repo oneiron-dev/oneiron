@@ -62843,6 +62843,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbCallScope"
+     ],
+     "path": "src/runtime_hooks/verb/call_scope.rs",
+     "purpose": "The call context a verb-hook selector can narrow to",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -62931,7 +62945,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 9,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 2,
       "type": 1
      }
@@ -92539,7 +92553,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92961,7 +92975,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6501,
+   "source_files": 6502,
    "test_files": 895
   },
   "oneiron-android": {
