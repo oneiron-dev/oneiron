@@ -3,7 +3,7 @@
 mod graph;
 mod rust_api;
 mod storage;
-mod types;
+use oneiron_store::contract_oracle::types;
 
 pub use graph::{AffectedTests, WorkspaceGraph};
 pub use rust_api::{RustPublicNames, rust_public_names};

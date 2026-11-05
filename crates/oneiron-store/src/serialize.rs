@@ -1,0 +1,15 @@
+//! Store-layer modules of core `serialize`; core re-exports each one at its old path.
+
+pub mod access_grant_fields;
+pub mod context_entity;
+pub mod empty_context;
+pub mod export_format;
+pub mod grant_fields;
+pub mod group_labels;
+pub mod l2_prefix;
+pub mod outbound_grant_fields;
+pub mod pack_format;
+pub mod person_identity;
+pub mod persona_export_fields;
+pub mod types;
+pub mod value_json;

@@ -8797,6 +8797,7 @@ name = "oneiron-store"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "base64 0.22.1",
  "blake3",
  "getrandom 0.4.3",
  "half",
@@ -8809,6 +8810,8 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-model",
+ "oneiron-vault-contract",
+ "rand_core 0.6.4",
  "rmp-serde",
  "rmpv",
  "rustix",

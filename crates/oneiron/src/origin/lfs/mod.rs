@@ -15,7 +15,7 @@ mod lifecycle;
 mod lift;
 mod oid;
 mod pointer;
-mod policy;
+use oneiron_store::origin::lfs::policy;
 mod read_room;
 mod scanner;
 mod store;
