@@ -30,6 +30,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     occurred_range: Option<(u64, u64)>,
     temporal_now: u64,
     rerank_query: Option<&str>,
+    replay_inputs_memory: &mut Option<crate::host_memory::MemoryLease>,
 ) -> RetrievalReplayInputs {
     // Seed identities and channel payloads belong in the authorized query
     // packet, not in the local telemetry ledger.
@@ -125,8 +126,18 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         .media_search
         .memory()
         .map(crate::host_memory::MachineMemory::empty_lease);
+    *replay_inputs_memory = builder
+        .media_search
+        .memory()
+        .map(crate::host_memory::MachineMemory::empty_lease);
+    let mut account_ref = |value: Option<String>| {
+        if let (Some(memory), Some(value)) = (replay_inputs_memory.as_mut(), value.as_ref()) {
+            memory.materialized(0, value.capacity() as u64);
+        }
+        value
+    };
     let mut inputs = RetrievalReplayInputs {
-        query_ref: builder.replay_query_ref.clone(),
+        query_ref: account_ref(builder.replay_query_ref.clone()),
         config: json!({
             "channels": {
                 "vector_limit": builder.vector_search.as_ref().map(|(_, limit)| limit),
@@ -275,7 +286,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 entries
             }),
         }),
-        corpus_snapshot_ref: builder.corpus_snapshot_ref.clone(),
+        corpus_snapshot_ref: account_ref(builder.corpus_snapshot_ref.clone()),
     };
     // `json!` above is at its recursion limit, so these join after it.
     inputs.config["skill_reliability"] = json!(&builder.skill_reliability_query);
