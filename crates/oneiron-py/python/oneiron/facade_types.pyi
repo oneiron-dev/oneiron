@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1233 facade rows, 4493 declarations.
+Census: 1233 facade rows, 4495 declarations.
 Inputs: 1164 of 1233 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1068 of 1233 fully typed, 165 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -18335,9 +18335,11 @@ class CalendarIcsImportReceipt(TypedDict):
     source_version: int
     events: list[CalendarImportedEvent]
     screen_verdict: str
-class CalendarOccurrencesRequest(TypedDict):
+class CalendarOccurrencesPageRequest(TypedDict):
     master_ref: str
     range: CalendarRangeDto
+    deadline_ms: NotRequired[int | None]
+    resume_from: NotRequired[int | None]
 class CalendarOccurrenceView(TypedDict):
     event_ref: str
     master_ref: str
@@ -18345,6 +18347,10 @@ class CalendarOccurrenceView(TypedDict):
     original_start_utc: int
     start_utc: int
     end_utc: int
+class CalendarOccurrencesPage(TypedDict):
+    occurrences: list[CalendarOccurrenceView]
+    complete: bool
+    resume_from: NotRequired[int | None]
 class CalendarInstanceMoveRequest(TypedDict):
     system: str
     source_blob_ref: str
@@ -18365,18 +18371,29 @@ class CalendarEventView(TypedDict):
     blocks_time: bool
 class CalendarSel(TypedDict):
     system: NotRequired[str | None]
-class CalendarSearchRequest(TypedDict):
+class CalendarSearchPageRequest(TypedDict):
     calendars: list[CalendarSel]
     range: NotRequired[CalendarRangeDto | None]
     text: NotRequired[str | None]
     limit: int
-class CalendarFreebusyRequest(TypedDict):
+    deadline_ms: NotRequired[int | None]
+    resume_from: NotRequired[int | None]
+class CalendarSearchPage(TypedDict):
+    events: list[CalendarEventView]
+    complete: bool
+    resume_from: NotRequired[int | None]
+class CalendarFreebusyPageRequest(TypedDict):
     calendars: list[CalendarSel]
     range: CalendarRangeDto
+    deadline_ms: NotRequired[int | None]
+    resume_from: NotRequired[int | None]
 class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
-CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class CalendarFreebusyPage(TypedDict):
+    intervals: list[CalendarFreebusyIntervalDto]
+    complete: bool
+    resume_from: NotRequired[int | None]
 class CalendarMeetingRequest(TypedDict):
     event_ref: str
 PrepSectionKind = Literal["prior_commitment", "attendee_thread", "dossier_delta"]
