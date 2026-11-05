@@ -108,6 +108,33 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
     }
 
+    fn erase_skipped_send_receipt_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::comm::erase_skipped_send_receipt_in_txn(store, wtxn, id)
+    }
+
+    fn erase_trusted_contact_rows_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::counterparty_contact::erase_trusted_contact_rows_in_txn(store, wtxn, id)
+    }
+
+    fn erase_inbox_cards_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        crate::calendar::inbox_card::erase_inbox_cards_in_txn(store, wtxn, id)
+    }
+
     fn erase_room_side_rows(
         &self,
         store: &Store,
