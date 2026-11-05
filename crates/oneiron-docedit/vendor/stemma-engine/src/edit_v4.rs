@@ -916,6 +916,23 @@ pub enum Op {
         #[serde(default)]
         rationale: Option<String>,
     },
+    /// Edit one paragraph within a comment story as marked runs (§17.13.4).
+    /// Mirrors `EditStep::EditCommentRuns`. `comment_id` must be non-empty;
+    /// `target` is the story-local paragraph id; `expect` is the current-text
+    /// precondition; `content` is the v4 inline list (same shape as a paragraph
+    /// replace). Empty content empties the paragraph; new runs carry the exact
+    /// six marks and land as Normal annotation text in both outer modes, never
+    /// as a tracked redline in comments.xml.
+    EditCommentRuns {
+        comment_id: String,
+        target: NodeId,
+        expect: String,
+        content: Vec<Inline>,
+        #[serde(default)]
+        semantic_hash: Option<String>,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
     /// Insert a footnote or endnote (§17.11). Mirrors `EditStep::InsertNote`.
     /// `note_kind` is the wire string `"footnote"` | `"endnote"` (validated and
     /// mapped to `NoteKind`; an unknown value is refused, never defaulted).
@@ -2409,6 +2426,17 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
     ("comment_resolve", &["comment_id", "done", "rationale"]),
     ("comment_delete", &["comment_id", "rationale"]),
     (
+        "edit_comment_runs",
+        &[
+            "comment_id",
+            "target",
+            "expect",
+            "content",
+            "semantic_hash",
+            "rationale",
+        ],
+    ),
+    (
         "insert_note",
         &[
             "target",
@@ -3686,6 +3714,15 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                 }
             }
             Op::CommentResolve { comment_id, .. } | Op::CommentDelete { comment_id, .. } => {
+                if comment_id.trim().is_empty() {
+                    return Err(SchemaError::CommentMissingId { op_index });
+                }
+            }
+            // `expect` needs no emptiness gate here: a blank expectation is
+            // the guarded empty-paragraph fill the projection sends with the
+            // actual semantic hash, and apply-time matching is the same
+            // substring law the header/footer story edits use.
+            Op::EditCommentRuns { comment_id, .. } => {
                 if comment_id.trim().is_empty() {
                     return Err(SchemaError::CommentMissingId { op_index });
                 }
@@ -5114,6 +5151,21 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             rationale,
         } => Ok(EditStep::CommentDelete {
             comment_id,
+            rationale,
+        }),
+        Op::EditCommentRuns {
+            comment_id,
+            target,
+            expect,
+            content,
+            semantic_hash,
+            rationale,
+        } => Ok(EditStep::EditCommentRuns {
+            comment_id,
+            block_id: target,
+            expect,
+            semantic_hash,
+            content: v4_inlines_to_paragraph_content(op_index, &content)?,
             rationale,
         }),
         Op::InsertNote {

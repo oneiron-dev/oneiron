@@ -113,10 +113,12 @@ pub(super) fn group_ops<'v>(
 }
 
 /// One story text change as its native op: `edit_header`/`edit_footer` for an
-/// authored header/footer paragraph, `edit_note` for a footnote/endnote body.
-/// Header/footer scopes match the actual part name and band and skip synthesized
-/// blanks exactly as the reader does. A note routes only when the requested
-/// block is its first paragraph; any other block never lands on it.
+/// authored header/footer paragraph, `edit_note` for a footnote/endnote body,
+/// `edit_comment_runs` for one paragraph within a comment story. Header/footer
+/// scopes match the actual part name and band and skip synthesized blanks
+/// exactly as the reader does. A note routes only when the requested block is
+/// its first paragraph; any other block never lands on it. A comment routes by
+/// story-local paragraph id, any paragraph of the story.
 fn story_text_op(
     canonical: &CanonDoc,
     scope: &DocxStoryScope,
@@ -230,16 +232,24 @@ fn story_text_op(
                 "body": text,
             }))
         }
-        DocxStoryScope::Comment { id } => Err(DoceditError::InvalidTransaction(format!(
-            "comment story {id} is read-only: comment text has no native write verb"
-        ))),
+        DocxStoryScope::Comment { id } => {
+            let story = canonical
+                .comments
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown comment story {id}"))
+                })?;
+            comment_runs_op(&story.blocks, &story.id, block, story_text_content(text))
+        }
     }
 }
 
 /// One story runs change as its native op: an authored header/footer paragraph
 /// or one paragraph within a footnote/endnote story, as styled inlines for one
-/// whole-paragraph tracked redline. Comments have no write verb and refuse
-/// rather than silently dropping marks.
+/// whole-paragraph tracked redline; or one paragraph within a comment story as
+/// styled inlines for one Normal annotation edit. Comment runs land with exactly
+/// the requested six text marks, never as a tracked redline.
 fn story_runs_op(
     canonical: &CanonDoc,
     scope: &DocxStoryScope,
@@ -327,9 +337,16 @@ fn story_runs_op(
                 })?;
             note_runs_op(&story.blocks, &story.id, "endnote", block, runs)
         }
-        DocxStoryScope::Comment { id } => Err(DoceditError::InvalidTransaction(format!(
-            "comment story {id} is read-only: comment text has no native write verb"
-        ))),
+        DocxStoryScope::Comment { id } => {
+            let story = canonical
+                .comments
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown comment story {id}"))
+                })?;
+            comment_runs_op(&story.blocks, &story.id, block, story_runs_content(runs))
+        }
     }
 }
 
@@ -357,6 +374,33 @@ fn note_runs_op(
         "target": target.id.to_string(),
         "expect": target.text,
         "content": story_runs_content(runs),
+        "semantic_hash": target.guard,
+    }))
+}
+
+/// One comment runs change as its native `edit_comment_runs` op. The block
+/// resolves by ordered story-local lookup over the ACTUAL comment story, so any
+/// paragraph of the comment (not just its first) is addressable; the guard it
+/// carries is that paragraph's own. `content` is the v4 inline list for the new
+/// paragraph text, plain or marked — one op serves both story text and runs.
+fn comment_runs_op(
+    blocks: &[TrackedBlock],
+    comment_id: &str,
+    block: &str,
+    content: Vec<Value>,
+) -> Result<Value, DoceditError> {
+    let story_view = build_story_blocks_view(blocks);
+    let target = story_view
+        .blocks
+        .iter()
+        .find(|block_view| block_view.id.to_string() == block)
+        .ok_or_else(|| DoceditError::InvalidTransaction(format!("unknown block {block}")))?;
+    Ok(json!({
+        "op": "edit_comment_runs",
+        "comment_id": comment_id,
+        "target": target.id.to_string(),
+        "expect": target.text,
+        "content": content,
         "semantic_hash": target.guard,
     }))
 }

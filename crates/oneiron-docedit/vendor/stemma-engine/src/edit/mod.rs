@@ -1398,6 +1398,32 @@ pub enum EditStep {
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
     },
+    /// Edit one paragraph WITHIN a comment story as marked runs (§17.13.4): a
+    /// Normal annotation rewrite over the story-local `block_id`, addressed by
+    /// the actual `comment_id` (`w:id`). The paragraph-scoped comment-body edit:
+    /// this step edits the chosen top-level paragraph only — including later
+    /// paragraphs of a multi-paragraph comment — preserving every other comment
+    /// block, the comment author/date/tracking status, the paragraph `para_id`,
+    /// the `commentsExtended` threading/resolve sidecar, and all body comment
+    /// anchor ranges. `expect` is the current-text precondition (header/footer
+    /// substring law); `content` is the complete new paragraph content; empty
+    /// content empties the paragraph. New runs carry the exact six marks and
+    /// land as Normal text in both outer modes, never as `w:ins`/`w:del` in
+    /// comments.xml.
+    EditCommentRuns {
+        /// The comment id (`w:id`) whose story holds the paragraph.
+        comment_id: String,
+        /// Story-local paragraph block id (never a body id).
+        block_id: NodeId,
+        /// Substring that must appear in the paragraph's current visible text.
+        expect: String,
+        /// Optional full-block semantic-hash precondition.
+        semantic_hash: Option<String>,
+        /// The complete new content for the paragraph.
+        content: ParagraphContent,
+        /// Optional audit metadata from the schema envelope.
+        rationale: Option<String>,
+    },
     // ─── add new authoring verbs above ───────────────────────────────────────
     // Keep each verb's validate/apply logic in `edit/verbs/<verb>.rs` and make
     // the `apply_transaction` arm a one-line delegate. See `edit/AGENTS.md`.
@@ -12134,6 +12160,27 @@ pub(crate) fn apply_transaction_with_notes(
                     &mut doc,
                     note_id,
                     *note_kind,
+                    block_id,
+                    expect,
+                    semantic_hash.as_deref(),
+                    content,
+                    &transaction.revision,
+                    transaction.materialization_mode,
+                    &mut rev_counter,
+                    step_index,
+                )?;
+            }
+            EditStep::EditCommentRuns {
+                comment_id,
+                block_id,
+                expect,
+                semantic_hash,
+                content,
+                rationale: _,
+            } => {
+                verbs::comments::apply_edit_runs(
+                    &mut doc,
+                    comment_id,
                     block_id,
                     expect,
                     semantic_hash.as_deref(),

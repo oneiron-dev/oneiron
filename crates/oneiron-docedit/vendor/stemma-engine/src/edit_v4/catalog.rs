@@ -69,7 +69,8 @@ fn group_of(op: &str) -> &'static str {
         "set_numbering" => "numbering",
         "set_image_attrs" | "delete_image" | "insert_image" | "replace_image"
         | "set_image_layout" => "images",
-        "comment_create" | "comment_reply" | "comment_resolve" | "comment_delete" => "comments",
+        "comment_create" | "comment_reply" | "comment_resolve" | "comment_delete"
+        | "edit_comment_runs" => "comments",
         "insert_note" | "edit_note" | "edit_note_runs" | "delete_note" => "notes",
         "set_page_setup" | "set_section_type" | "insert_section_break" => "sections",
         "edit_header"
@@ -153,6 +154,9 @@ fn cue_of(op: &str) -> &'static str {
         "comment_reply" => "Reply to an existing comment thread by its parent comment id.",
         "comment_resolve" => "Mark a comment thread resolved or unresolved (w15:done).",
         "comment_delete" => "Delete a comment and its anchor range markers.",
+        "edit_comment_runs" => {
+            "Normal marked-runs edit of one comment paragraph by comment_id and story-local id."
+        }
         "insert_note" => "Insert a footnote/endnote reference and its story body.",
         "edit_note" => "Edit one note body by its note_id from the current notes index.",
         "edit_note_runs" => {
@@ -327,6 +331,9 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
             &[r#"{"op":"comment_resolve","comment_id":"<comment_id>","done":true}"#]
         }
         "comment_delete" => &[r#"{"op":"comment_delete","comment_id":"<comment_id>"}"#],
+        "edit_comment_runs" => &[
+            r#"{"op":"edit_comment_runs","comment_id":"<comment_id>","target":"<block_id>","expect":"<substring currently in the comment paragraph>","content":[{"type":"text","text":"<new comment text>"}]}"#,
+        ],
         "insert_image" => &[
             r#"{"op":"insert_image","target":"<block_id>","bytes_base64":"AAAA","format":"png","alt_text":"<description>"}"#,
         ],
