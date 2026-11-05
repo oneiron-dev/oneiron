@@ -127,6 +127,7 @@ pub(super) fn apply_claim_candidate(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version: None,
             },
             // A candidate opens no admit band and no hub inlet.
             options: PutOptions {
