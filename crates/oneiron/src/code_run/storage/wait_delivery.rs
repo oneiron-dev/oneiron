@@ -20,9 +20,12 @@
 mod erased_read;
 mod settle_report;
 
+use std::cell::Cell;
+
 use self::erased_read::{delivery_in_txn, settled_in_txn};
 use super::records::REPLAY_RECORDS;
 use super::replay_bodies::response_erased_error;
+use super::routing::SessionBinding;
 use super::wait_holders::{
     hold_settled_for_caller_in_txn, holder_erased_in_txn, holder_erased_routed, join_wait_in_txn,
     join_wait_routed,
@@ -30,7 +33,9 @@ use super::wait_holders::{
 use crate::code_run::ExecutorStorage;
 use crate::llm::{DreamerTrapKind, TrapRef};
 use crate::off_record::OffRecordSession;
-use crate::side_table::{self, CodecError, Erased, Raw, RawValue, RoutedDbs, SideTable};
+use crate::side_table::{
+    self, CodecError, Erased, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
+};
 use crate::store::Store;
 pub use crate::store::executor_wait_delivery::WaitDelivery;
 pub(super) use crate::store::executor_wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG};
@@ -287,6 +292,36 @@ pub fn park_and_bind_wait_trap(
         wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok(true)
     })
+}
+
+/// Puts `value` at `key` along the run's route unless the composed view
+/// holds a row there; `true` when this call wrote it. The comparison runs in
+/// the transaction that writes.
+fn put_if_absent_routed<K: SideKey, V, C: SideCodec<V>>(
+    binding: &SessionBinding<'_>,
+    table: &SideTable<K, V, C>,
+    key: &K,
+    value: &V,
+) -> Result<bool> {
+    let held = Cell::new(false);
+    let put = binding.session.side_table_compare_and_put_routed(
+        &binding.route,
+        table,
+        key,
+        value,
+        |current| match current {
+            Some(_) => {
+                held.set(true);
+                Err(Error::InvariantViolation("the code-run wait row is held"))
+            }
+            None => Ok(()),
+        },
+    );
+    match put {
+        Ok(()) => Ok(true),
+        Err(_) if held.get() => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// The vault's canonical store under a routed transaction's `dbs`: whose
