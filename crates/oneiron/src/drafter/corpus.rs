@@ -1061,17 +1061,19 @@ impl Vault {
     /// rejected or erased version's, a damaged row's, a write's leftover. An
     /// erase retires the keys in its own transaction; this removes the
     /// sealed bytes after. A night runs it before its export and after its
-    /// write; housekeeping may run it at any time.
+    /// write; housekeeping runs it at open and daily (FIX 15259). Returns
+    /// how many directories and files it removed.
     ///
     /// # Errors
     /// Storage and I/O faults.
-    pub fn sweep_drafter_corpora(&self) -> Result<()> {
+    pub fn sweep_drafter_corpora(&self) -> Result<u64> {
         let root = self.store.drafter_corpus_dir();
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(error) => return Err(error.into()),
         };
+        let mut removed = 0_u64;
         let txn = self.store.env.read_txn()?;
         for entry in entries {
             let entry = entry?;
@@ -1099,6 +1101,7 @@ impl Vault {
                 } else {
                     fs::remove_file(&path)?;
                 }
+                removed += 1;
                 continue;
             };
             let kept = [
@@ -1113,9 +1116,10 @@ impl Vault {
                     .is_some_and(|name| kept.iter().any(|keep| keep.as_str() == name));
                 if !named {
                     fs::remove_file(file.path())?;
+                    removed += 1;
                 }
             }
         }
-        Ok(())
+        Ok(removed)
     }
 }
