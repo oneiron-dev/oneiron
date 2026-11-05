@@ -55,6 +55,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
 ) -> Result<BlobArtifactLifecycleCleanup> {
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
+    crate::edit_settle::purge_artifact_retention_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let hashes = artifact_hashes(store, wtxn, id)?;
     let keys = VERSIONS.scan_keys(store, wtxn, id.as_bytes())?;
