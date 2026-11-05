@@ -100,6 +100,7 @@ pub use stream::{
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;
+mod tasks_layout;
 
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
@@ -153,6 +154,8 @@ pub use tasks::{
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
+pub(crate) use tasks_layout::erase_tasks_budget_actor_in_txn;
+pub use tasks_layout::{TasksLayoutCandidate, TasksLayoutPendingState, TasksLayoutState};
 
 /// Collapse control characters and the Unicode line and paragraph separators
 /// (which are not controls) so a rendered row is always one physical line,
