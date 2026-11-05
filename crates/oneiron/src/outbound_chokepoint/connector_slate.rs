@@ -129,7 +129,7 @@ fn always_ask(
         if current.is_none_or(|row| row.state != IntentState::Pending) {
             return Ok(Release::Ask);
         }
-        match setting_in_txn(vault, wtxn, record)? {
+        match setting_in_txn(vault, wtxn, record, candidate.actor)? {
             SlateDisposition::AlwaysAsk => {}
             // A later pass stops it.
             SlateDisposition::NeverAllow => return Ok(Release::Ask),
@@ -182,6 +182,7 @@ fn setting_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &IntentLedgerRecord,
+    actor: EntityId,
 ) -> Result<SlateDisposition, IntentLedgerError> {
     let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
         return Ok(SlateDisposition::Auto);
@@ -189,13 +190,27 @@ fn setting_in_txn(
     let Some(key) = crate::connector_key::read_key_for_pack_in_txn(vault, txn, key_ref)? else {
         return Ok(SlateDisposition::AlwaysAsk);
     };
-    Ok(crate::connector_key::connector_tool_setting_in_txn(
+    let setting = crate::connector_key::connector_tool_setting_in_txn(
         &vault.store,
         txn,
         key_ref,
         &key,
         &record.tool,
-    )?)
+    )?;
+    if setting == SlateDisposition::AlwaysAsk
+        && crate::connector_key::connector_tool_remembered_in_txn(
+            &vault.store,
+            txn,
+            key_ref,
+            &key,
+            Some(actor),
+            &record.server,
+            &record.tool,
+        )?
+    {
+        return Ok(SlateDisposition::Auto);
+    }
+    Ok(setting)
 }
 
 /// `record` kept Pending for the owner's press, naming the digest and actor

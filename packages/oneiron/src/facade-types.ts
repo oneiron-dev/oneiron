@@ -2341,7 +2341,7 @@ export type SlateOwnerOverride = { disposition: SlateDisposition }
 /** `oneiron::connector_key::slate::SlateHolderNarrow` */
 export type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number }
 /** `oneiron::connector_key::slate::SlateRow` */
-export type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null }
+export type SlateRow = { settings_act: EntityId; draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null }
 /** `oneiron::verbs::connector_pack::ConnectorPackAdvisory` */
 export type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null }
 /** `oneiron::verbs::connector_pack::ConnectorPackView` */

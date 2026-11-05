@@ -13,7 +13,7 @@ use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnap
 use crate::store::GateDecisionId;
 
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 4;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 6;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -147,14 +147,11 @@ impl CodeConsentPendingEffect {
     }
 }
 
-/// The capability setting an "approve and stop asking" answer changes: one
-/// tool's row on the slate its governing key meets, at the revision the
-/// offer was made against (CALLS: stop-asking for connector.call).
+/// The tool-setting act an "approve and stop asking" answer remembers.
+/// Actor, connector and tool come from the same immutable call binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CodeConsentRememberOffer {
-    pub(crate) slate_ref: EntityId,
-    pub(crate) slate_revision: u64,
-    pub(crate) tool: String,
+    pub(crate) settings_act: EntityId,
 }
 
 /// The question the wait's ask carries: who is asked, and the ids the
@@ -221,8 +218,8 @@ pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) authentication: GateDecisionId,
     /// The consent act's own receipt: approve-once or denied.
     pub(crate) decision: GateDecisionId,
-    /// The slate a stop-asking answer changed, at its new revision.
-    pub(crate) remembered: Option<(EntityId, u64)>,
+    /// The native standing consent grant the stop-asking answer minted.
+    pub(crate) remembered: Option<String>,
     /// The policy manifest frontier the answer was judged under. The owner
     /// gate decided it; no settlement-policy row is named (CALLS).
     pub(crate) policy_frontier: [u8; 32],

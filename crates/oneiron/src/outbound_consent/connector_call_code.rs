@@ -26,7 +26,6 @@ use crate::code_run::original_authority_holds_in_txn;
 use crate::code_run::read_code_consent_wait_in_txn;
 use crate::code_run::refuse_code_consent_wait_in_txn;
 use crate::code_run::settle_code_consent_wait_listing_in_txn;
-use crate::connector_key::SlateDisposition;
 use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
 use crate::consent::code_wait_state::CodeConsentCallSite;
 use crate::entity_id::EntityId;
@@ -215,7 +214,12 @@ impl Vault {
             return Ok(None);
         }
         let remember_offer = if reasons.iter().any(|reason| reason == SLATE_ALWAYS_ASK) {
-            self.connector_stop_asking_offer(&facts.key_id, &facts.call.tool)?
+            self.connector_stop_asking_offer(
+                &facts.key_id,
+                principal.actor_ref,
+                &facts.call.server,
+                &facts.call.tool,
+            )?
         } else {
             None
         };
@@ -252,33 +256,29 @@ impl Vault {
         )))
     }
 
-    /// The stop-asking offer for `tool` under the governing key `key_id`
-    /// (CALLS: stop-asking for connector.call): the tool's row on the slate
-    /// that key meets, at its current revision, when that row asks always.
-    /// The answer flips that one row back to `auto`; the tool's own scoped
-    /// grant already covers its consent.
+    /// The exact lineage/tool box a stop-asking answer can remember without
+    /// changing the shared catalog setting or another caller's narrows.
     fn connector_stop_asking_offer(
         &self,
         key_id: &EntityId,
+        actor: EntityId,
+        server: &str,
         tool: &str,
     ) -> Result<Option<CodeConsentRememberOffer>, IntentLedgerError> {
-        let Some(key) = self.get_connector_key(key_id)? else {
-            return Ok(None);
-        };
         let txn = self.store.env.read_txn().map_err(Error::from)?;
-        let Some((slate_ref, slate)) =
-            crate::connector_key::governing_slate_in_txn(&self.store, &txn, &key)?
-        else {
+        let Some(key) = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_id)? else {
             return Ok(None);
         };
-        Ok(
-            (slate.row(tool).is_some() && slate.tool_setting(tool) == SlateDisposition::AlwaysAsk)
-                .then(|| CodeConsentRememberOffer {
-                    slate_ref,
-                    slate_revision: slate.revision(),
-                    tool: tool.to_owned(),
-                }),
-        )
+        Ok(crate::connector_key::connector_tool_remember_bound_in_txn(
+            &self.store,
+            &txn,
+            key_id,
+            &key,
+            actor,
+            server,
+            tool,
+        )?
+        .map(|(settings_act, _)| CodeConsentRememberOffer { settings_act }))
     }
 
     /// Opens the owner's question for the code consent wait a fresh hold

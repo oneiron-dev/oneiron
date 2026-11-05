@@ -30,3 +30,25 @@ arguments or credentials are copied into the attachment.
 The existing consent queue may pre-fill a reason from its recorded reason
 lookup. This change does not complete the separate typed nearest-reason judgment
 remainder of FIX2975, or make any new runtime or end-to-end proof claim.
+
+## Code-owned stop-asking answers
+
+A code consent wait's authenticated **approve and stop asking** answer keeps
+its original approve-once for the frozen call and mints a separate native
+standing consent grant. The grant names the original agent actor, the server,
+the tool and that tool row's current settings act. Later reader forks that
+inherit that actor can reuse it. Another actor cannot. The baseline scoped-MCP
+grant is still required; it is not itself a remembered answer.
+
+The answer does not set the shared catalog row to `auto` or clear holder
+narrows. Preparation, the current Gate and the final send boundary all check
+the live remembered grant. `never allow`, scope, manifest, authority and the
+catastrophe floor keep their existing checks. Ordinary non-code questions
+keep their existing paths.
+
+Every new tool row and every explicit owner override of that row receives a
+fresh native `settings_act`, including an override that repeats the same
+setting. That later act ends prior remembers for the row. An override of a
+different row does not end them. Unchanged rows carry their identity through
+delta slates, forced revisions and pack rebounds. The grant is visible and
+revocable through the existing consent registry.

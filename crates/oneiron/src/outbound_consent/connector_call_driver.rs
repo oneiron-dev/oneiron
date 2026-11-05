@@ -575,6 +575,7 @@ impl Vault {
         // the digest; `never allow` mints nothing to send.
         let prepared = match self.prepare_connector_tool_call(
             &key_id,
+            &pending.principal_ref,
             call,
             descriptor,
             &arguments,

@@ -345,6 +345,10 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             );
         }
     }
+    field(&[u8::from(binding.remember_offer.is_some())]);
+    if let Some(offer) = &binding.remember_offer {
+        field(offer.settings_act.as_bytes());
+    }
     *hasher.finalize().as_bytes()
 }
 

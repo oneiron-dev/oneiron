@@ -266,17 +266,30 @@ fn answer_in_txn(
                 .ok_or(Error::ConcurrentWrite(
                     "this code consent wait offers no stop asking",
                 ))?;
-            let revision = crate::connector_key::stop_asking_tool_in_txn(
-                vault,
+            let call = row
+                .binding
+                .pending
+                .connector_call()
+                .ok_or(Error::ConcurrentWrite(
+                    "this code consent wait binds no connector call",
+                ))?;
+            let key = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &call.key_ref)?
+                .ok_or(Error::EntityNotFound)?;
+            let (_, bound) = crate::connector_key::connector_tool_remember_bound_in_txn(
+                &vault.store,
                 txn,
-                owner,
-                offer.slate_ref,
-                offer.slate_revision,
-                &offer.tool,
-            )?;
+                &call.key_ref,
+                &key,
+                row.binding.original.actor_ref,
+                &call.server,
+                &call.tool,
+            )?
+            .filter(|(settings_act, _)| *settings_act == offer.settings_act)
+            .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
+            let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
             (
                 vault.approve_once_in_txn(txn, owner, digest)?,
-                Some((offer.slate_ref, revision)),
+                remembered.grant_ref(),
             )
         }
     };

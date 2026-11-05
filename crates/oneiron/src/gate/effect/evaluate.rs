@@ -536,7 +536,20 @@ pub(crate) fn evaluate_external_effect_policy(
                     );
                 }
                 connector_key::SlateDisposition::AlwaysAsk
-                    if approve_once.is_none() && !scoped_retry_proof =>
+                    if approve_once.is_none()
+                        && !scoped_retry_proof
+                        && !match hydrated_effect.scoped_mcp_call.as_ref() {
+                            Some(call) => connector_key::connector_tool_remembered_in_txn(
+                                store,
+                                &*wtxn,
+                                &_key_id,
+                                &key,
+                                hydrated_effect.provenance.actor_entity_ref,
+                                &call.server,
+                                manifest_verb,
+                            )?,
+                            None => false,
+                        } =>
                 {
                     charter_wall = Some(
                         GateDecision::pending(vec![

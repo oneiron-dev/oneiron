@@ -498,13 +498,14 @@ impl crate::Vault {
     pub fn prepare_connector_tool_call(
         &self,
         key_ref: &crate::EntityId,
+        principal_ref: &str,
         call: ScopedMcpCallContext,
         descriptor: ToolCallDescriptor<'_>,
         arguments: &Value,
         mutation: MutationIntent,
     ) -> Result<ConnectorToolCallPreparation> {
         use crate::connector_key::SlateDisposition;
-        let (key, setting) = {
+        let (key, setting, remembered) = {
             let txn = self.store.env.read_txn()?;
             let key = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_ref)?
                 .ok_or(crate::Error::EntityNotFound)?;
@@ -515,7 +516,17 @@ impl crate::Vault {
                 &key,
                 &call.tool,
             )?;
-            (key, setting)
+            let remembered = setting == SlateDisposition::AlwaysAsk
+                && crate::connector_key::connector_tool_remembered_in_txn(
+                    &self.store,
+                    &txn,
+                    key_ref,
+                    &key,
+                    crate::EntityId::from_hex(principal_ref).ok(),
+                    &call.server,
+                    &call.tool,
+                )?;
+            (key, setting, remembered)
         };
         if setting == SlateDisposition::NeverAllow {
             return Ok(ConnectorToolCallPreparation::Denied {
@@ -539,7 +550,7 @@ impl crate::Vault {
         };
         let prepared = prepare_tool_call(call, descriptor, arguments, mutation)?
             .with_manifest_binding(binding)?;
-        Ok(if setting == SlateDisposition::AlwaysAsk {
+        Ok(if setting == SlateDisposition::AlwaysAsk && !remembered {
             ConnectorToolCallPreparation::ConsentRequired {
                 candidate: prepared,
             }
