@@ -177,6 +177,10 @@ impl Vault {
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
         if erase {
+            // FIX 11030: an erased PERSON's late sends are linked while its
+            // body still holds its party key, so the actor scrub below
+            // takes them.
+            crate::outbound_intent_ledger::link_late_recipients_in_txn(&self.store, wtxn, id)?;
             crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
                 act,
