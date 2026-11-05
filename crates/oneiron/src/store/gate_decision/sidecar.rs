@@ -64,12 +64,14 @@ impl Store {
         record: &GateDecisionRecord,
         target: &[u8; 16],
         tombstone_reason: u8,
+        authority_act: Option<[u8; 16]>,
     ) -> Result<()> {
         let pending = PendingDeletionGateDecisionRecord {
             version: PENDING_DELETION_GATE_DECISION_VERSION,
             target: *target,
             tombstone_reason,
             decision: record.clone(),
+            authority_act,
         };
         vet_pending_deletion_gate_decision_record(&pending)?;
         let sidecar_exists =
@@ -121,7 +123,8 @@ impl Store {
     }
 
     /// Appends a staged deletion authority record to the real Gate
-    /// ledger and removes its recovery sidecar atomically with TXN3.
+    /// ledger and removes its recovery sidecar atomically with TXN3. Returns
+    /// the original act binding for that writer to finish beside its receipt.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn append_pending_deletion_gate_decision_in_txn(
         &self,
@@ -129,7 +132,7 @@ impl Store {
         request_id: GateDecisionId,
         target: &[u8; 16],
         tombstone_reason: u8,
-    ) -> Result<Option<GateDecisionRecord>> {
+    ) -> Result<Option<(GateDecisionRecord, Option<[u8; 16]>)>> {
         let Some(required) = DELETE_REQUIRED.get(self, &*wtxn, &request_id)? else {
             return Ok(None);
         };
@@ -148,7 +151,7 @@ impl Store {
         self.append_gate_decision_in_txn(wtxn, &pending.decision)?;
         PENDING_DELETION.delete(self, wtxn, &request_id)?;
         DELETE_REQUIRED.delete(self, wtxn, &request_id)?;
-        Ok(Some(pending.decision))
+        Ok(Some((pending.decision, pending.authority_act)))
     }
 
     /// Discards a staged recovery sidecar when a later ownership probe proves

@@ -238,6 +238,7 @@ impl Vault {
             name: slot_name(&slot),
             class: CustodyClass::CustodyDeviceBound,
             device_only: true,
+            model_reveal_allowed: true,
             value_bytes: tokens.to_vec(),
             status: SecretCustodyStatus::Active,
             registered_at: at,

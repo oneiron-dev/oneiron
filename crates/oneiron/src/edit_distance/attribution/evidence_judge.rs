@@ -14,7 +14,7 @@ use super::taxonomy::{
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, amendment_delta};
-use crate::edit_distance::{RetainedProposal, retained_proposal};
+use crate::edit_distance::{RetainedProposal, TextRead, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
@@ -332,6 +332,55 @@ fn recorded_window(vault: &Vault, delta: &AmendmentDelta) -> Option<RetainedProp
     }
 }
 
+/// The retained endpoint texts `delta` measured, when it measured a
+/// reconstructed re-diff (FIX 12715): the final end's artifact (the
+/// settlement's own row) beside both ends' texts, read through the delta's
+/// own refs — the refs' stated purpose. `None` for every other lane, for a
+/// Δ whose refs name no retained row, and when a row or text does not
+/// read — those hunks carry no ranges, as before.
+fn reconstructed_ends(vault: &Vault, delta: &AmendmentDelta) -> Option<(EntityId, String, String)> {
+    if delta.source != DeltaSource::Reconstructed {
+        return None;
+    }
+    let proposed_artifact = delta.proposed_ref.proposal_artifact()?;
+    let final_artifact = delta.final_ref.proposal_artifact()?;
+    let proposed_row = match retained_proposal(vault, proposed_artifact) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's reconstructed proposed end does not read; its hunks carry no ranges"
+            );
+            return None;
+        }
+    };
+    let TextRead::Text(proposed_text) = proposed_row.end_text(&delta.proposed_ref) else {
+        return None;
+    };
+    if proposed_artifact == final_artifact {
+        let TextRead::Text(final_text) = proposed_row.end_text(&delta.final_ref) else {
+            return None;
+        };
+        return Some((final_artifact.entity_id(), proposed_text, final_text));
+    }
+    let final_row = match retained_proposal(vault, final_artifact) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's reconstructed final end does not read; its hunks carry no ranges"
+            );
+            return None;
+        }
+    };
+    let TextRead::Text(final_text) = final_row.end_text(&delta.final_ref) else {
+        return None;
+    };
+    Some((final_artifact.entity_id(), proposed_text, final_text))
+}
+
 /// Persists one judged split for `receipt_id`: the judgment row, its
 /// preference note, unclear row and discovery proposal land in one write
 /// transaction. Shared by the judge tiers and the verdict door above.
@@ -380,20 +429,36 @@ fn persist_amendment_split(
         at: evidence.at,
         hunks: {
             // Located once per judgment: every hunk's ranges name changes of
-            // this window (FIX 11344).
+            // this window (FIX 11344), or the reconstructed endpoints' line
+            // positions (FIX 12715).
             let recorded = recorded_window(vault, delta);
+            let reconstructed = if recorded.is_none() {
+                reconstructed_ends(vault, delta)
+            } else {
+                None
+            };
             hunks
                 .iter()
                 .zip(&split.hunks)
                 .map(|(hunk, class)| HunkLabel {
                     class: *class,
-                    ranges: recorded.as_ref().map_or(Vec::new(), |artifact| {
+                    ranges: if let Some(artifact) = recorded.as_ref() {
                         crate::edit_distance::miner::hunk_substitution_ranges(
                             artifact,
                             hunk.before,
                             hunk.after,
                         )
-                    }),
+                    } else if let Some((artifact, before, after)) = reconstructed.as_ref() {
+                        crate::edit_distance::miner::reconstructed_hunk_ranges(
+                            *artifact,
+                            before,
+                            after,
+                            hunk.before,
+                            hunk.after,
+                        )
+                    } else {
+                        Vec::new()
+                    },
                 })
                 .collect()
         },
