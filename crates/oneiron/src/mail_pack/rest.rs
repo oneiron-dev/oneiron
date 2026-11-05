@@ -2,6 +2,8 @@
 //! HTTPS client shape, one bounded JSON read, the Bearer header for an
 //! injected credential, and the text helpers a message body needs.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::time::Duration;
 
@@ -9,6 +11,7 @@ use dom_query::Document;
 use reqwest::header::HeaderValue;
 use serde_json::Value;
 
+use crate::EntityId;
 use crate::error::{Error, Result};
 
 /// The largest provider answer read: a whole message with its inline parts.
@@ -51,9 +54,9 @@ impl RestAnswer {
         match self {
             Self::Found(value) => Ok(Some(value)),
             Self::Failed { status: 404, .. } => Ok(None),
-            Self::Failed { status, .. } => Err(Error::InvalidConfig(format!(
-                "{wire}_status_{status}"
-            ))),
+            Self::Failed { status, .. } => {
+                Err(Error::InvalidConfig(format!("{wire}_status_{status}")))
+            }
         }
     }
 }
@@ -209,4 +212,38 @@ pub(super) fn tidy_text(text: &str) -> String {
         out.push('\n');
     }
     out.trim_end().to_owned()
+}
+
+/// The credentials a wire has seen read the mailbox their source names, each
+/// by a keyed digest of the exact bytes presented (FIX 12559, REVIEW-5754):
+/// a credential replaced at its door is checked again before it reads. The
+/// key is this wire's own and never leaves it, so a digest names no
+/// credential outside it.
+pub(super) struct VerifiedCredentials {
+    key: [u8; 32],
+    seen: RefCell<BTreeSet<(EntityId, [u8; 32])>>,
+}
+
+impl VerifiedCredentials {
+    pub(super) fn new() -> Self {
+        Self {
+            key: rand::random(),
+            seen: RefCell::new(BTreeSet::new()),
+        }
+    }
+
+    fn digest(&self, source: EntityId, token: &[u8]) -> (EntityId, [u8; 32]) {
+        (source, *blake3::keyed_hash(&self.key, token).as_bytes())
+    }
+
+    /// Whether `token` was seen read `source`'s mailbox.
+    pub(super) fn holds(&self, source: EntityId, token: &[u8]) -> bool {
+        self.seen.borrow().contains(&self.digest(source, token))
+    }
+
+    /// Records that `token` reads `source`'s mailbox.
+    pub(super) fn insert(&self, source: EntityId, token: &[u8]) {
+        let digest = self.digest(source, token);
+        self.seen.borrow_mut().insert(digest);
+    }
 }
