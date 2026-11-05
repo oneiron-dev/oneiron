@@ -41,6 +41,8 @@ vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
 vaultCommitmentsRelease(input: unknown): unknown
 vaultCommitmentsSupersede(input: unknown): unknown
+vaultCommitmentsReminderRouteGet(input: unknown): unknown
+vaultCommitmentsReminderRouteSet(input: unknown): unknown
 fetch(input: unknown): unknown
 crawl(input: unknown): unknown
 report(input: unknown): unknown
@@ -394,6 +396,7 @@ vaultFederationCoreferenceUnlink(input: unknown): unknown
 vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
+vaultSyncQuarantineHeldEdits(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown
