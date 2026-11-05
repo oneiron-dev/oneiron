@@ -2021,7 +2021,7 @@
      "path": "src/anchored_annotation/reanchor.rs",
      "purpose": "Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -56314,7 +56314,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/pack.rs",
@@ -70239,7 +70239,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 34
      }
     },
     {
@@ -70250,6 +70250,16 @@
      "purpose": "A body finished under its reader's pin (FIX 5399b)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store/finish_scanned.rs",
+     "purpose": "Scans a completed sink using its existing inline bytes or finished spill",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74342,7 +74352,7 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 11,
       "re-export": 1,
@@ -83135,7 +83145,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 2,
       "re-export": 1
      }
@@ -83161,6 +83171,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/history.rs",
+     "purpose": "Reads retained revisions from their original generic or common document",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -83181,7 +83201,7 @@
      "path": "src/vault/entity_revision/storage/retained.rs",
      "purpose": "The revisions a row retains, read for a TURN's text revision search",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -91835,7 +91855,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 487,
+     "files": 488,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91975,7 +91995,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92073,9 +92093,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 142,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6426,
+   "source_files": 6428,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93516,7 +93536,7 @@
      "purpose": "Request boundary limits and pure validators",
      "surface": {
       "const": 13,
-      "fn": 13
+      "fn": 12
      }
     },
     {
@@ -115084,7 +115104,7 @@
      "path": "src/api/memory_reason.rs",
      "purpose": "ONE-207: `POST /v1/companion/memory/reason`",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
