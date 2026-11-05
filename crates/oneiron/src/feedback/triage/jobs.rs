@@ -94,9 +94,6 @@ pub(super) fn requeue_unacknowledged(
     let queue = AttemptQueue::new(vault);
     let mut requeued = 0;
     for (key, read) in handoffs {
-        if read.erased_at().is_some() {
-            continue;
-        }
         // An acknowledged row stays out unless its evidence is erased, for
         // the backstop below (FIX 10921).
         if read.result.is_some() {
@@ -111,7 +108,7 @@ pub(super) fn requeue_unacknowledged(
                 return Ok(false);
             };
             if handoff.erased_at().is_some() {
-                return Ok(false);
+                return work_store::reconcile_in_txn(vault, txn, &key, &mut handoff, now);
             }
             // The erase backstop (FIX 10921): an acknowledged row whose
             // evidence the owner erased settles here and queues nothing.
