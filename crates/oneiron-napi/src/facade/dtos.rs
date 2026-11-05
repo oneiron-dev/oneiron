@@ -441,6 +441,16 @@ pub struct NapiBlobVersionView {
     /// Unix seconds.
     pub created_at: i64,
 }
+/// A checked append's landed version or complete retained proposal.
+#[napi(object)]
+pub struct NapiBlobVersionAppendOutcome {
+    /// `landed` | `proposed`.
+    pub outcome: String,
+    /// Set only for `landed`.
+    pub view: Option<NapiBlobVersionView>,
+    /// The full engine proposal; set only for `proposed`.
+    pub proposal: Option<serde_json::Value>,
+}
 
 /// A recall's media query (OF-370): bytes the server embeds into one
 /// declared space, searched as that space's list beside the query's.
