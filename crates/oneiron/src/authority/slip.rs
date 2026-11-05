@@ -585,7 +585,10 @@ impl CapabilitySlip {
             SlipPurpose::TrustedContact => contact,
             SlipPurpose::SeatChild => seat,
         };
-        if !admitted {
+        // A seat-child slip is presented as the host minted it: a caveat
+        // could only widen its signed records, never narrow them usefully,
+        // so it carries none (FIX 10624).
+        if !admitted || (seat && !self.caveats.is_empty()) {
             return Err(invalid_authority());
         }
         if self.version != 2

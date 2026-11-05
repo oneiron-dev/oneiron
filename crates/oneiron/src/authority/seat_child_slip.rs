@@ -119,8 +119,12 @@ impl Vault {
     }
 
     /// A seat-child slip stands only while its claim does: the attempt it
-    /// names is leased, to that lease owner, at that lease generation. A slip
-    /// that names no claim passes.
+    /// names is leased, to that lease owner, at that lease generation, as
+    /// every writer acting on a claimed try checks it (FIX 5088). The queue
+    /// keeps no lease deadline: a lease ends when a reclaim, retry, cancel
+    /// or settle moves the row, and the slip ends with it; its own
+    /// `expires_at`, the run's budget, bounds it otherwise. A slip that
+    /// names no claim passes.
     pub(super) fn require_live_seat_claim_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
