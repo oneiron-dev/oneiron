@@ -3979,17 +3979,17 @@ export_facade! {
 "vault.artifacts.review_slides" => fn vault_artifacts_review_slides(&self, input: SlideReviewSubmit) -> ActAnswerSlideReviewOutcome = |client| {
     let input: oneiron::blob_artifact::SlideReviewSubmit = crate::codec::lower_record("vault.artifacts.review_slides", input)?;
     let output = client.vault_artifacts_review_slides(&input)?;
-    crate::codec::lift_record("vault.artifacts.review_slides", &output)
+    Lift::lift(output)
 };
 "vault.artifacts.ask" => fn vault_artifacts_ask(&self, input: ArtifactAskSubmit) -> ActAnswerArtifactAskOutcome = |client| {
     let input: oneiron::blob_artifact::ArtifactAskSubmit = crate::codec::lower_record("vault.artifacts.ask", input)?;
     let output = client.vault_artifacts_ask(&input)?;
-    crate::codec::lift_record("vault.artifacts.ask", &output)
+    Lift::lift(output)
 };
 "vault.artifacts.admit" => fn vault_artifacts_admit(&self, input: ArtifactAdmitSubmit) -> ArtifactAskOutcome = |client| {
     let input: oneiron::blob_artifact::ArtifactAdmitSubmit = crate::codec::lower_record("vault.artifacts.admit", input)?;
     let output = client.vault_artifacts_admit(&input)?;
-    crate::codec::lift_record("vault.artifacts.admit", &output)
+    Lift::lift(output)
 };
 "vault.critic.review" => fn vault_critic_review(&self, input: CriticReviewSubmit) -> CriticReviewOutcome = |client| {
     let input: oneiron::critic::review::CriticReviewSubmit = crate::codec::lower_record("vault.critic.review", input)?;
@@ -4034,7 +4034,7 @@ export_facade! {
 "vault.artifacts.propose_deck" => fn vault_artifacts_propose_deck(&self, input: DeckProposeRequest) -> DeckProposeOutcome = |client| {
     let input: oneiron::blob_artifact::DeckProposeRequest = crate::codec::lower_record("vault.artifacts.propose_deck", input)?;
     let output = client.vault_artifacts_propose_deck(&input)?;
-    crate::codec::lift_record("vault.artifacts.propose_deck", &output)
+    Lift::lift(output)
 };
 "vault.artifacts.propose_output" => fn vault_artifacts_propose_output(&self, input: NativeOutputRequest) -> PendingProposalView = |client| {
     let input: oneiron::blob_artifact::NativeOutputRequest = crate::codec::lower_record("vault.artifacts.propose_output", input)?;
@@ -5339,7 +5339,7 @@ export_facade! {
 "vault.artifacts.body.deck.export" => fn vault_artifacts_body_deck_export(&self, input: DeckExportRequest) -> DeckExportView = |client| {
     let input: oneiron::office_body::DeckExportRequest = crate::codec::lower_record("vault.artifacts.body.deck.export", input)?;
     let output = client.vault_artifacts_body_deck_export(&input)?;
-    crate::codec::lift_record("vault.artifacts.body.deck.export", &output)
+    Lift::lift(output)
 };
 "vault.artifacts.body.deck.gate" => fn vault_artifacts_body_deck_gate(&self, input: DeckGateRequest) -> DeckGateView = |client| {
     let input: oneiron::office_body::DeckGateRequest = crate::codec::lower_record("vault.artifacts.body.deck.gate", input)?;

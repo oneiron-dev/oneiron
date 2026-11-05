@@ -15,8 +15,17 @@ are unchanged. Made-by metadata keeps the existing record codec.
 This removes the extra JSON-tree record round trip for those proposal results
 and recursive rendering and ordinary destruction of their summary at this
 boundary. It does not remove recursive JSON values from native proposal getters,
-the shared client, verb hooks or the general generated-record codec. Other
-generated result types that contain proposals still use that general codec.
+the shared client, verb hooks or the general generated-record codec.
+
+Five nested proposal results (`vault.artifacts.propose_deck`,
+`vault.artifacts.body.deck.export`, `vault.artifacts.admit`,
+`vault.artifacts.review_slides`, `vault.artifacts.ask`) use the same direct
+typed lift. Each consumes its nested `proposed` first. Ask-unit JSON and
+non-null narrowed `requested_schema` values move owned into their `WireJson`
+leaves. A null schema still reads as absent; false `on_device` and empty
+`reasons` still read as omitted. Finite siblings keep the existing record
+codec. Other generated result types still use that general codec.
+
 Input parsing, input canonicalization, hook masking, admission and receipts
 are unchanged. No end-to-end depth, memory, speed or runtime claim follows from
 this output conversion alone.
