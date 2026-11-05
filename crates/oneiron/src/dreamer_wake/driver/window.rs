@@ -1,4 +1,4 @@
-//! One wake pass's partition window (FIX 12487): plain Micro
+//! One wake pass's partition window (FIX 12487): plain Micro or Meso
 //! partitions admitted back to back, up to the selection policy's
 //! width, extracted side by side by the executor and settled here one
 //! by one in admission order through the same settle path as a serial
@@ -51,8 +51,9 @@ impl SettleFlow {
 }
 
 /// A window member is exactly what the executor's window contract
-/// holds: a plain Micro partition (the consolidation kind, the scope's
-/// own attempt type) whose preparation is Ready at this wake revision.
+/// holds: a plain Micro or Meso partition (the scope's consolidation
+/// kind, its own attempt type) whose preparation is Ready at this wake
+/// revision.
 /// A budget-pressure warning failure and a raised cancellation keep
 /// their serial pre-dispatch arms instead of joining.
 pub(super) fn window_eligible(
@@ -65,10 +66,10 @@ pub(super) fn window_eligible(
     parallelism > 1
         && pressure_ok
         && !cancel_requested
-        && admitted.status.attempt.kind
-            == crate::dreamer_runner::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
-        && admitted.status.payload.attempt_type
-            == crate::dreamer_runner::DreamerConsolidationScope::Micro.as_str()
+        && crate::dreamer_consolidation::selection::windowed_partition(
+            &admitted.status.attempt.kind,
+            &admitted.status.payload.attempt_type,
+        )
         && matches!(
             prepared_wake.preparation(admitted.status.attempt.id),
             Some(crate::dreamer_consolidation::AttemptPreparation::Ready(_))
