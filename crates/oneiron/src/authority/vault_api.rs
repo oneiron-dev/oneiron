@@ -490,11 +490,23 @@ impl Vault {
         Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
     }
 
-    /// This vault's authority-row generation: it moves on every commit to
-    /// the authority log, a grant's revoke among them, and on nothing
-    /// outside it (a scope or world setting held elsewhere leaves it). A
-    /// kept inference snapshot restores only at the generation its read was
-    /// admitted at (V2-R3). It only reads.
+    /// Moves the authority head for a revoke stored outside the authority log
+    /// (FIX 11810), such as a legacy token's sync-state marker. The caller
+    /// writes the marker in this same transaction; aborting discards both.
+    /// Existing head pollers then judge their credential again after commit.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors or an exhausted generation counter.
+    pub fn note_non_authority_revoke_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        advance_authority_cache_generation(&self.store, txn)
+    }
+
+    /// This vault's authority generation: it moves on every commit to the
+    /// authority log, a grant's revoke among them, and on a legacy token
+    /// revoke's marker. A scope or world setting held elsewhere leaves it.
+    /// A kept inference snapshot restores only at the generation its read
+    /// was admitted at (V2-R3). It only reads.
     ///
     /// # Errors
     ///

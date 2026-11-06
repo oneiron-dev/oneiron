@@ -223,6 +223,7 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
             return Ok(false);
         }
         vault.sync_state_put_in_write_txn(txn, &key, &[])?;
+        vault.note_non_authority_revoke_in_txn(txn)?;
         Ok(true)
     })?)
 }

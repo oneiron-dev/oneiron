@@ -21,7 +21,9 @@
 //! the job pinned, and the job alone files the final answer. Nothing is cut
 //! away, and every answer is kept.
 use oneiron::attempt_queue::AttemptRecord;
-use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerRunnerStore};
+use oneiron::dreamer_runner::{
+    DreamerAdmittedAttempt, DreamerParkedAttemptRecord, DreamerRunnerStore,
+};
 use oneiron::feedback::{
     COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER, FeedbackInboxNote,
     FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageNodeInput,
@@ -214,12 +216,21 @@ pub(super) fn yielded(
     admitted: &DreamerAdmittedAttempt,
     now: u64,
 ) -> oneiron::Result<bool> {
+    Ok(yielded_park(store, admitted, now)?.is_some())
+}
+
+/// The native park created by this revision run, with its stored cause and reason.
+pub(super) fn yielded_park(
+    store: &DreamerRunnerStore<'_>,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<Option<DreamerParkedAttemptRecord>> {
     if admitted.status.payload.attempt_type != COACH_FEEDBACK_TRIAGE_FACET {
-        return Ok(false);
+        return Ok(None);
     }
     Ok(store
         .parked_attempt(admitted.status.attempt.id)?
-        .is_some_and(|park| {
+        .filter(|park| {
             park.park_owner == COACH_FEEDBACK_TRIAGE_PARK_OWNER && park.parked_at >= now
         }))
 }
