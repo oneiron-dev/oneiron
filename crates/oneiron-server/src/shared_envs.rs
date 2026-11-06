@@ -37,6 +37,9 @@ use oneiron::sync::SyncConnection;
 use oneiron::sync::WindowManager;
 use oneiron::sync::bridge::Materializer;
 
+mod lane_events;
+use lane_events::{LaneMark, lane_observer};
+
 /// How often one env's membership is re-checked: leave is rare, and each
 /// check is one authenticated POST per membership.
 const LEAVE_CHECK_EVERY_SECS: u64 = 3600;
@@ -241,7 +244,7 @@ impl SharedEnvRegistry {
                         stop_rx,
                         freeze,
                         first,
-                        env.key.0,
+                        LaneMark::new(self, env.key.clone()),
                     ));
                     Some(ActiveLane {
                         connection: Arc::clone(&env.connection),
@@ -483,8 +486,9 @@ async fn run_lane(
     mut stop: tokio::sync::oneshot::Receiver<()>,
     mut freeze: Option<crate::device_sync::ReapFreeze>,
     first: Option<Box<dyn Send>>,
-    vault_id: u64,
+    mark: LaneMark,
 ) {
+    let vault_id = mark.vault_id();
     // Dropped only once the run it admits has ended; none while paused.
     let mut _admitted: Option<Box<dyn Send>> = first;
     if _admitted.is_none() {
@@ -513,7 +517,7 @@ async fn run_lane(
     }
     loop {
         let (stop_run, ended) = tokio::sync::oneshot::channel();
-        let run = connection.run_observed(ended, lane_observer(vault_id));
+        let run = connection.run_observed(ended, lane_observer(mark.clone()));
         tokio::pin!(run);
         let outcome = match freeze.as_mut() {
             Some(freeze) => tokio::select! {
@@ -574,20 +578,6 @@ async fn run_lane(
                 );
             }
         }
-    }
-}
-
-/// One lane's event observer: errors to the log, statuses to debug, the
-/// rest ignored. A sync error here is never a leave.
-fn lane_observer(vault_id: u64) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
-    move |event| match event {
-        oneiron::sync::SyncEvent::StatusChanged(status) => {
-            tracing::debug!(vault_id = vault_id, ?status, "shared env lane");
-        }
-        oneiron::sync::SyncEvent::Error(error) => {
-            tracing::warn!(vault_id = vault_id, %error, "shared env lane");
-        }
-        _ => {}
     }
 }
 

@@ -80,6 +80,16 @@ impl AsyncWrite for SyncIo {
 /// server (ARCH-0081 §7).
 pub(crate) type SyncSocket = WireSocket<WebSocketStream<SyncIo>>;
 
+/// Whether `error` is the home's HTTP 401 answer to the upgrade: it did not
+/// accept the credential the upgrade carried (FIX 12442).
+pub(crate) fn upgrade_unauthorized(error: &WsError) -> bool {
+    matches!(
+        error,
+        WsError::Http(response)
+            if response.status() == tokio_tungstenite::tungstenite::http::StatusCode::UNAUTHORIZED
+    )
+}
+
 /// Opens `request`'s WebSocket on `dialer`'s carrier when there is one, else on
 /// TCP to the request's host. TCP carries `ws` only: this build has no TLS, so
 /// a `wss` URL is refused as `connect_async` refuses it. Returns the upgrade
