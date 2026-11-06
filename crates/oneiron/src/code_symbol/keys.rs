@@ -3,7 +3,7 @@
 use heed::RwTxn;
 use sha2::{Digest, Sha256};
 
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoIdentity, RepoRef};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CODE_SYMBOL_ENTITY;
 use crate::error::{Error, Result};
@@ -31,17 +31,19 @@ pub(super) const MANIFEST: SideTable<EntityId, CodeSymbolManifest, Raw> =
 pub(super) const REVISION_INDEX: SideTable<Vec<u8>, (), Raw> =
     SideTable::new(&side_table::CODE_SYMBOL_REVISION_INDEX);
 
-/// The symbol's id, by its repo, file document, name, kind and ordinal
-/// (ARCH-0050, FIX 7809): a rename keeps the document and an edit above the
-/// symbol keeps the rest, so neither moves the notes attached to it. Its
-/// path, fingerprint and version stay revision data. A revision naming no
-/// document is on the one its path's first op births.
-pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) -> Result<EntityId> {
+/// The symbol's id, by its repository identity, file document, name, kind
+/// and ordinal (ARCH-0050, FIX 7809): a rename keeps the document and an
+/// edit above the symbol keeps the rest, so neither moves the notes
+/// attached to it. Its path, fingerprint and version stay revision data. A
+/// revision naming no document is on the one its path's first op births.
+/// The repository is its [`RepoIdentity`] (FIX 12761): its standing
+/// portable id when one stands, so a moved repository keeps its symbol ids.
+pub fn code_symbol_entity_id(repo: &RepoIdentity, symbol: &CodeSymbolRevision) -> Result<EntityId> {
     validate_symbol_shape(symbol)?;
-    let repo = repo_identity_key(repo_ref);
+    let repo = repo.as_str();
     let document = symbol
         .document
-        .unwrap_or_else(|| crate::code_document::code_document_genesis_id(&repo, &symbol.path, 0));
+        .unwrap_or_else(|| crate::code_document::code_document_genesis_id(repo, &symbol.path, 0));
     EntityId::derive(
         CODE_SYMBOL_ENTITY,
         &[
@@ -54,23 +56,19 @@ pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) ->
     )
 }
 
-/// The file document `path` of `repo_ref` is, read in `txn`: the document
-/// a symbol extracted from it is a span on (FIX 7809).
+/// The file document `path` of repository `repo` is, read in `txn`: the
+/// document a symbol extracted from it is a span on (FIX 7809), under the
+/// same identity its symbols are derived with (FIX 12761).
 ///
 /// # Errors
 /// A store failure.
 pub(crate) fn code_symbol_document_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    repo_ref: &RepoRef,
+    repo: &RepoIdentity,
     path: &str,
 ) -> Result<[u8; 32]> {
-    crate::code_document::code_document_identity_in_txn(
-        store,
-        txn,
-        &repo_identity_key(repo_ref),
-        path,
-    )
+    crate::code_document::code_document_identity_in_txn(store, txn, repo.as_str(), path)
 }
 
 pub fn derive_symbol_fingerprint(
@@ -107,13 +105,6 @@ pub fn derive_symbol_fingerprint(
         hasher.update(chunk.content_hash);
     }
     Ok(hasher.finalize().into())
-}
-
-pub(super) fn repo_identity_key(repo_ref: &RepoRef) -> String {
-    match repo_ref {
-        RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
-        RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
-    }
 }
 
 /// [`REVISION_INDEX`]'s key for one (repo_ref, path, name, fingerprint) group, without the
