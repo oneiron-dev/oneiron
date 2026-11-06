@@ -350,6 +350,7 @@ impl EntityImportEffects {
     ) -> Vec<crate::vault::EntityRevisionChange> {
         let EntityMaterialization {
             applied_ops,
+            native_records: _,
             revision_changes,
             born,
             floor_written,
