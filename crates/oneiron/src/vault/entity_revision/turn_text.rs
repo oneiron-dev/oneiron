@@ -27,7 +27,8 @@
 //! had, is refused before any source is read.
 
 use super::storage::{
-    entity_owns_revision_in_txn, reference, retained_row_sources_in_txn, retained_rows_in_txn,
+    common_binding_in_txn, entity_owns_revision_in_txn, read_entity_revision_from_store_in_txn,
+    reference, retained_row_sources_in_txn, retained_rows_in_txn, revision_for_mode_in_txn,
     row_revisions_starting_with_in_txn, state,
 };
 use super::{ReadMode, RevisionRef};
@@ -124,7 +125,15 @@ pub(crate) fn served_turn_text_in_txn(
             )
         }
     };
-    let Some(sources) = current_sources_in_txn(vault, store, txn, turn, release)? else {
+    // An indexed read joins each source at its own indexed state, so the
+    // words it serves and its revision wait for their idle publication as
+    // the row does (FIX 10203); any other read joins them as they stand.
+    let sources = if mode == ReadMode::Indexed {
+        indexed_sources_in_txn(vault, store, txn, turn, release)?
+    } else {
+        current_sources_in_txn(vault, store, txn, turn, release)?
+    };
+    let Some(sources) = sources else {
         return Ok(None);
     };
     let revision = if sources.is_empty() {
@@ -329,6 +338,84 @@ fn current_sources_in_txn(
     Ok(Some(sources))
 }
 
+/// The turn's sources at their indexed states (FIX 10203): each member, in
+/// the turn's current membership and order, that shows text at the state its
+/// index has published, with that state. `None` for a turn that is gone or
+/// archived.
+fn indexed_sources_in_txn(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    turn: &EntityId,
+    release: bool,
+) -> Result<Option<Vec<(EntityId, SourceState)>>> {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn, false)? else {
+        return Ok(None);
+    };
+    let mut sources = Vec::with_capacity(members.len());
+    for (id, _, _) in members {
+        if let Some(state) = indexed_state_in_txn(vault, store, txn, &id, release)? {
+            sources.push((id, state));
+        }
+    }
+    Ok(Some(sources))
+}
+
+/// The indexed state of `message`, when it shows text there: its words and
+/// body read at its indexed revision, and the commitment a search of its
+/// retained states makes for that same state ([`source_in_txn`]). A message
+/// whose index has caught up commits as [`current_state_in_txn`] does.
+fn indexed_state_in_txn(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    message: &EntityId,
+    release: bool,
+) -> Result<Option<SourceState>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, message)? else {
+        return Ok(None);
+    };
+    let Some(indexed) =
+        read_entity_revision_from_store_in_txn(vault, store, txn, message, ReadMode::Indexed)?
+    else {
+        return Ok(None);
+    };
+    let body = indexed
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .unwrap_or_default();
+    let Some(text) = crate::tagging::shown_message_text(body) else {
+        return Ok(None);
+    };
+    let live = revision_for_mode_in_txn(store, txn, message, ReadMode::Live)?;
+    let revision = revision_for_mode_in_txn(store, txn, message, ReadMode::Indexed)?;
+    let commitment = match revision.filter(|revision| Some(*revision) != live) {
+        // Indexed as it stands: the commitment a current read makes.
+        None => match crate::entity_doc::source_frontier_in_txn(&vault.store, txn, message)? {
+            Some(frontier) => document_commitment(message, &raw, &frontier),
+            None => row_commitment(message, &raw),
+        },
+        Some(revision) => match common_binding_in_txn(&vault.store, txn, message, revision)? {
+            None => row_commitment(message, &indexed),
+            Some((_, true)) => revision_commitment(revision),
+            Some((frontier, false)) => {
+                let pin = crate::entity_doc::source_frontier_at_in_txn(
+                    &vault.store,
+                    txn,
+                    message,
+                    &frontier,
+                )?
+                .ok_or(crate::error::Error::CorruptedIndex("entity document head"))?;
+                document_commitment(message, &raw, &pin)
+            }
+        },
+    };
+    Ok(Some(SourceState {
+        commitment,
+        text,
+        body: if release { body.to_vec() } else { Vec::new() },
+    }))
+}
+
 /// The state `message` stands at, when it shows `text`, read from `body`.
 /// An entity document is the vault's, so its frontier is read on the vault's
 /// own store.
@@ -424,7 +511,31 @@ fn source_in_txn(
                     state.body,
                 );
             }
-            let (rows, aliases) = retained_row_sources_in_txn(&vault.store, txn, &message)?;
+            let retained = retained_row_sources_in_txn(&vault.store, txn, &message)?;
+            let (rows, aliases) = (retained.rows, retained.aliases);
+            // The common document's own retained states the walk above may
+            // not follow, an indexed state beside a concurrent head among
+            // them (FIX 10203).
+            let mut common = Vec::with_capacity(retained.common.len());
+            for frontier in retained.common {
+                if let Some(pin) = crate::entity_doc::source_frontier_at_in_txn(
+                    &vault.store,
+                    txn,
+                    &message,
+                    &frontier,
+                )? {
+                    common.push((pin, frontier));
+                }
+            }
+            for (pin, body) in crate::entity_doc::record_bodies_at_in_txn(
+                &vault.store,
+                txn,
+                &message,
+                body,
+                common,
+            )? {
+                push(document_commitment(&message, &raw, &pin), body);
+            }
             for raw in rows {
                 push(
                     row_commitment(&message, &raw),

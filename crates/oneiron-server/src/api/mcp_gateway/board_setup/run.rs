@@ -27,8 +27,16 @@ pub(crate) async fn run_current_board(
         super::board_observations::run_state(server, actor, connection, &read, &packs).await?;
     let mut rows = Vec::new();
     let pins = run_hook_pins(server, &read)?;
-    let (mut sections, omissions, hooks) =
-        run_board_sections(server, actor, &read, &packs, &pins, session, &mut rows)?;
+    // The agent's own board layout (BOARD-LAYOUT): the run's next board
+    // render is its next turn, so the pending batch projects here and the
+    // render that shows it activates it.
+    let (layout, layout_candidate) = server
+        .vault
+        .select_board_layout(actor.entity_ref(), true)
+        .map_err(|error| mcp_engine_error("board layout selection failed", error))?;
+    let (mut sections, omissions, hooks) = run_board_sections(
+        server, actor, &read, &packs, &pins, session, &layout, &mut rows,
+    )?;
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
@@ -44,7 +52,14 @@ pub(crate) async fn run_current_board(
     );
     let scope_label =
         crate::mcp::mcp_effective_scope_label(&crate::mcp::McpConnectorScope::vault_wide());
-    let mut state_rows = mcp_board_state_rows(&sections);
+    let cap_tok = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(server),
+    )
+    .cap_tok;
+    let laid_out = oneiron::context_board::apply_board_layout(&sections, &layout, cap_tok);
+    let layout_candidate =
+        layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
+    let mut state_rows = mcp_board_state_rows(&laid_out.sections);
     state_rows.extend(board.render());
     let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
     // The connection's published events are read under the run's own key,
@@ -67,6 +82,8 @@ pub(crate) async fn run_current_board(
         .observe_pack_inventory(&packs);
     Ok(McpBoardState {
         sections,
+        laid_out: laid_out.sections,
+        layout_candidate,
         scope_label,
         epoch,
         changes,
@@ -208,6 +225,7 @@ pub(super) fn run_board_sections(
     packs: &[(String, String)],
     pins: &[oneiron::context_board::HookPin],
     session: Option<&str>,
+    layout: &oneiron::context_board::BoardLayout,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
@@ -255,7 +273,34 @@ pub(super) fn run_board_sections(
             .chain(rows.bare_jobs.iter().map(|job| job.id.as_str()))
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
-    let mut tasks = rows.render();
+    let budget = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(server),
+    );
+    // TASKS under the agent's layout: the fold line counts every admitted
+    // row; the filter and the share narrow only what the section lists.
+    let tasks_summary = rows.fold_summary(Some(actor.entity_ref()));
+    let filtered = layout
+        .filter("tasks")
+        .map(|filter| {
+            crate::api::context_board::filter_task_rows(
+                &server.vault,
+                read,
+                &oneiron::context_board::PeopleView::new(&people, &resident),
+                Some(actor.entity_ref()),
+                filter,
+                &rows,
+            )
+        })
+        .transpose()
+        .map_err(|error| mcp_engine_error("board tasks filter failed", error))?;
+    let shown = filtered.as_ref().unwrap_or(&rows);
+    let mut tasks = match layout.share_tok("tasks", budget.cap_tok) {
+        None => shown.render(),
+        Some(budget) => shown.render_with_token_budget(budget),
+    };
+    if let Some(fold) = layout.fold("tasks") {
+        tasks.keep_rows_open(&rows, &fold.keep);
+    }
     tasks.pin_hook_tasks(&rows.intents, pins);
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
@@ -281,9 +326,13 @@ pub(super) fn run_board_sections(
         let presences = oneiron::context_board::WorldPresence::read_admitted(read, &allowed)
             .map_err(|error| mcp_engine_error("board worlds failed", error))?;
         served.extend(presences.iter().map(|world| world.id));
-        oneiron::context_board::WorldsSection::project(&presences, &authority, MCP_BOARD_WORLDS_CAP)
-            .board_section()
-            .map_err(mcp_board_frame_error)?
+        oneiron::context_board::WorldsSection::project(
+            &presences,
+            &authority,
+            layout.row_allotment("worlds", budget.cap_tok, MCP_BOARD_WORLDS_CAP),
+        )
+        .board_section()
+        .map_err(mcp_board_frame_error)?
     };
     // The fan-out launches that wait on an approver (OF-393): the agent's own
     // and those whose bound project lead or board role it holds live.
@@ -295,9 +344,15 @@ pub(super) fn run_board_sections(
         .map_err(mcp_facade_error)?;
     let tasks_section = oneiron::context_board::assemble_tasks_section(
         &tasks,
-        oneiron::context_board::fanout_action_rows(&launches),
+        oneiron::context_board::fanout_action_rows_for(&launches, layout, budget.cap_tok),
     )
-    .map_err(mcp_board_frame_error)?;
+    .map_err(mcp_board_frame_error)?
+    .with_fold_summary(tasks_summary)
+    .with_hook_pinned_ids(
+        pins.iter()
+            .flat_map(|pin| pin.refs.iter().copied())
+            .collect(),
+    );
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) =
         crate::api::context_board::lane_pins_projection(read, pins).map_err(super::mcp_api_error)?

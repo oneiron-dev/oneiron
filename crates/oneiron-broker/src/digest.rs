@@ -9,12 +9,13 @@ const CONTEXT: &str = "oneiron-broker 2026-10-11 request digest v1";
 
 /// Request headers that carry a credential. The digest leaves them out, and a
 /// call frame may not carry them: the broker adds the shape's own.
-const AUTH_HEADERS: [&str; 5] = [
+const AUTH_HEADERS: [&str; 6] = [
     "authorization",
     "proxy-authorization",
     "x-api-key",
     "api-key",
     "x-goog-api-key",
+    "xi-api-key",
 ];
 
 /// Whether `name` is an auth header, in any letter case.

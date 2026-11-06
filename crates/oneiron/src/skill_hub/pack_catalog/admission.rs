@@ -444,23 +444,33 @@ impl Vault {
                 .map(|old_source| old_source.manifest.version)
                 .unwrap_or_default();
             let from_predicates = old.predicates.into_iter().collect();
-            crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
-                self,
-                txn,
-                &crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
-                    pack: &source.manifest.name,
-                    from_version: &from_version,
-                    to_version: &source.manifest.version,
-                    from_source: &old.content_hash,
-                    to_source: &receipt.content_hash,
-                    from_predicates: &from_predicates,
-                    to_predicates: &source.manifest.predicates,
-                    shipped: source
-                        .manifest
-                        .migration_from(&from_version, &old.content_hash),
-                },
-                self.now_recorded_at(),
-            )?;
+            let moved = crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
+                pack: &source.manifest.name,
+                from_version: &from_version,
+                to_version: &source.manifest.version,
+                from_source: &old.content_hash,
+                to_source: &receipt.content_hash,
+                from_predicates: &from_predicates,
+                to_predicates: &source.manifest.predicates,
+                shipped: source
+                    .manifest
+                    .migration_from(&from_version, &old.content_hash),
+            };
+            self.store
+                .record_hooks
+                .repair_saved_queries_after_pack_move_in_txn(
+                    self,
+                    txn,
+                    moved.pack,
+                    moved.from_version,
+                    moved.to_version,
+                    moved.from_source,
+                    moved.to_source,
+                    moved.from_predicates,
+                    moved.to_predicates,
+                    moved.shipped,
+                    self.now_recorded_at(),
+                )?;
         }
         Ok(PackInstallDisposition::Installed(Box::new(receipt)))
     }
