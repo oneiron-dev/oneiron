@@ -29,6 +29,18 @@ pub(crate) enum SetupRetirementEvent {
     Withdrawn(CustodySubject),
 }
 
+#[derive(Clone)]
+pub(crate) enum SetupConsentEvent {
+    StandingGrantRevoked {
+        grant_ref: String,
+        row: crate::consent::ConsentGrantRow,
+    },
+    OwnerReasonRetired {
+        grant_ref: String,
+        rule_decision_id: [u8; 16],
+    },
+}
+
 struct Trace {
     owner: usize,
     positions: Vec<Position>,
@@ -36,6 +48,7 @@ struct Trace {
     retired_positions: BTreeMap<EntityId, Option<Scope>>,
     position_resets: BTreeSet<EntityId>,
     retirements: Vec<SetupRetirementEvent>,
+    consent_events: Vec<SetupConsentEvent>,
 }
 
 fn active(store: &impl ManifestDbs) -> Option<Rc<RefCell<Trace>>> {
@@ -73,6 +86,7 @@ impl<'store> SetupMutationTrace<'store> {
             retired_positions: BTreeMap::new(),
             position_resets: BTreeSet::new(),
             retirements: Vec::new(),
+            consent_events: Vec::new(),
         }));
         TRACES.with(|traces| traces.borrow_mut().push(Rc::clone(&state)));
         Self {
@@ -114,6 +128,7 @@ impl<'store> SetupMutationTrace<'store> {
             retired_positions: std::mem::take(&mut trace.retired_positions),
             position_resets: std::mem::take(&mut trace.position_resets),
             retirements: std::mem::take(&mut trace.retirements),
+            consent_events: std::mem::take(&mut trace.consent_events),
             blast_radius,
         })
     }
@@ -131,6 +146,7 @@ pub(crate) struct ObservedSetupMutations {
     retired_positions: BTreeMap<EntityId, Option<Scope>>,
     position_resets: BTreeSet<EntityId>,
     retirements: Vec<SetupRetirementEvent>,
+    consent_events: Vec<SetupConsentEvent>,
     blast_radius: u64,
 }
 
@@ -149,6 +165,10 @@ impl ObservedSetupMutations {
         &self.retirements
     }
 
+    pub(crate) fn consent_events(&self) -> &[SetupConsentEvent] {
+        &self.consent_events
+    }
+
     pub(crate) fn blast_radius(&self) -> u64 {
         self.blast_radius
     }
@@ -164,6 +184,9 @@ pub(super) fn observe_merged_child(store: &impl ManifestDbs, child: &ObservedSet
     parent.mutated.extend(child.entities.iter().copied());
     parent.positions.extend(child.positions.iter().cloned());
     parent.retirements.extend(child.retirements.iter().cloned());
+    parent
+        .consent_events
+        .extend(child.consent_events.iter().cloned());
     for id in &child.position_resets {
         parent.retired_positions.remove(id);
     }
@@ -362,4 +385,42 @@ pub(crate) fn observe_row_fence(
     trace.mutated.insert(id);
     trace.positions.push(position);
     Ok(())
+}
+
+/// The native row was successfully revoked at this exact key. Its consent
+/// bound is not an ENTITY position or a federation Scope.
+pub(crate) fn observe_standing_grant_revocation(
+    store: &impl ManifestDbs,
+    grant_ref: &str,
+    row: &crate::consent::ConsentGrantRow,
+) {
+    let Some(trace) = active(store) else {
+        return;
+    };
+    trace
+        .borrow_mut()
+        .consent_events
+        .push(SetupConsentEvent::StandingGrantRevoked {
+            grant_ref: grant_ref.to_owned(),
+            row: row.clone(),
+        });
+}
+
+/// Records the native rule key only after its retired row was written. A
+/// decision id in this key is not an ENTITY id or an admitted row position.
+pub(crate) fn observe_owner_reason_retirement(
+    store: &impl ManifestDbs,
+    grant_ref: &str,
+    rule_decision_id: [u8; 16],
+) {
+    let Some(trace) = active(store) else {
+        return;
+    };
+    trace
+        .borrow_mut()
+        .consent_events
+        .push(SetupConsentEvent::OwnerReasonRetired {
+            grant_ref: grant_ref.to_owned(),
+            rule_decision_id,
+        });
 }

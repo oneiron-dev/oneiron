@@ -140,6 +140,11 @@ pub(super) fn retire_owner_reason_rules_in_txn(
     }
     for (key, row) in rows {
         RULES.put(store, txn, &key, &row)?;
+        crate::agent_def::setup_trace::observe_owner_reason_retirement(
+            store,
+            &key.grant_ref,
+            key.decision_id,
+        );
     }
     Ok(())
 }
