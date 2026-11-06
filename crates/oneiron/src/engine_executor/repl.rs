@@ -5,7 +5,9 @@
 mod persistence;
 mod request;
 mod speech;
+mod turn;
 
+use self::turn::{StepProgram, TurnProgram};
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
 use super::host::{
@@ -130,133 +132,28 @@ impl EngineNativeExecutor<'_> {
                 ));
             }
 
-            self.land_finished_compaction()?;
-            // A turn hook's ask parks the run before the turn, as a call's
-            // ask parks the call; a skip or a hidden result ends the entry.
-            let turn = match self.pre_turn_hooks(config, completed_steps)? {
-                Ok(turn) => turn,
-                Err(stop) => {
-                    let Some(wait) = turn_hook_wait(&stop) else {
-                        return Err(Error::from(stop).into());
-                    };
-                    let key = wait_key(&record, &wait);
-                    if !self.storage.park_wait(&key)? {
-                        return Ok(self.outcome(
-                            EngineExecutorStatus::Waiting(wait),
-                            steps_run,
-                            record,
-                        ));
-                    }
-                    // The ask settled before the park: the turn's hooks take
-                    // its answer now, and any stop then ends the entry.
-                    self.storage.clear_wait(&key)?;
-                    self.pre_turn_hooks(config, completed_steps)?
-                        .map_err(Error::from)?
+            let program = match self
+                .generate_step_program(
+                    config,
+                    &mut record,
+                    &wire_prompt.text,
+                    &wire_prompt.stamp.resolved_fingerprint,
+                    continuation.as_ref(),
+                    completed_steps,
+                )
+                .await?
+            {
+                TurnProgram::Generated(program) => program,
+                TurnProgram::Ended(status) => {
+                    return Ok(self.outcome(status, steps_run, record));
                 }
             };
-            let request =
-                self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
-            match self.feed_compaction(config, &record, &request)? {
-                Ok(Some(reason)) => {
-                    return Ok(self.outcome(
-                        EngineExecutorStatus::WindowFull {
-                            next_step_seq: completed_steps,
-                            reason,
-                        },
-                        steps_run,
-                        record,
-                    ));
-                }
-                Ok(None) => {}
-                Err(stop) => {
-                    let Some(wait) = turn_hook_wait(&stop) else {
-                        return Err(Error::from(stop).into());
-                    };
-                    let key = wait_key(&record, &wait);
-                    if !self.storage.park_wait(&key)? {
-                        return Ok(self.outcome(
-                            EngineExecutorStatus::Waiting(wait),
-                            steps_run,
-                            record,
-                        ));
-                    }
-                    // The ask settled before the park: retry the same sealed
-                    // invocation once, with its fold marks still pending.
-                    self.storage.clear_wait(&key)?;
-                    match self.feed_compaction(config, &record, &request)? {
-                        Ok(Some(reason)) => {
-                            return Ok(self.outcome(
-                                EngineExecutorStatus::WindowFull {
-                                    next_step_seq: completed_steps,
-                                    reason,
-                                },
-                                steps_run,
-                                record,
-                            ));
-                        }
-                        Ok(None) => {}
-                        Err(stop) => return Err(Error::from(stop).into()),
-                    }
-                }
-            }
-            // Rule 5 (FIX 4197): the first step past the `[limits]
-            // executor_run_steps` row asks whether everything is okay, once
-            // per run however often it re-enters, and the run keeps going.
-            let steps = self.storage.limit_watch();
-            if completed_steps == steps.bound(EngineLimit::ExecutorRunSteps) {
-                steps.measure(EngineLimit::ExecutorRunSteps, completed_steps + 1);
-            }
-            let request_hash = request.canonical_hash()?;
-            self.capture_step_start(
-                config,
-                completed_steps,
-                &request,
-                &record,
-                &wire_prompt.stamp.resolved_fingerprint,
-            );
-            let response = {
-                let sources = self.step_source_rows(config, &record);
-                let _generating = self.gated_write.activity_generating();
-                self.backend
-                    .generate_sourced(request, self.lease, sources)
-                    .await
-            }?;
-            let execution_text = self.post_turn_hooks(turn, &response)?;
-            // Only the post-hook execution view is healed below, as its text:
-            // no copy of the reply is made for it (FIX 448). The raw provider
-            // response stays separate as evidence (FIX 9840).
-            // The provider that answered is the one this turn's program
-            // speaks for: each verb call it makes carries the name (OF-560).
-            self.gated_write
-                .observe_model_provider(response.usage.served_provider());
-            // The reply as the provider gave it, kept apart from the program
-            // healed out of it: evidence, never executed.
-            record_reply_evidence(
-                &self.storage,
-                &mut record,
-                completed_steps,
-                &response.message,
-            )?;
-            // ONE-1929: the ONE normalization seam. Only `code` is executed,
-            // staged, hashed, or replayed; the reply's own console bytes are
-            // already gone, and `trailing_speak` belongs to ONE-1686.
-            if response.finish_reason != crate::FinishReason::Stop {
-                return Err(Error::InvalidClaimBody(
-                    "executor LLM response did not finish cleanly",
-                )
-                .into());
-            }
-            let HealedExecutorReply {
-                code: script,
+            let StepProgram {
+                request_hash,
+                script,
                 trailing_speak,
-                repairs,
-            } = heal_executor_text(&execution_text)?;
-            record_script_output(
-                &self.storage,
-                &mut record,
-                script_output_path(completed_steps),
-                &script,
-            )?;
+                healed,
+            } = program;
             // One preparation per program (FIX 8276): a TypeScript program
             // runs as the JavaScript Oxc prints for it, kept beside the
             // program with its map and Oxc pin; JavaScript runs as written.
@@ -329,7 +226,7 @@ impl EngineNativeExecutor<'_> {
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
-                            repairs.healed(),
+                            healed,
                             config,
                         )?
                         && !cancelled
@@ -375,7 +272,7 @@ impl EngineNativeExecutor<'_> {
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
-                    repairs.healed(),
+                    healed,
                     config,
                 )? {
                     checking.ended(Some(&status));
@@ -421,7 +318,7 @@ impl EngineNativeExecutor<'_> {
                             format!(
                                 "Runtime output recording failed after host bridge calls: {err}"
                             ),
-                            repairs.healed(),
+                            healed,
                             config,
                         )?
                     {
@@ -592,7 +489,7 @@ impl EngineNativeExecutor<'_> {
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
                     expected_generation,
-                    repairs.healed().then_some(&config.model),
+                    healed.then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
                     &context,
@@ -605,7 +502,7 @@ impl EngineNativeExecutor<'_> {
                         .put_code_run_replay_record_with_receipts_if_generation(
                             &record,
                             expected_generation,
-                            repairs.healed().then_some(&config.model),
+                            healed.then_some(&config.model),
                             &host.receipts,
                             parked.as_ref(),
                             &context,
