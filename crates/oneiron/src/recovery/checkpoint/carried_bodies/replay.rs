@@ -7,10 +7,14 @@
 //! its descriptor naming the row it recomposes into ([`ReplayPartCarried`]):
 //! a replay row's, whose image row holds its skeleton, or a capsule's,
 //! whose row travels as it is. A carried start is kept as shared pieces
-//! (FIX 4192): each piece that holds an ask its parts carry apart travels
-//! nowhere. Its body row goes without its bytes, and no file or descriptor
-//! carries its file, so no stream holds such an ask. Its other pieces and
-//! its manifest travel as any body does.
+//! (FIX 4192). FIX 4192 review fix: each piece that holds its content (its
+//! config, its record's frame, each element) travels nowhere, as its whole
+//! body did before. Its body row goes without its bytes, and no file or
+//! descriptor carries its file, so only the rest, bound to the rest's
+//! owners, carries that content: the erase that retires the rest retires
+//! every copy of it. Its nodes and its manifest hold only digests and
+//! lengths, and travel as any body does. A content piece a start that
+//! travels whole also names travels with that start, as its body did.
 //!
 //! A restore reads each part's stream as it reads any inline body, checked
 //! against its instance and digest, then recomposes each destination once
@@ -82,7 +86,7 @@ pub(in crate::recovery::checkpoint) fn carried_part(
 /// The step starts a census carries as parts, found by their capsules'
 /// typed refs before it notes a row, whichever row it meets first: each
 /// start's parts by its capsule row, and the digests of the start pieces
-/// that hold their asks (FIX 4192), which no stream carries.
+/// that hold their content (FIX 4192 review fix), which no stream carries.
 pub(super) struct StartIndex {
     starts: BTreeMap<Vec<u8>, ReplayParts>,
     digests: BTreeSet<[u8; 32]>,
@@ -90,29 +94,38 @@ pub(super) struct StartIndex {
 
 impl StartIndex {
     /// Every kept start `txn` holds whose prefix holds an ask a checkpoint
-    /// carries apart.
+    /// carries apart, with its content pieces (FIX 4192 review fix). A
+    /// content piece a kept start that travels whole names stays out: it
+    /// travels with that start, as its whole body did.
     fn of(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
         let mut index = Self {
             starts: BTreeMap::new(),
             digests: BTreeSet::new(),
         };
+        let mut whole_content = BTreeSet::new();
         for kept in crate::code_run::kept_step_starts_in_txn(store, txn)? {
-            if let Some(parts) = crate::code_run::step_start_parts(&kept.bytes) {
-                let asks = crate::code_run::step_start_ask_pieces(&kept.bytes)?;
-                index.digests.extend(asks);
-                index.starts.insert(kept.row, parts);
+            let content = crate::code_run::step_start_content_pieces(&kept.bytes)?;
+            match crate::code_run::step_start_parts(&kept.bytes) {
+                Some(parts) => {
+                    index.digests.extend(content);
+                    index.starts.insert(kept.row, parts);
+                }
+                None => whole_content.extend(content),
             }
         }
+        index
+            .digests
+            .retain(|digest| !whole_content.contains(digest));
         Ok(index)
     }
 }
 
 /// FIX 9180: the census of a `vault_meta` row a carried step start names:
 /// its capsule's row carries the start's parts and travels as it is, and
-/// the row of each of its pieces that holds an ask (FIX 4192) travels
-/// without its bytes, which no file or descriptor carries either. `None`
-/// for any other row. The first `vault_meta` row the census meets indexes
-/// every kept start.
+/// the row of each of its pieces that holds its content (FIX 4192 review
+/// fix) travels without its bytes, which no file or descriptor carries
+/// either. `None` for any other row. The first `vault_meta` row the census
+/// meets indexes every kept start.
 ///
 /// # Errors
 ///
@@ -274,7 +287,8 @@ fn live_part<'r>(
 /// ask goes back in its call, and each retired one's call answers
 /// `TargetErased`, the one precedence `crate::code_run::recompose_replay_row`
 /// defines. The bodies the starts rested under without their bytes are
-/// settled last.
+/// settled last: FIX 4192 review fix, each content piece of a start whose
+/// rest retired goes unless a live start lands it again.
 ///
 /// # Errors
 ///
@@ -291,6 +305,9 @@ pub(super) fn land(
     if destinations.is_empty() {
         return Ok(());
     }
+    // FIX 4192 review fix: a start piece's file row holds its bytes only
+    // when the image carries its file.
+    let files: BTreeSet<[u8; 32]> = image.bodies.iter().map(|(digest, _)| *digest).collect();
     let rows = image
         .databases
         .get_mut("vault_meta")
@@ -314,19 +331,17 @@ pub(super) fn land(
             *value = crate::code_run::recompose_replay_row(&value[..], rest, &requests)?;
             continue;
         }
-        // FIX 4192: the calls whose ask pieces traveled without their bytes.
-        let asks: Vec<u32> = requests.iter().map(|((index, _), _)| *index).collect();
         match rest {
             Some(rest) => {
                 let bytes = crate::code_run::recompose_step_start(rest, &requests)?;
                 if let Some((before, after)) =
-                    crate::code_run::republish_step_start_in_rows(rows, row, &bytes, &asks)?
+                    crate::code_run::republish_step_start_in_rows(rows, row, &bytes, &files)?
                 {
                     rested.extend(before);
                     landed.extend(after);
                 }
             }
-            None => rested.extend(crate::code_run::drop_step_start_in_rows(rows, row, &asks)?),
+            None => rested.extend(crate::code_run::drop_step_start_in_rows(rows, row, &files)?),
         }
     }
     crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)?;
@@ -353,13 +368,15 @@ fn image_row<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]>
 /// helpers that write them: each piece put back inline with its descriptor
 /// and holder row, the manifest under the same occurrence, the capsule's
 /// row, and each instance row the settle marks inline
-/// (`crate::code_run::republish_step_start_lengths_in_rows`). No margin is
-/// added.
+/// (`crate::code_run::republish_step_start_lengths_in_rows`). FIX 4192
+/// review fix: the pieces put back are every content piece the census
+/// carried without its bytes ([`stripped_digests`]), each counted once. No
+/// margin is added.
 ///
 /// # Errors
 ///
-/// A carried start's capsule row the image does not hold, and a row that
-/// does not decode or encode.
+/// A carried start's capsule row the image does not hold, a row that does
+/// not decode or encode, and an occurrence that does not derive.
 pub(in crate::recovery::checkpoint) fn landed_lengths(
     image: &CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
@@ -368,6 +385,7 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
     let Some(rows) = image.databases.get("vault_meta") else {
         return Ok(lengths);
     };
+    let mut stripped = None;
     for (row, destination) in destinations(&image.inline_bodies) {
         let Some((_, rest)) = destination.rest else {
             continue;
@@ -404,8 +422,11 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
                 .iter()
                 .map(|((call, _), _, carried, _)| (*call, !retired.contains(&carried.instance)))
                 .collect();
+            let stripped = stripped.get_or_insert_with(|| {
+                crate::code_run::StrippedPieces::of(rows, &stripped_digests(image, rows))
+            });
             lengths.extend(crate::code_run::republish_step_start_lengths_in_rows(
-                rows, &row, len, &asks,
+                rows, &row, len, &asks, stripped,
             )?);
         } else if let Some(body_row) =
             image_row(rows, &row).and_then(crate::code_run::step_start_body_row)
@@ -415,4 +436,31 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
         }
     }
     Ok(lengths)
+}
+
+/// FIX 11415: the digests of the result body rows among the image's
+/// `vault_meta` `rows` that a restore finds without their bytes before any
+/// body is read: an inline row no carried body fills, or a file row whose
+/// file the image does not carry. A census carries each content piece of a
+/// carried start so (FIX 4192 review fix).
+fn stripped_digests(image: &CheckpointImage, rows: &[(Vec<u8>, Vec<u8>)]) -> BTreeSet<[u8; 32]> {
+    let carried: BTreeSet<&[u8]> = image
+        .inline_bodies
+        .iter()
+        .filter(|carried| carried.database == "vault_meta")
+        .map(|carried| carried.key.as_slice())
+        .collect();
+    let files: BTreeSet<[u8; 32]> = image.bodies.iter().map(|(digest, _)| *digest).collect();
+    rows.iter()
+        .filter_map(|(key, value)| {
+            if let Some((digest, body)) = crate::code_run::code_run_inline_body_of_row(key, value) {
+                let held =
+                    carried.contains(key.as_slice()) || *blake3::hash(body).as_bytes() == digest;
+                return (!held).then_some(digest);
+            }
+            crate::code_run::code_run_body_file_of_row(key, value)
+                .map(|(digest, _)| digest)
+                .filter(|digest| !files.contains(digest))
+        })
+        .collect()
 }

@@ -76,13 +76,13 @@ pub(crate) use self::owner_pair::{
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
-pub(crate) use self::start_landing::republish_step_start_lengths_in_rows;
+pub(crate) use self::start_landing::{StrippedPieces, republish_step_start_lengths_in_rows};
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
-pub(crate) use self::start_pieces::step_start_ask_pieces;
+pub(crate) use self::start_pieces::step_start_content_pieces;
 
 /// Capsules. Key: id16(attempt) + be64(lease generation) + be64(step).
 const CAPSULES: SideTable<(EntityId, u64, u64), StepReplayCapsule, Named> =

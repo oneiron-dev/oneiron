@@ -19,6 +19,13 @@
 //! [`held_start_bytes_in_txn`]); none reads a manifest as a start. A start
 //! whose pieces would not spell its bytes again exactly is one piece.
 //!
+//! The config, the frame and each element hold the start's content. A node
+//! and the manifest hold only digests and lengths. FIX 4192 review fix: a
+//! checkpoint carries a carried start's content in its rest alone
+//! ([`step_start_content_pieces`]), so the erase that retires the rest
+//! retires every copy of that content; a restore lists the pieces from the
+//! manifest and the nodes ([`manifest_content_pieces`]).
+//!
 //! FIX 19821: a capsule's writer holds the manifest, the record's frame and
 //! each node of its calls inline whatever the inline bound. A restore reads
 //! them among its rows to find the pieces that hold the start's asks. Every
@@ -39,8 +46,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::super::codec::encode_code_run_replay_value;
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::super::replay_capsule::{ExecutorStepStart, StepStartBody};
-use super::super::super::spawn_replay::spawn_ask_part;
+use super::super::super::replay_capsule::ExecutorStepStart;
 use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUTS, owned_body};
 use super::super::response_erase::release_occurrence_in_txn;
 use super::CAPSULES;
@@ -49,7 +55,7 @@ use super::pieces::{
     PieceScope, decode, held_piece_in_txn, holds_in_txn, piece_bytes_in_txn, piece_ref,
 };
 use super::spawn_erase::{publish_start_in_txn, republished_start_body};
-use crate::code_run::{CODE_RUN_REPLAY_RECORD_KEYS, decode_code_run_replay_record};
+use crate::code_run::CODE_RUN_REPLAY_RECORD_KEYS;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
 use crate::store::{BodyMeter, Store};
@@ -123,14 +129,16 @@ impl Shared {
 }
 
 /// A step start cut into its pieces (FIX 4192): each shared piece once,
-/// the manifest, and the element of each call of its record in order
-/// (`None` for a start kept as one piece). FIX 19821: also the digests of
-/// the record's frame and of each node of its calls, which a capsule's
-/// writer holds inline whatever the bound, as it holds the manifest.
+/// the manifest, and the digest of each piece that holds the start's
+/// content (FIX 4192 review fix): its config, its record's frame and each
+/// element, or its one piece when it is kept whole. FIX 19821: also the
+/// digests of the record's frame and of each node of its calls, which a
+/// capsule's writer holds inline whatever the bound, as it holds the
+/// manifest.
 pub(super) struct StartPieces {
     shared: Vec<(OutputRef, Vec<u8>)>,
     manifest: Vec<u8>,
-    calls: Option<Vec<OutputRef>>,
+    content: BTreeSet<[u8; 32]>,
     frame_and_call_nodes: BTreeSet<[u8; 32]>,
 }
 
@@ -153,7 +161,7 @@ impl StartPieces {
         Ok(Self {
             manifest: encode_piece(&StartManifest::Whole { start })?,
             shared: shared.pieces,
-            calls: None,
+            content: BTreeSet::from([start.hash]),
             frame_and_call_nodes: BTreeSet::new(),
         })
     }
@@ -174,7 +182,7 @@ impl StartPieces {
         };
         let mut shared = Shared::default();
         let config = shared.add(rmpv_bytes(&Value::Map(body))?);
-        let (mut arrays, mut calls) = (Vec::new(), Vec::new());
+        let (mut arrays, mut content) = (Vec::new(), BTreeSet::from([config.hash]));
         let mut frame_and_call_nodes = BTreeSet::new();
         for (key, value) in &mut frame {
             let (Some(name), Value::Array(elements)) = (growing(key), value) else {
@@ -183,13 +191,13 @@ impl StartPieces {
             let mut last = None;
             for element in std::mem::take(elements) {
                 let element = shared.add(rmpv_bytes(&element)?);
+                content.insert(element.hash);
                 let node = ElementNode {
                     prior: last,
                     element,
                 };
                 let node = shared.add(encode_piece(&node)?);
                 if name == CALLS {
-                    calls.push(element);
                     frame_and_call_nodes.insert(node.hash);
                 }
                 last = Some(node);
@@ -197,6 +205,7 @@ impl StartPieces {
             arrays.push(last);
         }
         let frame = shared.add(rmpv_bytes(&Value::Map(frame))?);
+        content.insert(frame.hash);
         frame_and_call_nodes.insert(frame.hash);
         let manifest = encode_piece(&StartManifest::Cut {
             config,
@@ -207,7 +216,7 @@ impl StartPieces {
         Ok((spells.as_deref() == Some(bytes)).then_some(Self {
             shared: shared.pieces,
             manifest,
-            calls: Some(calls),
+            content,
             frame_and_call_nodes,
         }))
     }
@@ -609,87 +618,52 @@ fn kept_start_pieces_in_txn(
     Ok(named)
 }
 
-/// FIX 4192: the pieces of the step start `bytes` that hold an ask a
-/// checkpoint carries apart: the element of each call of its prefix that
-/// holds one, or the start's one piece when it is kept whole. A census
-/// carries their rows without their bytes. None for a start that does not
-/// decode or holds no such ask.
+/// FIX 4192 review fix: the pieces of the step start `bytes` that hold
+/// its content: its config, its record's frame and each element of each
+/// growing array, or its one piece when it is kept whole. A census carries
+/// the rows of a carried start's content pieces without their bytes, so
+/// only its rest carries that content. Each node and the manifest name
+/// only digests and lengths, and travel as any body does.
 ///
 /// # Errors
 ///
 /// A piece that does not encode.
-pub(crate) fn step_start_ask_pieces(bytes: &[u8]) -> Result<Vec<[u8; 32]>> {
-    let Ok(body) = rmp_serde::from_slice::<StepStartBody>(bytes) else {
-        return Ok(Vec::new());
-    };
-    let Ok(record) = decode_code_run_replay_record(&body.record) else {
-        return Ok(Vec::new());
-    };
-    let asks: Vec<usize> = record
-        .bridge_calls
-        .iter()
-        .enumerate()
-        .filter(|(_, call)| spawn_ask_part(call).is_some())
-        .map(|(at, _)| at)
-        .collect();
-    if asks.is_empty() {
-        return Ok(Vec::new());
-    }
-    let pieces = StartPieces::of(bytes)?;
-    Ok(match &pieces.calls {
-        Some(calls) => asks
-            .iter()
-            .filter_map(|at| calls.get(*at))
-            .map(|call| call.hash)
-            .collect(),
-        None => pieces.shared.iter().map(|(piece, _)| piece.hash).collect(),
-    })
+pub(crate) fn step_start_content_pieces(bytes: &[u8]) -> Result<BTreeSet<[u8; 32]>> {
+    Ok(StartPieces::of(bytes)?.content)
 }
 
-/// FIX 4192: the pieces of the start whose manifest is `manifest` that hold
-/// the asks of its calls at `asks` (by place among the calls), each piece
-/// read by `read`, as a census found them: each such call's element, or
-/// the start's one piece when it is kept whole. None when the manifest, its
-/// frame or a node of its calls does not read. FIX 19821: a capsule's
-/// writer holds those inline whatever the bound, so a restore reads them
-/// among its rows.
-pub(super) fn manifest_ask_pieces(
+/// FIX 4192 review fix: the pieces that hold the content of the start
+/// whose manifest is `manifest`, each structural piece read by `read`: its
+/// config and frame, and the element each node of each array names, or the
+/// start's one piece when it is kept whole. A restore reads the manifest
+/// and the nodes among its rows, as each travels as any body does. An
+/// array whose node does not read names no element past it; a manifest
+/// that does not read names none.
+pub(super) fn manifest_content_pieces(
     manifest: OutputRef,
-    asks: &[u32],
     read: impl Fn(OutputRef) -> Option<Vec<u8>>,
 ) -> Vec<[u8; 32]> {
-    if asks.is_empty() {
-        return Vec::new();
-    }
-    let (frame, arrays) = match read(manifest).and_then(|bytes| decode::<StartManifest>(&bytes)) {
-        Some(StartManifest::Cut { frame, arrays, .. }) => (frame, arrays),
-        Some(StartManifest::Whole { start }) => return vec![start.hash],
-        None => return Vec::new(),
-    };
-    let Some(Value::Map(frame)) = read(frame).and_then(|bytes| value_of(&bytes)) else {
-        return Vec::new();
-    };
-    let position = frame
-        .iter()
-        .filter(|(key, value)| value.is_array() && growing(key).is_some())
-        .position(|(key, _)| key.as_str() == Some(CALLS));
-    let mut next = position.and_then(|at| arrays.get(at).copied().flatten());
-    let mut calls = Vec::new();
-    while let Some(at) = next {
-        let Some(node) = read(at).and_then(|bytes| decode::<ElementNode>(&bytes)) else {
-            return Vec::new();
+    let (config, frame, arrays) =
+        match read(manifest).and_then(|bytes| decode::<StartManifest>(&bytes)) {
+            Some(StartManifest::Cut {
+                config,
+                frame,
+                arrays,
+            }) => (config, frame, arrays),
+            Some(StartManifest::Whole { start }) => return vec![start.hash],
+            None => return Vec::new(),
         };
-        calls.push(node.element.hash);
-        next = node.prior;
+    let mut content = vec![config.hash, frame.hash];
+    for mut next in arrays {
+        while let Some(at) = next {
+            let Some(node) = read(at).and_then(|bytes| decode::<ElementNode>(&bytes)) else {
+                break;
+            };
+            content.push(node.element.hash);
+            next = node.prior;
+        }
     }
-    calls.reverse();
-    asks.iter()
-        .filter_map(|at| {
-            usize::try_from(*at)
-                .ok()
-                .and_then(|at| calls.get(at).copied())
-        })
-        .collect()
+    content
 }
 
 /// The digest whose MessagePack encoding in a ref is the widest (FIX
