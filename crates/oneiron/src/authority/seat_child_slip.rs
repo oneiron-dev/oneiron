@@ -25,8 +25,11 @@ impl Vault {
     /// host's `issuer` (FIX 10624). It holds for `holder`, an existing
     /// per-claim Agent PERSON; it binds `holder_key`, the public half of the
     /// key the host generated for this run; it names `records`, the secret
-    /// names the run may ask for; it carries no verb; and it ends `ttl_secs`
-    /// from now. Refused unless `claim` holds as the mint commits.
+    /// names the run may ask for; it carries no verb; `model_door` gives it
+    /// the model door's channel ([`SEAT_MODEL_CHANNEL`], FIX 15702), and no
+    /// other channel rides it; and it ends `ttl_secs` from now. Refused
+    /// unless `claim` holds as the mint commits.
+    #[allow(clippy::too_many_arguments)]
     pub fn mint_seat_child_slip(
         &self,
         issuer: &HostSlipIssuer,
@@ -34,6 +37,7 @@ impl Vault {
         holder: EntityId,
         holder_key: [u8; 32],
         records: BTreeSet<String>,
+        model_door: bool,
         ttl_secs: u64,
     ) -> Result<CapabilitySlip> {
         let mut txn = self.store.env.write_txn()?;
@@ -63,7 +67,11 @@ impl Vault {
             ttl_secs,
             single_use: false,
             records,
-            channels: BTreeSet::new(),
+            channels: if model_door {
+                BTreeSet::from([SEAT_MODEL_CHANNEL.to_owned()])
+            } else {
+                BTreeSet::new()
+            },
             actor_class: Some("agent".to_owned()),
             org_ref: None,
             grant_ref: None,
@@ -97,6 +105,98 @@ impl Vault {
             slip.verify_seat_child(host_public_key, &fold, now, challenge, signature)?;
         self.require_live_slip_refs_in_txn(&txn, credential.claims(), now)?;
         Ok(credential)
+    }
+
+    /// Admits one request a seat child signed with its slip (FIX 10624): the
+    /// same holder proof and request challenge as
+    /// [`Self::admit_capability_slip_request`], admitting only a seat-child
+    /// slip whose claim holds, and spending the request's nonce in the same
+    /// writer, so a replayed request is refused.
+    pub fn admit_seat_child_slip_request(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<SeatChildCredential> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
+        let mut txn = self.store.env.write_txn()?;
+        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, request_now)?;
+        let key = &fold
+            .slips
+            .mints
+            .get(&slip.claims.slip_id)
+            .ok_or_else(invalid_authority)?
+            .signer;
+        let credential = slip.verify_seat_child(key, &fold, now, &challenge, signature)?;
+        self.require_live_slip_refs_in_txn(&txn, credential.claims(), now)?;
+        super::slip_replay::record_nonce(
+            self,
+            &mut txn,
+            &slip.current_binding_key(),
+            nonce,
+            timestamp,
+            request_now,
+        )?;
+        txn.commit()?;
+        Ok(credential)
+    }
+
+    /// Whether the model door would release `secret_ref` for `credential`'s
+    /// run now (FIX 15702), checked without reading its value: the slip
+    /// carries the model door's channel and names the secret in its signed
+    /// records, its claim holds, and the custody door would release the
+    /// secret to [`SEAT_MODEL_CHANNEL`], all on one snapshot.
+    pub fn check_seat_model_key(
+        &self,
+        credential: &SeatChildCredential,
+        secret_ref: &str,
+    ) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        if !self.seat_model_key_admitted_in_txn(&txn, credential, secret_ref)? {
+            return Err(invalid_authority());
+        }
+        self.check_secret_at_door_in_txn(&txn, secret_ref, SEAT_MODEL_CHANNEL)
+    }
+
+    /// The model door's T0 key release for a seat child (FIX 15702): the
+    /// checks of [`Self::check_seat_model_key`] and the value copy in one
+    /// writer, so a claim lost, a slip revoked or a secret's binding changed
+    /// before it refuses the copy. `apply` runs with the value once the
+    /// writer is released, as at every T0 door; the key goes to the broker,
+    /// never to the seat.
+    pub fn inject_seat_model_key(
+        &self,
+        credential: &SeatChildCredential,
+        secret_ref: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<crate::secret_lease::DoorInjectionReceipt> {
+        let wtxn = self.store.env.write_txn()?;
+        if !self.seat_model_key_admitted_in_txn(&wtxn, credential, secret_ref)? {
+            return Err(invalid_authority());
+        }
+        self.inject_secret_at_door_in_txn(wtxn, secret_ref, SEAT_MODEL_CHANNEL, apply)
+    }
+
+    fn seat_model_key_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        credential: &SeatChildCredential,
+        secret_ref: &str,
+    ) -> Result<bool> {
+        Ok(credential.admits_model_door()
+            && credential.records().contains(secret_ref)
+            && self.seat_child_holds_in_txn(txn, credential)?)
+    }
+
+    /// [`Self::seat_child_holds_in_txn`] in its own snapshot, for a door that
+    /// checks the claim again before it hands a value out.
+    pub fn seat_child_holds(&self, credential: &SeatChildCredential) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.seat_child_holds_in_txn(&txn, credential)
     }
 
     /// Whether a seat-child credential verified earlier still holds in `txn`
