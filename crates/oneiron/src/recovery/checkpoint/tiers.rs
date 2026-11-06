@@ -166,6 +166,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"rb:n:",
                 b"rb:s:",
                 b"rb:u:",
+                // Each proposing actor's opaque handle is this vault's own
+                // erasable map (FIX 9870): no image may keep who stands
+                // behind a signed handle.
+                b"it:proposer-scope:",
             ]
             .iter()
             .any(|p| key.starts_with(p))
