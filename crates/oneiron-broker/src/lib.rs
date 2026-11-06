@@ -46,7 +46,7 @@ pub use error::{BrokerError, Failure, Refusal};
 pub use form::FormData;
 pub use frame::{MAX_BODY, MAX_SECRET, MAX_STREAM, PROTOCOL_VERSION};
 pub use send::SendPolicy;
-pub use shape::Shape;
+pub use shape::{Shape, json_member};
 pub use strip::{MARKER, strip};
 
 #[cfg(unix)]
