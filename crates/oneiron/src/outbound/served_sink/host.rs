@@ -149,14 +149,16 @@ impl ServedTransports {
 
     /// Fixed configured APNs apps, each with its own topic, environment and
     /// connection pool. Credentials remain in the existing T0 secret door.
-    pub fn with_apns_applications(
-        mut self,
-        configs: Vec<super::ApnsAppConfig>,
-    ) -> Result<Self> {
+    pub fn with_apns_applications(mut self, configs: Vec<super::ApnsAppConfig>) -> Result<Self> {
         let mut applications: Vec<Arc<super::apns::ApnsApplication>> = Vec::new();
         for config in configs {
-            if applications.iter().any(|application| application.id() == config.id) {
-                return Err(Error::InvalidConfig("duplicate APNs application id".to_owned()));
+            if applications
+                .iter()
+                .any(|application| application.id() == config.id)
+            {
+                return Err(Error::InvalidConfig(
+                    "duplicate APNs application id".to_owned(),
+                ));
             }
             applications.push(Arc::new(super::apns::ApnsApplication::new(config)?));
         }
@@ -165,7 +167,10 @@ impl ServedTransports {
     }
 
     pub(super) fn apns_application(&self, id: &str) -> Option<&super::apns::ApnsApplication> {
-        self.apns_applications.iter().map(Arc::as_ref).find(|application| application.id() == id)
+        self.apns_applications
+            .iter()
+            .map(Arc::as_ref)
+            .find(|application| application.id() == id)
     }
 
     pub(crate) fn broker_model_listing(&self) -> Option<&Arc<dyn BrokerModelListingHost>> {

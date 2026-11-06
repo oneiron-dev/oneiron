@@ -23,6 +23,10 @@ environment = "production" # or explicitly "sandbox"
 signing_key_ref = "<immutable SECRET record id>"
 ```
 
+After rotating an Apple key, update both the stored `.p8` and the configured
+Apple Key ID (and Team ID if it changed), then restart the matching host with
+that configuration. Rotating a SECRET value does not invent new issuer metadata.
+
 The section is file-only. No section means no configured APNs applications;
 Slack, LINE, Telegram and native mail keep their existing behavior. App ids
 must be unique. The public config has no private key or cached bearer token.
@@ -66,8 +70,10 @@ and uppercase token encodings are not canonical addresses.
 The identity assignment key keeps the complete address immutable. A new token,
 application, topic or environment needs a new address/identity, not a mutable
 alias behind an admitted send. The sender reads that same identity id on each
-attempt and requires its live `apns` registration. Release/close prevents
-further provider calls; no provider error silently deletes the registration.
+attempt and requires its live `apns` registration. An attempt whose registration
+read sees release/close makes no provider call. This adds no cancellation of
+already admitted, in-flight sends; their ordinary uncertainty remains. No
+provider error silently deletes the registration.
 The row is destination data. It does not supply the send actor, consent, a
 sender identity or permission to use the provider key.
 
@@ -79,8 +85,8 @@ APNs interruption-level from execute-time delivery-window policy is preserved;
 agent-supplied raw payload or arbitrary text argument at send time. This slice
 sends text alerts, not badge/sound, background, VoIP or arbitrary custom payloads.
 
-Every request enters the live T0 secret door again. Revoked, suspended or
-unavailable keys cannot use an old session. Existing secret scope and custody
+Every request enters the live T0 secret door again. A key revoked or suspended
+before that admission cannot use an old session. Existing secret scope and custody
 admission remain in force. P-256 PKCS8 PEM is signed with ES256; the JWT uses
 Apple's Key ID, Team ID and Unix issued-at timestamp. Private key bytes and the
 transient JWT remain inside the current secret-door callback.
@@ -92,7 +98,8 @@ same JWT inside each live door until the 20-minute refresh point. No bearer
 credential is retained between calls. This follows Apple's requirement to
 refresh no more often than every 20 minutes on one connection and at least
 every 60 minutes; it is not an admission wait or a new outbound retry timer.
-The existing connect and request timeouts are unchanged.
+This describes the adapter's retained state, not complete allocator or network
+buffer erasure. The existing connect and request timeouts are unchanged.
 
 APNs `200` becomes `DeliveredToChannel`, with its returned `apns-id` when
 present, or an explicitly acceptance-only label. Definite connection refusal
