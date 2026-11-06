@@ -167,6 +167,24 @@ Actor erase removes the stored resident attribution without releasing money or
 pending work; a later terminal cannot recreate that resident row. The existing
 resident-share family and its whole-row erase remain unchanged in ownership.
 
+### Original-key terminal preparation
+
+`CallOutcome::charge` uses the original native unit, cost and reservation without
+constructing a permit. Its run-line conversion uses the original line terms;
+its native allocation conversion uses the original hold's terms. These are
+separate quantities, not interchangeable booking amounts.
+
+`VaultAllocationLedger::settle_original_with` prepares a pending original
+terminal inside the existing writer and uses the same accounting body as
+`settle`. The caller stages its original line booking, retained terminal receipt
+and canonical producer under that supplied transaction. The API does not create
+that caller ownership or activate kept-job recovery. An already selected
+terminal returns `AllocationTerminalSelection::Existing` with its exact original
+identity, without invoking either callback or reading a consumed producer.
+Both cases retain the existing `AllocationCommit` semantics: an error after the
+durable commit does not undo the selected value or justify another terminal.
+Post-commit producer cleanup and notification remain the actual caller's duty.
+
 ## Runtime integration and remaining work
 
 The opt-in run path reserves and freezes its admitted receipt in the native
