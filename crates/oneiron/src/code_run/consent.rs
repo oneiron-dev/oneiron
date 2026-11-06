@@ -392,7 +392,7 @@ type ReferenceGraphMaps = (
 fn index_reference_graph(graph: &CodeSymbolGraph) -> Result<ReferenceGraphMaps> {
     let mut entities_by_symbol = BTreeMap::new();
     for symbol in &graph.manifest.symbols {
-        let id = code_symbol_entity_id(&graph.manifest.repo_ref, symbol)?;
+        let id = code_symbol_entity_id(&graph.manifest.repo_identity, symbol)?;
         let mut entities = BTreeSet::from([id]);
         if let Some(provenance) = symbol.provenance_claim_id {
             entities.insert(provenance);
