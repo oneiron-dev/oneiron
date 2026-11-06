@@ -126,11 +126,12 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
-    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
-    StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle, bind_workflow_step_answer,
-    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
-    note_step_admission_role, refresh_step_capture_request, route_prompt_digest,
+    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
+    ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
+    StepReplayCapsule, StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle,
+    bind_workflow_step_answer, capture_workflow_step, finalize_step_captures,
+    note_answering_route_pin, note_answering_rung, note_step_admission_role,
+    refresh_step_capture_request, route_prompt_digest,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{

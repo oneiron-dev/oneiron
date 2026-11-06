@@ -85,14 +85,19 @@ impl EngineNativeExecutor<'_> {
         Ok(refs)
     }
 
+    /// The step's model request, and where it shows the step before's
+    /// console whole, the slot a callable's counterfactual renders each
+    /// branch's observation into (FIX 3608): only a full view that no fold
+    /// or frame stands in for has one.
     pub(super) fn build_llm_request(
         &mut self,
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         wire_prompt: &str,
         continuation: Option<&ContinuationNote>,
-    ) -> EngineExecutorResult<LlmRequest> {
+    ) -> EngineExecutorResult<(LlmRequest, Option<crate::code_run::ConsoleSlot>)> {
         let completed_steps = completed_step_count(record)?;
+        let mut console_slot = None;
         let mut messages = Vec::new();
         messages.push(LlmMessage {
             role: LlmMessageRole::System,
@@ -191,6 +196,7 @@ impl EngineNativeExecutor<'_> {
                 None => {}
             }
             let view = view.clone();
+            let full = view.tier == OutputTier::Full;
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
             let folded = epochs
@@ -254,11 +260,14 @@ impl EngineNativeExecutor<'_> {
                     text: turn.assistant_exec(),
                 }],
             });
+            let text = turn.user_console(seq as u64);
+            if full && folded.is_none() && seq as u64 + 1 == completed_steps {
+                console_slot =
+                    crate::code_run::ConsoleSlot::whole(seq as u64, messages.len(), &text);
+            }
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text {
-                    text: turn.user_console(seq as u64),
-                }],
+                content: vec![ContentPart::Text { text }],
             });
             // The step's type feedback, the host's own words beside its
             // console, as it stands now: never inside the console (FIX 8277).
@@ -355,7 +364,7 @@ impl EngineNativeExecutor<'_> {
         // FIX 4930: the step's own call marks where its prefix ends, so the
         // fork a compaction sends after it names the same block.
         crate::code_run::main_prefix_boundary(&mut request)?;
-        Ok(request)
+        Ok((request, console_slot))
     }
 }
 

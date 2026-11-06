@@ -9,8 +9,8 @@ use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
-    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, StepCapture, StepContextCapture,
-    StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
+    CapsuleHost, CodeRunReplayRecord, ConsoleSlot, ExecutorStorage, StepCapture,
+    StepContextCapture, StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
 };
 use crate::{EntityId, Error, LlmRequest};
 
@@ -60,7 +60,8 @@ impl EngineNativeExecutor<'_> {
         ])
     }
 
-    /// Captures `request` before it is sent, with `record`, the run's row as
+    /// Captures `request` before it is sent, with `console`, where it shows
+    /// the step before's console whole (FIX 3608), and `record`, the run's row as
     /// it stands before the step, and the config and teaching fingerprint it
     /// runs under, when the run is a leased attempt's own canonical run (the
     /// run whose id is the attempt's). Step 0's request is the one input no
@@ -79,6 +80,7 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         step: u64,
         request: &LlmRequest,
+        console: Option<ConsoleSlot>,
         record: &CodeRunReplayRecord,
         prompt_fingerprint: &str,
     ) {
@@ -105,6 +107,7 @@ impl EngineNativeExecutor<'_> {
                 request,
                 task: &config.task,
                 exposures,
+                console,
                 source_rows,
                 start: Some(StepStartCapture {
                     record,
