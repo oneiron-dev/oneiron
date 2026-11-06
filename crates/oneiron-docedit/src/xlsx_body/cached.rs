@@ -12,6 +12,7 @@
 //! worksheet keeps every other element and attribute in place
 //! (docengine:fidelity).
 
+use super::read::decode_escapes;
 use super::{
     Book, Result, SML, XlsxArea, XlsxLock, cell_ref, drop_attribute, encode_escapes, parse,
     refused, string_item,
@@ -70,9 +71,16 @@ pub fn write_cached_values(
         .iter()
         .map(|(name, part)| (name.clone(), part.clone()))
         .collect();
+    // Names match as the application reads them: a `_xHHHH_` escape one
+    // side writes and the other spells out are the same name (review #6434).
+    let copied_sheets: BTreeMap<String, &String> = copy
+        .worksheets
+        .iter()
+        .map(|(name, part)| (decode_escapes(name), part))
+        .collect();
     let mut formula_count = 0;
     for (name, part) in sheets {
-        let Some(copied) = copy.worksheets.get(&name) else {
+        let Some(copied) = copied_sheets.get(&decode_escapes(&name)).copied() else {
             continue;
         };
         let bytes = book
@@ -83,6 +91,15 @@ pub fn write_cached_values(
         let cells = formula_cells(&tree)?;
         if cells.is_empty() {
             continue;
+        }
+        // An array whose results grew or shrank in the copy would leave
+        // stale or missing cells under a stamp that says the workbook was
+        // recalculated, so the whole fallback stands down instead and the
+        // workbook keeps today's fullCalcOnLoad mark (review #6434).
+        if array_extents(&tree)? != array_extents(&parse(&copy.package, copied)?)? {
+            return Err(refused(
+                "an array formula's result range changed in the recalculated copy",
+            ));
         }
         let values = copy.cached_values(copied, &cells)?;
         let mut edits = Vec::new();
@@ -116,9 +133,11 @@ fn takes_value(cell: &Node, formula: Option<&str>) -> bool {
     cell.attr("vm").is_none() && !formula.is_some_and(reads_location)
 }
 
-/// Whether `formula` calls one of [`LOCATION_FUNCTIONS`].
+/// Whether `formula` calls one of [`LOCATION_FUNCTIONS`]. A string literal
+/// (`"..."`) and a quoted sheet name (`'...'`) are text, never a call, so
+/// they are blanked before the names are looked for (review #6434).
 fn reads_location(formula: &str) -> bool {
-    let upper = formula.to_ascii_uppercase();
+    let upper = unquoted(formula).to_ascii_uppercase();
     LOCATION_FUNCTIONS.iter().any(|name| {
         upper.match_indices(name).any(|(at, _)| {
             let called = upper[at + name.len()..].trim_start().starts_with('(');
@@ -128,6 +147,65 @@ fn reads_location(formula: &str) -> bool {
             called && !joined
         })
     })
+}
+
+/// `formula` with the inside of each string literal and quoted name replaced
+/// by spaces: a doubled quote inside one is its own quote character, and an
+/// unclosed one runs to the end.
+fn unquoted(formula: &str) -> String {
+    let mut out = String::with_capacity(formula.len());
+    let mut open: Option<char> = None;
+    let mut chars = formula.chars().peekable();
+    while let Some(c) = chars.next() {
+        match open {
+            None => {
+                if matches!(c, '"' | '\'') {
+                    open = Some(c);
+                }
+                out.push(c);
+            }
+            Some(quote) if c == quote => {
+                if chars.peek() == Some(&quote) {
+                    chars.next();
+                    out.push_str("  ");
+                } else {
+                    open = None;
+                    out.push(c);
+                }
+            }
+            Some(_) => out.push(' '),
+        }
+    }
+    out
+}
+
+/// Each array formula of worksheet `tree` by its anchor cell (column, row),
+/// with the range its results fill: the `ref` it names, or its own cell when
+/// it names none or one that does not parse.
+fn array_extents(tree: &XmlTree) -> Result<BTreeMap<(u32, u32), ((u32, u32), (u32, u32))>> {
+    let mut extents = BTreeMap::new();
+    let Some((data, _)) = tree.child(0, SML, "sheetData")? else {
+        return Ok(extents);
+    };
+    for (row, _) in tree.children(data).filter(|(_, node)| node.is(SML, "row")) {
+        for (index, cell) in tree.children(row).filter(|(_, node)| node.is(SML, "c")) {
+            let Some(at) = cell.attr("r").and_then(cell_ref) else {
+                continue;
+            };
+            let Some((_, f)) = tree
+                .children(index)
+                .find(|(_, child)| child.is(SML, "f") && child.attr("t") == Some("array"))
+            else {
+                continue;
+            };
+            let extent = f
+                .attr("ref")
+                .and_then(|reference| XlsxArea::parse(reference, XlsxLock::ArrayFormula))
+                .map_or((at, at), |area| (area.first, area.last));
+            extents.insert(at, extent);
+        }
+    }
+    Ok(extents)
 }
 
 /// The cells of worksheet `tree` that take a recalculated value, each its
