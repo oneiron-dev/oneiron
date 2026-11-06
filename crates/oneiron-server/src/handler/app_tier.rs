@@ -562,7 +562,8 @@ fn answer_app_message(
                 auth,
                 context,
                 connection.as_deref(),
-            );
+            )
+            .with_signing_request_transport(state.signing_request_transport.clone());
             return Ok(Some(VerbCall::Verb {
                 auth: auth.clone(),
                 request,
