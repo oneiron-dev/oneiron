@@ -13,7 +13,9 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, Retrieva
 use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_head_lines, text_counts};
+use super::coreutils_text::{
+    HeadPosition, checkpoint, copy_text_parts, literal_grep_pattern, page_head_lines, text_counts,
+};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -21,7 +23,7 @@ use super::model::{
 
 use super::readdir::{normalize_path, parse_entity_id, path_components, sealed_is_absent};
 
-use super::paging::{CommandOutputBuilder, TemporalCursor};
+use super::paging::{CommandOutputBuilder, SealedPosition, TemporalCursor};
 
 impl GraphFsResolver<'_, '_> {
     pub fn grep(
@@ -319,8 +321,18 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let scope = self.cursor_scope(&format!("head -n {lines} {path}"));
-        let from: HeadPosition = scope.open(cursor)?.unwrap_or_default();
+        let prefix = format!("head -n {lines} ");
+        let listing = copy_text_parts(&[&prefix, path], reader, self.options.page_byte_cap)?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let from: HeadPosition = scope
+            .open_with(
+                cursor,
+                quantum,
+                || checkpoint(reader),
+                |bytes| Ok(HeadPosition::from_bytes(bytes)),
+            )?
+            .unwrap_or_default();
         let mut out = CommandOutputBuilder::new(self.options);
         let mut next_cursor = None;
         let read = self.read_file_with_reader(path, reader)?;
@@ -333,12 +345,19 @@ impl GraphFsResolver<'_, '_> {
                 reader,
                 self.options.page_byte_cap,
             )?;
-            next_cursor = next.map(|at| {
-                scope.seal(&HeadPosition {
-                    lines: at,
-                    printed: from.printed + finished,
+            next_cursor = next
+                .map(|at| {
+                    scope.seal_bytes_with(
+                        &HeadPosition {
+                            lines: at,
+                            printed: from.printed + finished,
+                        }
+                        .to_bytes(),
+                        quantum,
+                        || checkpoint(reader),
+                    )
                 })
-            });
+                .transpose()?;
         }
         let total = out.entries();
         self.finish_coreutils_command(
