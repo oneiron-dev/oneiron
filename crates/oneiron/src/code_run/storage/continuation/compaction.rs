@@ -10,6 +10,12 @@
 //! billed or receipted again. The coverage and fold modules keep their own
 //! codecs and write rules.
 //!
+//! The capture keeps no epoch's digest, so no start body holds a hash of a
+//! summary's words (FIX 928). The seed takes each digest from the source's
+//! own row, which a withdrawal clears, and an alias whose summary is
+//! withdrawn keeps none. A withdrawal then changes no start body and no
+//! start digest that a continuation or its child's frozen seed binds.
+//!
 //! After a failed step, the copied row holds that step's calls, but the
 //! capture is the earlier start's (FIX 18695). The fold verbs those calls
 //! made are not inherited, and their recorded answers stay as history. So
@@ -40,7 +46,8 @@ use crate::{EntityId, Error, Result, Vault};
 /// coverage rows and its fold ledger, inside the prefix the start holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StartCompaction {
-    /// The run's epoch coverage rows, in epoch order, from epoch 1.
+    /// The run's epoch coverage rows, in epoch order, from epoch 1, each
+    /// without its digest (FIX 928).
     coverage: Vec<CodeRunCompactionCoverage>,
     /// The run's fold ledger: its handles, `last`, marks, unfolds and
     /// compact ask as they stood. No fold keeps its receipt here: the run
@@ -51,7 +58,8 @@ pub(crate) struct StartCompaction {
 impl StartCompaction {
     /// The compaction of `prefix`'s run as `txn` holds it, kept inside
     /// `prefix` (FIX 4198). A step start reads it in its own writer. A fold
-    /// that a withdrawn record reached keeps no words.
+    /// that a withdrawn record reached keeps no words, and no epoch keeps
+    /// its digest (FIX 928).
     ///
     /// # Errors
     ///
@@ -65,7 +73,10 @@ impl StartCompaction {
         for fold in &mut folds.folds {
             fold.execution = None;
         }
-        let coverage = coverage_rows_in_txn(store, txn, prefix.run_id)?;
+        let coverage = coverage_rows_in_txn(store, txn, prefix.run_id)?
+            .into_iter()
+            .map(CodeRunCompactionCoverage::without_digest)
+            .collect();
         Ok(Self { coverage, folds }.kept_inside(prefix))
     }
 
@@ -199,15 +210,18 @@ impl InheritedCompaction {
 
 /// Seeds `child`'s compaction from `compaction`, which its source's proved
 /// start captured, in the writer that puts the child's replay row (FIX
-/// 4198). Each epoch becomes an alias that changes only its run. The ledger
-/// lands as the child's through the fold module's own landing. The capture
-/// must lie inside `child`'s copied prefix.
+/// 4198). Each epoch becomes an alias that changes only its run, with the
+/// digest the source's own row holds now: none once its summary is
+/// withdrawn (FIX 928). The ledger lands as the child's through the fold
+/// module's own landing. The capture must lie inside `child`'s copied
+/// prefix.
 ///
 /// # Errors
 ///
 /// Storage errors. [`Error::ConcurrentWrite`] for a child that holds
 /// coverage or a ledger already; an invariant error for a capture past the
-/// prefix, or a coverage chain that does not continue.
+/// prefix, a captured epoch the source's row does not match, or a coverage
+/// chain that does not continue.
 pub(super) fn seed_continuation_compaction_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -220,7 +234,13 @@ pub(super) fn seed_continuation_compaction_in_txn(
             "a continuation's compaction lies past its copied prefix",
         ));
     }
-    put_coverage_aliases_in_txn(&vault.store, txn, child.run_id, &compaction.coverage)?;
+    put_coverage_aliases_in_txn(
+        &vault.store,
+        txn,
+        source,
+        child.run_id,
+        &compaction.coverage,
+    )?;
     seed_code_run_folds_in_txn(
         &vault.store,
         txn,

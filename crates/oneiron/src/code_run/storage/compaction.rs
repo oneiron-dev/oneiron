@@ -157,12 +157,27 @@ impl CodeRunCompactionCoverage {
         }
     }
 
+    /// This row with no digest: the form a step start captures and its body
+    /// carries (FIX 4198). The start then keeps no hash of the summary's
+    /// words, so a withdrawal has no copy there to clear (FIX 928).
+    pub(super) fn without_digest(self) -> Self {
+        Self {
+            digest: None,
+            ..self
+        }
+    }
+
     /// Withdraws every coverage row bound to the epoch summary `summary`,
     /// in the writer that withdraws it (FIX 928; ARCH-0038: deleted words
     /// leave no confirmation hash): each keeps its run, summary, epoch and
     /// span, and loses its body digest for good, and a self-written row's
     /// receipt loses the accepted snapshot's hash and length; its
     /// content-free execution record stays.
+    ///
+    /// A continuation's aliases are rows here too, so each child seeded
+    /// before the withdrawal loses its copy of the digest in this walk. A
+    /// step start's capture holds no digest (FIX 4198), so no start body
+    /// is rewritten, and no start digest a continuation binds changes.
     ///
     /// # Errors
     /// A store failure, or a coverage row that does not decode.
@@ -205,13 +220,15 @@ impl RawValue for CodeRunCompactionCoverage {
 }
 
 /// A row as a step start's body carries it (FIX 4198): its own frame, with
-/// no receipt, read back as strictly as the table reads it.
+/// no receipt and no digest, read back as strictly as the table reads it.
+/// No start body holds a hash of a summary's words (FIX 928). A seed takes
+/// each digest from the source's own row ([`put_coverage_aliases_in_txn`]).
 impl Serialize for CodeRunCompactionCoverage {
     fn serialize<S: serde::Serializer>(
         &self,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
-        encode(self, None)
+        encode(&self.without_digest(), None)
             .map_err(serde::ser::Error::custom)?
             .serialize(serializer)
     }
@@ -455,13 +472,18 @@ fn put_coverage_in(
 }
 
 /// Writes `rows`, a continuation's inherited coverage, as `child`'s, in
-/// `txn` (FIX 4198). Each alias changes only its run. Its summary, session,
-/// span, calls and digest stay, so [`verify_summary`] binds it as it bound
-/// the source's row. It carries no receipt: no pass runs or bills again.
-/// The rows must chain from epoch 1, and `child` must hold none yet.
+/// `txn` (FIX 4198). Each row is `source`'s own row as `txn` holds it, but
+/// for its digest, which a step start never carries. Each alias changes
+/// only its run. It takes the source row's summary, session, span, calls
+/// and digest, so [`verify_summary`] binds it as it binds the source's row.
+/// An alias whose summary is withdrawn has no digest, whatever the source's
+/// row holds (FIX 928). It carries no receipt, so no snapshot hash or
+/// length either: no pass runs or bills again. The rows must chain from
+/// epoch 1, and `child` must hold none yet.
 pub(super) fn put_coverage_aliases_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
+    source: EntityId,
     child: EntityId,
     rows: &[CodeRunCompactionCoverage],
 ) -> Result<()> {
@@ -472,17 +494,28 @@ pub(super) fn put_coverage_aliases_in_txn(
     }
     let mut prior = None;
     for row in rows {
-        let alias = CodeRunCompactionCoverage {
+        let stored = COVERAGE.get(dbs, &*txn, &(source, row.summary_id))?;
+        let Some(stored) = stored.filter(|stored| {
+            row.run_id == source && stored.without_digest() == row.without_digest()
+        }) else {
+            return Err(Error::InvariantViolation(
+                "an inherited coverage row is not its source's",
+            ));
+        };
+        let mut alias = CodeRunCompactionCoverage {
             run_id: child,
-            ..*row
+            ..stored
         };
         if !alias.continues(prior.as_ref()) {
             return Err(Error::InvariantViolation(
                 "an inherited coverage row does not continue its chain",
             ));
         }
-        // A withdrawn summary still covers its steps; a corrupt binding refuses.
-        verify_summary(dbs, &*txn, &alias)?;
+        // A withdrawn summary still covers its steps, and its alias keeps
+        // no digest (FIX 928); a corrupt binding refuses.
+        if verify_summary(dbs, &*txn, &alias)?.is_none() {
+            alias.digest = None;
+        }
         let key = (alias.run_id, alias.summary_id);
         let written = WrittenCoverage {
             row: alias,
