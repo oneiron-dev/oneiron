@@ -158,13 +158,22 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         hub: &EntityId,
     ) -> Result<SkillHubRecord> {
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, hub)?
-            .ok_or(Error::EntityNotFound)?;
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_SKILL_HUB {
-            return Err(invalid("hub id is not a SKILL_HUB"));
-        }
-        decode_skill_hub_record(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+        hub_record_in_read(&self.store, txn, hub)
     }
+}
+
+/// Hub record content in the caller's snapshot, without publisher authority.
+pub(super) fn hub_record_in_read(
+    read: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    hub: &EntityId,
+) -> Result<SkillHubRecord> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(read, txn, hub)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_SKILL_HUB {
+        return Err(invalid("hub id is not a SKILL_HUB"));
+    }
+    decode_skill_hub_record(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
 }

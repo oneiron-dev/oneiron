@@ -104,17 +104,7 @@ impl Vault {
     }
 
     fn default_skill_hub_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<DefaultSkillHub> {
-        let hub = default_skill_hub_id()?;
-        Ok(DefaultSkillHub {
-            hub,
-            record: self.hub_record_in_txn(txn, &hub)?,
-            skills: self
-                .hub_ref_sync_in_txn(txn, &hub, "skills")?
-                .unwrap_or(TrackedHubRef::new(
-                    HubRef::new(hub, "skills", HubPin::Commit(HUB_COMMIT.into()))?,
-                    HubSyncPolicy::PinnedCommit,
-                )),
-        })
+        default_skill_hub_in_read(&self.store, txn)
     }
 
     /// The installed holder of one default-hub skill: the loadable skill of
@@ -532,6 +522,24 @@ impl Vault {
         txn.commit()?;
         Ok((entity, true))
     }
+}
+
+/// Default hub configuration from the same content snapshot; provenance, not a grant.
+pub(crate) fn default_skill_hub_in_read(
+    read: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<DefaultSkillHub> {
+    let hub = default_skill_hub_id()?;
+    Ok(DefaultSkillHub {
+        hub,
+        record: super::publisher::hub_record_in_read(read, txn, &hub)?,
+        skills: super::ref_sync::hub_ref_sync_in_read(read, txn, &hub, "skills")?.unwrap_or(
+            TrackedHubRef::new(
+                HubRef::new(hub, "skills", HubPin::Commit(HUB_COMMIT.into()))?,
+                HubSyncPolicy::PinnedCommit,
+            ),
+        ),
+    })
 }
 
 #[cfg(test)]

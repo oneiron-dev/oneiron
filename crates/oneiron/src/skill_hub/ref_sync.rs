@@ -149,10 +149,7 @@ impl Vault {
         hub: &EntityId,
         ref_string: &str,
     ) -> Result<Option<TrackedHubRef>> {
-        REF_SYNC
-            .get(&self.store, txn, &(*hub, ref_string.to_owned()))?
-            .map(|row| row.into_tracked(*hub, ref_string))
-            .transpose()
+        hub_ref_sync_in_read(&self.store, txn, hub, ref_string)
     }
 
     /// Owner door: set one ref's policy and pin. Revisions already seen and
@@ -229,4 +226,17 @@ impl Vault {
             )
         })
     }
+}
+
+/// The stored ref policy and pin as data, with no fetch or admission.
+pub(super) fn hub_ref_sync_in_read(
+    read: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    hub: &EntityId,
+    ref_string: &str,
+) -> Result<Option<TrackedHubRef>> {
+    REF_SYNC
+        .get(read, txn, &(*hub, ref_string.to_owned()))?
+        .map(|row| row.into_tracked(*hub, ref_string))
+        .transpose()
 }
