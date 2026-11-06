@@ -7,7 +7,7 @@ mod authority_log;
 mod base_apply;
 mod builder;
 #[cfg(feature = "sync")]
-pub(crate) use builder::IngestedPutOutcome;
+pub(crate) use builder::{AppliedRecordDocument, IngestedPutOutcome};
 mod child_of_overlay;
 pub(crate) mod claim_candidate_apply;
 mod claim_materialization;
