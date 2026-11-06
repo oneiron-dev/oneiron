@@ -58,7 +58,19 @@ pub(super) async fn execute_mcp_native_read(
             hook_notice,
             ..
         }) => {
+            let completed = matches!(*stop, VerbHookStop::Completed { .. });
             let rows = stop_release_rows(server, actor, &stop, served);
+            // The drain read that answer, not this retry: its caller's
+            // credential still reads every row it was derived from, and none
+            // was erased since, or it gets only the word that the call ran,
+            // as a claimed invocation's waiter does (FIX 1435).
+            let lapsed = rows.zip(actor.auth.as_ref()).is_some_and(|(rows, auth)| {
+                !crate::api::facade::rows_still_admitted(server.vault(), auth, rows)
+            });
+            if completed && lapsed {
+                let ran = super::super::claimed_release::details_on_device_result();
+                return Ok(ControlFlow::Break(ran));
+            }
             let stopped = mcp_hook_stop_result(server, args, actor, *stop, rows, hook_notice)?;
             return Ok(ControlFlow::Break(stopped));
         }
