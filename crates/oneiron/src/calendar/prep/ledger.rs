@@ -53,6 +53,32 @@ pub(super) fn ledger_prep_items(
         Ok((header.learned_at <= fired_at).then_some(raw))
     };
     let mut contacts: Vec<_> = event.attendee_refs.iter().map(|id| (*id, None)).collect();
+    let mut add_party_contacts = |party: String, sources: Vec<EntityId>| -> Result<()> {
+        for contact in crate::counterparty_contact::contact_ids_with_live_head_from_read_in_txn(
+            store,
+            pending,
+            txn,
+            crate::counterparty_contact::PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+            &party,
+        )? {
+            contacts.push((contact, Some((party.clone(), sources.clone()))));
+        }
+        Ok(())
+    };
+    for person in &event.attendee_refs {
+        let Some(raw) = source_in_time(person)? else {
+            continue;
+        };
+        if let Some(party) = crate::comm::person_party_key_from_row_in_txn(
+            store.base(),
+            txn,
+            *person,
+            raw[0],
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )? {
+            add_party_contacts(party, vec![*person])?;
+        }
+    }
     for id in vault.claims_for_subject_from_read_in_txn(store, txn, &event.event_ref)? {
         let Some(raw) = source_in_time(&id)? else {
             continue;
@@ -69,22 +95,28 @@ pub(super) fn ledger_prep_items(
         let Ok(attendee) = crate::calendar::claims::decode_attendee_value(&body.value) else {
             continue;
         };
-        let party = attendee
-            .who
-            .strip_prefix("mailto:")
-            .unwrap_or(&attendee.who)
-            .trim();
-        if !party.contains('@') {
-            continue;
-        }
-        for contact in crate::counterparty_contact::contact_ids_with_live_head_from_read_in_txn(
-            store,
-            pending,
-            txn,
-            crate::counterparty_contact::PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
-            party,
-        )? {
-            contacts.push((contact, Some((party.to_owned(), id))));
+        if let Ok(person) = EntityId::from_hex(&attendee.who) {
+            let Some(raw) = source_in_time(&person)? else {
+                continue;
+            };
+            if let Some(party) = crate::comm::person_party_key_from_row_in_txn(
+                store.base(),
+                txn,
+                person,
+                raw[0],
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )? {
+                add_party_contacts(party, vec![id, person])?;
+            }
+        } else {
+            let party = attendee
+                .who
+                .strip_prefix("mailto:")
+                .unwrap_or(&attendee.who)
+                .trim();
+            if party.contains('@') {
+                add_party_contacts(party.to_owned(), vec![id])?;
+            }
         }
     }
     let mut seen = HashSet::new();
@@ -134,10 +166,12 @@ pub(super) fn ledger_prep_items(
                     source_refs.push(hex);
                 }
             }
-            if let Some((_, attendee_claim)) = expected_party {
-                let hex = attendee_claim.to_hex();
-                if !source_refs.contains(&hex) {
-                    source_refs.push(hex);
+            if let Some((_, attendee_sources)) = expected_party {
+                for source in attendee_sources {
+                    let hex = source.to_hex();
+                    if !source_refs.contains(&hex) {
+                        source_refs.push(hex);
+                    }
                 }
             }
             items.push((

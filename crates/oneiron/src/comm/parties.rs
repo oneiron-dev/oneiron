@@ -75,13 +75,34 @@ pub(super) fn active_comm_party_key_in_txn(
         return Ok(None);
     };
 
-    if raw.entity_type != ENTITY_TYPE_PERSON {
+    Ok(person_party_key_from_row_in_txn(
+        store,
+        rtxn,
+        id,
+        raw.entity_type,
+        &raw.body,
+    )?)
+}
+
+/// The native active-PERSON party key from the caller's row, without fetching
+/// another body. The caller admits the row and applies its learned-at cutoff;
+/// lifecycle evidence still comes from the supplied vault authority.
+pub(crate) fn person_party_key_from_row_in_txn(
+    authority: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> crate::Result<Option<String>> {
+    if entity_type != ENTITY_TYPE_PERSON {
         return Ok(None);
     }
-    if entity_lifecycle_state_for_store_in_txn(store, rtxn, &id)? != EntityLifecycleState::Active {
+    if entity_lifecycle_state_for_store_in_txn(authority, rtxn, &id)?
+        != EntityLifecycleState::Active
+    {
         return Ok(None);
     }
-    let mut cursor = Cursor::new(&raw.body);
+    let mut cursor = Cursor::new(body);
     let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
         return Ok(None);
     };
