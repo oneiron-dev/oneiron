@@ -266,7 +266,7 @@ pub use self::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
     SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind, SelfTaskRefusalResult,
-    SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfTaskRefuseCall, SelfTeamResult, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
