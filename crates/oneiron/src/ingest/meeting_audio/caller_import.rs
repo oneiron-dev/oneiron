@@ -146,7 +146,7 @@ impl MeetingTranscriptImportAttempt<'_, '_> {
         let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
         let pre = if let Some(hint) = &self.hint {
             if let Some(ask) = self.ask {
-                match vault.session_import_hook_wait(hint, ask)? {
+                match vault.session_import_hook_wait(hint, ask, memory)? {
                     VerbHookWaitStatus::Waiting => {
                         return Ok(MeetingTranscriptCallerImportOutcome::HookPending {
                             session_ref: hint.id(),

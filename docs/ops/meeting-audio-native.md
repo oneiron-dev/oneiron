@@ -274,8 +274,11 @@ not start a fresh hook chain. Dropping the object abandons this in-memory
 continuation. A new preparation needs fresh bulk consent. This API installs
 no background retry, durable scheduling or served route.
 
-Both pre-hook readers come from the borrowed `Memory`. The committing audited
-writer revalidates its actor and reader, the live owner proof, both selected
+Both pre-hook readers come from the borrowed `Memory`. Pre-hooks and a saved
+ask's wait-status probe share that caller's currently held task-work turn;
+sharing the turn does not replace the ask's saved author or its authority.
+The committing audited writer revalidates its actor and reader, the live owner
+proof, both selected
 pins and sighted bytes, the source-audio relationship and the exact authorized
 JSON. It calls the existing shared prepared mint/turn/close/wake path with the
 meeting provenance and lands the native Imported NOTE in that same transaction.
