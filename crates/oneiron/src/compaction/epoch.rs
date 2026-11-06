@@ -29,7 +29,8 @@ pub(crate) use lineage::{EpochScope, PriorEpoch};
 pub(super) use lineage::{prior_epoch_in_txn, validate_epoch_boundary, validate_window_span};
 pub(crate) use mint::EpochMint;
 pub(super) use mint::{
-    mint_epoch_summary_guarded, mint_epoch_summary_in_overlay, mint_epoch_summary_with,
+    mint_epoch_summary_admitted_writer, mint_epoch_summary_guarded, mint_epoch_summary_in_overlay,
+    mint_epoch_summary_with,
 };
 
 /// Walks every record an epoch summary's words came from: its `DerivedFrom`

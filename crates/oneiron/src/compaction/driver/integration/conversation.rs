@@ -5,15 +5,21 @@
 //! transaction re-proves the SESSION and its turns, mints the epoch with its
 //! writer, puts the accepted try's check material (FIX 5040), puts the
 //! durable receipt keyed by the SUMMARY and declares the Dreamer's check, so
-//! a crash loses all of them or none. The evidence names the material's ref
-//! before the mint, so the receipt, its digest and the declaration bind it.
-//! The request's conversation binding must be the evidence's (FIX 5029): the
-//! mint re-proves that conversation's turn order and lands in its lineage.
+//! a crash loses all of them or none. The side-row wall admits the material
+//! first in that transaction, and the evidence names the admitted material's
+//! ref before the mint, so the receipt, its digest and the declaration bind
+//! the bytes its row keeps. The request's conversation binding must be the
+//! evidence's (FIX 5029): the mint re-proves that conversation's turn order
+//! and lands in its lineage.
+
+use std::cell::Cell;
 
 use super::*;
 use crate::compaction::{
-    CompactionCheckMaterial, CompactionEvidence, CompactionExecution, ConversationEvidence,
+    CompactionCheckMaterial, CompactionCheckMaterialRef, CompactionEvidence, CompactionExecution,
+    ConversationEvidence,
 };
+use crate::dreamer_runner::maintenance::compaction_check::declare_conversation_check_in_txn;
 
 impl CompactionDriver {
     /// Lands `gated`, a conversation window's accepted summary, with
@@ -25,23 +31,16 @@ impl CompactionDriver {
         vault: &Vault,
         byline: WriteActor,
         gated: GatedCompaction,
-        mut execution: CompactionExecution,
+        execution: CompactionExecution,
         material: Option<CompactionCheckMaterial>,
     ) -> Result<SwapPlan> {
         let material = material.ok_or(Error::InvariantViolation(
             "a conversation's summary carries no check material",
         ))?;
-        let reference = material.reference()?;
-        let evidence = match execution.evidence.as_mut() {
-            Some(CompactionEvidence::Conversation(evidence)) => {
-                evidence.check_material = Some(reference.clone());
-                evidence.clone()
-            }
-            _ => {
-                return Err(Error::InvariantViolation(
-                    "a conversation's summary carries no conversation evidence",
-                ));
-            }
+        let Some(CompactionEvidence::Conversation(evidence)) = execution.evidence.clone() else {
+            return Err(Error::InvariantViolation(
+                "a conversation's summary carries no conversation evidence",
+            ));
         };
         let landing = crate::compaction::self_writer::admit_self_conversation_landing(
             vault, &gated, execution,
@@ -55,33 +54,57 @@ impl CompactionDriver {
         let session = gated.request.session_ref;
         let turns: Vec<EntityId> = evidence.turns.iter().map(|span| span.turn).collect();
         let writer = landing.execution;
+        // The material as the wall admitted it, handed from the landing to
+        // the extra write of the same transaction (FIX 5040).
+        let admitted: Cell<Option<(CompactionCheckMaterial, CompactionCheckMaterialRef)>> =
+            Cell::new(None);
         self.integrate_inner(gated, &[], |request, product| {
-            crate::compaction::epoch::mint_epoch_summary_guarded(
+            crate::compaction::epoch::mint_epoch_summary_admitted_writer(
                 vault,
                 &session,
                 byline,
                 request,
                 product,
-                Some(&writer),
-                |txn| {
+                |txn, summary| {
                     crate::compaction::validate_session(&vault.store, txn, session)?;
-                    crate::compaction::validate_turn_membership(&vault.store, txn, &turns, session)
-                },
-                |txn, mint| {
-                    crate::compaction::put_check_material_in_txn(
-                        vault,
+                    crate::compaction::validate_turn_membership(
+                        &vault.store,
                         txn,
-                        mint.summary_id(),
-                        &material,
-                        &reference,
+                        &turns,
+                        session,
                     )?;
-                    crate::compaction::put_conversation_receipt_in_txn(vault, txn, mint, &writer)?;
-                    crate::dreamer_runner::maintenance::compaction_check::declare_conversation_check_in_txn(
+                    let (reference, kept) = crate::compaction::admit_check_material_in_txn(
+                        vault, txn, summary, material,
+                    )?;
+                    let mut writer = writer;
+                    if let Some(CompactionEvidence::Conversation(evidence)) =
+                        writer.evidence.as_mut()
+                    {
+                        evidence.check_material = Some(reference.clone());
+                    }
+                    admitted.set(kept.map(|kept| (kept, reference)));
+                    Ok(Some(writer))
+                },
+                |txn, mint, writer| {
+                    let writer = writer.ok_or(Error::InvariantViolation(
+                        "a conversation summary lands with no writer",
+                    ))?;
+                    if let Some((material, reference)) = admitted.take() {
+                        crate::compaction::put_check_material_in_txn(
+                            vault,
+                            txn,
+                            mint.summary_id(),
+                            material,
+                            &reference,
+                        )?;
+                    }
+                    crate::compaction::put_conversation_receipt_in_txn(vault, txn, mint, writer)?;
+                    declare_conversation_check_in_txn(
                         vault,
                         txn,
                         mint.summary_id(),
                         mint.epoch(),
-                        &writer,
+                        writer,
                     )
                 },
             )
