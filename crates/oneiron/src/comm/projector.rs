@@ -99,7 +99,8 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
 }
 
 /// The most new delivered receipts one housekeeping pass imports, and the
-/// most pending events it projects; the rest wait for the next pass.
+/// most successful event transactions it commits. Refusals stay pending
+/// without using this write budget.
 const HOUSEKEEPING_PROJECTOR_BATCH: usize = 256;
 
 /// The housekeeping pass's projector step: one [`run_comm_projector`] pass
@@ -118,8 +119,9 @@ pub(crate) fn run_comm_projector_housekeeping_step(vault: &Vault) {
 }
 
 /// [`run_comm_projector`] importing at most `max_writes` new delivered
-/// receipts and projecting at most `max_writes` pending events, in sequence
-/// order; the rest wait for the next pass.
+/// receipts and committing at most `max_writes` successful event transactions,
+/// in sequence order. Refused events stay pending without using the budget,
+/// so they cannot keep later eligible events from being tried.
 fn run_comm_projector_capped(vault: &Vault, max_writes: usize) -> CommResult<()> {
     import_delivered_send_receipts(vault, max_writes)?;
     let mut index = {
@@ -127,11 +129,18 @@ fn run_comm_projector_capped(vault: &Vault, max_writes: usize) -> CommResult<()>
         projector_index_in_txn(vault, &rtxn)?
     };
     let mut first_refusal = None;
-    for event_id in index.pending_event_ids().into_iter().take(max_writes) {
+    let mut projected = 0;
+    for event_id in index.pending_event_ids() {
+        if projected == max_writes {
+            break;
+        }
         // Each event keeps its own write transaction, so a later bad event
         // cannot roll back what earlier events already projected.
         match project_event(vault, event_id, &index) {
-            Ok(delta) => index.apply_committed(delta),
+            Ok(delta) => {
+                projected += 1;
+                index.apply_committed(delta);
+            }
             Err(CommError::Engine(Error::EntityNotFound)) => {
                 // A replicated event can arrive before its party row. Leave it
                 // unprojected — and the index untouched — so a later pass
