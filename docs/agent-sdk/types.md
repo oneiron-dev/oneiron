@@ -1243,6 +1243,8 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
+        def drafters(self) -> "Oneiron._VaultDraftersVerbs": ...
+        @property
         def roots(self) -> "Oneiron._VaultRootsVerbs": ...
         @property
         def owner_work(self) -> "Oneiron._VaultOwnerWorkVerbs": ...
@@ -2721,6 +2723,22 @@ class Oneiron:
             """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
         def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
+    class _VaultDraftersVerbs:
+        def list(self, spec: Facade.DrafterListRequest) -> list[Facade.DrafterVersionView]:
+            """The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."""
+        def list_as(self, spec: Facade.DrafterListRequest) -> list[Facade.DrafterVersionView]:
+            """An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."""
+        def status(self, spec: Facade.DrafterStatusRequest) -> Facade.DrafterStatus:
+            """The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."""
+        @property
+        def policy(self) -> "Oneiron._VaultDraftersPolicyVerbs": ...
+        def revert(self, spec: Facade.DrafterRevertRequest) -> Facade.DrafterRevertReceipt:
+            """The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."""
+        def revert_as(self, spec: Facade.DrafterRevertRequest) -> Facade.DrafterRevertReceipt:
+            """An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."""
+    class _VaultDraftersPolicyVerbs:
+        def set(self, spec: Facade.DrafterPolicySetRequest) -> Facade.DrafterPolicy:
+            """The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."""
     class _VaultRootsVerbs:
         @property
         def requests(self) -> "Oneiron._VaultRootsRequestsVerbs": ...
