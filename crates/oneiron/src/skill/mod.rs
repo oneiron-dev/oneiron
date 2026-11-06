@@ -34,6 +34,8 @@ pub(crate) use self::call::{
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
+#[cfg(feature = "sync")]
+pub(crate) use self::doors::{SkillStateWrite, SkillSupersessionRead, validate_skill_update_door};
 pub use self::graph::{
     GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
     GraphSkillStage, execute_graph_workflow_skill,

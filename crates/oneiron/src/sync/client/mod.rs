@@ -48,6 +48,7 @@ mod documents;
 mod endpoint;
 mod federated;
 mod federation_replay;
+mod home_claim_copies;
 mod inbound;
 mod leaf_keys;
 mod lfs;

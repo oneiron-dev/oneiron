@@ -7,6 +7,8 @@
 //! joined turn's key, part count, copies and fields (FIX 12153). A carrier
 //! has one spelling; any other refuses.
 
+pub(super) mod record_documents;
+
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 use serde::{Deserialize, Serialize};

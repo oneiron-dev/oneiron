@@ -175,6 +175,7 @@ impl EntityDocumentRows {
             if !self.history.advance_row(row)? {
                 return Ok(false);
             }
+            crate::entity_doc::validate_canonical_skill_state(row)?;
             self.history_complete = true;
             return Ok(false);
         }

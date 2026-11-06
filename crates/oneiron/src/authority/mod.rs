@@ -92,6 +92,8 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+#[cfg(feature = "sync")]
+pub(crate) mod shared_replica_bootstrap;
 mod home_candidacy;
 mod home_pick;
 mod host_action;
@@ -351,6 +353,7 @@ pub use recover_many::{
     VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
 };
 pub use slip::*;
+pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
     format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
@@ -391,7 +394,8 @@ pub use work_rebind::{
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use act_standing::{
-    CausalPoints, ExternalAct, ExternalActStanding, act_heads, causal_points_in_txn,
+    CausalPoints, ExternalAct, ExternalActStanding, NativeSkillCarrier, NativeSkillOrigin,
+    act_heads, causal_points_in_txn, native_skill_origins_in_txn,
 };
 pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
 pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;

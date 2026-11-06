@@ -26,40 +26,15 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// none, the parent aborts too.
 /// The source is the same immutable snapshot whose canonical validation groups
 /// completed before rebuild. The rebuilt document is checked independently below.
-pub(crate) fn preflight_validated_canonical_recovery(
-    vault: &Vault,
-    materializer: &Materializer,
-    snapshot: &CanonicalSnapshot,
-    doc: &LoroDoc,
-) -> Result<()> {
-    preflight_canonical_recovery(vault, materializer, snapshot, doc, None, None)
-}
 
-pub(crate) fn preflight_validated_canonical_recovery_in_note_scope(
+pub(crate) fn preflight_validated_canonical_recovery_with_source(
     vault: &Vault,
     materializer: &Materializer,
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
     note_scope: &BTreeSet<[u8; 16]>,
     note_plan: &NotePlanRows,
-) -> Result<()> {
-    preflight_canonical_recovery(
-        vault,
-        materializer,
-        snapshot,
-        doc,
-        Some(note_scope),
-        Some(note_plan),
-    )
-}
-
-fn preflight_canonical_recovery(
-    vault: &Vault,
-    materializer: &Materializer,
-    snapshot: &CanonicalSnapshot,
-    doc: &LoroDoc,
-    note_scope: Option<&BTreeSet<[u8; 16]>>,
-    note_plan: Option<&NotePlanRows>,
 ) -> Result<()> {
     let analyzer = vault
         .analyzer
@@ -81,6 +56,7 @@ fn preflight_canonical_recovery(
             snapshot,
             doc,
             &mut txn,
+            source,
             note_scope,
             note_plan,
         ),
@@ -98,17 +74,12 @@ fn preflight_in_txn(
     snapshot: &CanonicalSnapshot,
     doc: &LoroDoc,
     txn: &mut RwTxn<'_>,
-    note_scope: Option<&BTreeSet<[u8; 16]>>,
-    note_plan: Option<&NotePlanRows>,
+    source: Option<&crate::recovery::StoreCapturedCanonical>,
+    note_scope: &BTreeSet<[u8; 16]>,
+    note_plan: &NotePlanRows,
 ) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
-    match (note_scope, note_plan) {
-        (Some(scope), Some(rows)) => {
-            snapshot.preflight_note_recovery_with_rows(vault, txn, scope, rows)?
-        }
-        (Some(scope), None) => snapshot.preflight_note_recovery_in_scope(vault, txn, scope)?,
-        (None, _) => snapshot.preflight_note_recovery(vault, txn)?,
-    }
+    snapshot.preflight_note_recovery_with_rows(vault, txn, note_scope, note_plan)?;
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     // Each AUTHORITY_LOG row is judged beside the snapshot's others, as a
     // carrier's are (FIX 11959).
@@ -202,7 +173,9 @@ fn preflight_in_txn(
         let entity = EntityId::from_bytes(tombstone.id)?;
         vault.apply_replayed_tombstone_in_txn(txn, &entity, &tombstone.value)?;
     }
-    crate::recovery::materialize_recovery_notes_in_txn(vault, txn, doc, snapshot)?;
+    crate::recovery::materialize_recovery_notes_with_source_in_txn(
+        vault, txn, doc, snapshot, source,
+    )?;
     // The caller drops `txn`, aborting it even on success; in particular
     // lease/quota debits and all quarantine rows remain speculative and are
     // never committed here.

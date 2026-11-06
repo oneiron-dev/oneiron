@@ -161,6 +161,8 @@ pub(crate) fn birth_summary_in_txn(
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document: entity.to_hex(),
+        storage_document: None,
+        sequence_document: None,
         field,
         generation: 0,
         pending: 0,

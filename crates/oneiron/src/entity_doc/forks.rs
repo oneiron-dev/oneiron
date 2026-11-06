@@ -18,6 +18,82 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// An original authorized settlement owns both retained sources and the exact
+/// result of its constrained merge. No decoded snapshot constructs this owner.
+pub(super) struct SettledDocument<'vault> {
+    vault: &'vault Vault,
+    entity: EntityId,
+    source_head: storage::Head,
+    head_bytes: Vec<u8>,
+    source_frontier: Vec<u8>,
+    source_inventory: super::native_skill_state::NativeMapInventory,
+    target_document: String,
+    before: Option<loro::VersionVector>,
+    fork_key: String,
+    fork: ForkRecord,
+    fork_snapshot: Vec<u8>,
+    storage_document: Option<String>,
+    document: EntityDoc,
+    frontier: Vec<u8>,
+    inventory: super::native_skill_state::NativeMapInventory,
+}
+
+impl SettledDocument<'_> {
+    pub(super) fn vault(&self) -> &Vault {
+        self.vault
+    }
+
+    pub(super) fn document(&self) -> &EntityDoc {
+        &self.document
+    }
+
+    pub(super) fn before(&self) -> Option<&loro::VersionVector> {
+        self.before.as_ref()
+    }
+
+    pub(super) fn require_document(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        head: &storage::Head,
+    ) -> Result<BTreeSet<EntityId>> {
+        use super::native_skill_state::inspect_inventory;
+
+        if *entity != self.entity
+            || head.entity != self.source_head.entity
+            || head.document != self.target_document
+            || head.storage_document != self.storage_document
+            || head.sequence_document != self.source_head.sequence_document
+            || head.incarnation != self.source_head.incarnation
+            || head.field != self.source_head.field
+            || head.generation != self.source_head.generation
+            || head.pending != self.source_head.pending
+            || head.birth_frontier != self.source_head.birth_frontier
+            || storage::record_head_bytes(&self.vault.store, txn, entity)?.as_deref()
+                != Some(self.head_bytes.as_slice())
+            || ENTITY_DOC_FORK
+                .get(&self.vault.store, txn, &self.fork_key)?
+                .as_ref()
+                != Some(&self.fork)
+            || ENTITY_DOC_FORK_SNAPSHOT
+                .get(&self.vault.store, txn, &self.fork_key)?
+                .as_deref()
+                != Some(self.fork_snapshot.as_slice())
+        {
+            return Err(invalid("native SKILL state settlement source"));
+        }
+        let current = storage::load(&self.vault.store, txn, &self.source_head)?;
+        if inspect_inventory(&current)? != self.source_inventory
+            || current.frontier() != self.source_frontier
+            || inspect_inventory(&self.document)? != self.inventory
+            || self.document.frontier() != self.frontier
+        {
+            return Err(invalid("native SKILL state settlement source"));
+        }
+        self.inventory.writer_tokens()
+    }
+}
+
 /// Authorization is separate from attribution. Owner evidence is opaque;
 /// automated writes resolve a live DEC-0006 entity-bound action grant in-txn.
 #[derive(Debug, Clone, Copy)]
@@ -668,16 +744,43 @@ fn settle_one(
             before.clone()
         }
         SettleVerb::Merge => {
-            let fork = EntityDoc::from_snapshot(
-                &ENTITY_DOC_FORK_SNAPSHOT
-                    .get(&vault.store, txn, &fork_id.to_owned())?
-                    .ok_or(Error::EntityNotFound)?,
-            )?;
+            let fork_snapshot = ENTITY_DOC_FORK_SNAPSHOT
+                .get(&vault.store, txn, &fork_id.to_owned())?
+                .ok_or(Error::EntityNotFound)?;
+            let fork = EntityDoc::from_snapshot(&fork_snapshot)?;
+            let source_head = h.clone();
+            let head_bytes = storage::record_head_bytes(&vault.store, txn, &entity)?
+                .ok_or_else(|| invalid("native SKILL state settlement source"))?;
+            let source_frontier = live.frontier();
+            let source_inventory = super::native_skill_state::inspect_inventory(&live)?;
+            let fork_inventory = super::native_skill_state::inspect_inventory(&fork)?;
             let vv = live.doc.oplog_vv();
             merge_into(&live, &fork, &record.base)?;
-            storage::persist(vault, txn, &entity, &mut h, &live, Some(&vv))?;
+            super::native_skill_state::reconcile_settlement(
+                &live,
+                &source_inventory,
+                &fork_inventory,
+            )?;
+            let settled = SettledDocument {
+                vault,
+                entity,
+                source_head,
+                head_bytes,
+                source_frontier,
+                source_inventory,
+                target_document: h.document.clone(),
+                storage_document: h.storage_document.clone(),
+                before: Some(vv),
+                fork_key: fork_id.to_owned(),
+                fork: record.clone(),
+                fork_snapshot,
+                frontier: live.frontier(),
+                inventory: super::native_skill_state::inspect_inventory(&live)?,
+                document: live,
+            };
+            storage::persist_settled_document(txn, &entity, &mut h, &settled)?;
             record.status = ForkStatus::Merged;
-            live.frontier()
+            settled.document().frontier()
         }
         SettleVerb::Switch => {
             if h.document != record.parent_document
@@ -685,15 +788,25 @@ fn settle_one(
             {
                 return Err(Error::Artifact(ArtifactError::EditProposalStale));
             }
-            let fork = EntityDoc::from_snapshot(
-                &ENTITY_DOC_FORK_SNAPSHOT
-                    .get(&vault.store, txn, &fork_id.to_owned())?
-                    .ok_or(Error::EntityNotFound)?,
-            )?;
+            let fork_snapshot = ENTITY_DOC_FORK_SNAPSHOT
+                .get(&vault.store, txn, &fork_id.to_owned())?
+                .ok_or(Error::EntityNotFound)?;
+            let fork = EntityDoc::from_snapshot(&fork_snapshot)?;
+            let source_head = h.clone();
+            let head_bytes = storage::record_head_bytes(&vault.store, txn, &entity)?
+                .ok_or_else(|| invalid("native SKILL state settlement source"))?;
+            let source_frontier = live.frontier();
+            let source_inventory = super::native_skill_state::inspect_inventory(&live)?;
+            let fork_inventory = super::native_skill_state::inspect_inventory(&fork)?;
             // The retained fork is shallow at its base. Import only its ops into
             // a full live scratch doc before switching, retaining pinned history.
             merge_into(&live, &fork, &record.base)?;
-            let old_document = h.document.clone();
+            super::native_skill_state::reconcile_settlement(
+                &live,
+                &source_inventory,
+                &fork_inventory,
+            )?;
+            let old_document = storage::document_slot(&h)?.to_hex();
             // The live history keeps the old document's purge floor, so the new
             // slot carries it too; drop_document removes the old slot's row.
             let floor = vault.store.port_document_row(
@@ -701,6 +814,7 @@ fn settle_one(
                 DocumentSlot::from_hex(&old_document)?,
                 DocumentRow::ShallowSince,
             )?;
+            h.storage_document = storage::free_document_storage(&vault.store, txn, &record.fork)?;
             h.document = record.fork.clone();
             storage::move_pointer(
                 &crate::secret_custody::CustodyWrite::of(vault),
@@ -708,17 +822,34 @@ fn settle_one(
                 &entity,
                 &h.document,
             )?;
-            storage::persist(vault, txn, &entity, &mut h, &live, None)?;
+            let settled = SettledDocument {
+                vault,
+                entity,
+                source_head,
+                head_bytes,
+                source_frontier,
+                source_inventory,
+                target_document: record.fork.clone(),
+                before: None,
+                fork_key: fork_id.to_owned(),
+                fork: record.clone(),
+                fork_snapshot,
+                storage_document: h.storage_document.clone(),
+                frontier: live.frontier(),
+                inventory: super::native_skill_state::inspect_inventory(&live)?,
+                document: live,
+            };
+            storage::persist_settled_document(txn, &entity, &mut h, &settled)?;
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
                     txn,
-                    DocumentSlot::from_hex(&h.document)?,
+                    storage::document_slot(&h)?,
                     &floor,
                 )?;
             }
             storage::drop_document(&vault.store, txn, &old_document)?;
             record.status = ForkStatus::Switched;
-            live.frontier()
+            settled.document().frontier()
         }
     };
     ENTITY_DOC_FORK.put(&vault.store, txn, &fork_id.to_owned(), &record)?;
