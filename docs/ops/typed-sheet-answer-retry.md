@@ -50,6 +50,13 @@ alive until those changes are freed after workbook projection. Validation
 compares choice text through the same borrowed answer-to-cell projection used
 by the owned converter, instead of cloning a temporary cell string just to
 compare it. Abstentions, value kinds and native numeric equality stay unchanged.
+When a plan spans several write batches, the temporary batch plan also admits
+its vector before allocation and its actual capacity before filling it. The
+existing batch scratch hold covers copied sheet names and flat text or error
+cell values until that batch is freed. The small-plan path still forwards the
+original plan directly. Chunk order, one native call per chunk, the single
+proposal and outer recalc stay unchanged; no new operation-kind refusal is
+introduced.
 Validation sets and other scratch, native workbook parsing and projection
 output, applied-operation manifest copies, and transient allocator surplus
 remain outside this admission.
