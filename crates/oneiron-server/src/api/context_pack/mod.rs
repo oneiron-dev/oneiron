@@ -2,6 +2,7 @@
 //! scoped retrieval through the shared pipeline, and projects the wire response.
 
 mod audience;
+mod builder_controls;
 mod companion_assembly;
 mod controls;
 mod input_worker;
