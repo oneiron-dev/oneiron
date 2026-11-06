@@ -91,11 +91,23 @@ impl AuthorityView {
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
     ) -> Self {
-        if !self.fold.agent_carried_acts.is_empty() {
+        let mut grant_sources = self.source_rows.as_ref().map(|_| BTreeSet::new());
+        let refused = super::carried_act::grant_refused_agent_acts(
+            store,
+            txn,
+            &self.fold,
+            use_past_standing,
+            &mut grant_sources,
+        );
+        if let Some(rows) = grant_sources {
+            if !rows.is_empty()
+                && let Some(source_rows) = self.source_rows.as_mut()
+            {
+                Arc::make_mut(source_rows).extend(rows);
+            }
+        } else {
             self.source_rows = None;
         }
-        let refused =
-            super::carried_act::grant_refused_agent_acts(store, txn, &self.fold, use_past_standing);
         if refused.is_empty() {
             return self;
         }
@@ -242,7 +254,14 @@ fn cached_fold(store: &Store, key: AuthorityCacheKey) -> Option<AuthorityView> {
         cache
             .as_ref()
             .filter(|cached| cached.matches(key))
-            .map(|cached| cached.view.clone())
+            .map(|cached| {
+                let mut view = cached.view.clone();
+                // The cache key does not certify this transaction's Grant reads.
+                if !view.agent_carried_acts.is_empty() {
+                    view.source_rows = None;
+                }
+                view
+            })
     })
 }
 
