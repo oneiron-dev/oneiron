@@ -19,7 +19,9 @@
 //! claims in the room's overlay in one write segment, where they drop at
 //! close. There, as in base, an answer over the inline bound lives in a
 //! response artifact version the claim pins; the room keeps that version in
-//! its own overlay, never in base (FIX 4818).
+//! its own overlay, never in base, and places each row it stages. A live
+//! ASSET with the answer's bytes holds its body, and the room stages none
+//! over it (FIX 4818).
 //!
 //! Each step carries the summary's own lineage (FIX 5977): its claim, and
 //! a response artifact when it has one, derive from every record the call's
@@ -43,7 +45,6 @@ use super::types::{
     StepProgression,
 };
 use crate::attempt_queue::AttemptId;
-use crate::batch::BatchOp;
 use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, RoomResponseVersion, encode_blob_artifact_body,
 };
@@ -64,7 +65,9 @@ use crate::{Vault, WriteActor};
 
 /// The refusal a step filing takes when a record its call was read from is
 /// already gone or withdrawn (FIX 5977): its words may not land past that
-/// record's withdrawal. The pass's receipt names the calls as unfiled.
+/// record's withdrawal. The pass's receipt names the calls as unfiled. A
+/// room step takes it too when base holds its answer's bytes as an ASSET
+/// the room does not read live (FIX 4818): no room row stages over it.
 const COMPACTION_STEP_SOURCE_WITHDRAWN: &str = "compaction_step_source_withdrawn";
 
 /// The refusal a step filing takes when the call's complete input was not
@@ -345,7 +348,8 @@ impl StepFiling<'_> {
     /// the room at close. Each claim passes its gate before the segment
     /// opens. An answer over the inline bound lives in a fresh response
     /// artifact staged beside its claim, the exact version the claim pins,
-    /// as in base (FIX 4818); a smaller one stays inline.
+    /// as in base (FIX 4818); a smaller one stays inline. Each row the room
+    /// stages is placed, and none stages over a base row.
     fn stage_in_room(
         &self,
         session: &OffRecordSession<'_>,
@@ -406,7 +410,7 @@ impl StepFiling<'_> {
             };
             (claim_id, response)
         };
-        let response_ref = response.as_ref().map(|(version, _)| StepResponseRef {
+        let response_ref = response.as_ref().map(|version| StepResponseRef {
             artifact_id: version.artifact_id(),
             version: version.version(),
             content_hash: version.content_hash(),
@@ -430,8 +434,9 @@ impl StepFiling<'_> {
 
     /// Stages one prepared step inside the pass's segment: its sources
     /// rechecked as the segment reads them, then its response's rows in the
-    /// claim's journal scope, the claim with its lineage and birth, and the
-    /// pin of its response's exact version.
+    /// claim's journal scope, each placed, the claim with its lineage and
+    /// birth, and the pin of its response's exact version. A body base holds
+    /// as an ASSET the room does not read live refuses the step.
     fn stage_room_step_in_txn(
         &self,
         session: &OffRecordSession<'_>,
@@ -441,7 +446,10 @@ impl StepFiling<'_> {
         step: RoomStep<'_>,
     ) -> Result<CompactionStepRef> {
         step.call.sources_stand_in(&session.read_view()?, &*wtxn)?;
-        if let Some((version, ops)) = step.response {
+        if let Some(mut version) = step.response {
+            let ops = version
+                .take_staging_ops_in_txn(&session.read_view()?, &*wtxn)?
+                .ok_or(Error::InvalidClaimBody(COMPACTION_STEP_SOURCE_WITHDRAWN))?;
             session.stage_session_support_ops_in_txn(
                 wtxn,
                 apply,
@@ -468,9 +476,8 @@ impl StepFiling<'_> {
 struct RoomStep<'c> {
     call: &'c FiledCall,
     claim_id: EntityId,
-    /// The fresh artifact version an answer over the inline bound lives in,
-    /// with the ops that stage its rows.
-    response: Option<(RoomResponseVersion, Vec<BatchOp>)>,
+    /// The fresh artifact version an answer over the inline bound lives in.
+    response: Option<RoomResponseVersion>,
     response_ref: Option<StepResponseRef>,
     claim: PreparedSessionRows,
 }
