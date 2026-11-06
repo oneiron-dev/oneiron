@@ -268,7 +268,7 @@ impl Envelope {
     ) -> Result<()> {
         let opened = (|| {
             let key = self.opening_key(key, policy)?;
-            let aad = aad_with_extra(&self.header_bytes, extra_aad)?;
+            let aad = aad_with_extra_fallible(&self.header_bytes, extra_aad)?;
             aead_open_into(
                 self.header.suite,
                 &key,
@@ -423,6 +423,31 @@ fn aad_with_extra(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
     let len = u64::try_from(extra_aad.len()).map_err(|_| Error::Primitive("length"))?;
     let mut aad =
         Vec::with_capacity(header_bytes.len() + EXTRA_AAD_LABEL.len() + 8 + extra_aad.len());
+    aad.extend_from_slice(header_bytes);
+    aad.extend_from_slice(EXTRA_AAD_LABEL);
+    aad.extend_from_slice(&len.to_be_bytes());
+    aad.extend_from_slice(extra_aad);
+    Ok(aad)
+}
+
+fn aad_with_extra_fallible(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
+    if extra_aad.is_empty() {
+        let mut aad = Vec::new();
+        aad.try_reserve_exact(header_bytes.len())
+            .map_err(|_| Error::OutOfMemory)?;
+        aad.extend_from_slice(header_bytes);
+        return Ok(aad);
+    }
+    let len = u64::try_from(extra_aad.len()).map_err(|_| Error::Primitive("length"))?;
+    let capacity = header_bytes
+        .len()
+        .checked_add(EXTRA_AAD_LABEL.len())
+        .and_then(|size| size.checked_add(8))
+        .and_then(|size| size.checked_add(extra_aad.len()))
+        .ok_or(Error::OutOfMemory)?;
+    let mut aad = Vec::new();
+    aad.try_reserve_exact(capacity)
+        .map_err(|_| Error::OutOfMemory)?;
     aad.extend_from_slice(header_bytes);
     aad.extend_from_slice(EXTRA_AAD_LABEL);
     aad.extend_from_slice(&len.to_be_bytes());
