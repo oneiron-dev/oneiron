@@ -10,7 +10,7 @@ use heed::RoTxn;
 use super::FederationPeer;
 use crate::authority::PeerMachine;
 use crate::error::Result;
-use crate::sync::transport::{TAG_DOCUMENT, decode_document, document_sub_tags};
+use crate::sync::transport::{TAG_DOCUMENT, decode_unsplit_document, document_sub_tags};
 use crate::{EntityId, Vault};
 
 impl FederationPeer {
@@ -60,7 +60,7 @@ impl FederationPeer {
         if frame.first() != Some(&TAG_DOCUMENT) {
             return false;
         }
-        let Ok(document) = decode_document(&frame[1..]) else {
+        let Ok(document) = decode_unsplit_document(&frame[1..]) else {
             return true;
         };
         if matches!(

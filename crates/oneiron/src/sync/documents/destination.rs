@@ -70,7 +70,7 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
     }
-    let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
+    let Ok(document) = crate::sync::transport::decode_unsplit_document(&frame[1..]) else {
         return true;
     };
     if matches!(

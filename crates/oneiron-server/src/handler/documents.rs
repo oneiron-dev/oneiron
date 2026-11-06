@@ -19,7 +19,51 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
-    match handle_document_inner(server, conn_id, entity, kind, payload, direct, state) {
+    let joined = if kind == document_sub_tags::PART {
+        if payload.len() > server.config.max_update_payload {
+            return Err(ProtocolError::FrameTooLarge {
+                size: payload.len(),
+                max: server.config.max_update_payload,
+            });
+        }
+        if payload.first() != Some(&document_sub_tags::NOTE_OPS) {
+            return Err(ProtocolError::InvalidPayload(
+                "upload parts require NOTE operations",
+            ));
+        }
+        require_note_upload(server, state, entity)?;
+        let joined = state
+            .document_parts
+            .accept(transport::DocumentFrame {
+                entity,
+                kind,
+                payload,
+            })
+            .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE operation part"))?;
+        let Some(joined) = joined else {
+            return Ok(());
+        };
+        Some(joined)
+    } else {
+        None
+    };
+    let (kind, payload) = match &joined {
+        Some(joined) => {
+            let frame = joined.frame();
+            (frame.kind, frame.payload)
+        }
+        None => (kind, payload),
+    };
+    match handle_document_inner(
+        server,
+        conn_id,
+        entity,
+        kind,
+        payload,
+        direct,
+        state,
+        joined.is_some(),
+    ) {
         Err(ProtocolError::WaitedOut) => {
             let waited = transport::DocumentWaitedOut::try_from(kind)
                 .map_err(|_| ProtocolError::WaitedOut)?;
@@ -33,6 +77,27 @@ pub(super) fn handle_document(
     }
 }
 
+fn require_note_upload(
+    server: &SyncServer,
+    state: &ConnState,
+    entity: EntityId,
+) -> Result<(), ProtocolError> {
+    let principal = document_principal(server, state)?;
+    if state.owner_documents.contains_key(&entity) {
+        owner_auth(server, state, true)?;
+    } else {
+        let request = state
+            .documents
+            .get(&entity)
+            .ok_or(ProtocolError::InvalidPayload("document not admitted"))?;
+        if request.selector.member_ref != principal {
+            return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
+        }
+        require_note_auth(server, state, &request.selector, true)?;
+    }
+    Ok(())
+}
+
 fn handle_document_inner(
     server: &SyncServer,
     conn_id: u32,
@@ -41,6 +106,7 @@ fn handle_document_inner(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
+    logical_command: bool,
 ) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
         && !transport::is_owner_window_version(state.protocol_version)
@@ -50,7 +116,7 @@ fn handle_document_inner(
             "document sync requires a document-capable protocol",
         ));
     }
-    if payload.len() > server.config.max_update_payload {
+    if !logical_command && payload.len() > server.config.max_update_payload {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max: server.config.max_update_payload,
@@ -167,10 +233,12 @@ fn handle_document_inner(
             let _ = direct.send(notice);
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -375,10 +443,12 @@ fn owner_document(
             // sends the current state, then the receipt (FIX 9491).
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -505,7 +575,7 @@ pub(super) fn document_delivery_retrying(
     retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let mut docs = match data.first() {
-        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
+        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_unsplit_document(&data[1..])],
         Some(&transport::TAG_BATCH) => transport::decode_document_batch(&data[1..])
             .map_err(|_| ProtocolError::InvalidPayload("invalid document batch"))?
             .into_iter()
@@ -648,8 +718,7 @@ pub(super) fn document_delivery_retrying(
                         continue;
                     }
                     out.push(
-                        transport::encode_document(doc.entity, doc.kind, doc.payload)
-                            .into_result()
+                        transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload)
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
@@ -785,9 +854,14 @@ pub(super) fn retry_later(
 
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
-    transport::encode_document(doc.entity, doc.kind, doc.payload)
-        .into_result()
-        .ok()
+    match doc.kind {
+        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+            transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
+        }
+        _ => transport::encode_document(doc.entity, doc.kind, doc.payload)
+            .into_result()
+            .ok(),
+    }
 }
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {
