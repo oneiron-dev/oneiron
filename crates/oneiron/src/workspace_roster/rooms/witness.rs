@@ -569,6 +569,9 @@ pub(crate) fn admit_witness(
         converted_project: None,
         quotes,
     };
+    // FIX 15647: only the write that mints the turn's row stages its wakes;
+    // one adding to a stored turn wakes no one again.
+    let minted = old.is_none();
     if let Some(old) = old {
         if old.actor != turn.actor
             || old.room_id != turn.room_id
@@ -601,6 +604,12 @@ pub(crate) fn admit_witness(
         &turn.addressed_agents,
         now,
     )?;
+    // FIX 15647: each agent the turn addresses, and each holder of its
+    // thread's open TASK, is staged one wake in this write; whoever runs the
+    // agent delivers it after the commit.
+    if minted {
+        super::wake::stage_room_wakes_in_txn(vault, txn, branch, &turn, private.as_ref(), now)?;
+    }
     super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
     Ok(RoomWitness { quoted, thread })
 }
