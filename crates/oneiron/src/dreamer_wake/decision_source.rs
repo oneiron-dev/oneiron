@@ -214,8 +214,15 @@ impl DecisionCallAdmission {
             reserved_units: self.reserved_units.ok_or_else(invalid)?,
             at: self.admitted_at,
         };
+        let snapshot = self.accounting_snapshot();
         vault.with_write_txn_grouped(|wtxn| {
-            crate::dreamer_runner::retain_native_call_in_txn(vault, wtxn, input_hash, &admitted)
+            crate::dreamer_runner::retain_native_call_in_txn(
+                vault,
+                wtxn,
+                input_hash,
+                &admitted,
+                snapshot.guard_id,
+            )
         })?;
         let _ = self.meter_vault.set(Arc::downgrade(vault));
         Ok(DecisionCallInvoice {
