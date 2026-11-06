@@ -1,4 +1,7 @@
-//! Retrieval result values and transaction-local candidate admission contracts.
+//! Core half of `store::retrieval_values`: its store-layer items live in `oneiron_store::retrieval_values` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::retrieval_values::*;
 
 use crate::entity_id::EntityId;
 use crate::retrieval_quality::RetrievalQualityReport;
@@ -29,12 +32,6 @@ pub struct RetrievalWithTelemetry<T> {
     pub retrieval_quality: RetrievalQualityReport,
     pub value: T,
     pub run_id: Option<RetrievalRunId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingVectorEmbedding {
-    pub id: EntityId,
-    pub token: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]

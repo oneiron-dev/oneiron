@@ -1,4 +1,7 @@
-//! Commit-bound materialization revisions and read invalidation data.
+//! Core half of `store::materialization_event`: its store-layer items live in `oneiron_store::materialization_event` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::materialization_event::*;
 
 use crate::EntityId;
 use crate::store::revision_ref::RevisionRef;
@@ -35,13 +38,4 @@ pub struct MaterializedDiffSummary {
     pub bytes: usize,
     /// Revision identities captured at the transaction or bridge-commit door.
     pub revision_events: Vec<RevisionEvent>,
-}
-
-/// Transport correlation only; never actor authority.
-#[derive(Clone, Debug, Default)]
-pub struct OriginMark {
-    /// Parsed only from the server's existing `conn:<id>` import marker.
-    pub conn_id: Option<u32>,
-    /// Exact Loro origin, when present.
-    pub origin: Option<String>,
 }
