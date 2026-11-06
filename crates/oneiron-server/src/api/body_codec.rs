@@ -35,6 +35,11 @@ const REPLY_GZIP_LEVEL: u32 = 1;
 const LLM_DECISION_READ_BODY_BYTES: usize = 256 * 1024;
 /// `api/blob_artifacts.rs`'s `ARTIFACT_BODY_LIMIT`.
 const ARTIFACT_BODY_BYTES: usize = 96 * 1024 * 1024;
+/// `api/facade.rs`'s `ANONYMOUS_CHAT_MAX_BODY_BYTES`: the anonymous-chat SDK
+/// route keeps its own pre-auth bound, not the request floor.
+const ANONYMOUS_CHAT_BODY_BYTES: usize = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+/// The anonymous-chat SDK route `api/facade.rs` mounts under that bound.
+const ANONYMOUS_CHAT_FACADE_PATH: &str = "facade/ai.anonymous_chat";
 
 /// The decoded-body ceiling for `path`, equal to the limit its route applies,
 /// or `None` when the path is outside the decoded set and its body passes
@@ -54,6 +59,8 @@ fn decoded_body_cap(path: &str, floor: usize) -> Option<usize> {
     let rest = path.strip_prefix("/v1/core/")?;
     Some(if rest == "artifacts" || rest.starts_with("artifacts/") {
         ARTIFACT_BODY_BYTES
+    } else if rest == ANONYMOUS_CHAT_FACADE_PATH {
+        ANONYMOUS_CHAT_BODY_BYTES
     } else {
         floor
     })
