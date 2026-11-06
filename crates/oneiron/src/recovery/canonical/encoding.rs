@@ -24,6 +24,7 @@ struct RowCursor {
     next: usize,
     bytes: Option<usize>,
     suffix: bool,
+    items: Option<usize>,
 }
 
 impl CanonicalEncoding {
@@ -211,6 +212,11 @@ impl TextRow for CanonicalDocument {
             birth_at,
             authorship,
         } = self;
+        if let Some(next) = cursor.items.as_mut() {
+            write_named(out, &authorship[*next])?;
+            *next += 1;
+            return Ok(*next == authorship.len());
+        }
         if let Some(next) = cursor.bytes.as_mut() {
             if let Some(title) = title {
                 if *next < title.len() {
@@ -225,8 +231,9 @@ impl TextRow for CanonicalDocument {
             write_named(out, "birth_at")?;
             write_named(out, birth_at)?;
             write_named(out, "authorship")?;
-            write_named(out, authorship)?;
-            return Ok(true);
+            write_array_header(out, authorship.len())?;
+            cursor.items = Some(0);
+            return Ok(authorship.is_empty());
         }
         write_named(out, "title")?;
         if let Some(title) = title {
@@ -351,6 +358,7 @@ impl<T: TextRow> Field for TextRows<'_, T> {
         cursor.next += 1;
         cursor.bytes = None;
         cursor.suffix = false;
+        cursor.items = None;
         Ok(cursor.next == self.0.len())
     }
 }
