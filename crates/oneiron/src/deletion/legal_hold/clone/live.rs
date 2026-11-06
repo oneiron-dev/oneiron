@@ -516,7 +516,7 @@ impl Vault {
     ) -> Result<Option<LiveSpillCaptures>> {
         let target = LiveSessionTarget {
             session_ref: session_ref.to_owned(),
-            instance: instance.as_bytes(),
+            instance: *instance.as_bytes(),
         };
         self.host_legal_captures.prune_ended(self)?;
         let now = self.store.clock.now_recorded_at();
@@ -555,7 +555,7 @@ impl LiveSpillCaptures {
         for order in &self.orders {
             if identity.source_vault() != vault.vault_id()
                 || identity.session_ref() != order.key.target.session_ref
-                || identity.instance().as_bytes() != order.key.target.instance
+                || *identity.instance().as_bytes() != order.key.target.instance
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
