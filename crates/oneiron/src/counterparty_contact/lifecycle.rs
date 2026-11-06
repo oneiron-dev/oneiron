@@ -24,6 +24,9 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory, ClaimValueRead};
 use rmpv::Value;
 
+mod claim_heads;
+use claim_heads::contact_claim_values_in_txn;
+
 /// Closes `old_id` in favour of `new_id` for one claim whose FAMILY DOOR owns
 /// the transition, inside the caller's write transaction.
 ///
@@ -397,38 +400,6 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     )
 }
 
-fn contact_claim_values_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    contact_id: &EntityId,
-    memory: Option<ClaimScopeReadMemory<'_>>,
-) -> std::result::Result<Vec<ContactClaimValue>, ClaimBodyReadError> {
-    let mut bodies = Vec::new();
-    let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
-    let mut duplicate = false;
-    let mut retained_value_bytes = 0u64;
-    // Keep the first duplicate for the fold, but read every claim so later
-    // read errors still take precedence over the duplicate-head error.
-    for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
-        let memory = memory.map(|memory| memory.with_additional_pinned(retained_value_bytes));
-        if let Some(body) =
-            vault.get_claim_value_head_with_memory_in_txn(rtxn, &claim_id, memory)?
-        {
-            if duplicate {
-                continue;
-            }
-            let Some(value) = contact_claim_value(body) else {
-                continue;
-            };
-            duplicate = std::mem::replace(&mut seen[value.predicate_index], true);
-            retained_value_bytes =
-                retained_value_bytes.saturating_add(value.value.retained_bytes());
-            bodies.push(value);
-        }
-    }
-    Ok(bodies)
-}
-
 /// The record `contact_id`'s own `counterparty_contact.*` heads describe, or
 /// `None` when it has none or was deleted: the contact family's existence
 /// question, answered from claims (OF-272). The type-132 row plays no part, so
@@ -567,6 +538,12 @@ fn contact_claim_value(body: ContactClaim) -> Option<ContactClaimValue> {
     })
 }
 
+fn duplicate_contact_head_error() -> Error {
+    Error::Record(RecordError::InvalidCounterpartyContactBody(
+        "counterparty contact claim family has two live heads for one predicate",
+    ))
+}
+
 fn counterparty_contact_record_from_heads(
     bodies: Vec<ContactClaimValue>,
 ) -> Result<CounterpartyContactRecord> {
@@ -581,9 +558,7 @@ fn counterparty_contact_read_from_heads(
     for body in bodies {
         let index = body.predicate_index;
         if heads[index].is_some() {
-            return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
-                "counterparty contact claim family has two live heads for one predicate",
-            )));
+            return Err(duplicate_contact_head_error());
         }
         heads[index] = Some(body.value);
     }

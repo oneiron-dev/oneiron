@@ -488,3 +488,26 @@ hard allocation-bound or multi-holder FIFO-progress proof. History projection,
 returned full-body fields other than the guarded value, later typed copies and
 other consumers still need their own allocation and last-use custody. No new
 memory cap, deadline, default, wire format or refusal policy is introduced.
+
+
+## Contact duplicate-head input retirement
+
+The Vault contact-head collector still canonically reads every claim in the
+original transaction and order. On the first duplicate live family predicate,
+no selected value can contribute to a successful contact fold. It drops that
+duplicate value and every previously saved value, including their original
+memory holders, before the next claim read. The pinned-input sum then contains
+none of that discarded backing; the caller's original pinned inputs remain.
+
+The collector retains the duplicate flag and keeps all later native reads,
+validation and history selection. A later read error still wins. If those reads
+finish, it returns the same duplicate-head error before missing-field or typed
+field validation. The Store-only collector and the nonduplicate path keep their
+existing behavior. The collector is a private child module so the parent does
+not cross the giant-file threshold.
+
+This removes only input that is already useless once duplication is known.
+Valid contacts still hold required values across later canonical reads. Their
+retained-input FIFO progress, scalar staging, allocation peaks and other
+remaining custody work are not solved by this change. No cap, deadline,
+refusal, default, authority or wire-format policy changes.
