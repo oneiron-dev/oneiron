@@ -27,12 +27,31 @@ references use the native device projection. The event carries the original trus
 list of other live holders. Its declared outbound tag is `TAG_PRIVATE_HUMAN` (33),
 followed by the request JSON. It is not an RPC response or a made-up subscription.
 
-This is an unactivated source path. The anonymous-chat consumer still uses its
-original configuration. The owner-policy factory now constructs its request queue
-from the same server's live recipient hub, only after finding configured owner
-decisions. Configured None returns before any hub or private run is created. The
-factory is not called by the anonymous consumer. The current full-sync socket upgrade admits owner-grade credentials; these
-registrations do not establish a general non-owner holder notification route.
+The native anonymous-chat call now obtains its policy configuration from the
+request-owned factory. At server attachment, the existing
+`[models.decisions.owner_policy]` revision, wording and `budget_ms` fill an
+unbound owner decision slot after the configured model rungs are built, using the
+existing embedded-owner principal. An already-bound owner decision slot wins.
+An absent section or unavailable owner principal leaves the old configuration in
+place. The remaining host policy wording, dials and notices stay unchanged.
+
+The factory constructs its request queue from this same server's live recipient
+hub only after finding configured owner decisions. Configured None returns the
+old configuration before any hub, queue or private run is created. Configured
+Some keeps its snapshot's principal, questions, rungs, paired/person settings and
+budget. It binds a separate unrecorded run, its own existing private budget and
+the actual request credential guard, not the responder's or Checker's meter. Its
+queue pin names `private.human.ask` at the existing host protocol revision, not
+the durable ask queue. This identity is neither an answer nor authority.
+
+These run-owned policy reads use the ordinary provider entrypoints with the
+unrecorded run; they do not use the captured-generation entrypoint. Captured-only
+unsupported results are not proof about this path. Its native unrecorded views,
+recording guards and borrowed physical-send guards remain in place. This source
+wiring is not proof of a running instance, every provider, rendering or runtime
+privacy. The full-sync socket upgrade still admits only owner-grade credentials;
+these registrations do not establish a general non-owner holder notification
+route.
 Only a socket explicitly advertising the private Human frame kind (`0x81`) is
 registered. The native sync client decodes the same typed payload into
 `SyncEvent::PrivateHumanAsk`, under the existing decoded-payload bound. That arm
