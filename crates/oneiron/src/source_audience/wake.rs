@@ -15,7 +15,7 @@
 //! same policy starts its wake over; an older drain never retires it.
 
 #[cfg(feature = "sync")]
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -150,8 +150,12 @@ pub(crate) fn advance_policy_wake(
 }
 
 #[cfg(feature = "sync")]
-/// Files the window `label` under each of `policies` it does not stand
-/// under yet: what its export or persist found its map carrying.
+/// Files the window `label` under each policy of `carried` it does not stand
+/// under yet, what its export or persist found its map carrying, each with
+/// the revision it carries (`None` for a head that conflicts). A window filed
+/// with a revision older than this vault's, read in the filing writer, wakes
+/// its policy: the change it missed may have drained before the window was
+/// filed, or past it.
 ///
 /// # Errors
 ///
@@ -159,18 +163,18 @@ pub(crate) fn advance_policy_wake(
 pub(crate) fn note_policy_windows(
     vault: &Vault,
     label: &str,
-    policies: &BTreeSet<EntityId>,
+    carried: &BTreeMap<EntityId, Option<u64>>,
 ) -> Result<()> {
-    if policies.is_empty() {
+    if carried.is_empty() {
         return Ok(());
     }
     let hash = window_hash(label);
-    let missing: Vec<EntityId> = {
+    let missing: Vec<(EntityId, Option<u64>)> = {
         let txn = vault.store.env.read_txn()?;
         let mut missing = Vec::new();
-        for policy in policies {
+        for (policy, revision) in carried {
             if WINDOWS.get(&vault.store, &txn, &(*policy, hash))?.is_none() {
-                missing.push(*policy);
+                missing.push((*policy, *revision));
             }
         }
         missing
@@ -180,8 +184,34 @@ pub(crate) fn note_policy_windows(
     }
     let label = label.to_owned();
     vault.with_write_txn_grouped(|txn| {
-        for policy in &missing {
+        for (policy, revision) in &missing {
+            if WINDOWS.get(&vault.store, txn, &(*policy, hash))?.is_some() {
+                continue;
+            }
             WINDOWS.put(&vault.store, txn, &(*policy, hash), &label)?;
+            let current = super::POLICIES
+                .get(&vault.store, txn, policy)?
+                .map(|held| held.revision);
+            if current.is_some() && (revision.is_none() || current > *revision) {
+                wake_policy_in_txn(vault, txn, policy)?;
+            }
+        }
+        Ok(())
+    })
+}
+
+#[cfg(feature = "sync")]
+/// Files the window `label` under `policy` if it does not stand there yet:
+/// a loaded window the drain found carrying the policy.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn file_policy_window(vault: &Vault, policy: &EntityId, label: &str) -> Result<()> {
+    let hash = window_hash(label);
+    vault.with_write_txn_grouped(|txn| {
+        if WINDOWS.get(&vault.store, txn, &(*policy, hash))?.is_none() {
+            WINDOWS.put(&vault.store, txn, &(*policy, hash), &label.to_owned())?;
         }
         Ok(())
     })

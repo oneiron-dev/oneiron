@@ -702,7 +702,11 @@ pub(crate) fn refresh_and_scrub(
     // The window is filed under each policy it rides, so a change of one
     // wakes it (fix list row 17203).
     if let Some(key) = pin {
-        source_audience::note_policy_windows(vault, key.as_str(), &carried)?;
+        let revisions = carried_heads(&map)
+            .into_iter()
+            .map(|(policy, head)| (policy, head.map(|head| head.revision)))
+            .collect();
+        source_audience::note_policy_windows(vault, key.as_str(), &revisions)?;
     }
     Ok(changed)
 }
