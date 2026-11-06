@@ -1291,7 +1291,10 @@ the source its flight ran on (`retained_turns` or `live_fork`, never
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
 refused as its own line, the call's step hash and the home parts it wore,
-and, on the live fork, every row the captured request was read from.
+and, on the live fork, every row the captured request was read from. A call
+refused after it went out keeps its own record as the pass's last try: what
+ran it and what it wore, with its usage `null` unless the provider reported
+it; it answered nothing, so no step is filed for it.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
 the last pass as `self_writer` (landed or not) and every summary the run

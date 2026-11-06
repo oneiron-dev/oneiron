@@ -28,7 +28,7 @@ use oneiron::code_run::{
 };
 use oneiron::compaction::{
     CompactionBackend, CompactionCall, CompactionCheck, CompactionExecution, CompactionHomeRef,
-    CompactionProduct, CompactionRefusal, CompactionRequest, CompactionTierClass,
+    CompactionProduct, CompactionRefusal, CompactionRequest, CompactionTierClass, CompactionUsage,
     SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
 };
 use oneiron::llm::{
@@ -38,7 +38,7 @@ use oneiron::skill_optimize::union_source_rows;
 use oneiron::{EntityId, LlmRequest};
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
-use super::serve::{Admit, Served, product_of};
+use super::serve::{Admit, Served, Unserved, product_of};
 use super::{LiveAdmission, ServedCompactionBackend};
 
 /// The words that turn the house compaction call into the agent's own: the
@@ -123,6 +123,9 @@ pub(super) struct SelfCompactionBackend {
     /// What the last breakpoint read for its flight (FIX 6029).
     staged: Mutex<Option<Staged>>,
     flight: Mutex<Option<Frozen>>,
+    /// The record of the last call refused after it went out (FIX 7745),
+    /// until its pass takes it.
+    refused: Mutex<Option<CompactionExecution>>,
 }
 
 impl SelfCompactionBackend {
@@ -141,6 +144,7 @@ impl SelfCompactionBackend {
             admission,
             staged: Mutex::new(None),
             flight: Mutex::new(None),
+            refused: Mutex::new(None),
         }
     }
 
@@ -270,9 +274,9 @@ impl SelfCompactionBackend {
         frozen: &Frozen,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
-    ) -> Result<Served<Vec<CompactionHomeRef>>, CompactionRefusal> {
+    ) -> Result<Served<Vec<CompactionHomeRef>>, Unserved<Vec<CompactionHomeRef>>> {
         let Some((model, locality)) = frozen.cold.clone() else {
-            return Err(SelfCompactionUnavailable::ModelNotServed.refusal());
+            return Err(SelfCompactionUnavailable::ModelNotServed.refusal().into());
         };
         let admit = Admit::Exact { model, locality };
         let sources = request
@@ -302,21 +306,27 @@ impl SelfCompactionBackend {
     /// while its prefix is still warm, else on the cheap writer standing by,
     /// before anything is sent; every later call of the flight keeps the
     /// source the first one ran on, never switching after a live call that
-    /// may have been paid.
+    /// may have been paid. A refusal names the source too, with what went
+    /// out when it came after the call was sent (FIX 7745).
     fn serve_flight(
         &self,
         frozen: &Frozen,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
-    ) -> Result<(Served<Vec<CompactionHomeRef>>, SelfCompactionSource), CompactionRefusal> {
+    ) -> Result<
+        (Served<Vec<CompactionHomeRef>>, SelfCompactionSource),
+        (Unserved<Vec<CompactionHomeRef>>, SelfCompactionSource),
+    > {
+        let retained =
+            |served: Result<Served<Vec<CompactionHomeRef>>, Unserved<Vec<CompactionHomeRef>>>| {
+                served
+                    .map(|served| (served, SelfCompactionSource::RetainedTurns))
+                    .map_err(|unserved| (unserved, SelfCompactionSource::RetainedTurns))
+            };
         let executed = frozen.executed.get().copied();
         let fork = match (&frozen.live, executed) {
             (Some(fork), None | Some(SelfCompactionSource::LiveFork)) => fork,
-            _ => {
-                return self
-                    .serve_retained(frozen, request, retry)
-                    .map(|served| (served, SelfCompactionSource::RetainedTurns));
-            }
+            _ => return retained(self.serve_retained(frozen, request, retry)),
         };
         let while_warm = frozen.cold.is_some() && executed.is_none();
         match self
@@ -325,16 +335,15 @@ impl SelfCompactionBackend {
         {
             Ok(None) => {
                 let _ = frozen.executed.set(SelfCompactionSource::RetainedTurns);
-                self.serve_retained(frozen, request, retry)
-                    .map(|served| (served, SelfCompactionSource::RetainedTurns))
+                retained(self.serve_retained(frozen, request, retry))
             }
             Ok(Some(served)) => {
                 let _ = frozen.executed.set(SelfCompactionSource::LiveFork);
                 Ok((served, SelfCompactionSource::LiveFork))
             }
-            Err(refusal) => {
+            Err(unserved) => {
                 let _ = frozen.executed.set(SelfCompactionSource::LiveFork);
-                Err(refusal)
+                Err((unserved, SelfCompactionSource::LiveFork))
             }
         }
     }
@@ -439,6 +448,14 @@ impl CompactionBackend for SelfCompactionBackend {
     fn end_flight(&self) {
         *self.flight.lock().unwrap_or_else(PoisonError::into_inner) = None;
         *self.staged.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    fn take_refused_execution(&self) -> Option<CompactionExecution> {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     fn compact(
@@ -455,16 +472,51 @@ impl CompactionBackend for SelfCompactionBackend {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> Result<(CompactionProduct, Option<CompactionExecution>), CompactionRefusal> {
+        *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = None;
         let Some(frozen) = self.frozen() else {
             return Err(SelfCompactionUnavailable::FlightNotPrepared.refusal());
         };
-        let (served, source) = self.serve_flight(&frozen, request, retry)?;
         // The rows the live fork's prefix was read from, only when the call
         // ran on it (FIX 9463).
-        let prefix_sources = match (&frozen.live, source) {
+        let prefix_of = |source: SelfCompactionSource| match (&frozen.live, source) {
             (Some(fork), SelfCompactionSource::LiveFork) => fork.prefix_sources().to_vec(),
             _ => Vec::new(),
         };
+        let step_hash_hex = |hash: Option<[u8; 32]>| {
+            hash.map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect())
+        };
+        let (served, source) = match self.serve_flight(&frozen, request, retry) {
+            Ok(served) => served,
+            Err((unserved, source)) => {
+                // A call refused after it went out keeps what ran it, with
+                // no usage the provider did not report (FIX 7745). It
+                // answered nothing, so nothing of it is filed as a step.
+                if let Some(dispatched) = unserved.dispatched {
+                    *self.refused.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(CompactionExecution {
+                            writer: self.host.actor().entity_ref(),
+                            source,
+                            admitted_model: dispatched.model.to_string(),
+                            served_provider: None,
+                            served_model: None,
+                            usage: CompactionUsage::default(),
+                            rejected_tries: Vec::new(),
+                            step_hash: step_hash_hex(dispatched.step_hash),
+                            home: dispatched.worn,
+                            prefix_sources: prefix_of(source),
+                            snapshot_hash: None,
+                            snapshot_len: None,
+                            step: None,
+                            rejected_steps: Vec::new(),
+                            step_unfiled: None,
+                            evidence: None,
+                            calls: Vec::new(),
+                        });
+                }
+                return Err(unserved.refusal);
+            }
+        };
+        let prefix_sources = prefix_of(source);
         let usage = &served.response.usage;
         let sent = served.sent.zip(serde_json::to_vec(&served.response).ok());
         let mut execution = CompactionExecution {
@@ -479,9 +531,7 @@ impl CompactionBackend for SelfCompactionBackend {
                 .map(str::to_owned),
             usage: compaction_usage_projection(usage),
             rejected_tries: Vec::new(),
-            step_hash: served
-                .step_hash
-                .map(|hash| hash.iter().map(|byte| format!("{byte:02x}")).collect()),
+            step_hash: step_hash_hex(served.step_hash),
             home: served.worn,
             prefix_sources,
             snapshot_hash: None,

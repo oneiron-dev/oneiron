@@ -109,6 +109,13 @@ pub trait CompactionBackend: Send + Sync {
     > {
         self.compact(request, retry).map(|product| (product, None))
     }
+    /// The record of the last call this backend sent as its agent that came
+    /// back refused after it went out (FIX 7745): what ran it, with no usage
+    /// the provider did not report. Taken once, by the pass that saw the
+    /// refusal; `None` from every other backend.
+    fn take_refused_execution(&self) -> Option<crate::compaction::CompactionExecution> {
+        None
+    }
     /// At a breakpoint that seals a flight, the run's `live` request as the
     /// host's admitted rung sends it, when this backend writes as its agent
     /// from the live context (FIX 4465 C), or why it cannot be bound. `None`
