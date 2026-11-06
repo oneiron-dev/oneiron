@@ -2396,6 +2396,12 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_bootstrap_skills({name}, output)'
             elif row['output'] == 'crate::task_verb::sdk::SkillLibraryRestoreReceipt':
                 result = f'crate::codec::lift_skill_library_restore({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::ConnectorPackView':
+                result = f'crate::codec::lift_connector_pack_view({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::ConnectorPackDelta':
+                result = f'crate::codec::lift_connector_pack_delta({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::ProxyConnectorRegistration':
+                result = f'crate::codec::lift_proxy_connector_registration({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
