@@ -167,8 +167,12 @@ pub enum UncertainSendAnswerOutcome {
 
 /// The sticky send executor of one connector-send TASK (FIX 4747; canon
 /// ARCH-0023b, pending outbound send): only the machine `node_id` names
-/// sends it, and only while the TASK still holds this exact lease. A
-/// handover moves it to another machine at the next `generation`.
+/// sends it, and only while the TASK still holds this holder at this
+/// `generation`. A handover moves it to another machine at the next
+/// `generation`. The holder renews `held_until` while the TASK is its to
+/// send; a lease no pass renewed, or one its holder released as it closed,
+/// is expired from `held_until` on, and another machine's reaper may take it
+/// (FIX 4747 slice 4).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SendExecutorLease {
     /// The holder's stable sync node id (`m:client_id`).
@@ -176,11 +180,56 @@ pub struct SendExecutorLease {
     /// Raised by one on every handover; a take from no lease starts at
     /// [`SEND_EXECUTOR_LEASE_FIRST_GENERATION`].
     pub generation: u64,
+    /// Until when the holder holds it, vault clock seconds, as the TASK's
+    /// other times: expired at and after this instant.
+    pub held_until: u64,
+}
+
+impl SendExecutorLease {
+    /// Whether `other` names this lease's holder at this generation,
+    /// whatever either's `held_until`: a renewal or a release keeps the
+    /// holding, so the holder's attempt in flight still passes its fence.
+    #[must_use]
+    pub fn same_holding(self, other: Self) -> bool {
+        self.node_id == other.node_id && self.generation == other.generation
+    }
+
+    /// Whether the lease is expired at `now`: its holder neither renewed it
+    /// past `now` nor holds it any more, so the reaper may take it.
+    #[must_use]
+    pub fn expired_at(self, now: u64) -> bool {
+        now >= self.held_until
+    }
 }
 
 /// The generation a send executor lease starts at when a machine takes a
 /// TASK no machine held. Engine call (CALLS, FIX 4747).
 pub(super) const SEND_EXECUTOR_LEASE_FIRST_GENERATION: u64 = 1;
+
+/// How long a send executor lease holds past its holder's next pass over the
+/// TASK (FIX 4747 slice 4): the holder renews it on each executor pass that
+/// claims, sends, parks or holds the TASK. Engine call (CALLS, FIX 4747):
+/// fifteen minutes, so a machine that vanished without its release hands its
+/// sends over within one hold, and a pass that runs long never loses its
+/// lease while it sends.
+pub(super) const SEND_EXECUTOR_LEASE_HOLD_SECS: u64 = 15 * 60;
+
+/// The `held_until` a lease taken or handed over at `now` starts with.
+fn send_executor_lease_held_until(now: u64) -> u64 {
+    now.saturating_add(SEND_EXECUTOR_LEASE_HOLD_SECS)
+}
+
+/// The `held_until` a holder's pass leaves on its lease when the TASK next
+/// comes back to it at `next_pass_at`, or `None` while the lease it holds
+/// covers that pass. Engine call (CALLS, FIX 4747 slice 4): it renews to
+/// `next_pass_at` plus [`SEND_EXECUTOR_LEASE_HOLD_SECS`] once less than half
+/// the hold would be left at that pass, so a send that keeps parking writes
+/// its TASK at most once a half hold, and a park longer than the hold keeps
+/// its lease through the park.
+pub(super) fn send_executor_lease_renewal(held_until: u64, next_pass_at: u64) -> Option<u64> {
+    let renew_below = next_pass_at.saturating_add(SEND_EXECUTOR_LEASE_HOLD_SECS / 2);
+    (held_until < renew_below).then(|| send_executor_lease_held_until(next_pass_at))
+}
 
 /// The receipt field a send the fence stood down carries, valued
 /// [`SEND_EXECUTOR_STOOD_DOWN`] (FIX 4747).
@@ -679,8 +728,10 @@ fn connector_send_task_permits_send(body: &ConnectorSendTaskBody) -> bool {
 }
 
 /// Takes the TASK's send executor lease for `node_id` (FIX 4747): no lease
-/// becomes this node's at the first generation; this node's lease stays as
-/// it is; another node's lease is not taken, and this node stands down.
+/// becomes this node's at the first generation; this node's lease stays its
+/// own at its generation, renewed for this pass (FIX 4747 slice 4); another
+/// node's lease is not taken, expired or not, and this node stands down:
+/// only the reaper takes a lease another node let lapse, in the ruled order.
 /// Checked against the CURRENT replicated TASK in one write transaction.
 /// The first take records `engine_send_id` on the TASK. Engine call (CALLS,
 /// FIX 4747): a take of a send the owner released for one resend spends that
@@ -703,11 +754,20 @@ pub(super) fn take_send_executor_lease(
                 let lease = SendExecutorLease {
                     node_id,
                     generation: SEND_EXECUTOR_LEASE_FIRST_GENERATION,
+                    held_until: send_executor_lease_held_until(now),
                 };
                 body.send_executor_lease = Some(lease);
                 lease
             }
-            Some(lease) if lease.node_id == node_id => lease,
+            Some(lease) if lease.node_id == node_id => {
+                let lease = SendExecutorLease {
+                    held_until: send_executor_lease_renewal(lease.held_until, now)
+                        .unwrap_or(lease.held_until),
+                    ..lease
+                };
+                body.send_executor_lease = Some(lease);
+                lease
+            }
             Some(lease) => {
                 take = SendExecutorLeaseTake::HeldElsewhere(lease);
                 return Ok(());
@@ -828,16 +888,17 @@ pub(super) fn answer_uncertain_send_in_txn(
 
 /// The fence before the bytes (FIX 4747; canon ARCH-0023b "a woken old
 /// machine re-checks before any send and stands down"): reads the TASK in a
-/// fresh read and holds only while it still names exactly the lease
-/// `fence` took. Every later slice that sends for a connector TASK reuses
-/// it.
+/// fresh read and holds only while it still names the holder and generation
+/// `fence` took. A renewal or a release since keeps that holding; an expired
+/// lease no other machine took yet holds too, as no other machine sends it.
+/// Every later slice that sends for a connector TASK reuses it.
 pub(super) fn check_send_executor_fence(
     vault: &Vault,
     fence: &SendExecutorFence,
 ) -> Result<SendExecutorFenceCheck, Error> {
     let rtxn = vault.store.env.read_txn()?;
     let held = read_connector_send_task_body_in(vault, &rtxn, fence.task_ref)?.send_executor_lease;
-    Ok(if held == Some(fence.lease) {
+    Ok(if held.is_some_and(|held| held.same_holding(fence.lease)) {
         SendExecutorFenceCheck::Holds
     } else {
         SendExecutorFenceCheck::StoodDown { held }
@@ -893,26 +954,35 @@ pub(super) fn log_send_executor_stand_down(
     );
 }
 
-/// The lease a handover to `to_node` leaves on the TASK: `to_node` at the
-/// next generation. Engine call (CALLS, FIX 4747): a handover to the
-/// machine that already holds the lease keeps it unchanged, so that
-/// machine's own attempt in flight still passes its fence.
+/// The lease a handover to `to_node` at `now` leaves on the TASK: `to_node`
+/// at the next generation, held for one hold from `now`. Engine call
+/// (CALLS, FIX 4747): a handover to the machine that already holds the
+/// lease keeps its holder and generation, renewed for one hold from `now`
+/// (FIX 4747 slice 4), so that machine's own attempt in flight still passes
+/// its fence.
 fn send_executor_lease_after_handover(
     held: Option<SendExecutorLease>,
     to_node: u64,
+    now: u64,
 ) -> Result<SendExecutorLease, Error> {
+    let held_until = send_executor_lease_held_until(now);
     match held {
-        Some(lease) if lease.node_id == to_node => Ok(lease),
+        Some(lease) if lease.node_id == to_node => Ok(SendExecutorLease {
+            held_until: lease.held_until.max(held_until),
+            ..lease
+        }),
         Some(lease) => Ok(SendExecutorLease {
             node_id: to_node,
             generation: lease
                 .generation
                 .checked_add(1)
                 .ok_or(Error::IndexOverflow("send executor lease generation"))?,
+            held_until,
         }),
         None => Ok(SendExecutorLease {
             node_id: to_node,
             generation: SEND_EXECUTOR_LEASE_FIRST_GENERATION,
+            held_until,
         }),
     }
 }
@@ -924,11 +994,8 @@ fn send_executor_lease_after_handover(
 /// stands it down, and the approved-but-unsent send goes from `to_node`
 /// through the normal executor. It moves only the lease: the caller on the
 /// new machine enqueues that machine's local attempt. FIX 4747 slice 4's
-/// orphan reaper and the placement order call it.
-#[allow(
-    dead_code,
-    reason = "FIX 4747 slice 4: the orphan reaper and the placement order call it"
-)]
+/// orphan reaper calls it (`super::send_reaper`); agent-run placement does
+/// not yet.
 pub(crate) fn hand_over_connector_send_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -941,16 +1008,127 @@ pub(crate) fn hand_over_connector_send_task_in_txn(
         if !connector_send_task_permits_send(body) {
             return Ok(());
         }
-        let lease = send_executor_lease_after_handover(body.send_executor_lease, to_node)?;
-        handover = if body.send_executor_lease == Some(lease) {
+        let held = body.send_executor_lease;
+        let lease = send_executor_lease_after_handover(held, to_node, now)?;
+        handover = if held.is_some_and(|held| held.same_holding(lease)) {
             SendExecutorHandover::AlreadyHeld(lease)
         } else {
-            body.send_executor_lease = Some(lease);
             SendExecutorHandover::Moved(lease)
         };
+        body.send_executor_lease = Some(lease);
         Ok(())
     })?;
     Ok(handover)
+}
+
+/// Renews this machine's send executor lease on `task_ref` through the
+/// pass that next comes back to the TASK at `next_pass_at` (FIX 4747 slice
+/// 4), in the caller's write: the pass that parks or holds the TASK keeps
+/// its lease through the park (`send_executor_lease_renewal`). A TASK this
+/// machine does not hold, one that permits no send, and one that does not
+/// read as a connector-send TASK are left as they are: a renewal never
+/// fails the write that parks the send.
+pub(super) fn renew_send_executor_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    next_pass_at: u64,
+    now: u64,
+) -> Result<(), Error> {
+    let Some(node_id) = crate::identity::read_client_id_in_txn(vault, &*wtxn)? else {
+        return Ok(());
+    };
+    let Some(raw) = vault.store.port_entity_record(&*wtxn, &task_ref)? else {
+        return Ok(());
+    };
+    let Ok(body) = decode_connector_send_task_body(raw.entity_type, &raw.body) else {
+        return Ok(());
+    };
+    let renewal = body
+        .send_executor_lease
+        .filter(|lease| lease.node_id == node_id && connector_send_task_permits_send(&body))
+        .and_then(|lease| send_executor_lease_renewal(lease.held_until, next_pass_at));
+    let Some(held_until) = renewal else {
+        return Ok(());
+    };
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        if let Some(lease) = body.send_executor_lease.as_mut() {
+            lease.held_until = held_until;
+        }
+        Ok(())
+    })
+}
+
+/// Releases this machine's (`node_id`) send executor lease on `task_ref`
+/// as it closes (FIX 4747 slice 4), in the caller's write: the lease keeps
+/// its holder and generation and is held until `now`, so another machine's
+/// reaper may take it at once. `false` for a TASK this machine does not
+/// hold, one that permits no send, or a lease already expired at `now`.
+pub(super) fn release_send_executor_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    node_id: u64,
+    now: u64,
+) -> Result<bool, Error> {
+    let mut released = false;
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        if !connector_send_task_permits_send(body) {
+            return Ok(());
+        }
+        if let Some(lease) = body.send_executor_lease.as_mut()
+            && lease.node_id == node_id
+            && !lease.expired_at(now)
+        {
+            lease.held_until = now;
+            released = true;
+        }
+        Ok(())
+    })?;
+    Ok(released)
+}
+
+/// The send executor lease `task_ref` holds, read in `txn` (FIX 4747 slice
+/// 4); `None` while no machine took it.
+pub(super) fn send_executor_lease_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<SendExecutorLease>, Error> {
+    Ok(read_connector_send_task_body_in(vault, txn, task_ref)?.send_executor_lease)
+}
+
+/// Every connector-send TASK that still permits a send and that a machine
+/// took, with the lease it holds, read in `txn` (FIX 4747 slice 4): what the
+/// release and the reaper judge. A TASK body that does not decode as the
+/// current connector-send version is passed over.
+pub(super) fn open_send_executor_leases_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, SendExecutorLease)>, Error> {
+    let mut leases = Vec::new();
+    for task_ref in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_TASK, None)?
+    {
+        let task_ref = task_ref?;
+        let Some(raw) = vault.store.port_entity_record(txn, &task_ref)? else {
+            continue;
+        };
+        if !matches!(has_connector_send_subkind(&raw.body), Ok(true)) {
+            continue;
+        }
+        let Ok(body) = decode_connector_send_task_body(raw.entity_type, &raw.body) else {
+            continue;
+        };
+        if let Some(lease) = body
+            .send_executor_lease
+            .filter(|_| connector_send_task_permits_send(&body))
+        {
+            leases.push((task_ref, lease));
+        }
+    }
+    Ok(leases)
 }
 
 pub(super) fn project_connector_send_task_outcome(
@@ -1123,7 +1301,10 @@ fn update_connector_send_task_body_in_txn(
     // encoded bytes against what is stored makes the retry loop leave the
     // row byte-identical, while any real projection — the terminal
     // outcome, a timezone refresh, a node taking the send executor lease, a
-    // handover — still differs in bytes and writes exactly once.
+    // handover — still differs in bytes and writes exactly once. A lease
+    // renewal writes only once less than half its hold is left
+    // (`send_executor_lease_renewal`), so a send that keeps parking still
+    // writes its TASK at most once a half hold.
     if raw.body == encoded[..] {
         return Ok(());
     }
