@@ -78,7 +78,7 @@ impl CodeRunBridgeCall {
                 "a live bridge request spells the erased form",
             ));
         }
-        row.scrub_target_erased_ask()?;
+        row.scrub_erased_ask()?;
         row.validate_speech_coherence()?;
         row.validate_spawn_coherence()?;
         row.validate_rewritten_coherence()?;
