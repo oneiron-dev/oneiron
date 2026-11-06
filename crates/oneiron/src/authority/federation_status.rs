@@ -62,7 +62,7 @@ impl Vault {
                 .federation_pacts
                 .iter()
                 .map(|(pact_id, pact)| FederationPactStatusRow {
-                    pact: crate::entity_id::bytes_to_hex_lower(*pact_id),
+                    pact: crate::entity_id::bytes_to_hex_lower(pact_id),
                     status: pact.status,
                     epoch: pact.pact_epoch,
                     inactive_reason: mismatched
