@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::code_run::{
-    CodeRunSecretLiftDismiss, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+    CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftProposalView,
+    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
@@ -17,6 +18,16 @@ use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/code-run-room-lifts",
+                summary: "Lists positive MESSAGE-linked lift proposals in one room overlay without reading a body or preview.",
+                row: None,
+                shape: None,
+            },
+            get(list_room),
+        ),
         (
             OwnerRoute {
                 method: "get",
@@ -79,4 +90,19 @@ async fn dismiss(
     })
     .await?;
     Ok(Json(status))
+}
+
+async fn list_room(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Query(request): Query<CodeRunRoomSecretLiftRequest>,
+) -> OwnerReply<Vec<CodeRunSecretLiftProposalView>> {
+    let owner = owner(&auth, &server)?;
+    let proposals = blocking(move || -> OwnerResult<Vec<CodeRunSecretLiftProposalView>> {
+        Ok(server
+            .vault()
+            .code_run_room_secret_lifts_as_owner(&owner, &request)?)
+    })
+    .await?;
+    Ok(Json(proposals))
 }
