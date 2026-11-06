@@ -1,4 +1,5 @@
-//! One accepted run-now that joined a running feedback sweep (FIX 7552).
+//! One owner-requested sweep that joined running work (FIX 7552): a
+//! manual run-now or an intake the owner's standing policy enabled.
 //! Waiting work covers the request; running work owes one later ordinary
 //! sweep. The native queue owns its state and dedupe, not this marker.
 
@@ -43,8 +44,9 @@ fn covers_request(outcome: &EnqueueDreamerAttemptOutcome) -> bool {
     }
 }
 
-/// The authenticated owner's ordinary enqueue, retaining only an ask that
-/// running work cannot cover. Called inside the owner's revalidated write.
+/// The owner's ordinary enqueue, retaining only a request that running work
+/// cannot cover. The same write revalidates a manual owner's proof or reads
+/// the owner's enabled standing intake policy.
 pub(super) fn requested_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
