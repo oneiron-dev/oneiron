@@ -502,6 +502,18 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // The removal-archive door's spend of a one-shot transferred slip:
+        // its subject is the slip, its holder the removed person whose
+        // archives it took (FIX 11862).
+        AuthorityOp::RemovalArchiveConsume { slip_id, member } => (
+            Other,
+            "removal_archive_consume",
+            OpFields {
+                subject_ref: Some(hex_lower(slip_id)),
+                holder_ref: Some(member.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::FederationConfirm(action) => (
             Confirm,
             "federation_confirm",

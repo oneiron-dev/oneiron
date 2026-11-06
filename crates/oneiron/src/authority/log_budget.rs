@@ -230,6 +230,7 @@ pub(super) fn is_slip_op(op: &AuthorityOp) -> bool {
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::SlipGrantRevoke { .. }
+            | AuthorityOp::RemovalArchiveConsume { .. }
     )
 }
 
