@@ -73,6 +73,7 @@ pub(crate) use self::replay_capsule::{
 };
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+    soft_delete_actor_responses_in_txn,
 };
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{

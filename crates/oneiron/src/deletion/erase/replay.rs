@@ -206,6 +206,13 @@ impl Vault {
             )?;
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
+            // A peer's user delete of an actor releases its code runs'
+            // replies here too, before the body is truncated, even when no
+            // body is left: rows the actor owned may remain (FIX 15532). A
+            // hold refuses first, as the scrub below would.
+            self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+            #[cfg(unix)]
+            crate::code_run::soft_delete_actor_responses_in_txn(self, wtxn, id)?;
             let (existed, had_vector, ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, id, false, None)?;
             if had_vector {
