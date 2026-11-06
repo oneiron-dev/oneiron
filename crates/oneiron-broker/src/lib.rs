@@ -73,7 +73,7 @@ pub use lfs_http::{
 #[cfg(unix)]
 pub use lfs_http::{LfsReply, PreparedLfsCall};
 pub use send::SendPolicy;
-pub use shape::Shape;
+pub use shape::{Shape, json_member};
 pub use strip::{MARKER, strip};
 
 #[cfg(unix)]
