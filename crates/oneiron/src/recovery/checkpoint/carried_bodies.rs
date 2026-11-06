@@ -532,6 +532,7 @@ pub(super) fn require(
     }
     let retired = require_body_instances(&named, plan)?;
     let pruned = prune_retired_bodies_in_rows(rows, &retired)?;
+    crate::code_run::retire_replay_bodies_in_rows(&mut image.databases, &pruned.digests)?;
     crate::memory::retire_message_results_in_rows(&mut image.databases, &pruned.digests)?;
     // A retired response's row keeps its erased disposition (KS-2B1).
     response_rows::retire_carried(image, &retired)?;
@@ -624,6 +625,7 @@ pub(super) fn restore(
     mut bodies: SealedBodies<'_>,
     room: &mut RestoreRoom<'_>,
     (custody, retired): (Option<&CustodyBinding>, &BTreeSet<[u8; 16]>),
+    unlanded: &mut Vec<[u8; 32]>,
 ) -> Result<()> {
     let files = image.bodies.len();
     if files + image.inline_bodies.len() == 0 {
@@ -690,7 +692,7 @@ pub(super) fn restore(
         value.truncate(keep);
         value.extend_from_slice(&body);
     }
-    replay::land(image, &read, retired)
+    replay::land(image, &read, retired, unlanded)
 }
 
 /// Lands the `index`th file, the body `digest` of `len` bytes sealed under
