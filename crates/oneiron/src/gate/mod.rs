@@ -251,6 +251,8 @@ pub(crate) use self::skill_tradeoff_policy::{SkillTradeoffLimits, skill_tradeoff
 pub(crate) use self::voice_serving::VoiceServingPolicyReceipt;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
+#[cfg(feature = "sync")]
+pub(crate) use self::witness_message::companion_author_pending;
 pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
     WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,

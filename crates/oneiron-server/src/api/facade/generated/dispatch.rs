@@ -6561,6 +6561,46 @@ async fn vault_inbox_concerns_review(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_proactivity_digest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.proactivity.digest")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.proactivity.digest", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.proactivity.digest", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_proactivity_digest(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_inbox_lens(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40318,6 +40358,7 @@ async fn call_verb_row(
         "vault.inbox.concerns.review" => {
             Box::pin(vault_inbox_concerns_review(server, call, input)).await
         }
+        "vault.proactivity.digest" => Box::pin(vault_proactivity_digest(server, call, input)).await,
         "vault.inbox.lens" => Box::pin(vault_inbox_lens(server, call, input)).await,
         "vault.inbox.groups" => Box::pin(vault_inbox_groups(server, call, input)).await,
         "vault.inbox.groups.resolve" => {
