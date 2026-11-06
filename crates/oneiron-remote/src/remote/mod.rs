@@ -43,6 +43,10 @@ mod pairing;
 mod renewal;
 mod request;
 mod response;
+mod shared_membership;
+
+pub use self::shared_membership::HttpsSharedInvitationAcceptance;
+
 // OF-237: the network or an in-process server under one signing path.
 mod wire;
 
