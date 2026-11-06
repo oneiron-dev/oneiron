@@ -675,6 +675,7 @@ async fn hydrate_inner(
     // What a chat turn's context records keep of this render (FIX 6921):
     // for a split turn, of the two parts its call carries.
     let chat_context = chat_emit::capture_chat_context(
+        &server.memory,
         &auth,
         memories.as_ref(),
         &parts.authority,

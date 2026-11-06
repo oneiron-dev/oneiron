@@ -28,7 +28,9 @@ use oneiron::{
 };
 
 use crate::api::ai::chat::Answering;
+use crate::api::context_pack::output_memory::RetainedMemoriesOutput;
 use crate::auth::{CoreAuth, CoreScope};
+use crate::machine::{MachineMemory, MemoryLease};
 use crate::server::SyncServer;
 
 /// The receipt's persona stamp names the role-admitted system messages it
@@ -46,7 +48,6 @@ const TURN_AUTHOR_KEY: &str = "actor";
 /// the settled render shows, in its order and at the tier it shows them, the
 /// world authority it resolved, its render's fingerprint, and the credential
 /// it was read under.
-#[derive(Debug)]
 pub(crate) struct ChatContextCapture {
     /// `None` when the board carries no MEMORIES section.
     memories: Option<MemoriesSection>,
@@ -56,6 +57,22 @@ pub(crate) struct ChatContextCapture {
     /// The exact board layout batch this chat render projected (BOARD-LAYOUT);
     /// `None` when no activation follows.
     layout_candidate: Option<BoardLayoutCandidate>,
+    // Payload fields drop before their independent capacity charges.
+    _memories_storage: RetainedMemoriesOutput,
+    _fingerprint_storage: MemoryLease,
+}
+
+impl std::fmt::Debug for ChatContextCapture {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChatContextCapture")
+            .field("memories", &self.memories)
+            .field("worlds", &self.worlds)
+            .field("rendered_fingerprint", &self.rendered_fingerprint)
+            .field("read_auth", &self.read_auth)
+            .field("layout_candidate", &self.layout_candidate)
+            .finish()
+    }
 }
 
 /// A capture frozen against the call admitted with it. Its emit fields are
@@ -100,12 +117,15 @@ struct Awaited {
 /// selection captured BEFORE render; it rides ONLY with this SAME admitted
 /// board context.
 pub(super) fn capture_chat_context(
+    memory: &MachineMemory,
     auth: &CoreAuth,
     memories: Option<&MemoriesSection>,
     worlds: &ResolvedWorldAuthority,
     render: &BoardRender,
     layout_candidate: Option<BoardLayoutCandidate>,
 ) -> Option<ChatContextCapture> {
+    let mut memories_storage = RetainedMemoriesOutput::new(memory);
+    let mut fingerprint_storage = memory.empty_lease();
     let memories = match memories {
         Some(memories) => {
             let Some(settled) = settled_memories(memories, render) else {
@@ -118,12 +138,18 @@ pub(super) fn capture_chat_context(
         }
         None => None,
     };
+    memories_storage.retain(memories.as_ref());
+    let worlds = worlds.clone();
+    let rendered_fingerprint = blake3::hash(render.text.as_bytes()).to_hex().to_string();
+    fingerprint_storage.materialized(0, rendered_fingerprint.capacity() as u64);
     Some(ChatContextCapture {
         memories,
-        worlds: worlds.clone(),
-        rendered_fingerprint: blake3::hash(render.text.as_bytes()).to_hex().to_string(),
+        worlds,
+        rendered_fingerprint,
         read_auth: auth.clone(),
         layout_candidate,
+        _memories_storage: memories_storage,
+        _fingerprint_storage: fingerprint_storage,
     })
 }
 

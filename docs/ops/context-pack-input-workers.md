@@ -292,3 +292,26 @@ assembly, raw-return-tuple lifetimes, chat-context captures, dynamic JSON copies
 serializer buffers and other metadata backing remain separate work. No clone is
 claimed covered because it came from a charged source. No memory wait, size cap,
 deadline, refusal, policy or format version changes here.
+
+
+## Chat capture buffer custody
+
+The chat capture has its own capacity holders for the selected, settled MEMORIES
+clone and its rendered fingerprint string. They use the server's same physical
+memory line and record those allocations' actual capacities after construction.
+The section uses the same selected version, row-slot, row-string, companion and
+disclosure calculation as the Board response; it does not inherit the response's
+charge. The capture payload drops before its trailing holders.
+
+The existing live-turn and queued-action paths move that same capture into the
+frozen context, then into the detached answer-recording task and its blocking
+record callback. No consumer clones the holders onto different allocations.
+The original no-record, unmatched-render, error and cancellation behavior stays
+the same. The final record callback still borrows the original captured section.
+
+This is post-allocation custody only. Temporary clones while settling rows,
+filter scratch, world sets, auth, layout candidates, frozen emit fields, copied
+record text and other record-building allocations are not covered. Earlier
+assembly, raw-return tuples, allocation and reallocation peaks, and retained-input
+FIFO progress remain separate work. No memory wait, admission, cap, deadline,
+refusal, policy or format changes here.
