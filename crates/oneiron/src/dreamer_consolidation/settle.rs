@@ -52,6 +52,7 @@ use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
 pub(super) mod decision_pages;
 mod decision_projection;
+mod preference_pair;
 
 /// The marker-value keys that name a contradiction's claims: the
 /// consolidation marker's prior heads and candidates, and the older
@@ -386,7 +387,10 @@ pub(crate) fn open_conflicts_in_txn(
     markers.sort_by_key(|(id, _)| *id);
     let mut open = Vec::new();
     for (id, body) in markers {
-        if answered.contains(&id) {
+        // A preference marker whose pair no longer stands asks nothing (FIX 3079).
+        if answered.contains(&id)
+            || preference_pair::preference_pair_moot_in_txn(vault, txn, &body)?
+        {
             continue;
         }
         let was_reverted = reverted.contains(&id);
@@ -409,6 +413,11 @@ pub(crate) fn open_conflict_in_txn(
         .ok_or(Error::EntityNotFound)?;
     if !open_marker_body(&body) {
         return Err(invalid_consolidation("not an open conflict marker"));
+    }
+    if preference_pair::preference_pair_moot_in_txn(vault, txn, &body)? {
+        return Err(invalid_consolidation(
+            "the conflict's pair no longer stands: a later claim replaced one side",
+        ));
     }
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation("conflict subject"));
