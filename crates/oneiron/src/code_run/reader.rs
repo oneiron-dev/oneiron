@@ -23,7 +23,8 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
-pub use self::origins::{DelegatedSource, ReaderFindingRef};
+pub(crate) use self::origins::OriginsUnion;
+pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
 /// What the parent keeps back of its own window for the fold that reads its
 /// children's findings: the fold's code-first dedupe plus two staged
