@@ -79,6 +79,8 @@ pub(super) fn discard_owned_payload(
     }
     for artifact in &artifacts {
         crate::edit_settle::purge_artifact_retention_in_txn(store, txn, artifact)?;
+        // Its settlements' words (their history stays) and answer withdrawals.
+        crate::edit_settle::discard_settle_payload_in_txn(store, txn, artifact)?;
         crate::blob_artifact::discard_local_copy_in_txn(store, txn, artifact)?;
         crate::office_body::discard_export_payload_in_txn(store, txn, artifact)?;
     }

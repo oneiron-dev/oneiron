@@ -276,8 +276,13 @@ impl BrokerContext {
         if tokio::runtime::Handle::try_current().is_err() {
             return run();
         }
-        std::thread::scope(|scope| scope.spawn(run).join())
-            .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
+        std::thread::scope(|scope| {
+            crate::engine_thread("model-broker-send".into())
+                .spawn_scoped(scope, run)
+                .expect("failed to spawn thread")
+                .join()
+        })
+        .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
     }
 
     /// The System One seat's transport over this broker, its key the vault
