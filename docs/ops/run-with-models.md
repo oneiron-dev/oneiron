@@ -3691,10 +3691,14 @@ What exists now:
   its own rules. It holds the request exactly as the answering rung sent it
   (the rung's prompt first, the board included when it rode) and the span the
   reply generated: its reasoning, tool calls and text, in the parts the
-  request uses. The request and the span are one body, sealed under an
-  erasable key of the example's own (purpose `DrafterArtifact`). No example
-  is kept for a reply that failed or is not saved whole, a reused prefix that
-  fell back to today's call, a turn that keeps no model-call record (it keeps
+  request uses. The request and the span are one body. The side-row wall
+  masks it first, as it masks an authored row: a secret the call carried is
+  kept as its custody handle, never its value, and dropping the example
+  revokes the custody it minted. The body is then sealed under an erasable
+  key of the example's own (purpose `DrafterArtifact`). A reused prefix that
+  fell back keeps today's call, read from today's rows. No example
+  is kept for a reply that failed or is not saved whole, a turn that keeps no
+  model-call record (it keeps
   no durable record or runs off the record), a call whose rows are not known
   whole, or a rung that is not this host's drafter target. The engine keeps
   none while the policy is off, in a room with an open off-record stretch, or

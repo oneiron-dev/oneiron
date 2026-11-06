@@ -167,10 +167,12 @@ fn handle_document_inner(
             let _ = direct.send(notice);
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -364,10 +366,12 @@ fn owner_document(
             // sends the current state, then the receipt (FIX 9491).
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -466,7 +470,7 @@ pub(super) fn document_delivery_retrying(
     retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let mut docs = match data.first() {
-        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
+        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_unsplit_document(&data[1..])],
         Some(&transport::TAG_BATCH) => transport::decode_document_batch(&data[1..])
             .map_err(|_| ProtocolError::InvalidPayload("invalid document batch"))?
             .into_iter()
@@ -571,8 +575,7 @@ pub(super) fn document_delivery_retrying(
                         continue;
                     }
                     out.push(
-                        transport::encode_document(doc.entity, doc.kind, doc.payload)
-                            .into_result()
+                        transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload)
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
@@ -708,9 +711,14 @@ pub(super) fn retry_later(
 
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
-    transport::encode_document(doc.entity, doc.kind, doc.payload)
-        .into_result()
-        .ok()
+    match doc.kind {
+        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+            transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
+        }
+        _ => transport::encode_document(doc.entity, doc.kind, doc.payload)
+            .into_result()
+            .ok(),
+    }
 }
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {
