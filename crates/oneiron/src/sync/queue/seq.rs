@@ -47,6 +47,22 @@ pub(crate) fn push_embed_job_in_txn(
     Ok(())
 }
 
+/// A real pending canonical job, checked in the copy retainer's own writer.
+/// This never enqueues work or treats a received source as admitted.
+pub(crate) fn has_pending_embed_job_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<bool> {
+    if store.pending_embedding_token(txn, entity_id)?.is_none() {
+        return Ok(false);
+    }
+    Ok(store
+        .sync_queue
+        .get(txn, &encode_embed_key(entity_id))?
+        .is_some())
+}
+
 /// Replaces only the pending job's retained copy, never its priority or
 /// enqueue time. The caller validated the exact canonical source, original
 /// binding and obligations in this same writer before serializing the copy.

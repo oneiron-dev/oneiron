@@ -243,8 +243,8 @@ impl PreparedHomeClaimActors {
         }
     }
 
-    /// Borrows the ciphertext only in the writer that materialized the exact
-    /// original source. The caller still owns the real outer commit and carrier.
+    /// Borrows the ciphertext only in the native writer holding the exact
+    /// canonical source. The caller still owns the real outer commit and carrier.
     pub(crate) fn copy_for_current_source_in_txn(
         &self,
         vault: &Vault,

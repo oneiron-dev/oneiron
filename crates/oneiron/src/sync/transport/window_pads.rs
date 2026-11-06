@@ -17,8 +17,10 @@
 //! (`[envelope id:32][offset:8 BE][bytes]`, the id the header's BLAKE3, the
 //! offset counted from the header's end): the refs, capsule, copies and the rest
 //! of a payload past one frame, such as a replacement or a catch-up whose
-//! window outgrew the floor (FIX 8247). Its receiver joins every part and
-//! checks the payload against the header's digest before it reads any of it.
+//! window outgrew the floor (FIX 8247). Its receiver joins the required
+//! payload, references and capsule and checks their digests before delivery.
+//! Optional copies may finish later on the same socket, without delaying or
+//! repeating that canonical delivery.
 //! The header has its own allowance over the frame floor, so an update that
 //! fit one frame before still does.
 //!
@@ -315,13 +317,17 @@ impl Header {
         WINDOW_PAD_HEADER_BYTES + self.payload_len
     }
 
-    /// The whole envelope's length.
-    fn total(&self) -> Option<usize> {
+    /// The canonical payload and every required pad, without optional copies.
+    fn required(&self) -> Option<usize> {
         self.refs
             .checked_mul(REF_BYTES)?
             .checked_add(self.capsule_len)?
-            .checked_add(self.copies_len)?
             .checked_add(self.head())
+    }
+
+    /// The whole envelope's length.
+    fn total(&self) -> Option<usize> {
+        self.required()?.checked_add(self.copies_len)
     }
 }
 
@@ -511,6 +517,22 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
     if header.total() != Some(bytes.len()) {
         return Err(invalid("window pad envelope length"));
     }
+    decode_window_pad_fields(bytes, &header)
+}
+
+/// The original canonical ready point, even when optional copies come later.
+fn decode_required_window_pads(bytes: &[u8]) -> Result<WindowPadEnvelope, TransportError> {
+    let header = Header::read(bytes)?;
+    if header.required() != Some(bytes.len()) {
+        return Err(invalid("window pad envelope length"));
+    }
+    decode_window_pad_fields(bytes, &header)
+}
+
+fn decode_window_pad_fields(
+    bytes: &[u8],
+    header: &Header,
+) -> Result<WindowPadEnvelope, TransportError> {
     let payload = bytes[WINDOW_PAD_HEADER_BYTES..header.head()].to_vec();
     if *blake3::hash(&payload).as_bytes() != header.payload_digest {
         return Err(invalid("window pad payload digest"));
@@ -544,12 +566,14 @@ pub fn decode_window_pad_envelope(bytes: &[u8]) -> Result<WindowPadEnvelope, Tra
     };
     let copies = &bytes[refs_end + header.capsule_len..];
     // Derived copies are optional: their damage never rejects canonical bytes.
-    let home_claim_copies =
-        if !copies.is_empty() && *blake3::hash(copies).as_bytes() == header.copies_digest {
-            copies.to_vec()
-        } else {
-            Vec::new()
-        };
+    let home_claim_copies = if copies.len() == header.copies_len
+        && !copies.is_empty()
+        && *blake3::hash(copies).as_bytes() == header.copies_digest
+    {
+        copies.to_vec()
+    } else {
+        Vec::new()
+    };
     Ok(WindowPadEnvelope {
         kind: header.kind,
         form: header.form,

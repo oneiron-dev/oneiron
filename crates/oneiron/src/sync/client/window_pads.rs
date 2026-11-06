@@ -135,6 +135,54 @@ fn invalid(why: &'static str) -> TransportError {
 }
 
 impl SyncClient {
+    fn retain_late_window_home_claim_copies(
+        &mut self,
+        key: &WindowKey,
+        envelope: crate::sync::transport::ReceivedWindowPadEnvelope,
+    ) {
+        if self.config.federation_peer.is_some() {
+            return;
+        }
+        let copies = self.vault.prepare_relayed_home_claim_copy_bytes(
+            self.home_peer,
+            &crate::embed::home_vectors::HomeClaimDelivery {
+                window: key.as_str(),
+                payload: &envelope.payload,
+            },
+            &envelope.home_claim_copies,
+        );
+        if copies.is_empty() {
+            return;
+        }
+        let digest = *blake3::hash(&envelope.payload).as_bytes();
+        let mut attached = false;
+        for deferred in &mut self.deferred_sealed_updates {
+            if deferred.key == *key
+                && deferred.from == self.home_peer
+                && deferred.envelope.payload == envelope.payload
+            {
+                deferred.copies.extend(copies.iter().cloned());
+                attached = true;
+            }
+        }
+        for staged in &mut self.staged_world_updates {
+            if staged.key == *key
+                && staged.from == self.home_peer
+                && staged.copy_delivery == Some(digest)
+            {
+                staged.copies.extend(copies.iter().cloned());
+                attached = true;
+            }
+        }
+        if !attached {
+            crate::embed::home_vectors::copy_scope::retain_pending_copies(
+                &self.vault,
+                key,
+                &copies,
+            );
+        }
+    }
+
     fn window_pad_ledger(&self) -> std::sync::MutexGuard<'_, WindowPadLedger> {
         self.window_pads
             .lock()
@@ -378,7 +426,7 @@ impl SyncClient {
     }
 
     /// One window frame of `key` from the home under `sub_tag`: a notice as it
-    /// is, or an envelope's payload once the envelope is whole and its pads
+    /// is, or an envelope's payload once its required fields are whole and its pads
     /// are installed here, under the sub-tag its first frame came under.
     /// `Break` carries what answers a frame that is done with here: a part
     /// still to come, a receipt, or a `NotReady` and the ask for the window
@@ -418,6 +466,10 @@ impl SyncClient {
                         self.schedule_world_pad_repair(key);
                     }
                 }
+                return Ok(ControlFlow::Break(Vec::new()));
+            }
+            WindowPadArrival::Copies(envelope) => {
+                self.retain_late_window_home_claim_copies(key, envelope);
                 return Ok(ControlFlow::Break(Vec::new()));
             }
             WindowPadArrival::Envelope(sub_tag, envelope) => (sub_tag, envelope),
