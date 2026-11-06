@@ -70,37 +70,7 @@ impl Vault {
                 ));
             }
         }
-        let receipt = self.store.clock.entity_id()?;
-        let now = super::super::support::now_secs();
-        let mut body = ClaimBody::new(
-            "repo.proposal_settlement",
-            ClaimSubject::Entity(id),
-            rmpv::Value::Map(vec![
-                ("proposal".into(), id.to_hex().into()),
-                ("actor".into(), actor.to_hex().into()),
-                (
-                    "decision".into(),
-                    match decision {
-                        RepoProposalDecision::Approve => "approve".into(),
-                        RepoProposalDecision::Reject => "reject".into(),
-                    },
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.source = Some(ClaimSource::Observed);
-        self.put_reserved_claim_in_txn(
-            &mut txn,
-            &receipt,
-            &body,
-            crate::temporal::TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
-        )?;
+        let (receipt, now) = self.put_settlement_receipt_in_txn(&mut txn, id, actor, decision)?;
         // The owner's Approve of a masked copy's held bundle settles exactly
         // this replacement, in this same writer; a Reject settles nothing
         // (FIX 7608 2b-ii-B2, CALL H).
@@ -126,6 +96,49 @@ impl Vault {
         store(self, &mut txn, &row)?;
         txn.commit()?;
         Ok(row)
+    }
+
+    /// Mints the receipt claim of `actor`'s `decision` on proposal `id` in
+    /// the caller's writer: its id and time.
+    fn put_settlement_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        actor: EntityId,
+        decision: RepoProposalDecision,
+    ) -> Result<(EntityId, u64)> {
+        let receipt = self.store.clock.entity_id()?;
+        let now = super::super::support::now_secs();
+        let mut body = ClaimBody::new(
+            "repo.proposal_settlement",
+            ClaimSubject::Entity(id),
+            rmpv::Value::Map(vec![
+                ("proposal".into(), id.to_hex().into()),
+                ("actor".into(), actor.to_hex().into()),
+                (
+                    "decision".into(),
+                    match decision {
+                        RepoProposalDecision::Approve => "approve".into(),
+                        RepoProposalDecision::Reject => "reject".into(),
+                    },
+                ),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::Observed);
+        self.put_reserved_claim_in_txn(
+            txn,
+            &receipt,
+            &body,
+            crate::temporal::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        Ok((receipt, now))
     }
 }
 
