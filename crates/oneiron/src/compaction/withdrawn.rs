@@ -212,10 +212,13 @@ pub(crate) fn scrub_withdrawn_epoch_in_txn(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(());
     };
-    if row.entity_type != ENTITY_TYPE_SUMMARY
-        || WithdrawnKeyframe::decode(&row.body).is_ok()
-        || !crate::ports::stale_in_txn(store, txn, id)?
-    {
+    if row.entity_type != ENTITY_TYPE_SUMMARY || !crate::ports::stale_in_txn(store, txn, id)? {
+        return Ok(());
+    }
+    // An executor run's coverage keeps no digest of the words, whether this
+    // pass or an earlier one scrubs the row (FIX 928).
+    crate::code_run::CodeRunCompactionCoverage::withdraw_summary_in_txn(store, txn, id)?;
+    if WithdrawnKeyframe::decode(&row.body).is_ok() {
         return Ok(());
     }
     let form = stored_epoch_in(store, txn, id, &row.body)?;
