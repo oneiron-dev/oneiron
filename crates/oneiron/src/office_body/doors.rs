@@ -569,6 +569,7 @@ impl Vault {
                 version: version.version,
                 frontier: head.frontier.clone(),
                 rebind_frontier: None,
+                deck_ids: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),

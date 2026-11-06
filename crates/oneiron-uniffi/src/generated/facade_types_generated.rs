@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4571 generated types.
+// UniFFI census: 1262 facade rows, 4572 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -63420,6 +63420,23 @@ pub struct OfficeBodyExportVerbRequest {
     pub iana_timezone: Option<String>,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleOptionalU32OptionalString {
+    pub item0: Option<u32>,
+    pub item1: Option<String>,
+}
+impl serde::Serialize for TupleOptionalU32OptionalString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleOptionalU32OptionalString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::office_body::records::OfficeRecalcZone`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeRecalcZone {
@@ -63448,6 +63465,8 @@ pub struct OfficeBodyExportRecord {
         skip_serializing_if = "Option::is_none"
     )]
     pub rebind_frontier: Option<Vec<u8>>,
+    #[serde(rename = "deck_ids", default, skip_serializing_if = "Option::is_none")]
+    pub deck_ids: Option<std::collections::HashMap<String, TupleOptionalU32OptionalString>>,
     #[serde(rename = "source_version")]
     pub source_version: u64,
     #[serde(rename = "actor")]

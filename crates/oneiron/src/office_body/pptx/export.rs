@@ -284,7 +284,7 @@ impl Vault {
             })?;
             rebound = Some(rebind_frontier(&rebind.receipt));
         }
-        let record = export_record(
+        let mut record = export_record(
             (artifact, version.version, hold.frontier.clone()),
             rebound,
             base_version.unwrap_or(source.source_version),
@@ -292,6 +292,18 @@ impl Vault {
             at,
             (hold.changes, hold.effects.clone()),
         );
+        // An export this Keep did not bind keeps the ids its file gave each
+        // node, which no deck binding names (FIX 12346).
+        if record.rebind_frontier.is_none() {
+            record.deck_ids = Some(
+                hold.bindings
+                    .iter()
+                    .map(|(node, binding)| {
+                        (node.0, (binding.native_id, binding.creation_id.clone()))
+                    })
+                    .collect(),
+            );
+        }
         EXPORTS.put(
             &self.store,
             wtxn,
@@ -349,6 +361,7 @@ fn export_record(
         version,
         frontier,
         rebind_frontier,
+        deck_ids: None,
         source_version,
         actor: BodyActor::Actor(actor.entity_ref()),
         author: actor.entity_ref().to_hex(),
