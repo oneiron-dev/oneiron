@@ -77,3 +77,35 @@ queue dedupe rules apply as for the other request-bearing Coach jobs.
 
 This request does not grant source access, declare a complete input read set,
 enable FACT or authorize model release.
+
+## Callable defects and actual invokers
+
+`DreamerRunnerStore::enqueue_coach_skill_discovery_with_requests` accepts
+`dreamer_runner::maintenance::coach::SkillDiscoveryOutputReadRequests`. Its
+`attribution` field keeps the two independent judgment/proposal maps above.
+Its separate `callable_outcomes` map addresses an output by the exact pair of
+persisted judgment sequence and actual invoker executor. One judgment can charge
+several executors. A request for one invoker never supplies another's placement.
+The ordinary `enqueue_coach_skill_discovery` method still accepts attribution
+requests and queues an empty callable map. There is one current job-input format,
+not an old-format reader.
+
+After the original Coach-attempt check, the durable input reaches the original
+task sweep. That sweep resumes callable defects from its persisted judgment
+range before advancing its applied cursor. The callable projector rechecks the
+exact stored judgment, its undisplaced state, current callable skill revision,
+terminal receipt manifest and actual invocation witnesses in the same writer as
+the outcome. As with the ordinary reliability projector, only the judgment's
+first evidence receipt supplies its one outcome per invoker; additional citations
+do not multiply losses. A pack load without an invocation supplies no executor.
+A routed defect charges every executor that ran the callable, not only those
+whose invocation passed its return contract. The existing callable win path is
+unchanged.
+
+Only the explicit entry for that sequence and invoker supplies placement at a
+new physical outcome's birth. Missing requests remain unknown. Extra requests
+create no row. Replays do not restamp held outcomes, and changed contents retain
+the ordinary placement-clearing behavior. The judgment's own position, receipt,
+funding, read grants and advertised executor supply no output placement. No entry
+grants source access, declares a complete read set, enables FACT or authorizes
+model release.

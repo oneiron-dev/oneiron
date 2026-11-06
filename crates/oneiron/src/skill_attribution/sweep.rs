@@ -99,6 +99,26 @@ pub fn run_task_attribution_sweep_with_output_requests(
     decisions: Option<&AttributionDecisions<'_>>,
     output_requests: Option<&AttributionOutputReadRequests>,
 ) -> Result<AttributionSweepReport> {
+    run_task_attribution_sweep_with_callable_requests(
+        vault,
+        limit,
+        source,
+        decisions,
+        output_requests,
+        None,
+    )
+}
+
+/// The original sweep with separate placement requests for each callable
+/// defect's actual invoker. Missing requests leave outcome placement unknown.
+pub fn run_task_attribution_sweep_with_callable_requests(
+    vault: &Vault,
+    limit: usize,
+    source: &dyn ReceiptAttributionSource,
+    decisions: Option<&AttributionDecisions<'_>>,
+    output_requests: Option<&AttributionOutputReadRequests>,
+    callable_requests: Option<&crate::skill_reliability::CallableOutcomeReadRequests>,
+) -> Result<AttributionSweepReport> {
     let after = {
         let txn = vault.store.env.read_txn()?;
         SCAN_CURSOR.get(&vault.store, &txn, &())?
@@ -159,6 +179,11 @@ pub fn run_task_attribution_sweep_with_output_requests(
     report.judgments = judgments.len();
     report.actor_claims =
         crate::actor_claims::project_actor_claims_from_judgments(vault, &judgments)?;
+    report.skills = crate::skill_reliability::project_callable_judgment_outcomes(
+        vault,
+        &judgments,
+        callable_requests,
+    )?;
     for receipt in &receipts {
         let outcome = match source.anchored_outcome(receipt) {
             Ok(Some(outcome)) => outcome,

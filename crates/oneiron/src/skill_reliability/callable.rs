@@ -195,3 +195,88 @@ pub(crate) fn project_callable_receipt_outcome(
     }
     Ok(())
 }
+
+/// Independent output placement keyed by (persisted judgment sequence, actual
+/// invoker executor). One judgment can charge several executors; their output
+/// requests are separate. Its first evidence receipt identifies the outcome.
+/// These requests grant no read and never restamp an existing physical row.
+pub type CallableOutcomeReadRequests = BTreeMap<(u64, String), super::OutcomeReadPosition>;
+
+/// Projects stored, undisplaced callable defects to their actual invokers.
+/// Judgment, skill revision, receipt and invocation witnesses are read in the
+/// same writer as the outcome birth. A pack load alone is not an invocation.
+pub(crate) fn project_callable_judgment_outcomes(
+    vault: &Vault,
+    judgments: &[crate::skill_attribution::AttributionJudgment],
+    output_requests: Option<&CallableOutcomeReadRequests>,
+) -> Result<Vec<EntityId>> {
+    use crate::skill_attribution::{
+        AttributionVerdict, attribution_judgments_in_txn, judgment_displaced_in_txn,
+    };
+
+    let credited = vault.with_write_txn_grouped(|txn| {
+        let persisted: BTreeMap<_, _> = attribution_judgments_in_txn(vault, txn)?
+            .into_iter()
+            .map(|row| (row.sequence, row))
+            .collect();
+        let mut credited = BTreeMap::<(EntityId, String), u64>::new();
+        for judgment in judgments {
+            if judgment.verdict != AttributionVerdict::SkillDefect
+                || persisted.get(&judgment.sequence) != Some(judgment)
+                || judgment_displaced_in_txn(vault, txn, judgment.sequence)?
+            {
+                continue;
+            }
+            let Some(skill) = judgment.subject else {
+                continue;
+            };
+            let Some(record) = vault.get_skill_record_in_txn(txn, &skill)? else {
+                continue;
+            };
+            if record.role != SkillRole::Callable {
+                continue;
+            }
+            // One routed judgment contributes one receipt outcome per invoker,
+            // not a separate loss for every supporting citation.
+            let Some(receipt_ref) = judgment.evidence_receipts.first() else {
+                continue;
+            };
+            let Some(receipt) =
+                crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt_ref)?
+            else {
+                continue;
+            };
+            if !receipt_manifest_names_skill(&receipt, &record) {
+                continue;
+            }
+            for (executor, _) in callable_invokers_in_txn(vault, txn, &skill, &record, receipt_ref)?
+            {
+                let position = output_requests
+                    .and_then(|requests| requests.get(&(judgment.sequence, executor.clone())));
+                super::outcome_write::record_outcome_positioned_in_txn(
+                    vault,
+                    txn,
+                    &skill,
+                    Some(&executor),
+                    receipt_ref,
+                    false,
+                    judgment.at,
+                    position,
+                )?;
+                credited
+                    .entry((skill, executor))
+                    .and_modify(|at| *at = (*at).max(judgment.at))
+                    .or_insert(judgment.at);
+            }
+        }
+        Ok(credited)
+    })?;
+    let mut skills = Vec::new();
+    for ((skill, executor), at) in credited {
+        project_skill_reliability_for_executor(vault, &skill, &executor, at)?;
+        if !skills.contains(&skill) {
+            skills.push(skill);
+        }
+    }
+    Ok(skills)
+}

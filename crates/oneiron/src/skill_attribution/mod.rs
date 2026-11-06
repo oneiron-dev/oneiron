@@ -192,7 +192,8 @@ pub use run_writes::{RunWriteToken, run_write_token_of_origin, with_run_write_to
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
-    run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
+    run_task_attribution_sweep, run_task_attribution_sweep_with_callable_requests,
+    run_task_attribution_sweep_with_decisions,
     run_task_attribution_sweep_with_output_requests,
 };
 mod trace;
