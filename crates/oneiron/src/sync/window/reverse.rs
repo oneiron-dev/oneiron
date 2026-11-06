@@ -474,6 +474,11 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::origin_positions::mirror_local_position(vault, doc, window_key, id)?
+            {
+                wrote_any = true;
+            }
             // OF-522: a TURN's room row rides beside its carrier the same
             // way, and is refreshed when only the row changed.
             if window_key.world().is_none()

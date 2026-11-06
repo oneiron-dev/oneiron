@@ -13,6 +13,7 @@ use crate::{EntityId, Vault};
 /// own fresh binding, and still stands here on the key it proved. Only
 /// [`SyncClient::own_device_import`] makes one; the ingest doors mint a row's
 /// own-device lane under it.
+#[derive(Clone)]
 pub(in crate::sync) struct OwnDeviceImport {
     machine: EntityId,
     key: [u8; 32],

@@ -534,6 +534,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(key))?;
     // FIX 6279: and a birth carrier whose maker this vault erased.
     crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;
