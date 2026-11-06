@@ -1,6 +1,19 @@
 //! Default CLAIM vectors move only over an authenticated own-machine read,
 //! never through a canonical window's retained operation history.
 
+pub(crate) mod actor_copy;
+pub(crate) mod copy_scope;
+mod pending;
+pub(crate) mod retained;
+pub(crate) mod retained_copy;
+mod sealed;
+pub(crate) mod source;
+
+pub(crate) use sealed::{
+    HomeClaimDelivery, PreparedHomeClaimDelivery, PreparedHomeClaimSend, SealedHomeClaimVector,
+    SenderSignedHomeClaimVector,
+};
+
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
@@ -140,58 +153,67 @@ impl Vault {
     ) -> Result<Option<HomeClaimVector>> {
         let _acceptance = self.device_only_acceptance();
         let txn = self.store.env.read_txn()?;
-        if !own_peer_in_txn(self, &txn, peer)? {
-            return Ok(None);
-        }
-        let destination = crate::settings::ReadDestination::toward(peer);
-        let flagged = crate::settings::device_local_worlds_for(self, &txn, &destination)?;
-        if crate::settings::device_only_withholds(&self.store, &txn, &flagged, id)? {
-            return Ok(None);
-        }
-        let Some(source) = claim_source_in_txn(self, &txn, id)? else {
-            return Ok(None);
-        };
-        let (locality, model_locality) = match self.settled_embedding_locality_in_txn(&txn, id)? {
-            Some(EmbedderLocality::OwnerServer) => (1, ModelLocality::OwnServer),
-            Some(EmbedderLocality::ThirdParty) => (2, ModelLocality::ThirdParty),
-            _ => return Ok(None),
-        };
-        let Some(model_id) = model_in_txn(self, &txn)? else {
-            return Ok(None);
-        };
-        let Some(provenance) = self.embedding_provenance_in_txn(&txn, id)? else {
-            return Ok(None);
-        };
-        let Some(route) = route(&model_id, &provenance.runtime, model_locality) else {
-            return Ok(None);
-        };
-        let Some(row) = self
-            .store
-            .port_vector_with_raw(&txn, id, |bytes| Ok(bytes.to_vec()))?
-        else {
-            return Ok(None);
-        };
-        let values = crate::store::decode_vector_row(&row, self.config.dimensions)?;
-        if !values.iter().all(|value| value.is_finite()) {
-            return Ok(None);
-        }
-        let mut release_rows: Vec<_> = crate::settings::carried_worlds_in(&self.store, &txn, id)?
-            .worlds
-            .into_iter()
-            .collect();
-        release_rows.push(*id);
-        Ok(Some(HomeClaimVector {
-            entity_id: *id,
-            source,
-            release_rows,
-            model_id,
-            transform: transform_in_txn(self, &txn)?,
-            route,
-            locality,
-            provenance,
-            row,
-        }))
+        vector_for_peer_in_txn(self, &txn, peer, id)
     }
+}
+
+fn vector_for_peer_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    peer: PeerMachine,
+    id: &EntityId,
+) -> Result<Option<HomeClaimVector>> {
+    if !own_peer_in_txn(vault, txn, peer)? {
+        return Ok(None);
+    }
+    let destination = crate::settings::ReadDestination::toward(peer);
+    let flagged = crate::settings::device_local_worlds_for(vault, txn, &destination)?;
+    if crate::settings::device_only_withholds(&vault.store, txn, &flagged, id)? {
+        return Ok(None);
+    }
+    let Some(source) = claim_source_in_txn(vault, txn, id)? else {
+        return Ok(None);
+    };
+    let (locality, model_locality) = match vault.settled_embedding_locality_in_txn(txn, id)? {
+        Some(EmbedderLocality::OwnerServer) => (1, ModelLocality::OwnServer),
+        Some(EmbedderLocality::ThirdParty) => (2, ModelLocality::ThirdParty),
+        _ => return Ok(None),
+    };
+    let Some(model_id) = model_in_txn(vault, txn)? else {
+        return Ok(None);
+    };
+    let Some(provenance) = vault.embedding_provenance_in_txn(txn, id)? else {
+        return Ok(None);
+    };
+    let Some(route) = route(&model_id, &provenance.runtime, model_locality) else {
+        return Ok(None);
+    };
+    let Some(row) = vault
+        .store
+        .port_vector_with_raw(txn, id, |bytes| Ok(bytes.to_vec()))?
+    else {
+        return Ok(None);
+    };
+    let values = crate::store::decode_vector_row(&row, vault.config.dimensions)?;
+    if !values.iter().all(|value| value.is_finite()) {
+        return Ok(None);
+    }
+    let mut release_rows: Vec<_> = crate::settings::carried_worlds_in(&vault.store, txn, id)?
+        .worlds
+        .into_iter()
+        .collect();
+    release_rows.push(*id);
+    Ok(Some(HomeClaimVector {
+        entity_id: *id,
+        source,
+        release_rows,
+        model_id,
+        transform: transform_in_txn(vault, txn)?,
+        route,
+        locality,
+        provenance,
+        row,
+    }))
 }
 
 pub(super) fn replica_matches_in_txn(

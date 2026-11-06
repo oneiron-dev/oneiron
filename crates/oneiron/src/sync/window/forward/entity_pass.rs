@@ -129,7 +129,9 @@ pub(super) fn run_page(
             .map(|(key, _)| EntityId::from_hex(key).ok().filter(|id| watches(vault, id)))
             .collect();
         let mut claims_written = false;
-        let steps = match vault.with_write_txn_grouped(|wtxn| {
+        let copy_writer =
+            crate::embed::home_vectors::copy_scope::observe_writer(vault, ctx.window_key.as_str());
+        let result = vault.with_write_txn_grouped(|wtxn| {
             let mut unborn = Vec::with_capacity(rows.len());
             for watched in &watched {
                 unborn.push(match watched {
@@ -148,7 +150,11 @@ pub(super) fn run_page(
                 }
             }
             Ok(steps.into_iter().zip(unborn).collect::<Vec<_>>())
-        }) {
+        });
+        if let Some(copy_writer) = copy_writer {
+            copy_writer.finish(&result);
+        }
+        let steps = match result {
             Ok(steps) => steps,
             Err(err) => {
                 entity_error = Some(err);
