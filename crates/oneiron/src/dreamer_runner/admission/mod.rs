@@ -10,7 +10,8 @@ mod native_call;
 pub(in crate::dreamer_runner) use self::native_call::record_native_net_settlement_in_txn;
 pub(crate) use self::native_call::{
     NativeCallPayment, NativeNetSnapshot, NativeNetTally, bind_native_call_terminal_in_txn,
-    invoice_native_call_in_txn, record_native_call_meter_in_txn, record_native_net_response_in_txn,
+    invoice_native_call_in_txn, record_native_call_meter_in_txn,
+    record_native_house_completions_in_txn, record_native_net_response_in_txn,
     retain_native_call_in_txn,
 };
 mod requester;

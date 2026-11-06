@@ -72,6 +72,34 @@ pub struct DecisionCallAdmission {
     meter_vault: Arc<OnceLock<Weak<Vault>>>,
 }
 
+/// One actual native completion request. List position is request order on this
+/// read, not a corrective financial ordinal or proof that bytes reached a model.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionCompletionObservation {
+    pub requested_prompts: usize,
+    /// None when the request returned no parsed native response.
+    pub response: Option<DecisionCompletionResponse>,
+}
+
+/// Parsed response counters before status, batch or label validation. These are
+/// source data only; missing counts and malformed shapes are never zero invoices.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionCompletionResponse {
+    pub status: u16,
+    /// None for a non-object/non-array body; an empty array stays explicitly empty.
+    pub answers: Option<Vec<DecisionAnswerQuantity>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionAnswerQuantity {
+    pub index: Option<u64>,
+    pub tokens_evaluated: Option<u64>,
+    pub tokens_predicted: Option<u64>,
+}
+
 /// A native producer whose original admission was retained before its read.
 /// Recording its response quantity never pays or authorizes the call.
 pub struct DecisionCallInvoice<'a> {
@@ -80,6 +108,25 @@ pub struct DecisionCallInvoice<'a> {
 }
 
 impl DecisionCallInvoice<'_> {
+    /// Retains observed response counters separately from the immutable invoice,
+    /// including unknown responses after a known prefix. This never pays a call.
+    pub fn record_completions(
+        &self,
+        completions: &[DecisionCompletionObservation],
+    ) -> crate::Result<()> {
+        if completions.is_empty() {
+            return Ok(());
+        }
+        self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::record_native_house_completions_in_txn(
+                self.vault,
+                wtxn,
+                self.origin,
+                completions,
+            )
+        })
+    }
+
     /// Records the native terminal quantity, not a quote or a GROSS meter delta.
     pub fn record_usage(&self, usage: &oneiron_model::llm::LlmUsage) -> crate::Result<()> {
         let units = usage
