@@ -10,9 +10,14 @@
 //! where that getter put it, a mixed carrier's goes to KS7-3's port
 //! ([`MixedCarrierProjection`]), another client's stays with that client,
 //! and any row no compartment holds stays in the image, named by family on
-//! the capture receipt ([`NOT_COMPARTMENTED`]). The actor parts the getters
-//! split out are grouped under each actor's own entity tree ([`actors`]),
-//! and each bundle is sealed under its compartment's key ([`seal`]).
+//! the capture receipt ([`NOT_COMPARTMENTED`]). A sync window's Loro rows go
+//! to the port a window at a time once every row is read
+//! ([`MixedCarrierProjection::project_windows`], FIX 10277): each value's
+//! copies into their holders' compartments, the history into a payload-free
+//! carrier the image keeps ([`WindowCarrierRecord`]). The actor parts the
+//! getters split out are grouped under each actor's own entity tree
+//! ([`actors`]), and each bundle is sealed under its compartment's key
+//! ([`seal`]).
 //!
 //! KS7-5 wires capture ([`capture`]: the snapshot's projection, sealed) and
 //! restore ([`restore`]: each compartment opened before anything is made),
@@ -27,6 +32,7 @@
 )]
 
 mod actors;
+mod automatic;
 mod capture;
 mod preflight;
 mod restore;
@@ -50,7 +56,7 @@ pub(super) use self::seal::open_bundle;
 pub(super) use self::seal::{BundleRole, Compartment, PayloadSection, PayloadStreams};
 #[cfg(feature = "sync")]
 pub(super) use self::sync::SyncCarriers;
-use super::{INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
+use super::{BackupSelection, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
 use crate::store::checkpoint_payload::CHECKPOINT_PAYLOADS_ENABLED;
@@ -239,6 +245,67 @@ pub(super) trait MixedCarrierProjection {
     ) -> Result<BTreeSet<usize>> {
         Ok(BTreeSet::new())
     }
+
+    /// Splits the window Loro rows of `rows` a window at a time (FIX 10277):
+    /// the snapshots, pending updates and queued updates [`Self::project`]
+    /// left, every one the image takes, read whole before any is split. Each
+    /// window it splits puts its owners' value copies in `out.captured`, its
+    /// carrier in `out.records` and its rows in `out.rows`; a window it does
+    /// not split puts nothing anywhere. Answers the indexes of the rows it
+    /// placed. None by default.
+    fn project_windows(
+        &self,
+        _txn: &RoTxn<'_>,
+        _filter: &ImageFilter,
+        _rows: &[DocumentCarrierRow],
+        _out: &mut WindowCapture,
+    ) -> Result<BTreeSet<usize>> {
+        Ok(BTreeSet::new())
+    }
+}
+
+/// What a window projection placed (FIX 10277).
+#[derive(Default)]
+pub(super) struct WindowCapture {
+    /// Each owner's value copies, at their copy locators, with the actor
+    /// parts and dependencies of each.
+    pub(super) captured: Captured,
+    /// Each split window's carrier, which the image keeps.
+    pub(super) records: Vec<WindowCarrierRecord>,
+    /// Every Loro row a carrier puts back: the image leaves each out.
+    pub(super) rows: Vec<RowLocator>,
+}
+
+/// One copy of a window value or withheld key the credential client holds
+/// (FIX 10278): kept as it stands under the image's own seal, as that
+/// client's dispatched rows are. Another client's copy keeps its window whole.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::recovery::checkpoint) struct ClientCopy {
+    pub(in crate::recovery::checkpoint) atom: u32,
+    pub(in crate::recovery::checkpoint) value: Vec<u8>,
+}
+
+/// One split window as the image keeps it (FIX 10277): its carrier's one
+/// spelling (the vendored skeleton, its rows' locators and slices, each
+/// value's copies and their homes, never a value or an actor), and the
+/// structure copies and credential client copies the image's own seal holds,
+/// by ordinal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::recovery::checkpoint) struct WindowCarrierRecord {
+    pub(in crate::recovery::checkpoint) carrier: Vec<u8>,
+    pub(in crate::recovery::checkpoint) structure: Vec<StructureCopy>,
+    pub(in crate::recovery::checkpoint) clients: Vec<ClientCopy>,
+}
+
+/// One structure copy of a window value: ids, markers and metadata with no
+/// payload of their own, kept under the image's seal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::recovery::checkpoint) struct StructureCopy {
+    pub(in crate::recovery::checkpoint) atom: u32,
+    pub(in crate::recovery::checkpoint) value: Vec<u8>,
 }
 
 /// One image row of a carrier that holds entity-document frames (a pending
@@ -303,16 +370,23 @@ fn row_db(database: &str) -> Option<RowDb> {
 }
 
 /// What the image takes, the one rule the snapshot and the projection read
-/// it by (FIX 6377): canonical rows only, and no row of an excluded entity
-/// (a diagnostic): its own, its short ids, its edges and its index sources.
+/// it by (FIX 6377): canonical rows only, and no row of an excluded diagnostic
+/// entity: its own, its short ids, its edges and its index sources. Automatic
+/// snapshots also apply their positive known-world payload selection.
 pub(super) struct ImageFilter {
     excluded: BTreeSet<Vec<u8>>,
+    automatic: automatic::Selection,
 }
 
 impl ImageFilter {
     /// The filter of the image `txn` reads: every diagnostic entity left
-    /// out, as runtime-only.
-    pub(super) fn of_snapshot(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
+    /// out, as runtime-only, and the snapshot's actual backup selection.
+    pub(super) fn of_snapshot(
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        selection: BackupSelection,
+    ) -> Result<Self> {
+        let store = &vault.store;
         let mut excluded = BTreeSet::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(store, txn)? {
             let (key, value) = row?;
@@ -322,12 +396,17 @@ impl ImageFilter {
                 excluded.insert(key.as_bytes().to_vec());
             }
         }
-        Ok(Self { excluded })
+        Ok(Self {
+            excluded,
+            automatic: automatic::Selection::read(vault, txn, selection)?,
+        })
     }
 
     /// Whether the image takes the row `key` of `database`, as it rests.
     pub(super) fn takes(&self, database: &str, key: &[u8], value: &[u8]) -> bool {
-        if storage_tier(database, key) != StorageTier::Canonical {
+        if storage_tier(database, key) != StorageTier::Canonical
+            || !self.automatic.takes(database, key)
+        {
             return false;
         }
         let excluded = |id: &[u8]| self.excluded.contains(id);
@@ -347,11 +426,24 @@ impl ImageFilter {
         }
     }
 
+    /// Whether the image takes the value copy at `at` of `window`, a split
+    /// window's: each value of a window whose rows it takes, today. A window
+    /// any of whose values it does not take stays whole.
+    pub(super) fn takes_window_value(
+        &self,
+        _window: &str,
+        _at: &RowLocator,
+        _value: &[u8],
+    ) -> bool {
+        true
+    }
+
     /// `captured` with only the rows the image takes: an owner's part the
     /// image leaves out goes, with its actor parts and its dependencies.
     fn keep(&self, captured: Captured) -> Captured {
         let takes = |db: RowDb, key: &[u8], value: &[u8]| self.takes(db_name(db), key, value);
-        let mut kept = keep_owner_parts(captured, &takes);
+        let mut kept =
+            keep_owner_parts(captured, &takes, &|owner| self.automatic.keeps_owner(owner));
         kept.structure
             .retain(|row| takes(row.at.db, &row.at.key, &row.value));
         kept.dispatched
@@ -365,9 +457,16 @@ impl ImageFilter {
 /// `captured` with only the owner parts whose image rows `keeps` takes: a
 /// part it leaves out goes, with its actor parts and its dependencies. Its
 /// structure, dispatched and unclassified rows stay as they are.
-fn keep_owner_parts(captured: Captured, keeps: &dyn Fn(RowDb, &[u8], &[u8]) -> bool) -> Captured {
+fn keep_owner_parts(
+    captured: Captured,
+    keeps: &dyn Fn(RowDb, &[u8], &[u8]) -> bool,
+    keeps_owner: &dyn Fn(OwnerRef) -> bool,
+) -> Captured {
     let mut kept = Captured::default();
     for rows in captured.owners() {
+        if !keeps_owner(rows.owner()) {
+            continue;
+        }
         let parts: Vec<&RowPart> = rows
             .rows
             .iter()
@@ -485,6 +584,8 @@ pub(super) struct Projected {
     /// Every registry gap the capture rode past, which its receipt names
     /// (KS7-6).
     registry_gaps: Vec<preflight::RegistryGap>,
+    /// Each split window's carrier, which the image keeps (FIX 10277).
+    pub(super) window_carriers: Vec<WindowCarrierRecord>,
 }
 
 impl Projected {
@@ -620,6 +721,9 @@ pub(super) fn project(
     let families = Families::new();
     let mut split: BTreeMap<Carrier, Captured> = BTreeMap::new();
     let mut documents = Vec::new();
+    // A window's Loro rows the one-row port leaves, kept until every row is
+    // read so that a window's rows split together (FIX 10277).
+    let mut windows = Vec::new();
     for &(name, class) in preflight.databases() {
         let mut place = |key: &[u8], value: &[u8]| -> Result<()> {
             if !filter.takes(name, key, value) {
@@ -663,7 +767,19 @@ pub(super) fn project(
                 }
                 (Class::Mixed(carrier), None) => {
                     let out = split.entry(carrier).or_default();
-                    if !carriers.project(txn, carrier, key, value, out)? {
+                    let placed = carriers.project(txn, carrier, key, value, out)?;
+                    let loro = matches!(
+                        carrier,
+                        Carrier::WindowSnapshot | Carrier::WindowUpdate | Carrier::SyncQueue
+                    );
+                    if !placed && loro {
+                        windows.push(DocumentCarrierRow {
+                            carrier,
+                            family,
+                            key: key.to_vec(),
+                            value: value.to_vec(),
+                        });
+                    } else if !placed {
                         projected.count(family);
                     }
                 }
@@ -697,6 +813,23 @@ pub(super) fn project(
         if !carriers.project(txn, row.carrier, &row.key, &row.value, out)? {
             projected.count(row.family);
         }
+    }
+    let mut window = WindowCapture::default();
+    let placed = carriers.project_windows(txn, filter, &windows, &mut window)?;
+    for (index, row) in windows.iter().enumerate() {
+        if !placed.contains(&index) {
+            projected.count(row.family);
+        }
+    }
+    if !window.records.is_empty() {
+        claims.note(BundleRole::Window, &window.captured)?;
+        for at in &window.rows {
+            claims.put(at.db, &at.key, BundleRole::Window, Claim::Sealed)?;
+        }
+        projected
+            .captures
+            .push((BundleRole::Window, window.captured));
+        projected.window_carriers = window.records;
     }
     for (carrier, captured) in split {
         let role = BundleRole::Carrier(carrier);

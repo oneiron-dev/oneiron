@@ -295,8 +295,17 @@ export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 
+/** Caller-selected worlds, within the caller's existing read authority. */
+export type RecallWorlds =
+  | { kind: "all" }
+  | { kind: "base" }
+  | { kind: "world"; worldRef: string; includeBase: boolean }
+  | { kind: "worlds"; worldRefs: string[]; includeBase: boolean }
+
 /** Recall scoping: narrowing only; unset is the vault floor. */
 export type RecallScope = {
+  /** Explicit world selection; mutually exclusive with `worldRef`. */
+  worlds?: RecallWorlds
   worldRef?: string
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
@@ -393,6 +402,8 @@ export type MemoryItem = {
   stale?: MemoryStaleStamp
   world?: string
   facet?: string
+  /** The claim's explicit project audience, not a topic or a WORLD. */
+  projectRef?: string
   salience?: number
   /** A conversation record's current reactions, one grouped line per glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item. */
   reactions: string[]
@@ -755,6 +766,7 @@ class RecallResidence(TypedDict):
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
+    narrowing: Facade.ScopedReadReceipt
     scope_honesty: ScopeHonesty
     retrieval_meta: RetrievalMeta
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
@@ -1342,6 +1354,8 @@ class Oneiron:
         @property
         def productivity(self) -> "Oneiron._VaultProductivityVerbs": ...
         @property
+        def ingest(self) -> "Oneiron._VaultIngestVerbs": ...
+        @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
             """Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
@@ -1365,6 +1379,8 @@ class Oneiron:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs": ...
+        @property
+        def mail(self) -> "Oneiron._VaultMailVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -3892,6 +3908,14 @@ class Oneiron:
             """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
         def tree(self, spec: Facade.ProductivityTreeRequest) -> Facade.ScopedReadResult[Facade.ProductivityTree | None]:
             """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
+    class _VaultIngestVerbs:
+        @property
+        def ag_ui(self) -> "Oneiron._VaultIngestAgUiVerbs": ...
+    class _VaultIngestAgUiVerbs:
+        def import_(self, spec: Facade.AgUiFileImport) -> Facade.AgUiFileReceipt:
+            """The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."""
+        def read(self, input: Facade.AgUiFileReadInput) -> Facade.AgUiFileRead:
+            """Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."""
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
@@ -4168,6 +4192,55 @@ class Oneiron:
             """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
         def folder(self, spec: Facade.CustodyMemberRef) -> Facade.CustodySetRevision:
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
+    class _VaultMailVerbs:
+        @property
+        def pack(self) -> "Oneiron._VaultMailPackVerbs": ...
+        @property
+        def sources(self) -> "Oneiron._VaultMailSourcesVerbs": ...
+        @property
+        def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
+        @property
+        def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
+        def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
+            """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+    class _VaultMailPackVerbs:
+        def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
+            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+    class _VaultMailSourcesVerbs:
+        def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailSourceView]:
+            """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
+        @property
+        def settings(self) -> "Oneiron._VaultMailSourcesSettingsVerbs": ...
+        @property
+        def members(self) -> "Oneiron._VaultMailSourcesMembersVerbs": ...
+        def audience_events(self, spec: Facade.MailSourceRef) -> list[Facade.SourceAudienceEventView]:
+            """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
+        def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
+            """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+    class _VaultMailSourcesSettingsVerbs:
+        def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
+            """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
+    class _VaultMailSourcesMembersVerbs:
+        def set(self, spec: Facade.MailSourceMembersRequest) -> Facade.MailSourceView:
+            """Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on."""
+    class _VaultMailThreadsVerbs:
+        def share(self, spec: Facade.MailThreadShareRequest) -> Facade.MailThreadShareReceipt:
+            """Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox."""
+        def unshare(self, spec: Facade.MailThreadShareRequest) -> Facade.MailThreadShareReceipt:
+            """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
+        def read(self, spec: Facade.MailThreadRequest) -> Facade.MailThreadView:
+            """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+    class _VaultMailComplianceVerbs:
+        def setting(self, spec: Facade.EmptyRequest | None = None) -> Facade.MailComplianceSettingView:
+            """Whether org compliance search across mailboxes is on; off by default."""
+        def set(self, spec: Facade.MailComplianceSetRequest) -> Facade.MailComplianceSettingView:
+            """Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log."""
+        def log(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailComplianceEventView]:
+            """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
+        def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
+            """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
@@ -4176,6 +4249,8 @@ class Oneiron:
     class _SelfVerbs:
         @property
         def focus(self) -> "Oneiron._SelfFocusVerbs": ...
+        @property
+        def board(self) -> "Oneiron._SelfBoardVerbs": ...
         @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
@@ -4250,6 +4325,19 @@ class Oneiron:
             """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
         def seal(self, spec: Facade.ScratchpadSealRequest) -> Facade.ScratchpadWriteReply:
             """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
+    class _SelfBoardVerbs:
+        def layout(self, spec: Facade.EmptyRequest) -> Facade.BoardLayoutState:
+            """The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."""
+        def fold(self, spec: Facade.BoardFoldRequest) -> Facade.BoardLayoutState:
+            """Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."""
+        def unfold(self, spec: Facade.BoardSectionRequest) -> Facade.BoardLayoutState:
+            """Unfolds one section of the bound actor's context board; applies at the next turn."""
+        def size(self, spec: Facade.BoardSizeRequest) -> Facade.BoardLayoutState:
+            """Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."""
+        def filter(self, spec: Facade.BoardFilterRequest) -> Facade.BoardLayoutState:
+            """Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."""
+        def replace(self, spec: Facade.BoardReplaceRequest) -> Facade.BoardLayoutState:
+            """Replaces the whole layout the bound actor's next turn applies to its context board."""
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...

@@ -75,6 +75,7 @@ mod router;
 mod run_backend;
 mod runtime;
 mod served;
+mod siwc_responses;
 pub(crate) mod soniox;
 mod source_admission;
 mod sse;
@@ -123,7 +124,9 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+pub(crate) use worker_host::{
+    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+};
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{
@@ -228,6 +231,7 @@ fn build_provider(
     keys: Option<&Arc<dyn KeyDoor>>,
     identities: &Arc<llama_identity::LlamaIdentityResolver>,
     responses: &ResponsesContext,
+    posture: oneiron::HostingPrivacyPosture,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -241,6 +245,20 @@ fn build_provider(
             .workers
             .iter()
             .any(|row| row.kind == WorkerKind::Exl3 && row.binding.provider == name);
+    if let Some(siwc) = &provider.siwc {
+        oneiron::dispatch_byoa::check_seat_placement(
+            oneiron::dispatch_byoa::OfficialSeatRoute::SignInWithChatGpt,
+            posture,
+            oneiron::dispatch_byoa::SeatPlacementApproval {
+                openai_hosted_plan: siwc.openai_hosted_plan_approved,
+                ..Default::default()
+            },
+            true,
+        )?;
+        return Ok(Some(Arc::new(siwc_responses::SiwcResponses::new(
+            provider, catalog,
+        )?)));
+    }
     if provider.key_secret.is_some() && provider.kind.generates() {
         let site = site
             .ok_or_else(|| anyhow::anyhow!("no credential broker was made"))?
@@ -341,11 +359,22 @@ fn build_provider(
         }
         ProviderKind::AnthropicCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::ApiKeyHeader)?;
+            let engine_models = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             Arc::new(AnthropicMessagesBackend::new(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
                     cap: output_cap(provider),
+                    engine_models,
                 },
             ))
         }
@@ -373,6 +402,10 @@ fn build_reranker(
     provider: &ProviderConfig,
     models: &[ModelRef],
 ) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
+    anyhow::ensure!(
+        provider.siwc.is_none(),
+        "SIWC credentials serve Responses, not reranking"
+    );
     // The credential broker sends chat calls only. A rerank call sent without
     // it would carry no key, while its offer says the broker holds one.
     if provider.key_secret.is_some() {

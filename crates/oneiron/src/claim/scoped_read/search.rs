@@ -161,6 +161,7 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
         query_affect: Option<oneiron_contracts::affect::Vad>,
+        media_memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
@@ -179,6 +180,9 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted);
+        if let Some(memory) = media_memory {
+            pipeline = pipeline.media_query_memory(memory);
+        }
         if let Some(query) = query {
             pipeline = pipeline.search_text(query, limit);
         }
