@@ -51,14 +51,14 @@ pub(crate) use self::mask::side_row::{
     admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
-    BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
+    AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
     mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
 };
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
-pub(crate) use self::provider_tokens::embedded_credential;
+pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
 pub(crate) use self::whole_read::{
