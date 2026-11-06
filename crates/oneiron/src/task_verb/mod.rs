@@ -69,6 +69,9 @@ mod highway_report;
 pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
+mod host_done_confession;
+pub use host_done_confession::HostDoneConfessionContext;
+pub(crate) use host_done_confession::host_done_confession_in_txn;
 mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
