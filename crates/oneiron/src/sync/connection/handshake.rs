@@ -11,12 +11,11 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
-use crate::sync::transport;
 use crate::sync::types::parse_window_key_str;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 use super::server_close::ServerClose;
-use super::session::{FullResyncMarker, WsSink};
+use super::session::FullResyncMarker;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
