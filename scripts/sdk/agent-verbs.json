@@ -20973,7 +20973,7 @@
     },
     {
       "name": "vault.mail.reply.draft",
-      "description": "Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first.",
+      "description": "Drafts a reply to a mail thread the caller reads, in plain text with an optional simple HTML alternative, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first.",
       "input": "crate::mail_pack::MailReplyDraftRequest",
       "output": "crate::mail_pack::MailReplyDraftView",
       "call": "memory.mail_reply_draft(&input)?",
