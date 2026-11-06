@@ -204,11 +204,22 @@ pub struct SharedActExecutionReceipt {
     pub revoked_slips: Vec<String>,
     /// The export made for a removed Owner before the removal.
     pub export: Option<SharedActExport>,
-    /// The hash (hex) of the host-signed `OwnerHandover` AUTHORITY_LOG
-    /// entry an ownership change wrote in this writer, which names this
-    /// receipt back. `None` when nothing was signed: a membership change, or
-    /// an act run with no slip issuer.
+    /// The hash (hex) of the AUTHORITY_LOG entry that signs the change and
+    /// names this receipt back: the host-signed `OwnerHandover` an ownership
+    /// change wrote in this writer, or the carrier-signed membership
+    /// execution record of a change no host issuer signed, in this writer
+    /// or once a later pass counted it (FIX 12335). `None` while that record
+    /// is pending, and for a change no entry names: an invitation, an
+    /// erase, or a member change whose withdrawals the host signed apart.
     pub authority_entry: Option<String>,
+    /// Whether the change's signed record is pending (FIX 12335): its writer
+    /// had no host issuer to sign the withdrawal of a Grant an owner's
+    /// signed mint made, or its Owner handover, and the carrier-signed
+    /// record of it does not count yet. The pass that counts it clears this
+    /// and names the record in `authority_entry`. A pending change is never
+    /// reported signed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub authority_record_pending: bool,
     /// The person who authorized the change, PERSON hex, when the writer
     /// holds one apart from its actor: the attested account owner of a
     /// managed vault's proof-of-control recovery, as its signed handover
@@ -434,6 +445,29 @@ pub struct SharedVaultDeletion {
     pub backup_retain_until: u64,
 }
 
+/// What the authority log holds of one change, as its receipt names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChangeRecord {
+    /// No entry names the change: an invitation, an erase, or a member
+    /// change whose withdrawals the host signed apart.
+    Unnamed,
+    /// The counted entry that signs the change and names its receipt.
+    Signed(crate::authority::AuthorityEntryHash),
+    /// No issuer signed the change in its writer, and its carrier-signed
+    /// record does not count yet (FIX 12335).
+    Pending,
+}
+
+impl ChangeRecord {
+    /// The entry a receipt names, for a signed change alone.
+    const fn entry(self) -> Option<crate::authority::AuthorityEntryHash> {
+        match self {
+            Self::Signed(hash) => Some(hash),
+            Self::Unnamed | Self::Pending => None,
+        }
+    }
+}
+
 /// One applied effect, before its receipt is written.
 struct Effect {
     change: SharedVaultChange,
@@ -634,7 +668,7 @@ impl Vault {
         owners: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
-        authority_entry: Option<crate::authority::AuthorityEntryHash>,
+        record: ChangeRecord,
         authorizer: Option<EntityId>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
@@ -653,9 +687,11 @@ impl Vault {
                 .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
                 .collect(),
             export,
-            authority_entry: authority_entry
+            authority_entry: record
+                .entry()
                 .as_ref()
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
+            authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
             completed_at: now,
         };
