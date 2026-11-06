@@ -9,8 +9,10 @@ use super::{
 };
 use crate::mcp::{McpGeneratedVerbTool, McpVerbToolArgs};
 use crate::server::SyncServer;
+use oneiron::EntityId;
 use oneiron::code_run::vault_read::VaultReadMethod;
 use oneiron::context_board::CapabilityHit;
+use oneiron::runtime_hooks::VerbHookStop;
 use serde_json::Value;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -19,7 +21,8 @@ use std::sync::Arc;
 /// it served listed in `served`. Its request crosses the native read's
 /// verb-hook boundary ([`execute_native_read_input`], FIX 1435). A verb
 /// hook's stop is the tool result the client reads, not a refusal
-/// (ARCH-0080 §3): it breaks out with that result.
+/// (ARCH-0080 §3): it breaks out with that result, released by the rows
+/// [`stop_release_rows`] names.
 pub(super) async fn execute_mcp_native_read(
     server: &Arc<SyncServer>,
     args: &McpVerbToolArgs,
@@ -55,8 +58,8 @@ pub(super) async fn execute_mcp_native_read(
             hook_notice,
             ..
         }) => {
-            let stopped =
-                mcp_hook_stop_result(server, args, actor, *stop, served.rows(), hook_notice)?;
+            let rows = stop_release_rows(server, actor, &stop, served);
+            let stopped = mcp_hook_stop_result(server, args, actor, *stop, rows, hook_notice)?;
             return Ok(ControlFlow::Break(stopped));
         }
         read => read?,
@@ -69,6 +72,35 @@ pub(super) async fn execute_mcp_native_read(
         McpCarrierPolicy::DrainWithCapabilities(capabilities),
         None,
     )))
+}
+
+/// The rows a native read's hook `stop` is released by. A retry that gets
+/// the answer an ask's settlement already ran restores into `served` the
+/// rows that saved answer was derived from (FIX 1435). An answer saved with
+/// none is released by no listed row, so off this device it is withheld as
+/// a result whose rows are unknown is, never released as an empty set. Any
+/// other stop is released by the rows `served` lists.
+fn stop_release_rows<'s>(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    stop: &VerbHookStop,
+    served: &'s mut McpServed,
+) -> Option<&'s [EntityId]> {
+    if !matches!(stop, VerbHookStop::Completed { .. }) {
+        return served.rows();
+    }
+    let saved = actor.invocation.and_then(|invocation| {
+        server
+            .vault
+            .verb_hook_saved_producers(invocation)
+            .inspect_err(
+                |error| tracing::warn!(%error, "a drained native read's rows did not read"),
+            )
+            .ok()
+            .flatten()
+    })?;
+    served.extend(saved);
+    served.rows()
 }
 
 /// The native read `method` of `tool` on `request` for `actor`, through its
