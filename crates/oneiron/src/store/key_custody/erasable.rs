@@ -52,7 +52,7 @@ use super::files::{EntryState, LocalCustody, exists, open_dir, read_whole, write
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::platform;
 use super::retirement::{
-    RetireCause, RetirementIntent, retirement_in_txn, retirements_in_txn, stage_retirement_in_txn,
+    RetireCause, RetirementIntent, retirements_in_txn, stage_retirement_in_txn,
 };
 
 /// What an erasable key serves: its item's first byte.
@@ -477,40 +477,34 @@ impl Store {
         if owed.is_empty() {
             return Ok(false);
         }
-        self.finish_custody_retirements(CustodyKind::ErasableKey, |_, intent| {
-            if intent.cause == RetireCause::Erase {
-                Ok(true)
-            } else {
-                Err(Error::CorruptedIndex(
-                    "erasable keys retire for an erase only",
-                ))
-            }
-        })?;
-        self.tombstone_final_drafter_keys(&owed)?;
+        self.finish_custody_retirements_then(
+            CustodyKind::ErasableKey,
+            |_, intent| {
+                if intent.cause == RetireCause::Erase {
+                    Ok(true)
+                } else {
+                    Err(Error::CorruptedIndex(
+                        "erasable keys retire for an erase only",
+                    ))
+                }
+            },
+            tombstone_final_drafter_key,
+        )?;
         Ok(true)
     }
+}
 
-    /// Tombstones each drafter artifact key of `finished` whose retirement
-    /// is final, its intent cleared (FIX 16230), under custody's writer
-    /// guard and the write slot, so no mint, staging or finisher runs
-    /// beside it; the transaction only holds the slot and commits nothing.
-    /// A key whose intent stands again waits for the next pass. Other
-    /// purposes keep their directories.
-    fn tombstone_final_drafter_keys(&self, finished: &[RetirementIntent]) -> Result<()> {
-        let _custody = self.core.key_custody.write_guard()?;
-        let wtxn = self.env.write_txn()?;
-        if self.archived_in_txn(&wtxn)? {
-            return Ok(());
-        }
-        let custody = self.core.key_custody.committed_in_txn(self, &wtxn)?;
-        for intent in finished {
-            let drafter = ErasableItem::of_item(intent.subject.item())
-                .is_some_and(|item| item.purpose == ErasablePurpose::DrafterArtifact);
-            if !drafter || retirement_in_txn(self, &wtxn, &intent.subject)?.is_some() {
-                continue;
-            }
-            custody.tombstone_erasable(&intent.subject)?;
-        }
-        Ok(())
+/// Tombstones a drafter artifact key once its retirement is carried out
+/// (FIX 16230): its directory is replaced by a tombstone under the
+/// finisher's custody lock and writer, before its intent clears, so an
+/// interrupted or failed tombstone stays owed and the next pass makes it
+/// again (a tombstoned key reads retired, and an absent directory is
+/// already done). Other purposes keep their directories.
+fn tombstone_final_drafter_key(custody: LocalCustody<'_>, intent: &RetirementIntent) -> Result<()> {
+    let drafter = ErasableItem::of_item(intent.subject.item())
+        .is_some_and(|item| item.purpose == ErasablePurpose::DrafterArtifact);
+    if drafter {
+        custody.tombstone_erasable(&intent.subject)?;
     }
+    Ok(())
 }
