@@ -269,10 +269,13 @@ by this string lease. They are not charged as if they shared these buffers.
 ## MEMORIES response buffer custody
 
 The final Board response keeps its original MEMORIES section and a separate,
-non-serialized capacity holder. The section drops before that holder. Capture
-happens just after the response is assembled; it does not change the public
-section type, its optional wire field, the response schema or the earlier raw
-assembly tuple.
+non-serialized capacity holder. The section drops before that holder. The caller
+creates the holder before either raw producer and keeps it through the raw
+assembly tuple. Each producer records the final section's capacities
+before its next await: the retrieval path before advancing observations, and
+the pins-only path before recording delivery. The same holder moves into the
+response without another charge. The public section type, optional wire field,
+response schema and tuple payloads are unchanged.
 
 This holder records the version string, actual row-vector slots, each row's id,
 short id, content hash, asset reference, world, snippet and hook strings, and the
@@ -287,11 +290,18 @@ before the clone and populated from the clone's actual capacities. The callback,
 recording transaction, refusal and rollback behavior are unchanged. It never
 inherits the original response's charge.
 
-Both holders provide post-allocation custody, not admission. Earlier MEMORIES
-assembly, raw-return-tuple lifetimes, chat-context captures, dynamic JSON copies,
-serializer buffers and other metadata backing remain separate work. No clone is
-claimed covered because it came from a charged source. No memory wait, size cap,
-deadline, refusal, policy or format version changes here.
+These holders provide post-allocation custody, not admission. The producer's
+final section stays charged through observation or delivery recording, raw tuple
+moves, later board assembly and the response's last drop. Errors and cancellation
+drop the producer or board payload before the caller's holder. A missing or
+filtered-out section has no backing to charge. The independent turn-record clone
+still needs its own holder.
+
+Earlier projection and pin construction, filter scratch, allocation and
+reallocation peaks, dynamic JSON copies, serializer buffers and other metadata
+backing remain separate work. No clone is claimed covered because it came from
+a charged source. No memory wait, size cap, deadline, refusal, policy or format
+version changes here.
 
 
 ## Chat capture buffer custody
@@ -319,8 +329,8 @@ the same. The final record callback still borrows the original captured section.
 This is post-allocation custody only. Temporary clones while settling rows,
 filter scratch, world sets, auth, layout candidates, temporary emit assembly,
 copied record text and other record-building allocations are not covered. Earlier
-assembly, raw-return tuples, allocation and reallocation peaks, and retained-input
-FIFO progress remain separate work. No memory wait, admission, cap, deadline,
+assembly internals, allocation and reallocation peaks, and retained-input FIFO
+progress remain separate work. No memory wait, admission, cap, deadline,
 refusal, policy or format changes here.
 
 

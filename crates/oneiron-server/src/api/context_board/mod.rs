@@ -454,6 +454,8 @@ async fn hydrate_inner(
             branch,
         )
         .map_err(|error| super::core_engine_error("board hook blocks failed", error))?;
+    let mut memories_storage =
+        super::context_pack::output_memory::RetainedMemoriesOutput::new(&server.memory);
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
             let mut memories = resolve_memories_request(
@@ -465,8 +467,14 @@ async fn hydrate_inner(
                 &auth,
             )?;
             memories.hook_pins = hook_pins.clone();
-            let (pack, memories, cursor) =
-                run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
+            let (pack, memories, cursor) = run_context_pack(
+                &server,
+                &auth,
+                retrieval,
+                Some(memories),
+                &mut memories_storage,
+            )
+            .await?;
             (Some(pack), memories, cursor)
         }
         // OF-579: a board that runs no retrieval still carries its pins
@@ -480,6 +488,7 @@ async fn hydrate_inner(
                 req.memories.as_ref(),
                 targets.room_id(),
                 &hook_pins,
+                &mut memories_storage,
             )
             .await?,
             None,
@@ -759,11 +768,8 @@ async fn hydrate_inner(
         chat_context,
         chat_sources,
         chat_split,
-        memories_storage: super::context_pack::output_memory::RetainedMemoriesOutput::new(
-            &server.memory,
-        ),
+        memories_storage,
     };
-    response.memories_storage.retain(response.memories.as_ref());
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
         // check runs inside the recording transaction, with the real record:
