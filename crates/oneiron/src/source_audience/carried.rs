@@ -127,6 +127,7 @@ pub(crate) fn event_key(policy: &EntityId, revision: u64) -> String {
 }
 
 /// The key of the policies `by` found the derived row `row` reads under.
+#[cfg(feature = "sync")]
 pub(crate) fn derived_key(row: &EntityId, by: Option<&EntityId>) -> String {
     match by {
         Some(by) => format!("{DERIVED}{}/{}", row.to_hex(), by.to_hex()),
@@ -135,6 +136,7 @@ pub(crate) fn derived_key(row: &EntityId, by: Option<&EntityId>) -> String {
 }
 
 /// The prefix of every derived key of `row`.
+#[cfg(feature = "sync")]
 pub(crate) fn derived_prefix(row: &EntityId) -> String {
     format!("{DERIVED}{}/", row.to_hex())
 }
