@@ -262,6 +262,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultResidenceIndex
         | Row::VaultResidencePrune
         | Row::VaultResidenceDirectives
+        | Row::VaultSyncOutbox
         | Row::VaultCourtesyDeleteSend
         | Row::VaultCourtesyDeleteSent
         | Row::VaultCourtesyDeleteIncoming
