@@ -27,8 +27,8 @@ use super::record::{
 };
 use super::store::{
     bind_published_output, checkpoint_label, load_utf8_output, observation_output_path,
-    pinned_executed_output_path, pinned_source_map_output_path, record_output,
-    record_script_output, record_text_output, resumed_output_wait,
+    pinned_executed_output_path, pinned_source_map_output_path, publish_output, record_output,
+    record_script_output, resumed_output_wait,
 };
 use super::types::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
@@ -530,11 +530,14 @@ impl<'a> EngineNativeExecutor<'a> {
             UNFINISHED
         };
         let seq = completed_step_count(&record)?;
-        record_text_output(
+        let mut sink = self.storage.code_run_output_sink()?;
+        sink.write(observation.as_bytes())?;
+        publish_output(
             &self.storage,
             &mut record,
             observation_output_path(seq),
-            observation,
+            sink,
+            Some(entry_start),
         )?;
         let Some(observation_output) = record.outputs.last().cloned() else {
             return Err(

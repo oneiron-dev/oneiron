@@ -100,6 +100,18 @@ publisher before the occurrence is written. The same guest filename in a
 later step already receives a distinct per-step output path.
 
 This carry does not change stored-value replay: those occurrences retain
-their original producer metadata. Generic evidence, scripts, resumed wait
-replies and pinned-entry observations still have no step coordinate here.
-No effect, media type, grant or fence is inferred for the streamed family.
+their original producer metadata. Generic evidence, scripts and resumed wait
+replies still have no step coordinate here. No effect, media type, grant or
+fence is inferred for the streamed family.
+
+## Pinned program-entry observations
+
+A pinned program entry's observation carries its exact `entry_start` bridge
+sequence, already supplied to the entry's `RecordingJsHost`. The existing
+observation publisher sets `producing_step_start` before writing the occurrence.
+This applies to finished, waiting and unfinished observations; it does not
+claim that a failed call succeeded. The observation text, path, byte checks,
+source rows, binding, checkpoint, replay commit and error ordering are unchanged.
+The observation's completed-step ordinal is not used as its producer coordinate.
+Generic and failed-step text outputs and resumed wait replies keep `None`.
+No effect, media declaration, grant or fence is inferred.
