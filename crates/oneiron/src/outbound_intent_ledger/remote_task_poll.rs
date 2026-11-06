@@ -12,8 +12,10 @@
 //! this host answers no task input, so such a task ends when its provider
 //! drops it. A session the connector ended (HTTP 404) is renewed: the host
 //! opens a new one under the row's own endpoint and credential, and the
-//! handle keeps its id for the polls that follow (FIX 16028). The poll
-//! table keeps only
+//! handle keeps its id for the polls that follow (FIX 16028). A session
+//! whose handle goes before it ended (an erase takes the request, or the
+//! row settles another way) is owed its end: the host ends it on its next
+//! pass. The poll table keeps only
 //! the next poll time, the count and the last status: the session and the
 //! credential choice stay in the handle, which an erase forgets.
 
@@ -22,13 +24,19 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use super::settlement::{RemoteTaskHandle, RemoteTaskObservation, intent_settlement_in_txn};
-use super::types::{FrozenOutboundCall, IntentLedgerResult, IntentState};
+use super::types::{FrozenOutboundCall, IntentLedgerError, IntentLedgerResult, IntentState};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 /// Each pollable Deferred row's next poll, by its intent id.
 const POLLS: SideTable<[u8; 32], RemoteTaskPollState, Named> =
     SideTable::new(&side_table::OUTBOUND_REMOTE_TASK_POLL);
+
+/// Each MCP session a remote task's polls kept open whose handle went
+/// before the session ended (FIX 16028): the served host ends each, then
+/// drops its row.
+const SESSION_ENDS: SideTable<[u8; 32], RemoteTaskSessionEnd, Named> =
+    SideTable::new(&side_table::OUTBOUND_REMOTE_TASK_SESSION_END);
 
 /// The shortest wait between two polls of one task: the host's own pass.
 pub const MIN_REMOTE_TASK_POLL_MS: u64 = 30_000;
@@ -61,6 +69,83 @@ impl fmt::Debug for RemoteTaskPoll {
             .field("credential", &self.credential)
             .finish()
     }
+}
+
+/// An MCP session a remote task's polls kept open, owed its end: where it
+/// is, and the credential that opens it. Opaque provider data: never
+/// logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteTaskSessionEnd {
+    /// The connector the call went to, by its registry name.
+    pub server: String,
+    pub tool: String,
+    pub endpoint: String,
+    /// The key the call's binding named, 32-hex, when it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_ref: Option<String>,
+    /// The protocol revision the send pinned.
+    pub protocol: String,
+    /// The session (`Mcp-Session-Id`).
+    pub session: String,
+    pub credential: RemoteTaskCredential,
+}
+
+impl fmt::Debug for RemoteTaskSessionEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RemoteTaskSessionEnd")
+            .field("server", &self.server)
+            .field("tool", &self.tool)
+            .field("protocol", &self.protocol)
+            .field("session", &"[redacted]")
+            .field("credential", &self.credential)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Keeps, in `wtxn`, the end owed to the MCP session row `id`'s remote
+/// task is polled in, before its handle goes (FIX 16028): the served host
+/// ends it. A handle that keeps no session, or a row whose frozen call does
+/// not read, owes none.
+///
+/// # Errors
+/// Storage, row-codec and custody faults.
+pub(crate) fn keep_session_end_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &[u8; 32],
+) -> IntentLedgerResult<()> {
+    let Some(poll) = intent_settlement_in_txn(vault, wtxn, id)?
+        .remote_task
+        .and_then(|handle| handle.poll)
+    else {
+        return Ok(());
+    };
+    let Some(session) = poll.session else {
+        return Ok(());
+    };
+    let Some(mut record) = super::store::get_ledger_record(vault, wtxn, id)? else {
+        return Ok(());
+    };
+    // A payload that does not open names no session's place: the erase it
+    // runs in never fails for it.
+    if super::payload::open_payload_in_txn(vault, wtxn, &mut record).is_err() {
+        return Ok(());
+    }
+    let call = FrozenOutboundCall::from_record(&record);
+    let Ok(view) = crate::outbound_consent::FrozenToolCallView::read(&call) else {
+        return Ok(());
+    };
+    let end = RemoteTaskSessionEnd {
+        server: view.server().to_owned(),
+        tool: view.tool().to_owned(),
+        endpoint: view.endpoint().to_owned(),
+        key_ref: view.key_ref().map(str::to_owned),
+        protocol: poll.protocol,
+        session,
+        credential: poll.credential,
+    };
+    SESSION_ENDS.put(&vault.store, wtxn, id, &end)?;
+    Ok(())
 }
 
 /// The credential a send presented, as a poll presents it again. A secret
@@ -210,14 +295,49 @@ impl Vault {
             }
         }
         if !stale.is_empty() {
-            self.with_write_txn_grouped(|txn| {
+            self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<()> {
                 for id in &stale {
+                    // A row settled another way may keep the session its
+                    // polls had open: it is owed its end (FIX 16028).
+                    keep_session_end_in_txn(self, txn, id)?;
                     POLLS.delete(&self.store, txn, id)?;
                 }
                 Ok(())
             })?;
         }
         Ok(due)
+    }
+
+    /// The MCP sessions owed their end, at most `limit` (FIX 16028).
+    ///
+    /// # Errors
+    /// Storage and row-codec faults.
+    pub fn remote_task_sessions_to_end(
+        &self,
+        limit: usize,
+    ) -> IntentLedgerResult<Vec<([u8; 32], RemoteTaskSessionEnd)>> {
+        let txn = self
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        SESSION_ENDS
+            .iter_from(&self.store, &txn, &[])?
+            .take(limit)
+            .map(|row| row.map_err(IntentLedgerError::from))
+            .collect()
+    }
+
+    /// Drops the end owed to row `intent`'s session: the host ended it, or
+    /// can no longer reach it.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn remote_task_session_ended(&self, intent: &[u8; 32]) -> IntentLedgerResult<()> {
+        self.with_write_txn_grouped(|txn| {
+            SESSION_ENDS.delete(&self.store, txn, intent).map(|_| ())
+        })?;
+        Ok(())
     }
 
     /// Records a poll that found row `intent`'s task still running, as

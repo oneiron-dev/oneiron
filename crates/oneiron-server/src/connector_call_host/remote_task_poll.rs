@@ -12,11 +12,15 @@
 //! the connector ending that session: the poll opens a new one under the
 //! same endpoint, revision and credential, the ledger keeps its id, and the
 //! poll asks again in it (FIX 16028). The session ends only after the ledger
-//! holds the settlement. Only the status word is kept: the reply's other text never
+//! holds the settlement. A session whose handle went before it ended (an
+//! erase took the request) is owed its end: each pass ends those, under the
+//! connector's own endpoint and the credential the polls presented. Only the status word is kept: the reply's other text never
 //! leaves this pass, so nothing it echoes of the credential is stored.
 
 use oneiron::outbound_consent::{OutboundBindingAuthority, OutboundBindingValidation};
-use oneiron::outbound_intent_ledger::{DueRemoteTask, RemoteTaskCredential, RemoteTaskEnd};
+use oneiron::outbound_intent_ledger::{
+    DueRemoteTask, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskSessionEnd,
+};
 
 use super::*;
 
@@ -54,14 +58,21 @@ fn now_ms() -> u64 {
 /// sends, so run it on a blocking worker (the connector settler does).
 pub(crate) fn poll_remote_tasks(server: &SyncServer) {
     let vault = server.vault();
-    let due = match vault.remote_tasks_due(now_ms(), POLLS_PER_PASS) {
-        Ok(due) if due.is_empty() => return,
-        Ok(due) => due,
-        Err(error) => {
+    let due = vault
+        .remote_tasks_due(now_ms(), POLLS_PER_PASS)
+        .unwrap_or_else(|error| {
             tracing::warn!(%error, "remote tasks due a poll not read");
-            return;
-        }
-    };
+            Vec::new()
+        });
+    let owed = vault
+        .remote_task_sessions_to_end(POLLS_PER_PASS)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "remote task sessions owed their end not read");
+            Vec::new()
+        });
+    if due.is_empty() && owed.is_empty() {
+        return;
+    }
     let mut host = match ServedConnectorCallHost::new(server) {
         Ok(host) => host,
         Err(error) => {
@@ -97,9 +108,67 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
             tracing::warn!(%intent, %error, "remote task poll not recorded");
         }
     }
+    for (intent, end) in owed {
+        // An end that cannot be sent (the connector gone or moved, its
+        // credential no longer presented) is dropped: no session of it can
+        // be reached.
+        if let Err(reason) = host.end_remote_session(&end) {
+            tracing::info!(reason, "a remote task's session was not ended");
+        }
+        if let Err(error) = vault.remote_task_session_ended(&intent) {
+            tracing::warn!(%error, "a remote task session's end not recorded");
+        }
+    }
 }
 
 impl ServedConnectorCallHost {
+    /// Ends one session a remote task's polls kept open (`DELETE`), under
+    /// the connector's endpoint, as long as the connector still answers
+    /// there, with the credential its polls presented, through its own door
+    /// (FIX 16028).
+    fn end_remote_session(&mut self, end: &RemoteTaskSessionEnd) -> Result<(), &'static str> {
+        let connector = self
+            .connectors
+            .get(end.server.as_str())
+            .ok_or("connector_not_installed")?;
+        if connector.endpoint != end.endpoint {
+            return Err("connector_endpoint_changed");
+        }
+        let protocol = HeaderValue::from_str(&end.protocol).map_err(|_| "revision_unreadable")?;
+        let session = HeaderValue::from_str(&end.session).map_err(|_| "session_unreadable")?;
+        self.grant = None;
+        self.run = None;
+        self.credential = match end.credential {
+            RemoteTaskCredential::Record(custody) => Some(custody),
+            RemoteTaskCredential::Route => None,
+        };
+        let route = self
+            .vault
+            .route_connector_call(&end.server)
+            .ok()
+            .flatten()
+            .ok_or("connector_route_gone")?;
+        let key_ref = end
+            .key_ref
+            .as_deref()
+            .and_then(|hex| EntityId::from_hex(hex).ok());
+        let row = key_ref.as_ref().map(|key_ref| (key_ref, end.tool.as_str()));
+        let auth = self
+            .presenting(route)
+            .present_again(&self.vault, row)
+            .ok_or("credential_not_presented")?
+            .auth;
+        LiveSession {
+            client: self.client.clone(),
+            endpoint: end.endpoint.clone(),
+            protocol,
+            session: Some(session),
+            auth,
+        }
+        .end();
+        Ok(())
+    }
+
     /// Polls `task` once: its credential presented again through its own
     /// door, then one `tasks/get` in its session.
     fn poll_remote_task(&mut self, task: &DueRemoteTask) -> Result<Polled, &'static str> {
