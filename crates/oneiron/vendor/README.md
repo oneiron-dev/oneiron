@@ -104,9 +104,15 @@ the existing token/sink into DOM comment storage, including the owned atomic
 wrapper conversion. Its reservation follows that backing, not parser completion.
 Other payloads, the boxed guard's metadata and allocator-private overhead remain
 outside this backing admission.
+The optional attribute-value reservation covers every character or slice append,
+including decoded character references. Moves and native shares keep its
+allocation header; later allocating copies, including shared-value atomic
+wrapping, have separate unadmitted backing. Attribute-vector backing and
+interned names remain outside that initial value reservation.
 
 Callbacks use the caller's memory and work deadline, not a node-count/content
-limit or a new timer. Attributes, retained atoms and other tendril payloads, other
+limit or a new timer. Attribute-vector backing, allocating attribute copies,
+retained atoms and other tendril payloads, other
 parser stacks, lookahead and owned diagnostic payload allocations remain unadmitted. One tokenizer step, character-reference work,
 allocator surplus before settlement and opaque codec calls still prevent a
 global heap or hard wall-time bound. This snapshot does not complete FIX 9615.

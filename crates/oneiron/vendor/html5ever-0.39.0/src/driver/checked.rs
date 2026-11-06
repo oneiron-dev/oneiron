@@ -204,6 +204,39 @@ where
         self
     }
 
+    /// Reserve the actual attribute-value tendril before each append, including
+    /// decoded character references. Moves retain its allocation; allocating
+    /// copies have separate backing and need their own reservation.
+    /// A refusal uses the same first-error channel as the other checkpoints.
+    pub fn with_attribute_value_reservation<G>(mut self, reservation: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&mut StrTendril, usize) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .set_attribute_value_reservation(Box::new(move |value, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match reservation(value, additional) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
     /// Reserve the actual comment tendril before append. Its allocation can
     /// retain the reservation through token moves and native DOM ownership.
     /// A refusal uses the same first-error channel as the other checkpoints.

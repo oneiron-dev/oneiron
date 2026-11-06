@@ -173,3 +173,13 @@ remain unadmitted; their allocating copies/growth can create new unadmitted
 backing. The boxed guard's metadata, allocator-private overhead, other tendril
 payloads and opaque native work remain outside this slice. This is not complete
 HTML heap admission or a hard wall-time bound; FIX 9615 remains PART.
+
+Attribute-value payloads also preflight their actual UTF-8 tendril before each
+character or slice append, including decoded character references. They use the
+same native allocation header and caller admission as comments. Moving a value
+into an attribute or tag retains that header, and duplicate-value clearing
+keeps any owned capacity and its admission until reuse or drop. Native tag or
+attribute clones may share the admitted allocation; a later allocating copy,
+including shared-value atomic conversion, has separate unadmitted backing.
+This covers the tokenizer's value allocation, not every downstream attribute
+copy, attribute-vector backing or interned name.

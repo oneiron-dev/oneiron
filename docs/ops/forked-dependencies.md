@@ -151,7 +151,8 @@ and every local source change.
   and LocalName construction are unchanged; atom storage remains unadmitted.
   A separate checked attribute-name String also uses that reservation. Empty
   and duplicate-name checks, LocalName construction and namespace/value handling
-  keep their original bytes and order; attribute values and atoms are unadmitted.
+  keep their original bytes and order; atoms remain unadmitted. Checked
+  attribute-value tendrils have their own native reservation, described below.
   Other private parser vectors and transitive payloads remain unadmitted.
 
 - `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):
@@ -175,6 +176,10 @@ and every local source change.
   metadata, allocator-private overhead and opaque intervals remain unadmitted.
   Package version, production dependencies and features are unchanged. See the
   snapshot's `PROVENANCE.md`; no content-size cap or new timer is added.
+  The checked attribute-value producer also reserves before every character or
+  slice append, including decoded character references. It retains the same
+  native header through moves and shares; later allocating attribute copies,
+  including shared-value atomic wrapping, have separate unadmitted backing.
 
 ## Licences and attribution
 
