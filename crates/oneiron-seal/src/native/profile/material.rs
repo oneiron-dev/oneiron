@@ -302,7 +302,7 @@ pub(super) async fn include_timestamp_material(
     else {
         return Ok(false);
     };
-    for cert in &token.tsa_chain_ders {
+    for cert in token.tsa_chain_ders.iter() {
         if material.certs_der.contains(cert) || ctx.config.trust_anchors_der.contains(cert) {
             continue;
         }
