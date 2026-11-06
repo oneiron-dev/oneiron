@@ -748,7 +748,7 @@ impl<'a> Exchange<'a> {
         let deadline = asks_on_stream.then(|| Instant::now() + CALL_TIMEOUT);
         let mut stream = match open_reply(response, CALL_ID, deadline) {
             Ok(Reply::Json(Some((message, body)))) => {
-                return self.call_answered(&message, body, live, value);
+                return self.call_answered(message, body, live, value);
             }
             Ok(Reply::Json(None)) | Err(()) => {
                 return Sent::ambiguous("connector_reply_unreadable");
@@ -758,7 +758,7 @@ impl<'a> Exchange<'a> {
         loop {
             match stream.next(CALL_ID) {
                 Ok(StreamEvent::Answer(message, body)) => {
-                    return self.call_answered(&message, body, live, value);
+                    return self.call_answered(message, body, live, value);
                 }
                 Ok(StreamEvent::Request(request)) => {
                     let declared = self
@@ -820,7 +820,7 @@ impl<'a> Exchange<'a> {
     /// other result is the tool's.
     fn call_answered(
         &self,
-        message: &Value,
+        mut message: Value,
         body: Vec<u8>,
         live: &mut Option<LiveSession>,
         value: Option<&SentValue<'_>>,
@@ -829,7 +829,7 @@ impl<'a> Exchange<'a> {
             .elicitation
             .as_ref()
             .filter(|declared| declared.intake == Intake::Retry)
-            && let Some((questions, request_state)) = retry_questions(message)
+            && let Some((questions, request_state)) = retry_questions(&message)
         {
             let round = declared.keep_questions(questions, value);
             let continuation = Continuation::Retry {
@@ -841,14 +841,18 @@ impl<'a> Exchange<'a> {
                 original: declared.call.clone(),
             };
             let kept = value.map(SentValue::keep);
+            zeroize_json(message);
             return hand_over(declared, round, continuation, live, body, kept);
         }
         // FIX 7960: a connector that takes the call as a remote task answers
         // with its task, not the tool's result.
-        if let Some(handle) = remote_task::remote_task_from_result(message) {
+        if let Some(handle) = remote_task::remote_task_from_result(&message) {
+            zeroize_json(message);
             return Sent::deferred(handle, body);
         }
-        match tool_result(message) {
+        let reply = tool_result(&mut message);
+        zeroize_json(message);
+        match reply {
             Some(reply) => Sent::acked(Some(reply), body),
             None => Sent::ambiguous("connector_reply_unreadable"),
         }
