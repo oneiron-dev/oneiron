@@ -215,7 +215,7 @@ impl Memory<'_> {
     ) -> MemoryResult<NoteForkUploadReceipt> {
         let (upload, command_hash, operations) = NoteForkUpload::decode_payload(payload)?;
         let receipt = self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn, _lane| {
+            content.update_note(note, |txn| {
                 if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
                     return Err(invalid("replica NOTE cannot act as an admission authority").into());
                 }
