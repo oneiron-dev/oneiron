@@ -171,6 +171,13 @@ fn measure_with_owner(
             JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?,
         )
     };
+    if bandit
+        .goal_revision()
+        .is_some_and(|measured| measured != goal_revision.as_str())
+    {
+        return Err(retry("the goal moved while its axes were measured"));
+    }
+
     if !plan.online.is_empty() {
         for (arm, entity, record) in [
             (crate::skill_optimize::AxisArm::Incumbent, target, &current),
