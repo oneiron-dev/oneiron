@@ -74,6 +74,8 @@ mod role_route;
 mod router;
 mod run_backend;
 mod runtime;
+// FIX 15702: a seat's model door, its key read at the custody door per call.
+mod seat_model;
 mod served;
 mod siwc_responses;
 pub(crate) mod soniox;
@@ -116,6 +118,7 @@ pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
+pub(crate) use seat_model::{SeatKeyDoor, send_seat_model};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
