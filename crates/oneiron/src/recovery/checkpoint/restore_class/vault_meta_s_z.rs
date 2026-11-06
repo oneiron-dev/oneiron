@@ -244,6 +244,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A change to a source's readers is history, restored with the rows it
     // admitted; the policy itself is live authority: a restore never gives
     // back a reader removed since, or takes away one added (FIX 12559).
+    // A derived row's carried policies stand with the row as the image
+    // holds it; the policies they name are live authority (FIX 17207).
+    (&t::SOURCE_AUDIENCE_DERIVED, CONTENT),
     (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
     // A held-back row stays denied in the image as it was.
     (&t::SOURCE_AUDIENCE_HELD, CONTENT),

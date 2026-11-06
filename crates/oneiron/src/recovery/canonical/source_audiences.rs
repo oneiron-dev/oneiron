@@ -149,7 +149,7 @@ pub(super) fn capture(
                 // change receipt rides beside its policy from this vault's
                 // own receipts at the window's next export, not in the
                 // artifact.
-                Carrier::Withheld { .. } | Carrier::Event { .. } => {}
+                Carrier::Withheld { .. } | Carrier::Event { .. } | Carrier::Derived { .. } => {}
             }
         }
         for (id, revisions) in families {
@@ -296,7 +296,7 @@ impl CanonicalSnapshot {
                 }
                 // Capture keeps no marker and no receipt; one in an artifact
                 // restores none.
-                Carrier::Withheld { .. } | Carrier::Event { .. } => {}
+                Carrier::Withheld { .. } | Carrier::Event { .. } | Carrier::Derived { .. } => {}
             }
         }
         for (id, current) in held {

@@ -58,6 +58,8 @@ pub(crate) use wake::{
     PolicyWake, advance_policy_wake, forget_policy_window, note_policy_windows, policy_wakes,
     policy_windows_after,
 };
+#[cfg(feature = "sync")]
+pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
     ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
     withheld_from_replication_in,
@@ -80,6 +82,11 @@ const HELD: SideTable<EntityId, HeldBack, Named> =
 /// own key keeps the first.
 const THREADS: SideTable<(EntityId, [u8; 32]), EntityId, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_THREAD);
+/// The policies each derived row reads under beside its own lineage (fix
+/// list row 17207), by the row: the union of every set a full-window carrier
+/// brought. It only grows; a carrier that goes takes nothing from it.
+const DERIVED: SideTable<EntityId, BTreeSet<EntityId>, Named> =
+    SideTable::new(&side_table::SOURCE_AUDIENCE_DERIVED);
 /// Every change to a policy's readers, by the policy and the revision the
 /// change made.
 const EVENTS: SideTable<(EntityId, u64), SourceAudienceEvent, Named> =
@@ -213,9 +220,59 @@ pub(crate) fn lift_hold_in_txn(
     Ok(true)
 }
 
-/// Whether the vault holds any policy: one that holds none binds no row.
+/// Whether the vault holds any policy, or a derived row's carried policies
+/// (fix list row 17207): one that holds neither binds no row, and no read of
+/// it walks.
 pub(crate) fn any_policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(POLICIES.iter_from(&vault.store, txn, &[])?.next().is_some())
+    Ok(POLICIES.iter_from(&vault.store, txn, &[])?.next().is_some()
+        || DERIVED.iter_from(&vault.store, txn, &[])?.next().is_some())
+}
+
+/// The policies the derived row `row` reads under beside its own lineage,
+/// as full-window carriers brought them (fix list row 17207).
+pub(crate) fn derived_policies_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    DERIVED.get(&vault.store, txn, row)
+}
+
+/// Adds `policies` to those the derived row `row` reads under, in `txn`.
+/// Whether the set grew.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(feature = "sync")]
+pub(crate) fn add_derived_policies_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+    policies: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let mut held = DERIVED.get(&vault.store, txn, row)?.unwrap_or_default();
+    let before = held.len();
+    held.extend(policies.iter().copied());
+    if held.len() == before {
+        return Ok(false);
+    }
+    DERIVED.put(&vault.store, txn, row, &held)?;
+    Ok(true)
+}
+
+/// Drops the derived row `row`'s carried policies with the row: the
+/// entity erase's (fix list row 17207).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn erase_derived_policies_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    DERIVED.delete(store, txn, row).map(drop)
 }
 
 /// The policy the row `record` was born under, if it was bound.
