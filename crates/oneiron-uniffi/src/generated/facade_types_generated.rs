@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1264 facade rows, 4584 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
+// UniFFI census: 1266 facade rows, 4588 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1218.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -22405,6 +22405,54 @@ pub struct SharedInvitation {
     pub state: SharedInvitationState,
     #[serde(rename = "founding")]
     pub founding: bool,
+}
+
+/// `oneiron::sync::shared_replica::source::SharedReplicaManifestRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedReplicaManifestRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "grant")]
+    pub grant: String,
+}
+
+/// `oneiron::sync::shared_replica::source::SharedReplicaManifest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedReplicaManifest {
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "selector")]
+    pub selector: String,
+    #[serde(rename = "entries")]
+    pub entries: Vec<String>,
+    #[serde(rename = "windows")]
+    pub windows: Vec<String>,
+}
+
+/// `oneiron::sync::shared_replica::source::SharedReplicaWindowRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedReplicaWindowRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "selector")]
+    pub selector: String,
+}
+
+/// `oneiron::sync::shared_replica::source::SharedReplicaWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedReplicaWindow {
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "update")]
+    pub update: String,
 }
 
 /// `oneiron::verbs::shared_members::SharedInvitationRequest`.

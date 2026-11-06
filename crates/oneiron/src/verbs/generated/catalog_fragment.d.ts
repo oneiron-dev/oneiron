@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4642 declarations.
-// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1317 code-mode rows (1277 host rows, 40 run rows), 4646 declarations.
+// Replies: 1128 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1433,6 +1433,10 @@ declare namespace Sdk {
   type SharedMemberRoleRequest = { vault_id: string; member: string; role: FederationGrantRole };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
   type SharedInvitation = { id: string; vault_id: string; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState; founding: boolean };
+  type SharedReplicaManifestRequest = { vault_id: string; grant: string };
+  type SharedReplicaManifest = { grant: string; selector: string; entries: string[]; windows: string[] };
+  type SharedReplicaWindowRequest = { vault_id: string; grant: string; window: string; selector: string };
+  type SharedReplicaWindow = { window: string; update: string };
   type SharedInvitationRequest = { vault_id: string; invitation: string };
   type SharedInvitationAcceptWithCredentialRequest = { vault_id: string; invitation: string; expires_at: number };
   type MemberSlip = { slip_id: string; slip: string; expires_at: number };
@@ -6667,6 +6671,10 @@ declare const vault: Sdk.VaultHost & {
     projection(input: Sdk.SharedMemberRequest): Promise<Sdk.MemberProjection | StoredResult>;
     /** An Admin removes one member from a shared vault. */
     remove(input: Sdk.SharedMemberRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
+    /** The accepted member fetches admitted original signed history and the native replica window keys. */
+    replica_manifest(input: Sdk.SharedReplicaManifestRequest): Promise<Sdk.SharedReplicaManifest | StoredResult>;
+    /** The accepted member fetches one native window under its current logical shared-vault grant. */
+    replica_window(input: Sdk.SharedReplicaWindowRequest): Promise<Sdk.SharedReplicaWindow | StoredResult>;
     /** An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override. */
     reset_project_access(input: Sdk.SharedProjectAccessResetRequest): Promise<Sdk.SharedProjectAccessReset | StoredResult>;
     /** An Admin with the add_member power takes back a pending invitation. */

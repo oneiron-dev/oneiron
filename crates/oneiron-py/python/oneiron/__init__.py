@@ -2684,6 +2684,12 @@ class Oneiron:
         def invitations(self, spec):
             """The caller's own pending invitations into a shared vault."""
             return json.loads(_translate(lambda: self._client.vault_members_invitations(json.dumps(spec))))
+        def replica_manifest(self, spec):
+            """The accepted member fetches admitted original signed history and the native replica window keys."""
+            return json.loads(_translate(lambda: self._client.vault_members_replica_manifest(json.dumps(spec))))
+        def replica_window(self, spec):
+            """The accepted member fetches one native window under its current logical shared-vault grant."""
+            return json.loads(_translate(lambda: self._client.vault_members_replica_window(json.dumps(spec))))
         def accept(self, spec):
             """The invitee accepts their own invitation and joins the shared vault at its role."""
             return json.loads(_translate(lambda: self._client.vault_members_accept(json.dumps(spec))))

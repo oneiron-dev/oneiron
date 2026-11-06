@@ -12,6 +12,7 @@ use super::adopted_evidence::AdoptedEvidence;
 #[cfg(feature = "sync")]
 mod handoff;
 mod page;
+mod export;
 
 pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
 
@@ -251,33 +252,7 @@ impl Vault {
     /// the export refuses with the history it lacks ([`unheld_prefix`]).
     pub fn export_signed_authority_history(&self) -> Result<Vec<Vec<u8>>> {
         let txn = self.store.env.read_txn()?;
-        let mut history = history_in_txn(self, &txn)?;
-        if let Some(adopted) =
-            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?
-            && let Some(refusal) = unheld_prefix(adopted.as_ref(), &history)
-        {
-            return Err(refusal);
-        }
-        history_root(&history, None)?;
-        let mut emitted = BTreeSet::new();
-        let mut result = Vec::with_capacity(history.len());
-        while !history.is_empty() {
-            let Some(hash) = history.iter().find_map(|(hash, (_, entry))| {
-                entry
-                    .parent_hashes
-                    .iter()
-                    .all(|parent| emitted.contains(parent))
-                    .then_some(*hash)
-            }) else {
-                return Err(invalid_authority());
-            };
-            let (bytes, _) = history
-                .remove(&hash)
-                .ok_or(Error::InvariantViolation("authority export order"))?;
-            emitted.insert(hash);
-            result.push(bytes);
-        }
-        Ok(result)
+        self.export_signed_authority_history_in_txn(&txn)
     }
 
     /// Imports a complete signed history, atomically, before an in-chain ReRoot.

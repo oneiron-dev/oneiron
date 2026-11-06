@@ -1099,6 +1099,12 @@ impl OneironClient {
                 "vault.members.invitations" => remote_agent_verb_output::<
                     Vec<oneiron::federation::SharedInvitation>,
                 >(client, verb, &input),
+                "vault.members.replica_manifest" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SharedReplicaManifest,
+                >(client, verb, &input),
+                "vault.members.replica_window" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SharedReplicaWindow,
+                >(client, verb, &input),
                 "vault.members.accept" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
@@ -8272,6 +8278,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.members.invitations", value)
+    }
+    pub fn vault_members_replica_manifest(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedReplicaManifestRequest,
+    ) -> Result<oneiron::task_verb::sdk::SharedReplicaManifest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.replica_manifest", value)
+    }
+    pub fn vault_members_replica_window(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedReplicaWindowRequest,
+    ) -> Result<oneiron::task_verb::sdk::SharedReplicaWindow, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.replica_window", value)
     }
     pub fn vault_members_accept(
         &self,
