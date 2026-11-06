@@ -74,6 +74,17 @@ not an incarnation certificate. Native peer-origin tracking includes ASSET
 and ASSET_TEXT; the writer excludes a peer-origin owner or source in that
 row's actual residence window, not just the caption's window.
 
+An ASSET peer-origin record keeps its original 32-byte wire digest for
+carrier cleanup and adds a 32-byte logical identity: the exact metadata
+header plus the native body's BLAKE3, length and `xxh32`. Admission and
+staged confirmation compute that identity before import. A bound body
+reference supplies the carried facts; a native descriptor selects stored
+file facts. Manifest-looking inline bytes never select the file path.
+Checks therefore keep the origin across inline/file/reference echoes,
+including before the echo lands. Wire-map digests, copy/stale checks and
+exact removed-carrier cleanup remain unchanged. Other kinds retain their
+32-byte exact-byte records. There is no old ASSET-record reader or migration.
+
 Only the existing native BASE/default scope shape can be installed. An
 existing immutable stamp always wins, including one current edges do not
 validate. This is a dedicated own-device source-position import, not
@@ -85,6 +96,6 @@ Optional metadata errors do not fail an otherwise working raw update.
 The live client UPDATE and server push success boundaries are wired. Bounded
 replacement, deferred/body-later arrival, recovery and later replay do not
 mint an import proof. Raw, held, staged, missing or unknown evidence keeps its
-existing behavior. Those cases and a production compile/runtime demonstration
-remain separate work; this does not close all of FIX40. The older
+existing behavior. Those cases and a runtime demonstration remain separate
+work; this does not close all of FIX40. The older
 foreign-Connect proposal is not enabled by this path.
