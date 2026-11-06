@@ -14,10 +14,10 @@ pub(crate) mod board_layout;
 mod destination;
 mod device_local;
 mod device_only;
-pub mod model_versioning;
+pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;
-pub mod web_connector;
+pub use oneiron_store::settings::web_connector;
 
 pub use destination::{
     CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,

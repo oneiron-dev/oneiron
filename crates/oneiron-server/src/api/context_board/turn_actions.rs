@@ -1,8 +1,9 @@
 //! The context board a queued Continue or Retry reads (FIX 6920), as a live
-//! chat turn reads its own ([`super::chat_board`]): hydrated once, for the
-//! user turn the reply answers, under the authority its requester asked
-//! with. That is the invocation slip the action keeps, verified again now
-//! and projected as the request's own credential was; nothing else stands
+//! chat turn reads its own ([`super::chat_turn_board`], in two parts, I1 =
+//! C, FIX 14677): hydrated once, for the user turn the reply answers, under
+//! the authority its requester asked with. That is the invocation slip the
+//! action keeps, verified again now and projected as the request's own
+//! credential was; nothing else stands
 //! in for it. Reading it never fails the action: a slip that no longer
 //! verifies, a credential that is not the requester's or reads nothing, a
 //! refused assembly, an empty frame or a hold leaves the action as it always
@@ -62,7 +63,7 @@ pub(crate) async fn action_board(
         },
         PeerMachine::Unknown,
     );
-    let board = match super::chat_board(
+    let board = match super::chat_turn_board(
         server,
         auth,
         Some(action.conversation),
@@ -92,7 +93,7 @@ pub(crate) async fn action_board(
 /// door. It must still name the requester at its class and grant a read.
 /// An attested owner's is the owner the vault records as live now. `None`,
 /// logged, for a native action or one whose credential no longer does.
-fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
+pub(crate) fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
     let binding = match &action.authority {
         TurnActionAuthority::Slip { binding } => binding,
         // The owner the vault records as live now, when he is the requester
