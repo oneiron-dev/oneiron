@@ -2004,6 +2004,11 @@ struct KnownCopy {
     /// Whether the vault's copy is forgotten: a fence that holds against
     /// any copy no digest proves another message.
     forgotten: bool,
+    /// Whether the vault's copy is forgotten with no digest of its whole
+    /// message kept (it landed by its headers only): no digest read later,
+    /// of any place, is proof of what it was, so its fence holds against
+    /// every copy its header id names.
+    forgotten_without_digest: bool,
 }
 
 impl ImapMailWire<'_> {
@@ -2168,6 +2173,12 @@ impl ImapMailWire<'_> {
                 .or_insert(at);
             return Ok(proposed.header_id);
         };
+        if known.forgotten_without_digest {
+            // Nothing read now or later proves another message against a
+            // fence kept without its digest: a place or a digest taken from
+            // this copy would only be its own (fix list row 19145).
+            return Ok(proposed.header_id);
+        }
         let Some(digest) = whole_digest_of(&mut open.session, at.uid, proposed.size)? else {
             if known.forgotten {
                 self.first_places
@@ -2245,6 +2256,10 @@ impl ImapMailWire<'_> {
             forgotten: landed
                 .as_ref()
                 .is_some_and(|copy| matches!(copy.presence, MailPresence::Forgotten { .. })),
+            forgotten_without_digest: landed.as_ref().is_some_and(|copy| {
+                matches!(copy.presence, MailPresence::Forgotten { .. })
+                    && copy.content_digest.is_none()
+            }),
             labels: landed.map(|copy| copy.labels).unwrap_or_default(),
         }))
     }
