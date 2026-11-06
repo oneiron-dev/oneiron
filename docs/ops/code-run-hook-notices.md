@@ -36,13 +36,30 @@ An ordinary MCP code-mode refusal that supplied a hook notice keeps the same
 content-free summary beside its original code when recorded as a denial. The
 notice comes from that same error, not from its code. A refusal with no supplied
 notice remains unknown. Typed hook stops and provider retry errors keep their
-existing paths. This slice does not cover paths that replace the denial with a
-consent wait.
+existing paths.
 
-This path covers successful calls through the MCP code-mode verb door, the
-saved native hook completions described above, and ordinary MCP refusals with
-a supplied notice. It does not add notices to HTTP success bodies, other native
-verb-door implementations, or errors without a supplied notice source.
+When an existing browser or connector conversion replaces a notice-bearing
+answer or denial with a durable wait, the wait keeps the same content-free
+summary in optional host metadata. Its native payload and stored replay retain
+that metadata. Fresh waits without a supplied source remain unknown. The
+existing MCP collector reads these notices before paging, without changing the
+wait condition or the guest's wait-id-only result.
+
+## Pumped run-host calls
+
+Ordinary pumped run-host SDK calls keep the notice bit from their existing row
+or generated SDK boundary beside the original result. Only an actual positive
+bit attaches the existing content-free summary to the native answer or ordinary
+refusal. The call's output, error, source rows, observation and release stay the
+same, and the hook still runs once. Existing value-only host helpers keep their
+original result APIs.
+
+Browser, resident board/self-brief/lens and owner-program helper paths are not
+extended by this run-host change. Typed hook stops, provider retry errors,
+media traps and channel failures keep their existing paths. A missing notice
+source stays unknown; no notice is inferred from a verb, output or error code.
+This does not add notices to HTTP success bodies or claim other native doors
+without a supplied notice source.
 
 Update the engine and server together. The guest WIT, JavaScript bootstrap and
 component artifacts do not change for this host-side path.
