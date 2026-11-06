@@ -8,9 +8,9 @@ use oneiron::Vault;
 use oneiron::booking::anti_abuse::{
     BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission,
     BookingQuarantineRestoreInput, BookingRateDecision, BookingRequestFacts,
-    admit_quarantine_submission, admit_restorable_quarantine_submission,
-    applicable_booking_anti_abuse_rules, book_rate_knobs, evaluate_booking_amend_request,
-    evaluate_booking_book_request, evaluate_booking_hold_request,
+    admit_quarantine_submission, admit_quarantine_submission_without_quota,
+    admit_restorable_quarantine_submission, applicable_booking_anti_abuse_rules, book_rate_knobs,
+    evaluate_booking_amend_request, evaluate_booking_book_request, evaluate_booking_hold_request,
     evaluate_booking_slot_list_request, hold_rate_knobs, observe_book_request,
     observe_hold_request, observe_slot_list_request, server_submission_fingerprint,
     slot_list_rate_knobs,
@@ -304,7 +304,7 @@ pub(crate) async fn enforce_book_restorable(
                 EngineLimit::BookingQuarantineCallsPerMinute,
                 &actor,
             )?;
-            return admit_quarantine(&server, &facts, reason, NonZeroU32::MAX, restore.as_ref());
+            return admit_quarantine(&server, &facts, reason, None, restore.as_ref());
         }
         if let Some(disposition) = disposition_from_verdict("book", &facts, verdict)? {
             return Ok(disposition);
@@ -333,34 +333,42 @@ pub(crate) async fn enforce_book_restorable(
         return Ok(disposition);
     }
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
-        return admit_quarantine(&server, &facts, reason, per_minute_per_ip, restore.as_ref());
+        return admit_quarantine(
+            &server,
+            &facts,
+            reason,
+            Some(per_minute_per_ip),
+            restore.as_ref(),
+        );
     }
     // A non-quarantine request consumes its identity confirmation bucket.
     spend_book_bucket(&server, "book", &key, per_minute_per_ip)
 }
 
 /// Keeps a quarantined confirm for the owner's review. This one engine door
-/// serializes exact-retry lookup, aggregate quota (`per_minute_per_ip`), and
-/// first durable quarantine write.
+/// serializes exact-retry lookup, the page-wide aggregate quota
+/// (`per_minute_per_ip`), and first durable quarantine write. An
+/// authenticated caller's submission (`None`) spends no token of that
+/// quota, so it never takes an anonymous visitor's place (FIX 131).
 fn admit_quarantine(
     server: &SyncServer,
     facts: &BookingRequestFacts,
     reason: &str,
-    per_minute_per_ip: NonZeroU32,
+    per_minute_per_ip: Option<NonZeroU32>,
     restore: Option<&BookingQuarantineRestoreInput<'_>>,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     let vault = &server.vault;
     let now = server.booking_now_secs()?;
-    let admission = match restore {
-        Some(restore) => admit_restorable_quarantine_submission(
-            vault,
-            facts,
-            reason,
-            per_minute_per_ip,
-            now,
-            restore,
-        ),
-        None => admit_quarantine_submission(vault, facts, reason, per_minute_per_ip, now),
+    let admission = match (per_minute_per_ip, restore) {
+        (None, restore) => {
+            admit_quarantine_submission_without_quota(vault, facts, reason, now, restore)
+        }
+        (Some(per_minute), Some(restore)) => {
+            admit_restorable_quarantine_submission(vault, facts, reason, per_minute, now, restore)
+        }
+        (Some(per_minute), None) => {
+            admit_quarantine_submission(vault, facts, reason, per_minute, now)
+        }
     };
     match admission.map_err(engine_error)? {
         BookingQuarantineAdmission::Accepted(receipt) => {
@@ -375,7 +383,7 @@ fn admit_quarantine(
             log_rate_block("book", &facts.ip_hash, retry_after_secs);
             Ok(BookingHttpDisposition::RetryAfter {
                 seconds: retry_after_secs,
-                bound: u64::from(per_minute_per_ip.get()),
+                bound: per_minute_per_ip.map_or(0, |per_minute| u64::from(per_minute.get())),
             })
         }
     }
