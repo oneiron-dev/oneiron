@@ -308,7 +308,7 @@ impl<'a> HostModels<'a> {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -392,7 +392,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.clone()),
+            ContentPart::Text { text, .. } => Some(text.clone()),
             ContentPart::ToolCall { .. } => serde_json::to_string(part).ok(),
             _ => None,
         })
@@ -490,7 +490,7 @@ fn parse_draft(text: &str) -> Option<CodeFixDraft> {
 pub(super) fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }
 }
 

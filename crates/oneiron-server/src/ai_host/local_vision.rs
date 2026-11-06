@@ -121,7 +121,7 @@ impl LocalVisionModel {
             // names, as System One's state holds its asset's.
             let reference = format!("image:{}", image.name);
             state[image.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference });
+            content.push(ContentPart::Text { text: reference, signature: None });
             content.push(ContentPart::Image {
                 media_type: fitted.media_type.clone(),
                 image: ImageContent::Base64 {
@@ -132,10 +132,11 @@ impl LocalVisionModel {
         // The question's criteria triple, as the rubric its contract is
         // judged by (FIX 2181).
         if let Some(rubric) = QuestionCriteria::rubric_in(call.state, &call.question.contract) {
-            content.push(ContentPart::Text { text: rubric });
+            content.push(ContentPart::Text { text: rubric, signature: None });
         }
         content.push(ContentPart::Text {
             text: json!({"question": call.question.text, "state": state}).to_string(),
+            signature: None,
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
@@ -246,7 +247,7 @@ impl DecisionModel for LocalVisionModel {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>();

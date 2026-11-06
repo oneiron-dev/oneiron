@@ -98,12 +98,14 @@ impl EngineNativeExecutor<'_> {
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: executor_system_prompt(wire_prompt),
+                signature: None,
             }],
         });
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: format!("Run id: {}\nTask:\n{}", config.run_id.to_hex(), config.task),
+                signature: None,
             }],
         });
 
@@ -187,7 +189,7 @@ impl EngineNativeExecutor<'_> {
                     // summary, ids and a note: each is masked at every
                     // render, so a value custody learns later is masked too.
                     for part in &mut frame.content {
-                        if let ContentPart::Text { text } = part {
+                        if let ContentPart::Text { text, .. } = part {
                             *text = mask_known_text(&self.storage, text)?;
                         }
                     }
@@ -260,12 +262,14 @@ impl EngineNativeExecutor<'_> {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
                     text: turn.assistant_exec(),
+                    signature: None,
                 }],
             });
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: turn.user_console(seq as u64),
+                    signature: None,
                 }],
             });
             // The step's type feedback, the host's own words beside its
@@ -283,13 +287,13 @@ impl EngineNativeExecutor<'_> {
         if swapped && let Some(brief) = self.bindings_brief(record)? {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: brief }],
+                content: vec![ContentPart::Text { text: brief, signature: None }],
             });
         }
         if let Some(note) = memory_note {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: note }],
+                content: vec![ContentPart::Text { text: note, signature: None }],
             });
         }
         // An approved continuation's note, its own message (FIX 3694).
@@ -298,6 +302,7 @@ impl EngineNativeExecutor<'_> {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: executor_turn_instruction(completed_steps, wire_prompt),
+                signature: None,
             }],
         });
         // FIX 15011: a run an event started opens with the wake opener after
@@ -314,6 +319,7 @@ impl EngineNativeExecutor<'_> {
                         self.storage.now_recorded_ms(),
                         wake,
                     ),
+                    signature: None,
                 }],
             });
         }
@@ -408,7 +414,7 @@ impl EngineNativeExecutor<'_> {
         };
         Ok(LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text { text, signature: None }],
         })
     }
 }

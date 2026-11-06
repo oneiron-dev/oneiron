@@ -200,7 +200,7 @@ pub(super) fn reply_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            oneiron_model::llm::ContentPart::Text { text } => Some(text.as_str()),
+            oneiron_model::llm::ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()

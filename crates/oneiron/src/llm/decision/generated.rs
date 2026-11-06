@@ -461,6 +461,7 @@ fn request(
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: Value::Object(turn).to_string(),
+            signature: None,
         }],
     });
     if let Some(labels) = labels {
@@ -494,7 +495,7 @@ fn answers(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

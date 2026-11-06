@@ -173,6 +173,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                 {
                     content.push(ContentPart::Text {
                         text: text.to_owned(),
+                        signature: None,
                     });
                 }
             }
@@ -255,7 +256,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
 /// never joins the system string.
 fn text_content(part: &ContentPart) -> Option<String> {
     match part {
-        ContentPart::Text { text } => Some(text.clone()),
+        ContentPart::Text { text, .. } => Some(text.clone()),
         ContentPart::Reasoning {
             text,
             reasoning_kind,
@@ -292,7 +293,7 @@ fn anthropic_role(role: LlmMessageRole) -> &'static str {
 
 fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
     match part {
-        ContentPart::Text { text } => Some(json!({ "type": "text", "text": text })),
+        ContentPart::Text { text, .. } => Some(json!({ "type": "text", "text": text })),
         ContentPart::Reasoning {
             text,
             signature,
