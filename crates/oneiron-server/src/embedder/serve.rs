@@ -428,6 +428,8 @@ struct EmbeddingRow {
     object: &'static str,
     index: usize,
     embedding: Encoded,
+    /// Actual encoder input length after its existing truncation.
+    input_tokens: usize,
 }
 
 #[derive(Serialize)]

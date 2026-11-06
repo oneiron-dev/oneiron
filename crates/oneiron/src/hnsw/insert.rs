@@ -5,7 +5,7 @@ use heed::{RoTxn, RwTxn};
 use crate::config::VaultConfig;
 use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
-use crate::store::{ManifestDbs, Store};
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::discipline::{
     LinkDiscipline, increment_refresh_fallback_rebuilds, mark_symmetric_links, read_link_discipline,
@@ -24,7 +24,7 @@ use super::search::{beam_search, beam_search_logged, score_dims_for};
 use super::slim_drop::hnsw_is_dropped;
 use super::storage::{
     decode_neighbors, load_neighbors, load_vector, prune_neighbors_for_node, read_count,
-    read_entry_point, read_vector_version, write_neighbors,
+    read_entry_point, write_neighbors,
 };
 use super::types::{BeamOptions, ExpandedLists, HeapEntry, InsertOutcome, neighbor_list_hash};
 
@@ -34,7 +34,7 @@ use super::types::{BeamOptions, ExpandedLists, HeapEntry, InsertOutcome, neighbo
 /// callers and tests.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn hnsw_insert(
-    store: &Store,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -47,7 +47,7 @@ pub(crate) fn hnsw_insert(
 /// row read/write/delete and once per beam-search node/vector access, so
 /// tests can pin the localized-update complexity class (ONE-324 AC5).
 pub(super) fn hnsw_insert_probed(
-    store: &Store,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -68,7 +68,7 @@ pub(super) fn hnsw_insert_probed(
 /// end-of-transaction snapshot rebuild re-derives the whole graph from the
 /// `vectors` DB, so per-op mutations would be dead writes (ONE-324 AC11).
 pub(crate) fn hnsw_insert_batched(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -83,7 +83,7 @@ pub(crate) fn hnsw_insert_batched(
 /// this transaction's graph (see [`InsertPlan`]); otherwise the insert searches
 /// here as before.
 pub(crate) fn hnsw_insert_planned(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     (id, vector): (&EntityId, &[f32]),
@@ -105,7 +105,7 @@ pub(crate) fn hnsw_insert_planned(
 /// Runs a pending legacy snapshot rebuild scheduled by
 /// [`hnsw_insert_batched`]. Call after the batch op loop.
 pub(crate) fn run_pending_legacy_rebuild(
-    store: &Store,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     pending_rebuild: bool,
@@ -116,38 +116,39 @@ pub(crate) fn run_pending_legacy_rebuild(
     Ok(())
 }
 
-/// A fresh node's neighbour search, run under a read snapshot before the
-/// write transaction opens (RESEARCH-1115 Bend 2), so the writer only writes
-/// edges. It stands only while the transaction's graph is the graph it
-/// searched: same node count, entry point and vector version, no earlier graph
-/// write in the batch, and every chosen neighbour still present.
-pub(crate) struct InsertPlan {
-    vector_version: u64,
-    count: u64,
-    entry_point: EntityId,
-    vector: Vec<f32>,
-    /// Every neighbour list the search expanded: the beam is a function of
-    /// these lists, the entry point and the vectors it scored.
-    expanded: ExpandedLists,
-    selected: Vec<EntityId>,
+pub(crate) use crate::store::vector_insert_plan::InsertPlan;
+
+pub(crate) trait InsertPlanSearch: Sized {
+    fn search(
+        store: &impl VectorIndexDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Option<Self>;
+
+    fn try_search(
+        store: &impl VectorIndexDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Result<Option<Self>>;
+
+    fn stands(
+        &self,
+        store: &impl VectorIndexDbs,
+        txn: &RoTxn<'_>,
+        state: (&[f32], u64, EntityId),
+    ) -> bool;
 }
 
-impl std::fmt::Debug for InsertPlan {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InsertPlan")
-            .field("count", &self.count)
-            .field("expanded", &self.expanded.len())
-            .field("selected", &self.selected.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl InsertPlan {
+impl InsertPlanSearch for InsertPlan {
     /// Searches the committed graph for `id`'s neighbours. `None` when the
     /// insert is not a fresh one into a live, non-empty graph, or when the
     /// search fails: the transaction's own search then decides.
-    pub(crate) fn search(
-        store: &impl ManifestDbs,
+    fn search(
+        store: &impl VectorIndexDbs,
         config: &VaultConfig,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
@@ -159,14 +160,14 @@ impl InsertPlan {
     }
 
     fn try_search(
-        store: &impl ManifestDbs,
+        store: &impl VectorIndexDbs,
         config: &VaultConfig,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
         vector: &[f32],
     ) -> Result<Option<Self>> {
         if hnsw_is_dropped(store, rtxn)?
-            || store.hnsw_neighbors().get(rtxn, id.as_bytes())?.is_some()
+            || store.index_neighbors().get(rtxn, id.as_bytes())?.is_some()
         {
             return Ok(None);
         }
@@ -188,7 +189,10 @@ impl InsertPlan {
             &mut 0,
         )?;
         Ok(Some(Self {
-            vector_version: read_vector_version(store, rtxn)?,
+            vector_version: oneiron_store::vector_index::read_vector_version(
+                store.index_meta(),
+                rtxn,
+            )?,
             count,
             entry_point,
             vector: vector.to_vec(),
@@ -204,7 +208,7 @@ impl InsertPlan {
     /// searches, and reports, itself.
     fn stands(
         &self,
-        store: &impl ManifestDbs,
+        store: &impl VectorIndexDbs,
         txn: &RoTxn<'_>,
         (vector, count, entry_point): (&[f32], u64, EntityId),
     ) -> bool {
@@ -216,14 +220,15 @@ impl InsertPlan {
                 .iter()
                 .zip(vector)
                 .all(|(planned, now)| planned.to_bits() == now.to_bits())
-            && read_vector_version(store, txn).is_ok_and(|version| version == self.vector_version)
+            && oneiron_store::vector_index::read_vector_version(store.index_meta(), txn)
+                .is_ok_and(|version| version == self.vector_version)
             && self.expanded.iter().all(|(node, hash)| {
                 load_neighbors(store, txn, node)
                     .is_ok_and(|neighbors| neighbor_list_hash(&neighbors) == *hash)
             })
             && self.selected.iter().all(|neighbor| {
                 store
-                    .hnsw_neighbors()
+                    .index_neighbors()
                     .get(txn, neighbor.as_bytes())
                     .is_ok_and(|row| row.is_some())
             })
@@ -254,15 +259,15 @@ fn select_neighbors(
 /// beam from `entry_point`.
 /// A graph of `id` alone.
 fn start_graph(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<InsertOutcome> {
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
     write_neighbors(store, wtxn, id, &[])?;
     // A graph created from empty is symmetric by construction and every
@@ -279,7 +284,7 @@ fn start_graph(
 /// the walk loads a vector for ([`room_entry`]); with none, `id` is the
 /// graph's sole node. It never asks for a rebuild, which runs on base alone.
 fn room_insert(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     (id, vector): (&EntityId, &[f32]),
@@ -290,7 +295,10 @@ fn room_insert(
         return start_graph(store, wtxn, id);
     };
     let count = read_count(store, &*wtxn)?;
-    let existing = store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some();
+    let existing = store
+        .index_neighbors()
+        .get(&*wtxn, id.as_bytes())?
+        .is_some();
     if existing && discipline == LinkDiscipline::Symmetric {
         // Another node to enter at: not a sole-node re-anchor, whatever the
         // count says.
@@ -317,7 +325,7 @@ fn room_insert(
         .checked_add(1)
         .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
     Ok(InsertOutcome::Applied)
 }
@@ -326,14 +334,14 @@ fn room_insert(
 /// entry point when the walk loads its vector, else the first node it loads
 /// one for; `None` when it loads none.
 fn room_entry(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     txn: &RoTxn<'_>,
     dimensions: usize,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
     let loads = |node: &EntityId| -> Result<bool> {
         Ok(node != id
-            && store.hnsw_neighbors().get(txn, node.as_bytes())?.is_some()
+            && store.index_neighbors().get(txn, node.as_bytes())?.is_some()
             && load_vector(store, txn, node, dimensions)?.is_some())
     };
     if let Some(entry) = read_entry_point(store, txn)?
@@ -341,7 +349,7 @@ fn room_entry(
     {
         return Ok(Some(entry));
     }
-    for row in store.hnsw_neighbors().iter(txn)? {
+    for row in store.index_neighbors().iter(txn)? {
         let (key, _) = row?;
         let node = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
             Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
@@ -355,7 +363,7 @@ fn room_entry(
 }
 
 fn nearest_neighbors(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     txn: &RoTxn<'_>,
     id: &EntityId,
@@ -376,7 +384,7 @@ fn nearest_neighbors(
 }
 
 fn hnsw_insert_inner(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     (id, vector, plan): (&EntityId, &[f32], Option<&InsertPlan>),
@@ -398,10 +406,14 @@ fn hnsw_insert_inner(
         return Ok(InsertOutcome::Applied);
     }
     *ops += 1;
-    if store.is_union() {
+    if store.index_reads_union() {
         return room_insert(store, config, wtxn, (id, vector), discipline, ops);
     }
-    if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
+    if store
+        .index_neighbors()
+        .get(&*wtxn, id.as_bytes())?
+        .is_some()
+    {
         *ops += 1;
         let count = read_count(store, &*wtxn)?;
         if count == 0 {
@@ -422,7 +434,7 @@ fn hnsw_insert_inner(
     *ops += 1;
     if count == 0 {
         if read_entry_point(store, &*wtxn)?.is_some()
-            || store.hnsw_neighbors().first(&*wtxn)?.is_some()
+            || store.index_neighbors().first(&*wtxn)?.is_some()
         {
             return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
@@ -453,7 +465,7 @@ fn hnsw_insert_inner(
         .checked_add(1)
         .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
     store
-        .hnsw_meta()
+        .index_meta()
         .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
 
     Ok(InsertOutcome::Applied)
@@ -463,7 +475,7 @@ fn hnsw_insert_inner(
 /// removing the reverse direction, leaving one-way edges. Preserved verbatim
 /// for vaults that have not run the symmetry migration.
 fn attach_backlinks_legacy(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -502,7 +514,7 @@ fn attach_backlinks_legacy(
 /// victim whose list would become empty keeps its link one-way (orphan
 /// protection), so no prune ever disconnects a node's outgoing side.
 fn attach_backlinks_symmetric(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -549,14 +561,14 @@ fn attach_backlinks_symmetric(
 /// `from → victim` direction. Orphan protection: when `victim`'s list is
 /// exactly `[from]`, the link is kept one-way instead of emptying the list.
 fn detach_reverse_link(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
     from: &EntityId,
     victim: &EntityId,
     ops: &mut u64,
 ) -> Result<()> {
     *ops += 1;
-    let Some(raw) = store.hnsw_neighbors().get(&*wtxn, victim.as_bytes())? else {
+    let Some(raw) = store.index_neighbors().get(&*wtxn, victim.as_bytes())? else {
         return Ok(());
     };
     let list = decode_neighbors(&raw, false)?;
@@ -585,7 +597,7 @@ fn detach_reverse_link(
 /// `vectors` or `hnsw_neighbors` happens on this path.
 #[allow(clippy::too_many_arguments)]
 fn hnsw_refresh_localized(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -601,7 +613,10 @@ fn hnsw_refresh_localized(
     let mut orphaned: Vec<EntityId> = Vec::new();
     for neighbor_id in &old_neighbors {
         *ops += 1;
-        let Some(raw) = store.hnsw_neighbors().get(&*wtxn, neighbor_id.as_bytes())? else {
+        let Some(raw) = store
+            .index_neighbors()
+            .get(&*wtxn, neighbor_id.as_bytes())?
+        else {
             continue;
         };
         let list = decode_neighbors(&raw, false)?;
@@ -619,21 +634,21 @@ fn hnsw_refresh_localized(
     }
     // Every link `id` held goes with its row, the one-way ones included.
     reconcile_removed_one_way_links(store, wtxn, id, &old_neighbors, &[], ops)?;
-    store.hnsw_neighbors().delete(wtxn, id.as_bytes())?;
+    store.index_neighbors().delete(wtxn, id.as_bytes())?;
     *ops += 1;
 
     if count == 1 {
         // Sole node: trivially re-anchor at the new position.
         write_neighbors(store, wtxn, id, &[])?;
         store
-            .hnsw_meta()
+            .index_meta()
             .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
         return Ok(());
     }
 
     if entry_point == *id {
         let (replacement_key, _) = store
-            .hnsw_neighbors()
+            .index_neighbors()
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
         entry_point =
@@ -642,7 +657,7 @@ fn hnsw_refresh_localized(
                 other => other,
             })?;
         store
-            .hnsw_meta()
+            .index_meta()
             .put(wtxn, ENTRY_POINT_KEY, entry_point.as_bytes())?;
         *ops += 2;
     }
@@ -679,7 +694,7 @@ fn hnsw_refresh_localized(
     //    that the re-insert did not already reconnect.
     for orphan in orphaned {
         *ops += 1;
-        let Some(raw) = store.hnsw_neighbors().get(&*wtxn, orphan.as_bytes())? else {
+        let Some(raw) = store.index_neighbors().get(&*wtxn, orphan.as_bytes())? else {
             continue;
         };
         if !decode_neighbors(&raw, false)?.is_empty() {
@@ -723,7 +738,7 @@ fn hnsw_refresh_localized(
 /// rare path stays measured; the symmetric marker is already set and the
 /// rebuilt graph upholds it.
 pub(super) fn hnsw_symmetric_fallback_rebuild(
-    store: &impl ManifestDbs,
+    store: &impl VectorIndexDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {

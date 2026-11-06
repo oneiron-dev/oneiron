@@ -1,3 +1,6 @@
+//! TASK follow-up dedupe keys and consult-expiry recovery decoding.
+//! Entry [`task_follow_up_dedupe_key`]; shared by the human follow-up stages (ONE-1708).
+//! Owned by `task_verb`; terminal causes resolve in `terminal_state`.
 use rmpv::Value;
 
 use crate::Vault;

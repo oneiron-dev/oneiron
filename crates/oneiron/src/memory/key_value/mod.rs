@@ -3,7 +3,8 @@
 //!
 //! This first surface is explicitly WORLDLESS: it neither reads nor writes
 //! world-scoped claims. Actor id AND class are part of the identity. Reads
-//! require the canonical claim's envelope to name that actor/class. Namespace
+//! require the canonical claim's envelope to name that actor/class, and see
+//! only the words the canonical claim read serves (FIX 9946). Namespace
 //! prefixes compare whole string segments, never string-prefix approximations.
 #[cfg(test)]
 mod tests;
@@ -15,7 +16,7 @@ use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{ClaimError, Error};
 use crate::serialize::msgpack_value_to_json;
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
@@ -83,7 +84,7 @@ pub(crate) fn address_parses(address: &KeyValueAddress) -> bool {
     check_address(address).is_ok()
 }
 fn check_page(limit: usize, offset: usize) -> MemoryResult<()> {
-    super::caps::check_limit(limit)?;
+    super::caps::check_limit_nonzero(limit)?;
     if offset > MAX_OFFSET {
         return Err(MemoryError::bad_request("offset exceeds 1000000"));
     }
@@ -258,13 +259,38 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let Ok(body) = crate::claim::decode_claim_body(
+            // Malformed rows are not heads: one bad payload never denies
+            // every key of this actor, and the canonical read below would
+            // answer it as an error.
+            if crate::claim::decode_claim_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 true,
-            ) else {
+            )
+            .is_err()
+            {
                 continue;
+            }
+            // A head is chosen only among the words the canonical claim read
+            // serves now (FIX 9946): deleted, archived, integrity-withdrawn
+            // or use-limited words, words whose recorded source is gone or
+            // under a pending deletion walk, and a MACHINE claim whose
+            // authenticated history no longer projects it current all read
+            // as absent here, before any conflict, count, page or write
+            // prior. No older revision stands in for a withheld head: a
+            // superseded body is closed, and only Active heads are kept. A
+            // MACHINE claim whose history is not yet complete or proven is
+            // withheld the same way, never an error for the whole subject.
+            let body = match self.vault.get_claim_in_txn(txn, &id) {
+                Ok(Some(body)) => body,
+                Ok(None)
+                | Err(Error::Claim(
+                    ClaimError::MachineClaimHistoryIncomplete
+                    | ClaimError::InvalidMachineClaimProof,
+                )) => continue,
+                Err(error) => return Err(error.into()),
             };
             if body.lifecycle != ClaimLifecycleStatus::Active
+                || body.stale
                 || !matches!(
                     body.approval,
                     ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
@@ -340,6 +366,12 @@ impl Memory<'_> {
             }
         }
         let readable = self.key_value_readable()?;
+        // The requested page, measured where no read stands: the readable
+        // snapshot is closed and the page's own opens below.
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::RequestedResultRows,
+            u64::try_from(request.limit).unwrap_or(u64::MAX),
+        );
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let selected = |address: &KeyValueAddress, value: &StoredValue| {
             address.namespace.starts_with(&request.namespace_prefix)
@@ -384,6 +416,12 @@ impl Memory<'_> {
             ));
         }
         let readable = self.key_value_readable()?;
+        // The requested page, measured where no read stands: the readable
+        // snapshot is closed and the page's own opens below.
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::RequestedResultRows,
+            u64::try_from(request.limit).unwrap_or(u64::MAX),
+        );
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         // A conflicted address is live whichever head it keeps: its
         // namespace is listed, as one head's would be.

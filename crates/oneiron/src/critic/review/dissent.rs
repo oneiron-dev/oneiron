@@ -9,7 +9,6 @@ use crate::llm::decision::questions::{
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestionInput, ProviderPin,
 };
-use crate::note::TakeTarget;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CriticPrediction {
@@ -142,12 +141,12 @@ fn author_claimed_dissent(
     if state.note.is_none() {
         let markdown = serde_json::to_string_pretty(prediction)
             .map_err(|_| invalid_critic_config("dissent prediction encoding"))?;
-        let receipt = vault
-            .memory(actor.entity_ref(), actor.actor_class())
-            .author_dissent(TakeTarget::Claim(*verdict), markdown)
-            .map_err(|error| invalid_critic_config(error.to_string()))?;
-        state.note = Some(EntityId::from_hex(&receipt.id_hex)?);
-        save_dissent(vault, verdict, &state)?;
+        vault.with_write_txn_grouped(|txn| {
+            let note = crate::memory::append_dissent_in_txn(vault, txn, actor, *verdict, markdown)
+                .map_err(|error| invalid_critic_config(error.to_string()))?;
+            state.note = Some(note);
+            save_dissent_in_txn(vault, txn, verdict, &state)
+        })?;
     }
     if state.question.is_none() {
         // The question keeps the class its review's actor authenticated as
@@ -156,42 +155,45 @@ fn author_claimed_dissent(
             Some(class) => WriteActor::new(principal, class),
             None => questions::principal_actor(vault, principal)?,
         };
-        let record = questions::create_question(
-            vault,
-            asker,
-            QuestionDefinitionInput {
-                question: DecisionQuestionInput {
-                    text: prediction.what.clone(),
-                    class: DecisionClass::Judgment,
-                    contract: AnswerContract::Noul,
-                    accept_type: false,
+        vault.with_write_txn_grouped(|txn| {
+            let record = questions::create_question_in_txn(
+                vault,
+                txn,
+                asker,
+                QuestionDefinitionInput {
+                    question: DecisionQuestionInput {
+                        text: prediction.what.clone(),
+                        class: DecisionClass::Judgment,
+                        contract: AnswerContract::Noul,
+                        accept_type: false,
+                    },
+                    adapter: "graph".to_owned(),
+                    units: vec![EntityId::from_hex(&artifact.candidate_ref)?],
+                    recipe: "critic.dissent".to_owned(),
+                    profile: "critic.dissent".to_owned(),
+                    dial: REVIEW_DIAL,
+                    activation: QuestionActivation::Standing,
+                    // This records the critic's original prediction once. Arrivals label it;
+                    // they must not ask another model to replace it.
+                    refresh: RefreshPolicy {
+                        on_arrival: false,
+                        every_seconds: None,
+                    },
+                    delivery: "none".to_owned(),
+                    learning: true,
+                    binding: Some(prediction.how_checked.clone()),
+                    criteria: questions::QuestionCriteria::default(),
+                    audience: questions::QuestionAudience::Asker,
+                    posture: None,
+                    media: questions::QuestionMedia::default(),
+                    deadline_ms: None,
+                    artifacts: Vec::new(),
                 },
-                adapter: "graph".to_owned(),
-                units: vec![EntityId::from_hex(&artifact.candidate_ref)?],
-                recipe: "critic.dissent".to_owned(),
-                profile: "critic.dissent".to_owned(),
-                dial: REVIEW_DIAL,
-                activation: QuestionActivation::Standing,
-                // This records the critic's original prediction once. Arrivals label it;
-                // they must not ask another model to replace it.
-                refresh: RefreshPolicy {
-                    on_arrival: false,
-                    every_seconds: None,
-                },
-                delivery: "none".to_owned(),
-                learning: true,
-                binding: Some(prediction.how_checked.clone()),
-                criteria: questions::QuestionCriteria::default(),
-                audience: questions::QuestionAudience::Asker,
-                posture: None,
-                media: questions::QuestionMedia::default(),
-                deadline_ms: None,
-                artifacts: Vec::new(),
-            },
-            artifact.created_at,
-        )?;
-        state.question = Some(record.definition.question.id);
-        save_dissent(vault, verdict, &state)?;
+                artifact.created_at,
+            )?;
+            state.question = Some(record.definition.question.id);
+            save_dissent_in_txn(vault, txn, verdict, &state)
+        })?;
     }
     Ok(state)
 }

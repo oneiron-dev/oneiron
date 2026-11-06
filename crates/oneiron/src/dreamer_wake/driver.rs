@@ -340,7 +340,7 @@ impl<'a> DreamerWakeDriver<'a> {
         prepared_wake: &crate::dreamer_consolidation::PreparedWake,
     ) -> Result<WakePassReport> {
         let admission_policy = self.vault.dreamer_wake_policy()?;
-        // Plain Micro partitions extract side by side up to this width
+        // Plain Micro or Meso partitions extract side by side up to this width
         // (FIX 12487); their finishes and settles stay serial in
         // admission order.
         let partition_parallelism = self
@@ -587,7 +587,7 @@ impl<'a> DreamerWakeDriver<'a> {
             // executor's future (SCAN C012): an attempt that never
             // dispatched registers nothing and settles zero.
             let spend_meter = WakeAttemptMeter::default();
-            // A plain Micro partition with its plan ready joins the
+            // A plain Micro or Meso partition with its plan ready joins the
             // extraction window instead of dispatching alone (FIX
             // 12487); anything else first flushes what the window
             // holds, so no later admission settles ahead of partitions

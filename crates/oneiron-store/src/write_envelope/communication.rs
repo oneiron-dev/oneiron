@@ -71,6 +71,23 @@ pub const KEY_VALID_TO: &str = "valid_to";
 /// the lookup; THIS is what the cache is a cache of.
 pub const KEY_PARTY_KEY: &str = "party_key";
 
+/// Receipt token for a counterparty STOP opt-out.
+pub const COMM_OPT_OUT_REASON_STOP: &str = "counterparty_opt_out_stop";
+
+/// Receipt token for a counterparty unsubscribe opt-out.
+pub const COMM_OPT_OUT_REASON_UNSUBSCRIBE: &str = "counterparty_opt_out_unsubscribe";
+
+/// Receipt token for a counterparty block or friend-removal opt-out.
+pub const COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL: &str =
+    "counterparty_opt_out_block_or_friend_removal";
+
+/// The receipt vocabulary accepted by `comm.opt_out` claims, in reason order.
+pub const COMM_OPT_OUT_REASONS: [&str; 3] = [
+    COMM_OPT_OUT_REASON_STOP,
+    COMM_OPT_OUT_REASON_UNSUBSCRIBE,
+    COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
+];
+
 /// Typed error for communication projector and consent operations.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

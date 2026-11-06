@@ -171,6 +171,33 @@ fn measure_with_owner(
             JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?,
         )
     };
+    if bandit
+        .goal_revision()
+        .is_some_and(|measured| measured != goal_revision.as_str())
+    {
+        return Err(retry("the goal moved while its axes were measured"));
+    }
+
+    if !plan.online.is_empty() {
+        for (arm, entity, record) in [
+            (crate::skill_optimize::AxisArm::Incumbent, target, &current),
+            (
+                crate::skill_optimize::AxisArm::Candidate,
+                *proposal,
+                &staged,
+            ),
+        ] {
+            if let Some((bound_entity, bound_record)) = bandit.arm_record(arm)
+                && (bound_entity != entity
+                    || skill_body_binding_digest(bound_record)?
+                        != skill_body_binding_digest(record)?)
+            {
+                return Err(retry(
+                    "a skill body moved while its goal axes were measured",
+                ));
+            }
+        }
+    }
     let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
     vault.with_write_txn_grouped(|txn| {
         if let Some(owner) = owner {

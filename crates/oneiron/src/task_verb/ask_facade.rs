@@ -735,3 +735,32 @@ pub(super) fn ask_assignee(
         _ => TaskAssignee::Peer { actor_ref: actor },
     }
 }
+
+impl Memory<'_> {
+    /// Whether a recorded group still belongs to this asker and intent.
+    /// This reads the admitted ask; it neither admits a new spec nor changes
+    /// the replay digest, audience or world-placement checks.
+    pub(crate) fn owns_task_ask_intent(
+        &self,
+        handle: TaskAskHandle,
+        intent_key: &str,
+    ) -> MemoryResult<bool> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .owns_task_ask_intent(handle, intent_key);
+        }
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(self
+            .ask_group_named_in(&txn, handle.group_ref)?
+            .is_some_and(|group| {
+                group.owner == self.actor().to_hex() && group.requested.intent_key == intent_key
+            }))
+    }
+}

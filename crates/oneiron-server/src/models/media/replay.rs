@@ -10,9 +10,12 @@
 //! own) is known by it. A job's repeat answers the first's ticket and is
 //! never sent again, and its polls answer from that ticket. A call's
 //! repeat answers the answer kept for the first, unpaid, until it expires.
+//! Concurrent keyed runs share the first run's result before any second
+//! admission, even when its answer could not be kept. A dropped first run
+//! wakes its waiting repeats with a cut, without sending them again.
 //! A call in a banked voice is never replayed: a voice its owner withdrew
 //! since speaks no more. With no key, every call goes out as before.
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use oneiron::llm::media::MediaReplayKey;
 
@@ -136,7 +139,7 @@ impl MediaRuntime {
             Ok(walk) => walk.await,
             Err(error) => Err(error),
         };
-        let job = match answer {
+        let mut job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.unclaim(&id, intent);
@@ -153,7 +156,7 @@ impl MediaRuntime {
             row.receipt = job.receipt.clone();
         }
         let answer = ticket(&job.model);
-        self.keep_submitted(&id, row, intent);
+        job.unkept = !self.keep_submitted(&id, row, intent);
         self.lock_jobs()
             .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
         Ok(answer)
@@ -181,10 +184,56 @@ impl MediaRuntime {
         if let Some(answer) = self.replay_answer(key) {
             return answer;
         }
-        let kept = request.clone();
-        let response = self.run_in(request, None, payer.clone(), sources).await?;
-        self.keep_replay_answer(key, &kept, &response, actor, payer);
-        Ok(response)
+        let leader = match self.replay_runs.claim(key) {
+            super::run_replay::Claim::Leader(leader) => leader,
+            super::run_replay::Claim::Follower(follower) => {
+                drop(request);
+                return self.follow_replay(key, follower, None).await;
+            }
+        };
+        let admitted = AtomicBool::new(false);
+        let answer = async {
+            // A prior leader may have kept its answer after our first read.
+            if let Some(answer) = self.replay_answer(key) {
+                return answer;
+            }
+            let kept = request.clone();
+            let run = self.media_run(payer.clone(), sources)?;
+            let response = self
+                .run_admitted_for_step(&run, request, None, None, &admitted)
+                .await?;
+            self.keep_replay_answer(key, &kept, &response, actor, payer);
+            Ok(response)
+        }
+        .await;
+        leader.finish(answer, admitted.load(Ordering::Acquire))
+    }
+
+    /// A waiting repeat reads the current erase marker before copying the
+    /// shared answer, just as a durable replay refuses erased content.
+    pub(super) async fn follow_replay(
+        &self,
+        key: &MediaReplayKey,
+        follower: super::run_replay::Follower,
+        admitted: Option<&AtomicBool>,
+    ) -> LlmResult<MediaResponse> {
+        let answer = follower.answer().await;
+        if let Ok(answer) = &answer
+            && answer.admitted
+            && let Some(admitted) = admitted
+        {
+            admitted.store(true, Ordering::Release);
+        }
+        let id = format!("{REPLAY_TICKET}{}", key.memo_id());
+        if self
+            .store
+            .as_ref()
+            .and_then(|store| store.read(&id, false))
+            .is_some_and(|kept| kept.erased())
+        {
+            return Err(FatalLlmError::ResponseErased.into());
+        }
+        answer?.result.clone()
     }
 
     /// The answer the call `key` knows keeps for its repeats, when one
@@ -303,10 +352,12 @@ impl MediaRuntime {
     /// Keeps the row of job `id` its provider answered, over its intent row
     /// when that was kept. A row the vault refuses is kept as the job's held
     /// write (FIX 2963), and one refused there too leaves the job running
-    /// here only.
-    fn keep_submitted(&self, id: &str, row: Option<JobRow>, intent: bool) {
+    /// here only. Answers whether the write was handled: durable, held, or
+    /// erased (FIX 11517). Only a real persistence failure answers false; an
+    /// intent row without its provider job is no handling of this write.
+    fn keep_submitted(&self, id: &str, row: Option<JobRow>, intent: bool) -> bool {
         let (Some(store), Some(row)) = (&self.store, row) else {
-            return;
+            return false;
         };
         let row_kept = row.clone();
         let kept = match intent {
@@ -319,8 +370,12 @@ impl MediaRuntime {
             false => store.put(id, row),
         };
         // FIX 2963: a row the vault refuses is held as the job's held write.
-        if let Err(error) = kept.or_else(|_| store.hold(id, row_kept).map(|()| true)) {
-            tracing::error!(%error, ticket = id, "a media job was not kept: it runs held here");
+        match kept.or_else(|_| store.hold(id, row_kept).map(|()| true)) {
+            Ok(_) => true,
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a media job was not kept: it runs held here");
+                false
+            }
         }
     }
 
@@ -373,7 +428,7 @@ impl MediaRuntime {
                 Err(error) => Err(error),
             }
         };
-        let job = match answer {
+        let mut job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.lock_jobs().remove(id);
@@ -390,7 +445,7 @@ impl MediaRuntime {
         row.model = job.model.clone();
         row.provider_job = Some(job.provider_job.clone());
         row.receipt = job.receipt.clone();
-        self.keep_submitted(id, Some(row), true);
+        job.unkept = !self.keep_submitted(id, Some(row), true);
         self.lock_jobs().insert(
             id.to_owned(),
             Held::Running(Arc::new(tokio::sync::Mutex::new(job))),

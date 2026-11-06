@@ -37,8 +37,9 @@ pub(super) fn validate_local_agent_definition_create(
                 "forkedFrom parent must exist as a type-17 AGENT_DEF",
             )));
         }
-        let parent_definition =
-            crate::agent_def::decode_agent_definition(&parent_raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let parent_definition = crate::store::agent_definition_codec::decode_agent_definition(
+            &parent_raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
         if created.ceiling.widens_beyond(parent_definition.ceiling) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "forked agent ceiling cannot widen beyond its parent row ceiling",

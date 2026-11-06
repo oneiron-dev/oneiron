@@ -278,9 +278,7 @@ fn authority_history_selection_in_txn(
     }
     let bytes = super::checkpoint::checkpoint_image_bytes_in_txn(&vault.store, txn, checkpoint)?
         .ok_or_else(|| refused("no kept checkpoint image has this id"))?;
-    if bytes.len() > AUTHORITY_CHECKPOINT_V2_MAX_BYTES
-        || super::checkpoint_image::checkpoint_image_id(&bytes) != *checkpoint
-    {
+    if super::checkpoint_image::checkpoint_image_id(&bytes) != *checkpoint {
         return Err(refused("checkpoint image id"));
     }
     let image: SelectableOnly = bytes
@@ -521,7 +519,8 @@ fn verification_in_txn(
         .into_iter()
         .map(|(hash, (_, entry))| (hash, entry))
         .collect();
-    let adopted = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
+    let adopted =
+        super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
     let mut bound = rows_vault(rows.iter())
         .or_else(|| adopted.as_ref().map(|adopted| adopted.pin().genesis))
         .or(expected);
@@ -594,7 +593,7 @@ fn verification_in_txn(
         .copied()
         .collect();
     coverage.archive =
-        super::history_coverage::archive_coverage_in_txn(vault, txn, adopted.as_ref(), &scope)?;
+        super::history_coverage::archive_coverage_in_txn(vault, txn, adopted.as_deref(), &scope)?;
     Ok(coverage)
 }
 
@@ -681,7 +680,7 @@ impl Vault {
     ) -> Result<AuthorityHistoryFetch> {
         let txn = self.store.env.read_txn()?;
         let Some(adopted) =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?
+            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?
         else {
             return Ok(AuthorityHistoryFetch::closing(request, held));
         };
