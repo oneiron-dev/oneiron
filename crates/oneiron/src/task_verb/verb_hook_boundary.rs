@@ -560,6 +560,9 @@ fn chain_post(
     if pre.call().domain == VerbDomain::Read {
         return post(pre, result)?.map_err(stopped);
     }
+    if session.is_none() && !pre.has_post_carry() {
+        return Ok(result);
+    }
     let verb = pre.call().verb.clone();
     let committed = result.clone();
     match post(pre, result) {
