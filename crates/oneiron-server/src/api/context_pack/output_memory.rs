@@ -37,7 +37,7 @@ impl RetainedDisclosureOutput {
         let held = self.0.bytes();
         if bytes > held {
             self.0.materialized(0, bytes - held);
-        } else {
+        } else if bytes < held {
             self.0.shrink(held - bytes);
         }
     }
@@ -98,7 +98,9 @@ impl Write for ContextJsonBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.bytes.extend_from_slice(bytes);
         let growth = (self.bytes.capacity() as u64).saturating_sub(self.storage.bytes());
-        self.storage.materialized(0, growth);
+        if growth != 0 {
+            self.storage.materialized(0, growth);
+        }
         Ok(bytes.len())
     }
 
