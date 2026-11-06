@@ -375,8 +375,10 @@ impl<'s> SessionReadContext<'s> {
 
     /// The entity `reference` names in the room, at the frontier it names:
     /// a 32-hex id, the room's own short ref (`s<n>:<hash>`) or the vault's,
-    /// each optionally pinned as `<ref>@<revision>`. `None` is a ref that
-    /// names nothing here, never a withheld row: admission is the lane's.
+    /// each optionally pinned as `<ref>@<revision>`. A pinned room alias
+    /// names the revision this call's view holds (FIX 5162). `None` is a ref
+    /// that names nothing here, never a withheld row: admission is the
+    /// lane's.
     fn target(&self, reference: &str) -> MemoryResult<ReadTargetSlot> {
         let (reference, mode) = match reference.rsplit_once('@') {
             Some((reference, revision)) => (
@@ -386,12 +388,11 @@ impl<'s> SessionReadContext<'s> {
             None => (reference.trim(), ReadMode::Live),
         };
         if let Some((alias, hash)) = room_short_ref(reference) {
-            // A room's alias names its row's live body: a pin of one names
-            // no revision the room can check.
-            if mode != ReadMode::Live {
-                return Ok(None);
-            }
-            return Ok(self.room_alias(alias, hash)?.map(|id| (id, mode)));
+            let id = match mode {
+                ReadMode::Pinned(revision) => self.room_pinned_alias(alias, hash, revision)?,
+                _ => self.room_alias(alias, hash)?,
+            };
+            return Ok(id.map(|id| (id, mode)));
         }
         let id = match mode {
             // A pinned vault ref resolves against its pin, as on base; a
@@ -471,6 +472,28 @@ impl<'s> SessionReadContext<'s> {
     /// call's view of the room.
     fn room_alias(&self, alias: &str, hash: u8) -> MemoryResult<Option<EntityId>> {
         room_alias_in_view(self.vault, &self.view, alias, hash)
+    }
+
+    /// The row the room's alias `alias` names at `revision`, whose bytes
+    /// hash to `hash`, in this call's view of the room (FIX 5162). Identity,
+    /// alias and bytes are read in one view and one transaction. The
+    /// resolver grants nothing: the lane admits the row and its revision.
+    fn room_pinned_alias(
+        &self,
+        alias: &str,
+        hash: u8,
+        revision: RevisionRef,
+    ) -> MemoryResult<Option<EntityId>> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+        crate::vault::entity_revision::resolve_room_pinned_alias_in_txn(
+            self.vault, &self.view, &txn, alias, hash, revision,
+        )
+        .map_err(MemoryError::from)
     }
 }
 
