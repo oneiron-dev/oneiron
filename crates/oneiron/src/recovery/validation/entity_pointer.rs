@@ -16,7 +16,8 @@ pub(super) struct EntityPointer {
     stack: Vec<Frame>,
     reference_key: bool,
     references: u8,
-    reference: Option<Range<usize>>,
+    reference: Option<String>,
+    text: Option<PendingText>,
     pub(super) other_fields: bool,
     pub(super) metadata: bool,
     pub(super) body_field: bool,
@@ -34,11 +35,83 @@ struct Token {
     map: bool,
 }
 
+struct PendingText {
+    range: Range<usize>,
+    next: usize,
+    value: Option<String>,
+    key: bool,
+    body_field: bool,
+}
+
+impl PendingText {
+    fn new(range: Range<usize>, key: bool, field: Option<&str>) -> Self {
+        Self {
+            next: range.start,
+            body_field: key && field.is_some_and(|field| field.len() == range.len()),
+            range,
+            value: Some(String::new()),
+            key,
+        }
+    }
+
+    /// Decode one Unicode scalar; invalid UTF-8 stays a non-string Value.
+    fn advance(&mut self, body: &[u8], field: Option<&str>) -> bool {
+        if self.next == self.range.end {
+            return true;
+        }
+        let width = match body[self.next] {
+            0x00..=0x7f => 1,
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => 0,
+        };
+        let end = self.next + width.min(self.range.end - self.next);
+        let scalar = (width != 0 && end - self.next == width)
+            .then(|| std::str::from_utf8(&body[self.next..end]).ok())
+            .flatten();
+        let Some(scalar) = scalar else {
+            self.value = None;
+            self.body_field = false;
+            self.next = self.range.end;
+            return true;
+        };
+        if self.body_field {
+            let offset = self.next - self.range.start;
+            self.body_field = field.and_then(|field| field.as_bytes().get(offset..offset + width))
+                == Some(scalar.as_bytes());
+        }
+        self.value
+            .as_mut()
+            .expect("unfinished valid text has a string")
+            .push_str(scalar);
+        self.next = end;
+        self.next == self.range.end
+    }
+}
+
 impl EntityPointer {
-    /// Visit one marker or retire one completed container, without owning its values.
+    /// Visit one marker, root Unicode scalar, or completed container.
     pub(super) fn advance(&mut self, body: &[u8], field: Option<&str>) -> bool {
         if self.complete {
             return true;
+        }
+        if let Some(text) = self.text.as_mut() {
+            if text.advance(body, field) {
+                let text = self.text.take().expect("the completed scalar is pending");
+                if text.key {
+                    let key = text.value.as_deref();
+                    self.reference_key = key == Some("entity_doc_ref");
+                    if !self.reference_key {
+                        self.other_fields = true;
+                        self.metadata |= key.is_some_and(crate::ports::is_metadata_field);
+                        self.body_field |= text.body_field;
+                    }
+                } else {
+                    self.reference = text.value;
+                }
+            }
+            return false;
         }
         if !self.started {
             self.started = true;
@@ -71,19 +144,18 @@ impl EntityPointer {
         let remaining = frame.remaining;
         if self.stack.len() == 1 {
             if remaining % 2 == 1 {
-                let key = token
-                    .text
-                    .as_ref()
-                    .and_then(|range| std::str::from_utf8(&body[range.clone()]).ok());
-                self.reference_key = key == Some("entity_doc_ref");
-                if !self.reference_key {
+                self.reference_key = false;
+                if let Some(range) = token.text {
+                    self.text = Some(PendingText::new(range, true, field));
+                } else {
                     self.other_fields = true;
-                    self.metadata |= key.is_some_and(crate::ports::is_metadata_field);
-                    self.body_field |= key.is_some() && key == field;
                 }
             } else if self.reference_key {
                 self.references = self.references.saturating_add(1);
-                self.reference = token.text;
+                self.reference = None;
+                if let Some(range) = token.text {
+                    self.text = Some(PendingText::new(range, false, None));
+                }
             }
         }
         self.at = token.end;
@@ -95,7 +167,7 @@ impl EntityPointer {
 
     /// A document pointer in a raw entity row must have its value in the artifact.
     /// Do not trust the writer: decoded payloads enter this gate too.
-    pub(super) fn pointer<'body>(&self, body: &'body [u8]) -> Result<Option<&'body str>> {
+    pub(super) fn pointer(&self, body: &[u8]) -> Result<Option<&str>> {
         // As with read_value, malformed or non-map input has no pointer, even if
         // an earlier complete field happened to name one.
         if !self.valid || self.references == 0 {
@@ -106,8 +178,7 @@ impl EntityPointer {
         }
         let value = self
             .reference
-            .as_ref()
-            .and_then(|range| std::str::from_utf8(&body[range.clone()]).ok())
+            .as_deref()
             .ok_or(invalid("entity document pointer type"))?;
         id(crate::recovery::canonical::parse_id(value)?)?;
         Ok(Some(value))
