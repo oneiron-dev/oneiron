@@ -89,8 +89,33 @@ impl Replay<'_> {
         self.history_failure(lane, id, None, None)
     }
 
+    /// `None` while the current grant's reader reads a watcher run's trigger
+    /// row (FIX 4749) and the grant shows it: the check [`read::fact_row`]
+    /// makes on a live tick or inbound event, which pins no body. A row the
+    /// reader no longer reads, or the grant no longer shows, is withheld
+    /// alike, so the answer never tells a revoked hook whether it remains.
+    fn watcher_trigger_failure(
+        &self,
+        lane: &ScopedRead<'_>,
+        trigger: EntityId,
+    ) -> Option<HookReplayResult> {
+        match read::history_admission(lane, self.grant, trigger, None, None) {
+            Ok(HistoryAdmission::Shown) => None,
+            Ok(HistoryAdmission::Withheld | HistoryAdmission::Missing) => {
+                Some(HookReplayResult::Withheld {
+                    reason: "the run's trigger row is not shown to this hook now".to_owned(),
+                })
+            }
+            Err(error) => Some(HookReplayResult::MissingHistory {
+                reason: error.to_string(),
+            }),
+        }
+    }
+
     /// A run pinned this entry: its input as it was, each read only when it
     /// answers what it answered then, and each verdict as the run heard it.
+    /// A watcher run's saved input runs again only on a trigger row its
+    /// current grant still shows.
     pub(super) fn from_memo(
         &self,
         lane: &ScopedRead<'_>,
@@ -112,6 +137,10 @@ impl Replay<'_> {
             {
                 return failure;
             }
+        } else if memo.fact.is_watcher_source()
+            && let Some(failure) = self.watcher_trigger_failure(lane, memo.entity)
+        {
+            return failure;
         }
         for pin in &memo.verdicts {
             let Some(evidence) = pin.evidence.as_deref() else {
