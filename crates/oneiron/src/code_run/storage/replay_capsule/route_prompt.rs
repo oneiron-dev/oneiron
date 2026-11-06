@@ -28,6 +28,7 @@ use super::{CAPSULES, capsule_key, held_body, kept_in_txn};
 use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::dreamer_runner::shadow_values::{ShadowUnavailable, ShadowUnavailableReason as Reason};
 use crate::error::GateError;
+use crate::model_binding::ModelRole;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Where the wall's custody records name what they lifted from a capsule's
@@ -37,9 +38,10 @@ const PROMPT_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:route_prompt";
 /// A route prompt as read, or why it cannot be read.
 type Outcome<T> = std::result::Result<T, ShadowUnavailable>;
 
-/// Records the rung that answered the capsule at `key`, and the route it
-/// went out on when it pinned one (PR-S1), once and in one write: its route
-/// prompt admitted and published as a body the run owns (FIX 6255), and the
+/// Records the rung that answered the capsule at `key`, the role whose
+/// admission sent the call (`role`, FIX 6359), and the route it went out on
+/// when it pinned one (PR-S1), once and in one write: its route prompt
+/// admitted and published as a body the run owns (FIX 6255), and the
 /// capsule naming it by ref with the digest of the prompt as sent. A capsule
 /// already finalized keeps its rung and its pin. An erased capsule, or one
 /// whose actor is gone by now, takes neither and publishes nothing. A pin
@@ -48,6 +50,7 @@ pub(crate) fn finalize_capsule(
     vault: &Vault,
     key: &(EntityId, u64, u64),
     binding: CapsuleRungBinding,
+    role: ModelRole,
     route_pin: Option<ReplayRoutePin>,
 ) -> Result<()> {
     let CapsuleRungBinding {
@@ -79,6 +82,7 @@ pub(crate) fn finalize_capsule(
             locality,
             prompt,
             prompt_digest,
+            role,
         });
         capsule.route_pin.clone_from(&route_pin);
         CAPSULES.put(vault, wtxn, key, &capsule)?;

@@ -42,6 +42,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use super::super::CHAT_ROLE;
 use super::StepHost;
 use super::live_lease::LiveLease;
 use crate::models::{ModelCallBinding, OfferLadder};
@@ -236,8 +237,15 @@ impl<'a> StepSecretUse<'a> {
                     }
                 };
                 if !cursor.capture_completed {
+                    // A workflow's step call is admitted on the chat role
+                    // (FIX 6359): its replays are admitted on that role too.
                     if let Some(staged) = staged {
-                        staged.finalize(self.vault, binding.rung.clone(), binding.route.clone());
+                        staged.finalize(
+                            self.vault,
+                            binding.rung.clone(),
+                            CHAT_ROLE,
+                            binding.route.clone(),
+                        );
                     }
                     cursor.capture_completed = true;
                 }
