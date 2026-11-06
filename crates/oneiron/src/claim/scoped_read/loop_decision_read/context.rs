@@ -40,7 +40,7 @@ pub(super) fn record_family(record: &GateDecisionRecord) -> Option<LoopDecisionF
     })
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// What `record`'s kept read context admits, when the reader is admitted
     /// to every read context it kept (a bundle's every member): `None` when
     /// it kept none or one does not admit. A decision on a claim `claim`
@@ -54,7 +54,7 @@ impl<'v> ScopedRead<'v> {
     pub(super) fn loop_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         record: &GateDecisionRecord,
         claim: Option<EntityId>,
     ) -> Result<Option<KeptAdmission>> {
@@ -115,7 +115,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         context: &GateDecisionReadContext,
     ) -> Result<bool> {
         if context.about.is_empty() && context.position.is_none() {
@@ -257,7 +257,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_position_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         record: Option<&EntityId>,
         position: &GateReadPosition,
     ) -> Result<bool> {
