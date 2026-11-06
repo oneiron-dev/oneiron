@@ -187,9 +187,9 @@ pub use self::eval_set::{
 };
 pub use self::eval_set::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
-    EvalMeasurement, EvalMeasurementRequest, EvalTaskInput, FloorSlicePolicy, JUDGE_SCORE_AXIS,
-    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
-    ScoreDirection, eval_seat_canary,
+    EvalMeasurement, EvalMeasurementRequest, EvalServingOffer, EvalTaskInput, FloorSlicePolicy,
+    JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
+    MeasurementUnavailable, ScoreDirection, eval_seat_canary,
 };
 pub(crate) use self::eval_set::{
     erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,
