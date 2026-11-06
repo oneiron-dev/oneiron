@@ -266,6 +266,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(crate) claims_suppressed: usize,
     pub(crate) read_suppressed: usize,
+    /// Raw rejected candidates; scoped receipts qualify them before counting.
+    pub(crate) read_suppressed_candidates: std::collections::HashSet<EntityId>,
     pub(crate) cosine_ghosts_dampened: usize,
     /// Scored rows the pack's disclosure clamp withheld before selection
     /// (`PipelineBuilder::disclosure_preselect`).
