@@ -6,7 +6,7 @@
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
-use super::rows::{CLIENTS, client_key};
+use super::rows::{CLIENTS, FAMILIES, REQUESTS, client_key};
 use super::{
     OAUTH_CIMD_TTL_SECS, OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_REDIRECT_URIS_MAX,
     OAUTH_URI_MAX_BYTES,
@@ -283,12 +283,44 @@ impl Vault {
             registered_at: now,
         };
         self.with_write_txn_grouped(|txn| {
-            if CLIENTS.scan_keys(&self.store, txn, &[])?.len() >= OAUTH_CLIENTS_MAX {
+            if !self.make_oauth_client_room_in_txn(txn, now)? {
                 return Ok(Err(OAuthRegistrationRefusal::RegistryFull));
             }
             CLIENTS.put(&self.store, txn, &client_key(&record.client_id), &record)?;
             Ok(Ok(record))
         })
+    }
+
+    /// Whether the clients table has room for one more client at `now`, made in the caller's
+    /// writer when it is full: a client that holds no live token family and no pending sign-in
+    /// yields its slot, the oldest registered first, so open registration can never fill the
+    /// table for good (review #6508). Only a table full of clients in use has no room. An engine
+    /// call (CALLS, FIX 4902).
+    fn make_oauth_client_room_in_txn(&self, txn: &mut heed::RwTxn<'_>, now: u64) -> Result<bool> {
+        let clients = CLIENTS.scan(&self.store, txn)?;
+        if clients.len() < OAUTH_CLIENTS_MAX {
+            return Ok(true);
+        }
+        let mut in_use = std::collections::BTreeSet::new();
+        for (_, family) in FAMILIES.scan(&self.store, txn)? {
+            if !family.revoked && now < family.expires_at {
+                in_use.insert(family.client_id);
+            }
+        }
+        for (_, request) in REQUESTS.scan(&self.store, txn)? {
+            if now < request.expires_at {
+                in_use.insert(request.client_id);
+            }
+        }
+        let unused = clients
+            .into_iter()
+            .filter(|(_, client)| !in_use.contains(&client.client_id))
+            .min_by_key(|(_, client)| client.registered_at);
+        let Some((key, _)) = unused else {
+            return Ok(false);
+        };
+        CLIENTS.delete(&self.store, txn, &key)?;
+        Ok(true)
     }
 
     /// The client `client_id` names, as last stored; `None` for one this vault does not know. A
@@ -341,9 +373,7 @@ impl Vault {
             let known = CLIENTS
                 .get(&self.store, txn, &key)?
                 .filter(|record| record.client_id == client_id);
-            if known.is_none()
-                && CLIENTS.scan_keys(&self.store, txn, &[])?.len() >= OAUTH_CLIENTS_MAX
-            {
+            if known.is_none() && !self.make_oauth_client_room_in_txn(txn, now)? {
                 return Ok(None);
             }
             let record = OAuthClientRecord {

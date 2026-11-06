@@ -66,8 +66,10 @@ pub const OAUTH_CIMD_TTL_SECS: u64 = 3_600;
 /// The most authorization requests that may wait on the owner at once, so no stranger fills his
 /// inbox; one past it is refused `temporarily_unavailable` (CALLS, FIX 4902: an engine call).
 pub const OAUTH_PENDING_REQUESTS_MAX: usize = 16;
-/// The most clients the clients table holds, registered and metadata-document ones together;
-/// a new one past it is refused (CALLS, FIX 4902: an engine call).
+/// The most clients the clients table holds, registered and metadata-document ones together.
+/// At the limit, the oldest client with no live token family and no pending sign-in yields its
+/// slot; a new one is refused only when every client is in use (CALLS, FIX 4902: an engine
+/// call).
 pub const OAUTH_CLIENTS_MAX: usize = 1_024;
 /// The longest `client_name` a client may give, in characters (CALLS, FIX 4902: an engine call).
 pub const OAUTH_CLIENT_NAME_MAX_CHARS: usize = 128;
