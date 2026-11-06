@@ -673,6 +673,41 @@ fn check_claim_policy_for_write_with_record_inner(
                 crate::self_heal::tripwires::normal_baseline_token(&body.predicate),
             );
         }
+        // FIX 8752: a batch apply skips the checker its preflight already
+        // asked, so policy alone answers Allow here. A checker hold that
+        // preflight recorded for this same candidate stays the verdict: the
+        // write lands held, and the writer below binds that receipt's pending
+        // row instead of dropping the hold. A fresh Deny or Pending stands.
+        if decision.outcome() == GateOutcome::Allow
+            && let Some(preflight_id) = preflight_decision_id
+        {
+            let preflight = store.gate_decision_in_txn(&*wtxn, preflight_id)?.ok_or(
+                Error::InvariantViolation("preflight gate decision missing during apply"),
+            )?;
+            let checker_hold = [
+                GateReasonCode::PendingChecker,
+                GateReasonCode::PendingCheckerUnavailable,
+            ]
+            .into_iter()
+            .find(|reason| {
+                preflight.outcome == GateOutcome::Pending.as_str()
+                    && preflight.reason_codes.as_slice() == [reason.as_str()]
+            });
+            if let Some(reason) = checker_hold {
+                let mut held = decision_record.clone();
+                held.outcome.clone_from(&preflight.outcome);
+                held.reason_codes.clone_from(&preflight.reason_codes);
+                held.receipt_reasons.clone_from(&preflight.receipt_reasons);
+                held.grant_ref.clone_from(&preflight.grant_ref);
+                if !gate_decision_matches_pending_candidate(&preflight, &held) {
+                    return Err(Error::InvariantViolation(
+                        "preflight gate decision does not match pending candidate",
+                    ));
+                }
+                decision = GateDecision::pending(vec![reason]);
+                decision_record = held;
+            }
+        }
         if mode.record_decision {
             // A structural streak follows durable append order, including
             // ordinary receipts created within the same clock millisecond.
