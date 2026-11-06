@@ -13,7 +13,7 @@ use super::{
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbAskCredential, VerbHookStorage};
-use crate::runtime_hooks::{VerbHookPre, VerbHookStop, VerbResume};
+use crate::runtime_hooks::{InvocationId, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{AgentVerb, validate_input};
 
@@ -146,6 +146,12 @@ fn row_pre_with_saved(
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
         pre.with_read_capture(memory.read_capture());
+    }
+    // A retry the saved call's target check answered with what settlement's
+    // drain ran lists the rows that answer was saved beside, before any door
+    // turns it into the row's output (FIX 21054).
+    if let Err(VerbHookStop::Completed { invocation, .. }) = &ended {
+        memory.produced_by_drained(InvocationId::parse_hex(invocation));
     }
     Ok(ended)
 }
