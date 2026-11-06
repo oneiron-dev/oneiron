@@ -150,8 +150,9 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 }
 
 /// Puts `opened`'s revision-ledger rows back: each exact row as it stands,
-/// and a revision document as its join gives it back. That document's
-/// bindings are checked whole: their collisions before any row is written,
+/// and a revision document as its join gives it back (an author carrier's
+/// comes back whole, out of its actor's part, with no binding staged). A
+/// joined document's bindings are checked whole: their collisions before any row is written,
 /// and what was written once every row is in, before this returns, so no
 /// later row of this getter writes one of them again.
 pub(crate) fn restore_in_txn(
