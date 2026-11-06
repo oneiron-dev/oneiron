@@ -109,8 +109,7 @@ impl SyncServer {
         admit: HousekeepingAdmission,
     ) -> tokio::task::JoinHandle<()> {
         // A parked MCP run's re-entry writes under the same gate (FIX 4606).
-        self.mcp_code_run_continuations
-            .admit_with(Arc::clone(&admit));
+        self.mcp_code_run_continuations.admit_with(&admit);
         tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
