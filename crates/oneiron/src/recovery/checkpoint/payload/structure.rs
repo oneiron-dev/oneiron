@@ -107,7 +107,16 @@ pub(super) fn dependencies(database: &str, key: &[u8], value: &[u8]) -> Vec<Owne
             .and_then(entity)
             .into_iter()
             .collect(),
-        "sync_state" => sync_links(key),
+        "sync_state" => {
+            let mut linked = sync_links(key);
+            #[cfg(feature = "sync")]
+            linked.extend(
+                crate::store::window_record_sources::linked_entities(key, value)
+                    .iter()
+                    .map(OwnerRef::entity),
+            );
+            linked
+        }
         _ => Vec::new(),
     }
 }

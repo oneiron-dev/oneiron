@@ -395,6 +395,8 @@ pub(crate) mod turn_missing;
 mod usage_sources;
 mod world_pad_custody;
 mod writer_lease;
+#[cfg(feature = "sync")]
+pub(crate) mod window_record_sources;
 
 #[cfg(test)]
 pub(crate) mod test_hooks;

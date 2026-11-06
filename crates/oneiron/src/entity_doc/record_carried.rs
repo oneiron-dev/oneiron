@@ -74,6 +74,10 @@ impl CarriedRecordDocument {
         Ok(entity)
     }
 
+    pub(crate) fn row_digest(&self) -> &[u8; 32] {
+        &self.row_digest
+    }
+
     pub(crate) fn native(&self) -> &CarriedDocument {
         &self.native
     }
