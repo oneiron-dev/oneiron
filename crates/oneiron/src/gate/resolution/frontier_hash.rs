@@ -455,7 +455,6 @@ pub(super) fn hash_policy_frontier_v0(
     let nondefault: Vec<_> = resolution
         .sheet_answer_limits
         .iter()
-        .chain(resolution.untrusted_sheet_answer_limits.iter())
         .filter(|row| {
             row.artifact_ref.is_some()
                 || row.sheet.is_some()

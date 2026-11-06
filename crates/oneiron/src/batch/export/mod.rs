@@ -4,7 +4,9 @@ pub use credential_filter::{
     redacted_memory_body, redacted_memory_payload, write_door_refuses_body,
     write_door_refuses_claim,
 };
-pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+pub(crate) use credential_filter::{
+    export_released_record, served_messagepack_json, served_stored_messagepack_json,
+};
 pub(crate) use oneiron_store::batch::export::agent_knowledge_format;
 pub(crate) mod agent_knowledge_selection;
 mod archive_index;
@@ -64,6 +66,7 @@ mod document_snapshot;
 mod document_types;
 mod document_validation;
 mod embedding_setup;
+mod evidence_import;
 pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]

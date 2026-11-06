@@ -87,7 +87,7 @@ pub(super) fn admit_composition(
 /// inside the off-record session its request names (`credential_memory`).
 /// A credential that names no principal acts as the host's owner actor, as
 /// a facade door's hooks do, and binds no session (Engine ruling 2137/2271).
-fn answer_memory<'a>(
+pub(super) fn answer_memory<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
 ) -> Result<oneiron::Memory<'a>, ApiError> {

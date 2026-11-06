@@ -66,6 +66,16 @@ SUPERSEDED = "superseded"
 # A prepare whose prefill could never fit the page pool beside its pinned
 # base: it would wait at the head of the commit queue for ever.
 PREPARE_TOO_LARGE = "prepare_too_large"
+# The same for a suffix commit: the session cannot hold its successor.
+COMMIT_TOO_LARGE = "commit_too_large"
+
+
+def _fits_pool(layer, commit, base):
+    """Whether `commit`'s fresh pages, beside the pages of the checkpoint
+    `base` it pins, could ever fit the page pool. Commits start in order, so
+    one that cannot would hold back every commit behind it."""
+    base_pages = -(-base.anchor.frontier // PAGE_SIZE) if base is not None else 0
+    return commit.need + base_pages <= layer.scheduler.pool_pages
 
 # The ephemeral tail a differential rendering puts after a canonical path.
 PROBE = {"role": "user", "content": "oneiron session probe"}
@@ -284,11 +294,8 @@ def prepare(layer, body, conversation):
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
             staged = Staged(tokens, checkpoint.head, checkpoint, frontier, generation)
             kept = _commit(layer, session, op_id, staged, work, prepare=True)
-            # Refused before it pins its base or joins the queue: commits
-            # start in order, so one that can never fit would hold back every
-            # commit behind it.
-            base_pages = -(-frontier // PAGE_SIZE)
-            if kept.need + base_pages > layer.scheduler.pool_pages:
+            # Refused before it pins its base or joins the queue.
+            if not _fits_pool(layer, kept, checkpoint):
                 raise Refused(PREPARE_TOO_LARGE, "the prepared tail does not fit the page pool")
             stopped = session.preparing
             release += layer.unprepare(session)
@@ -357,6 +364,9 @@ def suffix_commit(layer, body, _conversation_):
             if staged.base is not session.published:
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
             kept = _commit(layer, session, op_id, staged, work)
+            # Refused before it pins its base or joins the queue.
+            if not _fits_pool(layer, kept, staged.base):
+                raise Refused(COMMIT_TOO_LARGE, "the successor does not fit the page pool")
             if staged.base is not None:
                 staged.base.anchor.pins += 1
             session.commit = kept
