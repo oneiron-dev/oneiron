@@ -437,8 +437,20 @@ before the final two delete keys and the caller lease, including errors and
 unwind. Their known capacities stay charged conservatively until that lease
 drops. Unbound cleanup keeps the same shared body without capacity accounting.
 
-Turn-index, trace-fork and outcome cleanup buffers remain outside these key
-charges. The full cleanup order and errors stay unchanged, as do exclusions
+The first turn-index cleanup also forwards the same optional caller lease.
+After its original successful scan, the collected typed-row vector records its
+actual capacity times the native row size once. After the original run-ID
+filter, the filtered key vector separately records its actual capacity times
+the native key size once. Both vectors move into their original consuming
+loops and drop before the caller lease. Each selected row's original encoded
+delete key also reports its actual capacity once before the same delete,
+including false or error returns. The full scan still completes before any
+delete, and keys for other runs are not deleted. Unbound cleanup shares the
+same native body without capacity accounting. Known capacities stay charged
+conservatively until the caller lease drops.
+
+Other turn-index buffers, trace-fork and outcome cleanup buffers remain outside
+these charges. The full cleanup order and errors stay unchanged, as do exclusions
 for raw row copies, decoded values, overlay copies, database pages, transaction
 scratch and allocation peaks. No extra encode, copy, lease, admission, wait or
 configured limit is introduced.

@@ -795,7 +795,12 @@ pub(super) fn stage_retrieval_run_delete_with_memory(
     run_id: RetrievalRunId,
     mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
-    super::turn_index::delete_for_run(target, wtxn, run_id)?;
+    super::turn_index::delete_for_run_with_memory(
+        target,
+        wtxn,
+        run_id,
+        memory.as_deref_mut(),
+    )?;
     delete_retrieval_trace_fork_indexes_for_run(target, wtxn, run_id)?;
     RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
     super::retention::delete_retrieval_age_with_memory(

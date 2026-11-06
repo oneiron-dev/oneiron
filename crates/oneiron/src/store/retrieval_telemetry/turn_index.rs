@@ -96,17 +96,46 @@ pub(super) fn delete_for_run(
     txn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
 ) -> Result<()> {
+    delete_for_run_with_memory(target, txn, run_id, None)
+}
+
+pub(super) fn delete_for_run_with_memory(
+    target: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<()> {
     let mut keys = Vec::new();
-    for (key, ()) in TURN_INDEX
+    let rows = TURN_INDEX
         .iter_from(target, &*txn, &[])?
-        .collect::<Result<Vec<_>>>()?
-    {
+        .collect::<Result<Vec<_>>>()?;
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.materialized(
+            0,
+            (rows.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<(TurnIndexKey, ())>() as u64),
+        );
+    }
+    for (key, ()) in rows {
         if key.2 == run_id {
             keys.push(key);
         }
     }
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.materialized(
+            0,
+            (keys.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<TurnIndexKey>() as u64),
+        );
+    }
     for key in keys {
-        TURN_INDEX.delete(target, txn, &key)?;
+        if let Some(memory) = memory.as_deref_mut() {
+            TURN_INDEX.delete_with_key_capacity(target, txn, &key, |bytes| {
+                memory.materialized(0, bytes);
+            })?;
+        } else {
+            TURN_INDEX.delete(target, txn, &key)?;
+        }
     }
     Ok(())
 }
