@@ -15,6 +15,7 @@ pub mod repo_projection;
 pub mod retained;
 pub mod retire;
 pub mod retire_selected;
+mod retrieval_erase;
 pub mod rows;
 pub mod segment;
 
