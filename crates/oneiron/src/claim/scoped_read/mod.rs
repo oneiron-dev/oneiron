@@ -157,6 +157,7 @@ pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 mod retrieval_loop;
 mod search;
+pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;
 
