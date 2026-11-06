@@ -1167,6 +1167,9 @@ impl OneironClient {
                 "vault.federation.burst.policy.set" => remote_agent_verb_output::<
                     oneiron::sync::federation_burst::FederationBurstPolicy,
                 >(client, verb, &input),
+                "vault.sync.outbox" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SyncOutboxAnswer,
+                >(client, verb, &input),
                 "vault.sync.quarantine.held_edits" => remote_agent_verb_output::<
                     Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>,
                 >(client, verb, &input),
@@ -8540,6 +8543,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.federation.burst.policy.set", value)
+    }
+    pub fn vault_sync_outbox(
+        &self,
+        input: &oneiron::task_verb::sdk::ResidenceMachineRequest,
+    ) -> Result<oneiron::task_verb::sdk::SyncOutboxAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.outbox", value)
     }
     pub fn vault_sync_quarantine_held_edits(
         &self,

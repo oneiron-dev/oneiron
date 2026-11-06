@@ -396,6 +396,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.federation.burst.baseline", post(facade_route))
         .route("/vault.federation.burst.policy", post(facade_route))
         .route("/vault.federation.burst.policy.set", post(facade_route))
+        .route("/vault.sync.outbox", post(facade_route))
         .route("/vault.sync.quarantine.held_edits", post(facade_route))
         .route("/vault.sync.retained_work.wait.set", post(facade_route))
         .route("/vault.federation.burst.ingress", post(facade_route))
