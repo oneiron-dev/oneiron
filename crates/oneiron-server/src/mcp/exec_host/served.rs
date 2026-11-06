@@ -196,6 +196,8 @@ impl McpEngineNativeCodeHost {
             .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
+        // The admitted caller a code consent wait of the run keeps (FIX 4606).
+        let consent_origin = request.consent_origin.clone();
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
@@ -261,6 +263,7 @@ impl McpEngineNativeCodeHost {
                     reader_seat,
                     seat.as_mut(),
                     git_door_base,
+                    consent_origin,
                 );
                 if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
                     let ended = outcome.as_ref().is_ok_and(|outcome| {

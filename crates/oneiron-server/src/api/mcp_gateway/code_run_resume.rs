@@ -36,6 +36,8 @@
 //! memory of a live host binding: a restart keeps nothing, and the caller's
 //! next call enters the run as before.
 
+mod origin;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
@@ -45,6 +47,7 @@ use oneiron::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord, WaitDelive
 use oneiron::engine_executor::EngineExecutorOutcome;
 use oneiron::runtime_hooks::verb::{VerbAskInstrument, VerbAskRefusal};
 
+pub(super) use self::origin::mcp_code_consent_origin;
 use super::McpCallContext;
 use crate::mcp::{McpCodeExecutionError, McpCodeRunResumeCondition};
 use crate::server::{HousekeepingAdmission, SyncServer};

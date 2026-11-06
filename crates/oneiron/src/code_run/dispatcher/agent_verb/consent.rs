@@ -45,6 +45,7 @@ impl HostSelfDispatcher<'_> {
             write_ordinal: ordinal,
             write_receipt_id: receipt_id,
             request_digest,
+            origin: self.code_consent_origin.clone(),
         }))
     }
 
