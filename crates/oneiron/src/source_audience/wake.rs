@@ -155,7 +155,8 @@ pub(crate) fn advance_policy_wake(
 /// the revision it carries (`None` for a head that conflicts). A window filed
 /// with a revision older than this vault's, read in the filing writer, wakes
 /// its policy: the change it missed may have drained before the window was
-/// filed, or past it.
+/// filed. So does one filed behind a pending wake's cursor, whatever the wake
+/// is for (a receipt-only change included): that drain would never reach it.
 ///
 /// # Errors
 ///
@@ -192,7 +193,14 @@ pub(crate) fn note_policy_windows(
             let current = super::POLICIES
                 .get(&vault.store, txn, policy)?
                 .map(|held| held.revision);
-            if current.is_some() && (revision.is_none() || current > *revision) {
+            let stale = current.is_some() && (revision.is_none() || current > *revision);
+            // A wake whose drain went past this window already, whatever it
+            // was for (a receipt-only change included), starts over.
+            let behind = WAKES
+                .get(&vault.store, txn, policy)?
+                .and_then(|wake| wake.after)
+                .is_some_and(|after| hash <= after);
+            if stale || behind {
                 wake_policy_in_txn(vault, txn, policy)?;
             }
         }
