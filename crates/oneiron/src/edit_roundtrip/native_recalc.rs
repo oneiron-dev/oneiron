@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 
+use oneiron_docedit::resource::Resources;
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use oneiron_xlsx_formula::{FormulaError, RecalcClock};
@@ -28,6 +29,7 @@ pub(super) struct NativeFirst<'a, S> {
     host: &'a S,
     engine: FormualizerEngine,
     limits: Limits,
+    resources: Option<Resources>,
     stamp: RefCell<Option<CalcEngineStamp>>,
 }
 
@@ -38,22 +40,36 @@ impl<'a, S: EditSession> NativeFirst<'a, S> {
             host,
             engine: FormualizerEngine::new(),
             limits,
+            resources: host.document_resources(),
             stamp: RefCell::new(None),
         }
     }
 
+    fn resources(&self) -> Resources {
+        self.resources
+            .clone()
+            .unwrap_or_else(crate::office_body::document_resources)
+    }
+
     fn host_recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+        if let Some(resources) = &self.resources {
+            resources
+                .checkpoint()
+                .map_err(crate::office_body::document_refused)?;
+        }
         if !self.host.supports_recalc() {
             return Err(failed("workbook needs a recalc-capable precision fallback"));
         }
         let output = self.host.recalc(doc)?;
-        oneiron_xlsx_formula::preserve_external_links(
-            &doc.bytes,
-            &output,
-            self.limits,
-            &crate::office_body::document_resources(),
-        )
-        .map_err(failed)?;
+        let resources = self.resources();
+        resources
+            .checkpoint()
+            .map_err(crate::office_body::document_refused)?;
+        oneiron_xlsx_formula::preserve_external_links(&doc.bytes, &output, self.limits, &resources)
+            .map_err(preservation_failed)?;
+        resources
+            .checkpoint()
+            .map_err(crate::office_body::document_refused)?;
         *self.stamp.borrow_mut() = self.host.recalc_engine();
         Ok(output)
     }
@@ -63,13 +79,20 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
     fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
         *self.stamp.borrow_mut() = None;
         let applied = self.host.apply_edits(doc, plan)?;
+        let resources = self.resources();
+        resources
+            .checkpoint()
+            .map_err(crate::office_body::document_refused)?;
         oneiron_xlsx_formula::preserve_external_links(
             &doc.bytes,
             &applied.bytes,
             self.limits,
-            &crate::office_body::document_resources(),
+            &resources,
         )
-        .map_err(failed)?;
+        .map_err(preservation_failed)?;
+        resources
+            .checkpoint()
+            .map_err(crate::office_body::document_refused)?;
         Ok(applied)
     }
 
@@ -85,20 +108,28 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
             self.limits,
             &clock,
             location.as_ref(),
-            &crate::office_body::document_resources(),
+            &self.resources(),
         ) {
             Ok(report) => {
                 let stamp = CalcEngineStamp::new(report.engine.engine, report.engine.version)?;
                 *self.stamp.borrow_mut() = Some(stamp);
                 Ok(report.bytes)
             }
+            Err(FormulaError::Resource(refusal)) => {
+                Err(crate::office_body::document_refused(refusal))
+            }
             Err(FormulaError::Package(_)) => Err(failed("workbook package refused")),
             Err(FormulaError::InvalidWorkbook(reason)) => Err(failed(reason)),
             // A refused workbook and an engine failure both mean "the engine
             // cannot do this one": the host's recalc is the precision fallback
-            // for both. Only a malformed or over-limit package fails outright.
+            // for both. A resource refusal keeps its cause above; malformed
+            // or over-limit packages fail outright.
             Err(_) => self.host_recalc(doc),
         }
+    }
+
+    fn document_resources(&self) -> Option<Resources> {
+        self.resources.clone()
     }
 
     fn recalc_engine(&self) -> Option<CalcEngineStamp> {
@@ -108,4 +139,12 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
 
 fn failed(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::EditRoundtripFailed(reason))
+}
+
+fn preservation_failed(error: FormulaError) -> Error {
+    match error {
+        FormulaError::Resource(refusal) => crate::office_body::document_refused(refusal),
+        FormulaError::InvalidWorkbook(reason) => failed(reason),
+        _ => failed("workbook package refused"),
+    }
 }

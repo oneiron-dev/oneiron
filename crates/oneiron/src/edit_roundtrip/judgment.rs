@@ -670,6 +670,10 @@ impl EditSession for NativeCellSession {
         )))
     }
 
+    fn document_resources(&self) -> Option<Resources> {
+        Some(self.resources.clone())
+    }
+
     fn supports_recalc(&self) -> bool {
         false
     }
