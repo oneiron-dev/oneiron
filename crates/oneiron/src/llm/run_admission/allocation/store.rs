@@ -249,6 +249,9 @@ impl VaultAllocationLedger {
     pub fn begin_dispatch(&self, key: &AllocationCallKey) -> Result<AllocationCommit<()>> {
         self.write(true, |_txn, row| {
             let hold = hold_mut(row, key)?;
+            if hold.serving_fence != self.fence {
+                return Err(AllocationStoreError::ServingChanged);
+            }
             if hold.terminal.is_some() || hold.dispatched {
                 return Err(AllocationStoreError::HoldClosed);
             }
