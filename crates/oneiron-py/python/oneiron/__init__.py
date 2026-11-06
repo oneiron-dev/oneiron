@@ -3667,6 +3667,9 @@ class Oneiron:
         def code_run_lifts(self, spec):
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
             return json.loads(_translate(lambda: self._client.vault_secrets_code_run_lifts(json.dumps(spec))))
+        def code_run_room_lifts(self, spec):
+            """The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_code_run_room_lifts(json.dumps(spec))))
         def lift_history(self, spec):
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
             return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
