@@ -163,7 +163,17 @@ pub(super) fn cursor(
     source: FactSource,
 ) -> Result<Option<CursorRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    CURSORS.get(&vault.store, &rtxn, &(binding, [source.tag()]))
+    cursor_in_txn(vault, &rtxn, binding, source)
+}
+
+/// [`cursor`] in the caller's snapshot.
+pub(super) fn cursor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: EntityId,
+    source: FactSource,
+) -> Result<Option<CursorRow>> {
+    CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))
 }
 
 pub(super) fn put_cursor_in_txn(
@@ -572,7 +582,16 @@ pub(super) struct HookIntent {
 
 pub(super) fn memo(vault: &Vault, key: &RunKey) -> Result<Option<HookRunRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    MEMOS.get(&vault.store, &rtxn, key)
+    memo_in_txn(vault, &rtxn, key)
+}
+
+/// [`memo`] in the caller's snapshot.
+pub(super) fn memo_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<HookRunRecord>> {
+    MEMOS.get(&vault.store, txn, key)
 }
 
 /// The id of the receipt a run writes.

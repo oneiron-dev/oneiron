@@ -115,6 +115,24 @@ impl HookPassReport {
     }
 }
 
+/// Enabled fact bindings from the caller's live-binding snapshot, in run order.
+pub(crate) fn fact_bindings(
+    all: &[(EntityId, PackHookBinding)],
+) -> Vec<(EntityId, PackHookBinding)> {
+    let mut bindings: Vec<(EntityId, PackHookBinding)> = all
+        .iter()
+        .filter(|(_, binding)| binding.enabled && binding.selector.phase == HookPhase::Fact)
+        .cloned()
+        .collect();
+    bindings.sort_by(|(_, a), (_, b)| {
+        b.selector
+            .priority
+            .cmp(&a.selector.priority)
+            .then_with(|| a.body_hash.cmp(&b.body_hash))
+    });
+    bindings
+}
+
 impl FactHookRunner {
     #[must_use]
     pub fn new() -> Self {
@@ -180,20 +198,10 @@ impl FactHookRunner {
         }
         let all = vault.pack_hook_bindings()?;
         pause_disabled(vault, &all)?;
-        let mut bindings: Vec<(EntityId, PackHookBinding)> = all
-            .iter()
-            .filter(|(_, binding)| binding.enabled && binding.selector.phase == HookPhase::Fact)
-            .cloned()
-            .collect();
+        let bindings = fact_bindings(&all);
         if bindings.is_empty() {
             return Ok(report);
         }
-        bindings.sort_by(|(_, a), (_, b)| {
-            b.selector
-                .priority
-                .cmp(&a.selector.priority)
-                .then_with(|| a.body_hash.cmp(&b.body_hash))
-        });
         let mut retained = retained;
         if let Some(pass) = &mut retained {
             pass.runs.keep_source_order_for(&bindings);
