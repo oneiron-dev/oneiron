@@ -285,10 +285,10 @@ head/tail interval (`from < position < to`) with zero actual DrawingML `fld` (ow
 check plus no descendant `fld`) as its original span bytes as-is under the same rebuilt
 paragraph qualified tag with its own `xmlns`/default-undeclare bindings and the same body
 ancestors, with no binding materialization into a self-closing tag. Old nonempty static and
-opaque bytes are unchanged; edited, boundary, leading, trailing or field-holding empties keep
-the existing drop, known empty `r` qualifies only under the same strict internal field-free
-rule, empty `fld` is never raw-restored, and same-position multiple zero children preserve
-original order once. No paragraph-wide field refusal, matching map, default, cap, API, DTO,
+opaque bytes are unchanged. In that shared loop, edited, boundary, leading, trailing or
+field-holding empties keep the existing drop, and empty `r` uses the strict internal
+field-free rule. Paragraph-edge carry is extended separately below. Empty `fld` is never
+raw-restored, and same-position multiple zero children preserve original order once. No paragraph-wide field refusal, matching map, default, cap, API, DTO,
 schema, authority, config, dependency, BC, policy or deploy changes. Raw comment/PI/whitespace
 gaps are not implemented in this slice. This is a source-only direct-child correction, part of
 the existing 17480/residual 18510 pack, not full 17480, full-feature, whole OF-509/OF-510 or
@@ -331,9 +331,10 @@ and contributes the first retained prefix character or last retained suffix
 character. Its other neighbor is the original paragraph edge, or the already
 copied first `a:pPr` or last `a:endParaRPr`, with no skipped direct child.
 The exterior gaps before that first `a:pPr` and after that last `a:endParaRPr`
-also keep their original bytes. Every gap excludes node spans and stays under
-the same original paragraph attributes and body ancestors. Leading/trailing
-zero-text children still drop and prevent bridges; field-containing paragraphs,
+also keep their original bytes. The original gap-only case excludes node spans
+and stays under the same original paragraph attributes and body ancestors.
+Leading/trailing zero-text children extend those edge slices as described below;
+field-containing paragraphs,
 unknown-coverage fallback, templates for added paragraphs, static run/break
 serialization, matching and field-removal receipts are unchanged. The complete
 fallback helper moves to `native_patch/table/rebuilt.rs` without changing its
@@ -417,3 +418,24 @@ The prior serializer still succeeds first; a failed native text splice keeps
 the same static attribute path. Runs intersecting both retained pieces, fields,
 breaks, templates, matching and receipts are unchanged. This remains source-only
 preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity proof.
+
+
+## Original zero-text children at retained native table paragraph edges
+
+A changed, actually reused field-free paragraph now keeps a contiguous cluster
+of original zero-native-text direct children before its first nonempty segment
+when the common prefix retains the original first character. It similarly keeps
+the cluster after its last nonempty segment when the common suffix retains the
+original last character. The existing leading/trailing raw slices extend through
+those whole child spans and their original gaps; no empty child is assigned to
+an inserted-text position. Original child ordinals and zero-segment counts
+require a directly adjacent paragraph edge, first `a:pPr`, or last
+`a:endParaRPr`, with no separately placed property skipped inside the slice.
+The shared retained-run loop still excludes zero-text children and gaps at
+character positions zero and original text length, so the edge slices own those
+bytes once. Interior zero-text carry, whole unchanged paragraphs, actual fields
+and their receipts, run serialization, templates, matching and empty paragraphs
+without a nonempty anchor keep their previous paths. Replaced paragraph edges
+with zero prefix or suffix do not acquire these original clusters. This is
+source preservation, not full table-cell fallback, OF-509/OF-510, runtime or
+Office fidelity proof.
