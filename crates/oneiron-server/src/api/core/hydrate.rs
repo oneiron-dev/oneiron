@@ -263,6 +263,10 @@ struct BatchItems<'a, 'p> {
     observed: &'a mut Vec<(usize, Observed)>,
     /// The rows the projected items were derived from (FIX 1435).
     producers: &'a mut Vec<oneiron::EntityId>,
+    /// Set when a slot answers from a row `producers` cannot name: a ref a
+    /// legal order keeps from use answers that order's refusal, which tells
+    /// of its row, and the named read keeps no id for it (FIX 1435).
+    unlisted: &'a mut bool,
 }
 
 /// A batch's items projected in order under one body budget; a single
@@ -284,6 +288,7 @@ fn project_short_id_batch(
         served,
         observed,
         producers,
+        unlisted,
     } = items;
     let mut bodies =
         projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
@@ -297,6 +302,7 @@ fn project_short_id_batch(
                 let row = match values.next().unwrap_or(Ok(None)) {
                     Ok(row) => row,
                     Err(refusal) => {
+                        *unlisted = true;
                         results.push(use_restricted::item(reference, &refusal));
                         continue;
                     }
