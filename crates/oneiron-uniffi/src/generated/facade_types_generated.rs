@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4570 generated types.
+// UniFFI census: 1262 facade rows, 4571 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -962,6 +962,10 @@ pub struct WakeEnvelope {
         skip_serializing_if = "Option::is_none"
     )]
     pub review_ref: Option<String>,
+    #[serde(rename = "room_ref", default, skip_serializing_if = "Option::is_none")]
+    pub room_ref: Option<String>,
+    #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
+    pub turn_ref: Option<String>,
 }
 
 /// `oneiron::verbs::BoardWakeReply`.
@@ -970,6 +974,8 @@ pub struct WakeEnvelope {
 pub struct BoardWakeReply {
     #[serde(rename = "wakes")]
     pub wakes: Vec<WakeEnvelope>,
+    #[serde(rename = "opener", default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<String>,
 }
 
 /// `oneiron::verbs::scratchpad::ScratchpadRecallRequest`.
@@ -69267,6 +69273,17 @@ pub struct FoldUnfoldRequest {
 pub enum FoldKind {
     #[serde(rename = "repl_output")]
     ReplOutput,
+    #[serde(rename = "program")]
+    Program,
+}
+
+/// `oneiron::compaction::fold_kinds::FoldedSpeech`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldedSpeech {
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "call")]
+    pub call: u64,
 }
 
 /// `oneiron::compaction::fold_kinds::FoldedOutput`.
@@ -69278,6 +69295,8 @@ pub struct FoldedOutput {
     pub handles: Vec<String>,
     #[serde(rename = "ids")]
     pub ids: Vec<String>,
+    #[serde(rename = "said", default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<Vec<FoldedSpeech>>,
 }
 
 /// `oneiron::compaction::folds::FoldDescription`.
@@ -74585,6 +74604,8 @@ pub enum SubscriptionScope {
     Counts,
     #[serde(rename = "diary_reviews")]
     DiaryReviews,
+    #[serde(rename = "room_turns")]
+    RoomTurns,
 }
 
 /// `oneiron::verbs::BoardSubscriptionRequest`.
