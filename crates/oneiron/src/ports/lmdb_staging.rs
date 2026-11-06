@@ -12,11 +12,13 @@ impl<T: ManifestDbs> EntityStoreStaging for T {
         id: &EntityId,
         encoded: &[u8],
     ) -> Result<()> {
+        crate::agent_def::setup_trace::observe_entity_put(self, txn, *id, encoded)?;
         self.entities().put(txn, id.as_bytes(), encoded)?;
         Ok(())
     }
 
     fn port_remove_entity_row(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
+        crate::agent_def::setup_trace::observe_entity_delete(self, txn, *id)?;
         self.entities().delete(txn, id.as_bytes())
     }
 }
@@ -42,6 +44,7 @@ impl<T: ManifestDbs> EdgeStoreStaging for T {
     ) -> Result<()> {
         let out = Store::encode_edge_key(src, kind, dst);
         let incoming = Store::encode_edge_key(dst, kind, src);
+        crate::agent_def::setup_trace::observe_edge(self, txn, *src, kind, *dst, Some(encoded))?;
         self.edges_out().put(txn, &out, encoded)?;
         self.edges_in().put(txn, &incoming, encoded)?;
         Ok(())
@@ -56,6 +59,7 @@ impl<T: ManifestDbs> EdgeStoreStaging for T {
     ) -> Result<bool> {
         let out = Store::encode_edge_key(src, kind, dst);
         let incoming = Store::encode_edge_key(dst, kind, src);
+        crate::agent_def::setup_trace::observe_edge(self, txn, *src, kind, *dst, None)?;
         let removed = self.edges_out().delete(txn, &out)?;
         self.edges_in().delete(txn, &incoming)?;
         Ok(removed)
