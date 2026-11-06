@@ -9,6 +9,8 @@ use oneiron::llm::decision::{
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron_llm_systemone::PreparedSystemOneRead;
 
+mod native_quantity;
+
 use crate::decision_verdict::{ModelCallCaller, model_call_context};
 use crate::models::native_call_capture::{NativeReadCapture, native_read_failure};
 
@@ -181,6 +183,7 @@ impl SystemOneRung {
             }
             return Err(failed("admitted after the work time"));
         }
+        let native_admission = permit.native_decision_admission().cloned();
         let caller = (pack.run.is_some() && !run.is_unrecorded())
             .then(model_call_context)
             .flatten();
@@ -210,6 +213,7 @@ impl SystemOneRung {
                                         permit.lease(),
                                         pack.deadline.decision_time_left(),
                                         Some(&release),
+                                        native_admission.as_ref(),
                                     ).await
                                 }
                                 None => self.ask_pack_request(
@@ -217,6 +221,7 @@ impl SystemOneRung {
                                     permit.lease(),
                                     pack.deadline.decision_time_left(),
                                     None,
+                                    native_admission.as_ref(),
                                 ).await,
                             }
                         } => Ok(read),
@@ -231,6 +236,7 @@ impl SystemOneRung {
                     () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
                     read = self.ask_pack_request(
                         request, permit.lease(), pack.deadline.decision_time_left(), None,
+                        native_admission.as_ref(),
                     ) => Ok(read),
                 }
             })
@@ -248,7 +254,13 @@ impl SystemOneRung {
             Ok(answer) => permit.settle(CallOutcome::Answered(&answer.usage)),
             Err(_) => permit.settle(CallOutcome::Failed),
         };
-        self.record_seat_pack_read(&run, caller.as_ref(), no_record_at_arrival, &asked);
+        self.record_seat_pack_read(
+            &run,
+            caller.as_ref(),
+            no_record_at_arrival,
+            &asked,
+            native_admission.as_ref(),
+        );
         settled.map_err(|_| failed("settlement refused"))?;
         let answer = asked
             .result
@@ -275,31 +287,13 @@ impl SystemOneRung {
         Ok(decisions)
     }
 
-    async fn ask_pack_request<'a>(
-        &'a self,
-        request: SystemOnePackReadRequest<'a>,
-        lease: &'a oneiron::BudgetLease,
-        time_left: std::time::Duration,
-        release: Option<oneiron::llm::DispatchRelease<'a>>,
-    ) -> oneiron_llm_systemone::SystemOnePackRead {
-        match request {
-            SystemOnePackReadRequest::Prepared(prepared) => {
-                prepared.ask_recorded(lease, time_left, release).await
-            }
-            SystemOnePackReadRequest::Logical(request) => {
-                self.seat
-                    .ask_pack_recorded(request, lease, time_left, release)
-                    .await
-            }
-        }
-    }
-
     fn record_seat_pack_read(
         &self,
         run: &RunAdmission,
         caller: Option<&ModelCallCaller>,
         no_record_at_arrival: bool,
         read: &oneiron_llm_systemone::SystemOnePackRead,
+        native_admission: Option<&oneiron::llm::decision::DecisionCallAdmission>,
     ) {
         let Some(caller) = caller else {
             return;
@@ -321,7 +315,7 @@ impl SystemOneRung {
                 };
                 NativeReadOutcome::Failed {
                     failure,
-                    usage: None,
+                    usage: native_quantity::retained_native_usage(native_admission),
                 }
             }
         };
@@ -467,7 +461,25 @@ impl SystemOneRung {
                 .map_err(|_| failed("settlement refused"))?;
             return Err(failed("admitted after the work time"));
         }
-        let asked = match prepared {
+        let native_admission = permit.native_decision_admission().cloned();
+        let asked = if let Some(admission) = native_admission.as_ref() {
+            self.runtime.block_on(async {
+                let cancel = call.deadline.work_cancel();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                    read = self.ask_single_request(
+                        request,
+                        prepared,
+                        permit.lease(),
+                        call.deadline.decision_time_left(),
+                        None,
+                        Some(admission),
+                    ) => read.result.map_err(|error| failed(&format!("the seat failed: {error}"))),
+                }
+            })
+        } else {
+            match prepared {
             Some(prepared) => self.runtime.block_on(async {
                 let cancel = call.deadline.work_cancel();
                 tokio::select! {
@@ -492,6 +504,7 @@ impl SystemOneRung {
                     ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
                 }
             }),
+            }
         };
         let answer = match asked {
             Ok(answer) => {
@@ -559,6 +572,7 @@ impl SystemOneRung {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
+        let native_admission = permit.native_decision_admission().cloned();
         let asked = super::run_native_read(&run, || {
             self.runtime.block_on(async {
                 let cancel = call.deadline.work_cancel();
@@ -566,50 +580,32 @@ impl SystemOneRung {
                     biased;
                     () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
                     read = async {
-                        match prepared {
-                            Some(prepared) => match run.send_guard() {
-                                Some(guard) => {
-                                    let release = || {
-                                        if guard() {
-                                            Ok(())
-                                        } else {
-                                            Err(oneiron::llm::FatalLlmError::Auth.into())
-                                        }
-                                    };
-                                    prepared.ask_recorded(
-                                        permit.lease(),
-                                        call.deadline.decision_time_left(),
-                                        Some(&release),
-                                    ).await
-                                }
-                                None => prepared.ask_recorded(
-                                    permit.lease(),
-                                    call.deadline.decision_time_left(),
-                                    None,
-                                ).await,
-                            },
-                            None => match run.send_guard() {
-                                Some(guard) => {
-                                    let release = || {
-                                        if guard() {
-                                            Ok(())
-                                        } else {
-                                            Err(oneiron::llm::FatalLlmError::Auth.into())
-                                        }
-                                    };
-                                    self.seat.ask_recorded_released(
-                                        request,
-                                        permit.lease(),
-                                        call.deadline.decision_time_left(),
-                                        &release,
-                                    ).await
-                                }
-                                None => self.seat.ask_recorded(
+                        match run.send_guard() {
+                            Some(guard) => {
+                                let release = || {
+                                    if guard() {
+                                        Ok(())
+                                    } else {
+                                        Err(oneiron::llm::FatalLlmError::Auth.into())
+                                    }
+                                };
+                                self.ask_single_request(
                                     request,
+                                    prepared,
                                     permit.lease(),
                                     call.deadline.decision_time_left(),
-                                ).await,
-                            },
+                                    Some(&release),
+                                    native_admission.as_ref(),
+                                ).await
+                            }
+                            None => self.ask_single_request(
+                                request,
+                                prepared,
+                                permit.lease(),
+                                call.deadline.decision_time_left(),
+                                None,
+                                native_admission.as_ref(),
+                            ).await,
                         }
                     } => Ok(read),
                 }
@@ -632,7 +628,13 @@ impl SystemOneRung {
             // The seat may still bill a failed call.
             Err(_) => permit.settle(CallOutcome::Failed),
         };
-        self.record_seat_read(&run, caller.as_ref(), no_record_at_arrival, &asked);
+        self.record_seat_read(
+            &run,
+            caller.as_ref(),
+            no_record_at_arrival,
+            &asked,
+            native_admission.as_ref(),
+        );
         settled.map_err(|_| failed("settlement refused"))?;
         let answer = match asked.result {
             Ok(answer) => answer,
@@ -655,6 +657,7 @@ impl SystemOneRung {
         caller: Option<&ModelCallCaller>,
         no_record_at_arrival: bool,
         read: &SeatRead,
+        native_admission: Option<&oneiron::llm::decision::DecisionCallAdmission>,
     ) {
         let Some(caller) = caller else {
             return;
@@ -671,7 +674,7 @@ impl SystemOneRung {
                 // Keep the class only, never the provider error's contents.
                 NativeReadOutcome::Failed {
                     failure,
-                    usage: None,
+                    usage: native_quantity::retained_native_usage(native_admission),
                 }
             }
         };
