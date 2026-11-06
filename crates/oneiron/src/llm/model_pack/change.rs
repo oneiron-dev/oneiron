@@ -44,6 +44,9 @@ pub enum ModelPackChangeCause {
     Retirement,
     /// The owner's revert of the change before (FIX 5369).
     Revert,
+    /// The owner moved a hub ref's pin or policy, which changes the model
+    /// packs it admits (review #6390).
+    HubRefPin,
 }
 
 impl ModelPackChangeCause {
@@ -55,6 +58,7 @@ impl ModelPackChangeCause {
             Self::Preference => "the owner's model pack setting",
             Self::Retirement => "a model pack retirement",
             Self::Revert => "a revert",
+            Self::HubRefPin => "a hub ref pin change",
         }
     }
 }
