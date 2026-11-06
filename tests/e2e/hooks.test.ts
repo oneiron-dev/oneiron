@@ -527,11 +527,15 @@ suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", 
     expect(value.scope.sensitivity).toEqual(ceiling.sensitivity);
     expect(value.scope.verbs).toEqual({ kind: "some", values: ["read", "write"] });
   };
-  expect((await caller.http.call("self.actor", {})).principal_ref).toBe(principal.principal_ref);
+  const httpActor = await caller.http.call("self.actor", {});
+  expect(httpActor.actor_ref).toBe(principal.principal_ref);
+  expect(httpActor.actor_class).toBe("agent");
   verifyCeiling(await caller.http.call("vault.scope.ceiling", {}));
   await caller.mcp.initialize();
   const tools = await caller.mcp.listTools() as ToolCatalog;
-  expect((await mcpCall(caller.mcp, tools, "self.actor", {})).principal_ref).toBe(principal.principal_ref);
+  const mcpActor = await mcpCall(caller.mcp, tools, "self.actor", {});
+  expect(mcpActor.actor_ref).toBe(principal.principal_ref);
+  expect(mcpActor.actor_class).toBe("agent");
   verifyCeiling(await mcpCall(caller.mcp, tools, "vault.scope.ceiling", {}));
   const tool = tools.tools.find(item => item.name === "vault.claims.upsert");
   if (!tool) throw new Error("Required vault.claims.upsert MCP tool is absent");
