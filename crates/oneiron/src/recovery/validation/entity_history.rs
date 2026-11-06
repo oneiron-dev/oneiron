@@ -1,6 +1,6 @@
 //! Ordered row history checks over the same frozen canonical document.
 
-use super::{id, invalid, strict, validate_document_metadata_value, validate_summary_meta_field};
+use super::{decode_document_metadata_value, id, invalid, strict, validate_summary_meta_field};
 use crate::error::Result;
 use crate::recovery::canonical::{CanonicalEntityDocument, CanonicalForkStatus};
 use crate::store::canonical_document::CanonicalDocumentTexts;
@@ -493,12 +493,13 @@ fn advance_head_bytes(actual: &[u8], expected: &[u8], next: &mut usize) -> Resul
     Ok(end == actual.len())
 }
 
-/// A single sorted resume key; values stay in the frozen source map.
+/// A sorted resume key and the current field's decoded-value walk.
 #[derive(Default)]
 struct MetadataRows {
     after: Option<String>,
     pending_key: Option<String>,
     body_field_byte: usize,
+    scan: Option<MetadataValueScan>,
 }
 
 impl MetadataRows {
@@ -513,18 +514,30 @@ impl MetadataRows {
             return Ok(true);
         };
         if self.pending_key.is_none() {
-            if let Some(body_field) = body_field.filter(|body| body.len() == field.len()) {
-                let start = self.body_field_byte;
-                let end = start.saturating_add(blake3::CHUNK_LEN).min(field.len());
-                if field.as_bytes()[start..end] == body_field.as_bytes()[start..end] {
-                    if end == field.len() {
-                        return Err(invalid("document body duplicated in metadata"));
+            if self.scan.is_none() {
+                if let Some(body_field) = body_field.filter(|body| body.len() == field.len()) {
+                    let start = self.body_field_byte;
+                    let end = start.saturating_add(blake3::CHUNK_LEN).min(field.len());
+                    if field.as_bytes()[start..end] == body_field.as_bytes()[start..end] {
+                        if end == field.len() {
+                            return Err(invalid("document body duplicated in metadata"));
+                        }
+                        self.body_field_byte = end;
+                        return Ok(false);
                     }
-                    self.body_field_byte = end;
-                    return Ok(false);
                 }
+                let value = decode_document_metadata_value(bytes)?;
+                self.scan = Some(MetadataValueScan::new(value));
             }
-            validate_document_metadata_value(field, bytes)?;
+            if !self
+                .scan
+                .as_mut()
+                .expect("decoded metadata value")
+                .advance(field)?
+            {
+                return Ok(false);
+            }
+            self.scan = None;
         }
         self.body_field_byte = 0;
         self.advance_key(field);
@@ -588,6 +601,65 @@ impl MetadataRows {
         if end == field.len() {
             self.after = self.pending_key.take();
         }
+    }
+}
+
+enum MetadataValueFrame {
+    Value(rmpv::Value),
+    Array(std::vec::IntoIter<rmpv::Value>),
+    Map(std::vec::IntoIter<(rmpv::Value, rmpv::Value)>),
+}
+
+struct MetadataValueScan {
+    frames: Vec<MetadataValueFrame>,
+    shape_tag_next: Option<usize>,
+}
+
+impl MetadataValueScan {
+    fn new(value: rmpv::Value) -> Self {
+        Self {
+            frames: vec![MetadataValueFrame::Value(value)],
+            shape_tag_next: Some(0),
+        }
+    }
+
+    fn advance(&mut self, field: &str) -> Result<bool> {
+        use MetadataValueFrame as Frame;
+        if let Some(tag_next) = &mut self.shape_tag_next {
+            let Frame::Value(value) = self.frames.first().expect("unscanned metadata root") else {
+                unreachable!("metadata shape precedes all leaf scans");
+            };
+            if !crate::ports::advance_metadata_shape(field, value, tag_next)? {
+                return Ok(false);
+            }
+            self.shape_tag_next = None;
+        }
+        match self.frames.pop().expect("pending metadata value") {
+            Frame::Value(rmpv::Value::String(text)) => {
+                crate::ports::scan_metadata_string(&text)?;
+            }
+            Frame::Value(rmpv::Value::Array(values)) => {
+                self.frames.push(Frame::Array(values.into_iter()));
+            }
+            Frame::Value(rmpv::Value::Map(fields)) => {
+                self.frames.push(Frame::Map(fields.into_iter()));
+            }
+            Frame::Value(_) => {}
+            Frame::Array(mut values) => {
+                if let Some(value) = values.next() {
+                    self.frames.push(Frame::Array(values));
+                    self.frames.push(Frame::Value(value));
+                }
+            }
+            Frame::Map(mut fields) => {
+                if let Some((key, value)) = fields.next() {
+                    self.frames.push(Frame::Map(fields));
+                    self.frames.push(Frame::Value(value));
+                    self.frames.push(Frame::Value(key));
+                }
+            }
+        }
+        Ok(self.frames.is_empty())
     }
 }
 
