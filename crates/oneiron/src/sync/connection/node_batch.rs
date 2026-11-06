@@ -68,6 +68,20 @@ pub(super) struct PreparedNodeBatch {
 }
 
 impl PreparedNodeBatch {
+    pub(super) fn encode(
+        frames: Vec<Vec<u8>>,
+        copy_releases: Vec<(usize, WindowClaimCopyRelease)>,
+    ) -> Result<Self, TransportError> {
+        let raw_batch = transport::encode_node_batch(&frames).into_result()?;
+        let size = frames.iter().fold(1, |size, frame| size + 4 + frame.len());
+        Ok(Self {
+            raw_batch,
+            frames,
+            size,
+            copy_releases,
+        })
+    }
+
     pub(super) fn into_frame(
         mut self,
         vault: &crate::Vault,
@@ -146,15 +160,9 @@ impl SyncConnection {
         let sent = match prepared {
             Err(error) => Err(error),
             Ok(()) if frames.is_empty() => Ok(()),
-            Ok(()) => match transport::encode_node_batch(&frames).into_result() {
+            Ok(()) => match PreparedNodeBatch::encode(frames, copy_releases) {
                 Err(error) => Err(error.to_string()),
-                Ok(raw_batch) => {
-                    let batch = PreparedNodeBatch {
-                        raw_batch,
-                        frames,
-                        size,
-                        copy_releases,
-                    };
+                Ok(batch) => {
                     let mut left = self.left.subscribe();
                     tokio::select! {
                         biased;
