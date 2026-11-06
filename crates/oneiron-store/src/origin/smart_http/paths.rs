@@ -199,4 +199,3 @@ pub fn validate_repo_name(name: &str) -> Result<()> {
     }
     Ok(())
 }
-

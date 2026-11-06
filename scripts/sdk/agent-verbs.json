@@ -2962,7 +2962,7 @@
       "description": "The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval.",
       "input": "crate::campaign::compliance::ComplianceAmendRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_install_as(&memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_install_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2978,7 +2978,7 @@
       "description": "Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp.",
       "input": "crate::campaign::compliance::ComplianceAmendRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_amend(&input)?",
+      "call": "memory.vault().store.record_hooks.compliance_amend(memory, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2991,7 +2991,7 @@
       "description": "The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt.",
       "input": "crate::campaign::compliance::ComplianceApprovalRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_approve_as(&memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_approve_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3007,7 +3007,7 @@
       "description": "The owner rejects the exact pending compliance proposal hash without changing the effective rules.",
       "input": "crate::campaign::compliance::ComplianceApprovalRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_reject_as(&memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_reject_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3023,7 +3023,7 @@
       "description": "The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy.",
       "input": "crate::campaign::compliance::ComplianceVerifyRequest",
       "output": "crate::campaign::compliance::ComplianceReceipt",
-      "call": "memory.compliance_verify_as(&memory.embedded_owner(\"vault.campaign.compliance.verify\")?, &input)?",
+      "call": "memory.vault().store.record_hooks.compliance_verify_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.verify\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3039,7 +3039,7 @@
       "description": "Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot.",
       "input": "crate::campaign::compliance::ComplianceResultRequest",
       "output": "crate::campaign::compliance::ComplianceResult",
-      "call": "memory.compliance_result(&input)?",
+      "call": "memory.vault().store.record_hooks.compliance_result(memory, &input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -17054,6 +17054,37 @@
       "section": false,
       "mcp_scope": "filtered",
       "openapi": true
+    },
+    {
+      "name": "vault.ingest.ag_ui.import",
+      "description": "The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent.",
+      "input": "crate::ingest::AgUiFileImport",
+      "output": "crate::ingest::AgUiFileReceipt",
+      "call": "memory.vault().ingest_ag_ui_file(&memory.embedded_owner(\"vault.ingest.ag_ui.import\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.ingest.ag_ui.read",
+      "description": "Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission.",
+      "input": "crate::ingest::AgUiFileReadInput",
+      "output": "crate::ingest::AgUiFileRead",
+      "call": "memory.read_ag_ui_file(&input)?",
+      "scope": "Read",
+      "refs": [
+        "/claim_ref"
+      ],
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.claims.admit",
