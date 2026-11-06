@@ -98,10 +98,24 @@ fn words_withdrawn(
     run: EntityId,
     record: &FoldRecord,
 ) -> Result<bool> {
-    if crate::ports::withdrawn_in_txn(dbs, txn, &fold_words_id(run, record.fold))? {
+    fold_words_withdrawn_in(dbs, txn, run, record.fold, &record.sources)
+}
+
+/// Whether the words of run `run`'s fold `fold`, written from `sources`,
+/// are withdrawn as read through `dbs`: the test the ledger's fence makes,
+/// for a copy that names the fold without its ledger, such as a recorded
+/// fold answer (FIX 18924).
+pub(crate) fn fold_words_withdrawn_in(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+    fold: u64,
+    sources: &[EntityId],
+) -> Result<bool> {
+    if crate::ports::withdrawn_in_txn(dbs, txn, &fold_words_id(run, fold))? {
         return Ok(true);
     }
-    for source in &record.sources {
+    for source in sources {
         if source_withdrawn(dbs, txn, source)? {
             return Ok(true);
         }
@@ -202,9 +216,11 @@ pub(crate) fn land_folds_in_overlay(
 /// base ledger in the withdrawing transaction, through
 /// [`fence_withdrawn_folds_in`], the fence the run's next ledger write drops
 /// them through (FIX 1494): with them go those of every other fold of the
-/// run a withdrawn record reached. Every withdrawal of a row calls this, the
-/// rows of a source chain included; any other id, or a ledger with no words
-/// to drop, is left as it is.
+/// run a withdrawn record reached. The recorded answers that copied the
+/// words of the run's withdrawn folds go in the same transaction (FIX
+/// 18924), whether or not the ledger still held them. Every withdrawal of a
+/// row calls this, the rows of a source chain included; any other id, or a
+/// ledger with no words to drop, is left as it is.
 pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -213,11 +229,10 @@ pub(crate) fn scrub_withdrawn_fold_summary_in_txn(
     let Some(owner) = OWNERS.get(store, txn, id)? else {
         return Ok(());
     };
-    let Some(mut ledger) = FOLD_LEDGERS.get(store, txn, &owner.run)? else {
-        return Ok(());
-    };
-    if !fence_withdrawn_folds_in(store, txn, owner.run, &mut ledger)? {
-        return Ok(());
+    if let Some(mut ledger) = FOLD_LEDGERS.get(store, txn, &owner.run)?
+        && fence_withdrawn_folds_in(store, txn, owner.run, &mut ledger)?
+    {
+        FOLD_LEDGERS.put(store, txn, &owner.run, &ledger)?;
     }
-    FOLD_LEDGERS.put(store, txn, &owner.run, &ledger)
+    crate::code_run::retire_fold_answers_in_txn(store, txn, Some(owner.run))
 }

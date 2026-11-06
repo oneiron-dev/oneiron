@@ -150,10 +150,10 @@ pub(crate) use self::storage::retire_replay_bodies_in_rows;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
-    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
-    erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
-    response_erased_error, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
-    wait_reply_in_txn,
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, WithdrawnFoldAnswer,
+    erase_settled_reply_of_erased_run_in_txn, redact_fold_answers, replay_carriage, replay_owners,
+    response_erased_error, retire_actor_responses_in_txn, retire_fold_answers_in_txn,
+    retire_sourced_code_outputs_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
@@ -273,8 +273,9 @@ use self::storage::canonical_speech_conversation_id;
 pub(crate) use self::storage::executor_speech_message_id;
 #[cfg(test)]
 pub(crate) use self::storage::require_facet_placement_in;
+pub(crate) use self::types::FoldWordRef;
 pub use self::types::{
-    SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
+    FoldAnswer, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,

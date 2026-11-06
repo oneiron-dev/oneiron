@@ -50,9 +50,10 @@ impl Vault {
 
     /// Publishes the reply body `spool` took as run `owner`'s output at
     /// `path`, admitted in the writer that publishes it (see the module
-    /// notes). An admitted body that spills where its spool did not takes
-    /// the writer again with an instance minted first: a writer never mints
-    /// one.
+    /// notes), as a dependent of each of `sources`, the records whose words
+    /// it copies (FIX 18924). An admitted body that spills where its spool
+    /// did not takes the writer again with an instance minted first: a
+    /// writer never mints one.
     ///
     /// # Errors
     ///
@@ -64,6 +65,7 @@ impl Vault {
         spool: BodySink,
         complete: bool,
         owner: EntityId,
+        sources: &[EntityId],
     ) -> Result<ReplyBody> {
         let spool = spool.into_spool()?;
         let occurrence = ResultOccurrence::owned(owner, &path)?.id();
@@ -92,6 +94,12 @@ impl Vault {
                 self.pin_result_body(digest)
             })?;
             self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, Some(owner))?;
+            super::super::fold_answers::record_reply_sources_in_txn(
+                &self.store,
+                &mut wtxn,
+                &occurrence,
+                sources,
+            )?;
             wtxn.commit()?;
             return Ok(ReplyBody::Published(finished.output));
         }
