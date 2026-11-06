@@ -5,10 +5,12 @@ use oneiron_vault_contract::BINDING_HEADER;
 use serde::Deserialize;
 
 /// The facade doors an invitee's own slip (FIX 1925) reaches: its
-/// invitation's list, accept and decline. Anywhere else it holds no scope.
-pub(crate) const INVITEE_DOORS: [&str; 3] = [
+/// invitation's list, acceptance (plain or with a member credential) and decline.
+/// Anywhere else it holds no scope.
+pub(crate) const INVITEE_DOORS: [&str; 4] = [
     "vault.members.invitations",
     "vault.members.accept",
+    "vault.members.accept_with_credential",
     "vault.members.decline",
 ];
 
@@ -198,9 +200,6 @@ impl CoreAuth {
             {
                 return Err(ApiError::unauthorized());
             }
-        } else if matches!(&claims.scope.verbs, ScopeAxis::Some(verbs) if verbs.iter().any(|verb| verb.starts_with("org:")))
-        {
-            return Err(ApiError::unauthorized());
         }
         let scopes: BTreeSet<_> = CoreScope::all()
             .into_iter()
@@ -210,8 +209,8 @@ impl CoreAuth {
                 if claims.invitation_ref.is_some() {
                     return false;
                 }
-                // A general root is not an organization credential. Organization
-                // powers exist only in the explicit org-bound closed vocabulary.
+                // A member grant may carry org:* verbs without an organization.
+                // Project organization powers only with their explicit binding.
                 if matches!(scope, CoreScope::OrgAdmin(_)) && claims.org_ref.is_none() {
                     return false;
                 }

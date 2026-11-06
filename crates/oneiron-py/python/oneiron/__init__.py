@@ -2684,6 +2684,9 @@ class Oneiron:
         def accept(self, spec):
             """The invitee accepts their own invitation and joins the shared vault at its role."""
             return json.loads(_translate(lambda: self._client.vault_members_accept(json.dumps(spec))))
+        def accept_with_credential(self, spec):
+            """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_members_accept_with_credential(json.dumps(spec))))
         def decline(self, spec):
             """The invitee declines their own invitation; nothing is granted."""
             return json.loads(_translate(lambda: self._client.vault_members_decline(json.dumps(spec))))
