@@ -585,6 +585,24 @@ impl Vault {
         Ok(outcome)
     }
 
+    /// One bounded sieve pass as a turn wake runs it, with nothing stopping
+    /// it: the follower wakes in its commit when spans queued. A host that
+    /// takes several landed turns in one wake round runs one such pass per
+    /// turn before the round's turn wakes, as each turn's own wake ran one,
+    /// and stops once nothing is left (FIX 14873). Returns whether work is
+    /// left for another pass.
+    pub fn sieve_pass_on_turn(&self, now: u64) -> Result<bool> {
+        match self.sieve_pass_until(now, WakeStop::NEVER, OnStale::OneWriter, true)? {
+            ReadWrite::Written(commit) => {
+                if commit.followed {
+                    self.store.notify_attempt_observers();
+                }
+                Ok(commit.pass.more)
+            }
+            ReadWrite::Stopped | ReadWrite::Deferred => Ok(false),
+        }
+    }
+
     /// The turn producer with nothing stopping it: a stale read retries in
     /// its writer, so the wake always lands. Returns whether a wake was
     /// queued.

@@ -1,6 +1,7 @@
 //! Resolve header parameters once and freeze them with the consent-visible tool call.
 //! Header parameters form an independent grant class, not a sensitivity rank.
 use super::{DataClass, FrozenMcpPayload, ScopedMcpCallContext};
+use crate::connector_key::ConnectorToolRememberContext;
 use crate::outbound_intent_ledger::OutboundToolDescriptor;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -77,8 +78,16 @@ impl PreparedToolCall {
     pub(crate) fn manifest_binding(&self) -> Option<&ConnectorManifestBinding> {
         self.frozen.manifest_binding.as_ref()
     }
-    fn with_manifest_binding(mut self, binding: ConnectorManifestBinding) -> Result<Self> {
+    pub(crate) fn remember_context(&self) -> Option<ConnectorToolRememberContext> {
+        self.frozen.remember_context
+    }
+    fn with_manifest_binding(
+        mut self,
+        binding: ConnectorManifestBinding,
+        remember_context: Option<ConnectorToolRememberContext>,
+    ) -> Result<Self> {
         self.frozen.manifest_binding = Some(binding);
+        self.frozen.remember_context = remember_context;
         self.payload =
             FrozenMcpPayload::new(serde_json::to_vec(&self.frozen).map_err(|_| invalid_schema())?);
         Ok(self)
@@ -205,6 +214,7 @@ pub(super) struct FrozenToolCall {
     headers: BTreeMap<String, String>,
     grant_requirements: Vec<HeaderGrantRequirement>,
     manifest_binding: Option<ConnectorManifestBinding>,
+    remember_context: Option<ConnectorToolRememberContext>,
     destructive_hint: bool,
     mutation: MutationIntent,
     read_only_hint: Option<bool>,
@@ -472,6 +482,7 @@ pub fn prepare_tool_call(
         headers,
         grant_requirements: requirements,
         manifest_binding: None,
+        remember_context: None,
         destructive_hint,
         mutation,
         read_only_hint: replay.read_only_hint,
@@ -504,8 +515,22 @@ impl crate::Vault {
         arguments: &Value,
         mutation: MutationIntent,
     ) -> Result<ConnectorToolCallPreparation> {
+        self.prepare_connector_tool_call_with_context(
+            key_ref, call, descriptor, arguments, mutation, None,
+        )
+    }
+
+    pub(crate) fn prepare_connector_tool_call_with_context(
+        &self,
+        key_ref: &crate::EntityId,
+        call: ScopedMcpCallContext,
+        descriptor: ToolCallDescriptor<'_>,
+        arguments: &Value,
+        mutation: MutationIntent,
+        remember_context: Option<ConnectorToolRememberContext>,
+    ) -> Result<ConnectorToolCallPreparation> {
         use crate::connector_key::SlateDisposition;
-        let (key, setting) = {
+        let (key, setting, remembered, remember_context) = {
             let txn = self.store.env.read_txn()?;
             let key = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_ref)?
                 .ok_or(crate::Error::EntityNotFound)?;
@@ -516,7 +541,33 @@ impl crate::Vault {
                 &key,
                 &call.tool,
             )?;
-            (key, setting)
+            let remember_context = match remember_context {
+                Some(mut context) => {
+                    let connection = crate::connector_key::connector_tool_connection_in_txn(
+                        &self.store,
+                        &txn,
+                        key_ref,
+                        &key,
+                    )?;
+                    if context.connection.is_some_and(|known| known != connection) {
+                        None
+                    } else {
+                        context.connection = Some(connection);
+                        Some(context)
+                    }
+                }
+                None => None,
+            };
+            let remembered = setting == SlateDisposition::AlwaysAsk
+                && crate::connector_key::connector_tool_remembered_in_txn(
+                    &self.store,
+                    &txn,
+                    key_ref,
+                    &key,
+                    &call,
+                    remember_context,
+                )?;
+            (key, setting, remembered, remember_context)
         };
         if setting == SlateDisposition::NeverAllow {
             return Ok(ConnectorToolCallPreparation::Denied {
@@ -539,8 +590,8 @@ impl crate::Vault {
             protocol_revision: key.protocol_revision.ok_or_else(invalid_schema)?,
         };
         let prepared = prepare_tool_call(call, descriptor, arguments, mutation)?
-            .with_manifest_binding(binding)?;
-        Ok(if setting == SlateDisposition::AlwaysAsk {
+            .with_manifest_binding(binding, remember_context)?;
+        Ok(if setting == SlateDisposition::AlwaysAsk && !remembered {
             ConnectorToolCallPreparation::ConsentRequired {
                 candidate: prepared,
             }

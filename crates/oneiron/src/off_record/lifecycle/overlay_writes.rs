@@ -11,10 +11,11 @@
 //! beside its row, a room step's response version (FIX 4818), ride that
 //! row's scope, and each is placed as the row is, once every op of the
 //! write is staged. A writer that stages several rows in one segment prepares
-//! each, gate included, before the segment opens. Its gate is judged
-//! against base policy, as every gate is (authority stays on base), and the
-//! decision is not kept: a decision about evaporating content follows that
-//! content, and the room keeps no decision rows of its own.
+//! each, gate included, before the segment opens. A claim's gate is judged
+//! against base policy, as every gate is (authority stays on base), and its
+//! decision follows the content it judged (ARCH-0052, FIX 9967): it stages
+//! beside the claim, in the claim's segment, never in base, and evaporates
+//! with the room.
 
 use crate::batch::BatchOp;
 use crate::claim::{ClaimBody, ClaimSubject};
@@ -25,6 +26,7 @@ use crate::memory::CreateNoteRequest;
 use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult, SessionReadContext};
 use crate::ports::EntityStoreRead;
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, SessionWriteRoute};
+use crate::store::RoomGateDecision;
 use crate::task_verb::sdk::AgentVerb;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
@@ -226,22 +228,23 @@ impl OffRecordSession<'_> {
     }
 
     /// Judges `body`'s write against base policy, as the write door would,
-    /// and keeps no decision: the transaction it reads in is never
-    /// committed.
+    /// and answers the decision it judged, for the room to stage beside the
+    /// claim (FIX 9967); `None` when no policy verdict was reached. The
+    /// transaction it reads in is never committed, so base keeps no row.
     ///
     /// # Errors
     ///
     /// The gate's refusal, typed as the write door raises it.
-    pub(crate) fn session_gate_check(
+    pub(crate) fn session_gate_decision(
         &self,
         id: EntityId,
         body: &ClaimBody,
         envelope: &WriteEnvelope,
-    ) -> Result<()> {
+    ) -> Result<Option<RoomGateDecision>> {
         let vault = self.vault;
         let mut wtxn = vault.store.env.write_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-        let judged = crate::gate::check_claim_policy_for_write(
+        let judged = crate::gate::capture_claim_policy_for_write(
             &vault.store,
             &mut wtxn,
             &id,
@@ -254,15 +257,30 @@ impl OffRecordSession<'_> {
                 can_resolve_pending_consent: false,
                 include_source_in_gate_input: true,
             },
-            false,
         );
-        // Dropped uncommitted: the room keeps no decision row, and base none.
+        // Dropped uncommitted: base keeps no decision row.
         drop(wtxn);
         judged
     }
 
+    /// [`Self::session_gate_decision`] as a check alone, for a run's precheck
+    /// before the write that judges again and stages its decision.
+    ///
+    /// # Errors
+    ///
+    /// The gate's refusal, typed as the write door raises it.
+    pub(crate) fn session_gate_check(
+        &self,
+        id: EntityId,
+        body: &ClaimBody,
+        envelope: &WriteEnvelope,
+    ) -> Result<()> {
+        self.session_gate_decision(id, body, envelope).map(|_| ())
+    }
+
     /// Stages one claim candidate as the CLAIM row `id`, with its `claim_of`
-    /// edge to an entity subject, after its gate (`session_gate_check`).
+    /// edge to an entity subject and the decision its gate judged
+    /// (`session_gate_decision`).
     /// The body is the one base would store for a new row, at the vault's
     /// default facet unless the candidate stamps one.
     ///
@@ -282,7 +300,7 @@ impl OffRecordSession<'_> {
     ) -> Result<String> {
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let body = candidate.into_claim_body(envelope, self.vault.default_facet()?)?;
-        self.session_gate_check(id, &body, envelope)?;
+        let decision = self.session_gate_decision(id, &body, envelope)?;
         let data = crate::claim::encode_claim_body(&body)?;
         let mut ops = vec![BatchOp::Put {
             id,
@@ -306,7 +324,8 @@ impl OffRecordSession<'_> {
                 vad: Vad::NEUTRAL,
             });
         }
-        let attachments = RoomRowAttachments::staged_claim(envelope, learned_at);
+        let attachments =
+            RoomRowAttachments::staged_claim(envelope, learned_at).with_gate_decision(decision);
         self.stage_session_rows(route, id, occurred, learned_at, &needs, ops, &attachments)
     }
 
@@ -333,7 +352,7 @@ impl OffRecordSession<'_> {
     ) -> Result<PreparedSessionRows> {
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let body = candidate.into_claim_body(envelope, self.vault.default_facet()?)?;
-        self.session_gate_check(id, &body, envelope)?;
+        let decision = self.session_gate_decision(id, &body, envelope)?;
         let data = crate::claim::encode_claim_body(&body)?;
         let mut ops = vec![BatchOp::Put {
             id,
@@ -373,7 +392,8 @@ impl OffRecordSession<'_> {
             learned_at,
             needs,
             ops,
-            attachments: RoomRowAttachments::derived_claim(envelope, sources, learned_at),
+            attachments: RoomRowAttachments::derived_claim(envelope, sources, learned_at)
+                .with_gate_decision(decision),
         })
     }
 
