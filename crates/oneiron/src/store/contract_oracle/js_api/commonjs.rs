@@ -26,17 +26,42 @@ pub(super) fn collect(
         let Statement::ExpressionStatement(statement) = statement else {
             continue;
         };
-        let Expression::AssignmentExpression(assignment) =
-            statement.expression.get_inner_expression()
-        else {
+        let expression = statement.expression.get_inner_expression();
+        if let Expression::UnaryExpression(unary) = expression {
+            if unary.operator.is_delete()
+                && let Some(member) = unary.argument.get_inner_expression().as_member_expression()
+                && let Some(deleted) =
+                    target(member, semantic, alias, native_module, &mut accounted)
+            {
+                commonjs = true;
+                match deleted {
+                    Target::Property(Some(name)) => {
+                        module.bindings.remove(&name);
+                    }
+                    Target::Property(None) => {
+                        module
+                            .unresolved
+                            .insert("commonjs:computed-delete".to_owned());
+                    }
+                    Target::Whole => {
+                        module.bindings.clear();
+                        alias = false;
+                    }
+                }
+            }
+            continue;
+        }
+        let Expression::AssignmentExpression(assignment) = expression else {
             continue;
         };
         if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
             if identifier.name == "exports" && semantic.is_reference_to_global_variable(identifier)
             {
                 alias = assignment.operator.is_assign()
-                    && native_module
-                    && whole_value(&assignment.right, semantic, &mut accounted);
+                    && ((native_module
+                        && whole_value(&assignment.right, semantic, &mut accounted))
+                        || (alias
+                            && global(&assignment.right, "exports", semantic, &mut accounted)));
                 accounted.insert((identifier.span.start, identifier.span.end));
             } else if identifier.name == "module"
                 && semantic.is_reference_to_global_variable(identifier)
@@ -116,10 +141,9 @@ pub(super) fn collect(
     }
     // CommonJS supplies one whole-module value even when it has no named keys.
     if commonjs {
-        module.bindings.insert(
-            "default".to_owned(),
-            Binding::Local("*commonjs-default*".to_owned()),
-        );
+        module
+            .bindings
+            .insert("default".to_owned(), Binding::CommonJsValue);
     }
     for node in semantic.nodes().iter() {
         let AstKind::IdentifierReference(identifier) = node.kind() else {
