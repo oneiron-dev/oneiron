@@ -152,14 +152,6 @@ impl ManifestDecodeMemo {
         row
     }
 
-    /// `body` decoded for this read alone: an untrusted ordinary pack's
-    /// (FIX 5987), read in full and never kept. A decode already kept serves.
-    pub(super) fn transient(&self, body: &[u8]) -> Arc<ManifestRow> {
-        let key = *blake3::hash(body).as_bytes();
-        self.kept(&key)
-            .unwrap_or_else(|| Arc::new(ManifestRow::decode(body)))
-    }
-
     fn kept(&self, key: &[u8; 32]) -> Option<Arc<ManifestRow>> {
         self.rows.lock().ok().and_then(|mut rows| rows.get(key))
     }
