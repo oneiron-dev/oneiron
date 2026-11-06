@@ -39,7 +39,7 @@ use super::imap_client::{
 use super::mime::MimeMessage;
 use super::rest::refused;
 use super::source::MailProvider;
-use super::state::{MailPresence, OCCURRENCES, occurrence_key};
+use super::state::{MailPresence, OCCURRENCES, SYNC, occurrence_key};
 use super::wire::{
     MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
@@ -59,6 +59,8 @@ const NEW_PER_FOLDER: usize = 200;
 const MAX_FOLDERS: usize = 1_000;
 /// The old UIDs one read of a folder's `Message-ID`s covers.
 const DEPARTURE_BATCH: u64 = 2_000;
+/// The search hits one read of their `Message-ID`s checks.
+const HIT_BATCH: usize = 64;
 /// The largest message read whole: a bigger one lands by its headers.
 const MAX_MESSAGE_BYTES: u64 = 40 * 1024 * 1024;
 /// The prefix of an anchor this wire wrote.
@@ -508,18 +510,25 @@ impl ImapMailWire<'_> {
             let Some(read) = read_of(message, "BODY[HEADER]") else {
                 continue;
             };
-            let headers = headers_of(&read, place, status.uid_validity, vec![place.label.clone()]);
-            self.seen.borrow_mut().insert(
-                headers.provider_id.clone(),
-                (
-                    headers.clone(),
-                    Location {
-                        folder,
-                        uid_validity: status.uid_validity,
-                        uid: read.uid,
-                    },
-                ),
-            );
+            let mut headers =
+                headers_of(&read, place, status.uid_validity, vec![place.label.clone()]);
+            let mut seen = self.seen.borrow_mut();
+            // A message read in several folders carries each of them.
+            let at = match seen.get(&headers.provider_id) {
+                Some((held, at)) => {
+                    let mut labels = held.labels.clone();
+                    labels.push(place.label.clone());
+                    headers.labels = dedup(labels);
+                    *at
+                }
+                None => Location {
+                    folder,
+                    uid_validity: status.uid_validity,
+                    uid: read.uid,
+                },
+            };
+            seen.insert(headers.provider_id.clone(), (headers.clone(), at));
+            drop(seen);
             out.push(headers);
         }
         Ok(out)
@@ -655,22 +664,22 @@ impl ImapMailWire<'_> {
         uids: &[u64],
         provider_id: &str,
     ) -> Result<Option<u64>> {
-        if uids.is_empty() {
-            return Ok(None);
+        // Every hit is checked, a bounded batch at a time: an unchecked
+        // hit is no evidence that the message is gone.
+        let place = open.folders[folder].clone();
+        let mut best = None;
+        for batch in uids.chunks(HIT_BATCH) {
+            let fetched = open
+                .session
+                .uid_fetch(&uid_set(batch), "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]")?;
+            for message in &fetched {
+                if fetched_id(message, &place, status.uid_validity).as_deref() == Some(provider_id)
+                {
+                    best = best.max(message.uid());
+                }
+            }
         }
-        let start = uids.len().saturating_sub(16);
-        let fetched = open.session.uid_fetch(
-            &uid_set(&uids[start..]),
-            "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
-        )?;
-        let place = &open.folders[folder];
-        Ok(fetched
-            .iter()
-            .filter(|message| {
-                fetched_id(message, place, status.uid_validity).as_deref() == Some(provider_id)
-            })
-            .filter_map(Fetched::uid)
-            .max())
+        Ok(best)
     }
 
     /// The headers and the whole message at the first place `provider_id`
@@ -720,8 +729,12 @@ impl ImapMailWire<'_> {
         else {
             return Ok(None);
         };
+        // The labels it has landed with stay, with this folder: a body read
+        // in one folder takes no other folder away.
         let folder = &open.folders[at.folder];
-        let headers = headers_of(&read, folder, at.uid_validity, vec![folder.label.clone()]);
+        let mut labels = self.landed_labels(source, provider_id)?.unwrap_or_default();
+        labels.push(folder.label.clone());
+        let headers = headers_of(&read, folder, at.uid_validity, dedup(labels));
         let raw = if whole { read.raw.to_vec() } else { Vec::new() };
         Ok(Some((headers, raw)))
     }
@@ -753,6 +766,7 @@ impl ImapMailWire<'_> {
         folder: usize,
         uid_next: u64,
         changes: &mut Vec<MailHistoryChange>,
+        pending: &mut BTreeMap<String, Vec<String>>,
     ) -> Result<()> {
         let place = open.folders[folder].clone();
         let mut held = BTreeSet::new();
@@ -798,11 +812,16 @@ impl ImapMailWire<'_> {
                 .map(|at| open.folders[at.folder].label.clone())
                 .collect();
             if kept.is_empty() {
+                pending.remove(&provider_id);
                 changes.push(MailHistoryChange::Deleted { provider_id });
             } else {
+                // Where it is now: the labels later folders of this read
+                // build on.
+                let labels = dedup(kept);
+                pending.insert(provider_id.clone(), labels.clone());
                 changes.push(MailHistoryChange::Labels {
                     provider_id,
-                    labels: dedup(kept),
+                    labels,
                     trash_or_spam: false,
                 });
             }
@@ -911,6 +930,7 @@ impl MailProviderWire for ImapMailWire<'_> {
         page: Option<&str>,
     ) -> Result<MailIdPage> {
         let mut cursor = ListCursor::parse(page)?;
+        let marks = self.anchor_marks(source)?;
         self.with_session(source, |open| {
             let read: Vec<usize> = (0..open.folders.len())
                 .filter(|&at| open.folders[at].read())
@@ -939,6 +959,20 @@ impl MailProviderWire for ImapMailWire<'_> {
                 cursor.end = None;
             }
             let below = cursor.below;
+            // The listing copies only what the change anchor stands past: a
+            // message above its frontier comes through the change feed,
+            // which also sees it leave (a folder the anchor does not hold,
+            // or holds under another UIDVALIDITY, comes that way whole).
+            let frontier = marks.as_ref().map(|marks| {
+                marks
+                    .get(&open.folders[folder].digest)
+                    .filter(|mark| mark.uid_validity == status.uid_validity)
+                    .map_or(1, |mark| mark.uid_next)
+            });
+            let listed = |uid: u64| {
+                below.is_none_or(|below| uid < below)
+                    && frontier.is_none_or(|frontier| uid < frontier)
+            };
             let (mut uids, more, end) = match query.newer_than {
                 Some(after) => {
                     // SINCE reads a day in the server's own zone: a day early,
@@ -947,7 +981,7 @@ impl MailProviderWire for ImapMailWire<'_> {
                     let since = search_date(after.saturating_sub(86_400))
                         .ok_or_else(|| refused("imap_cutoff_unreadable"))?;
                     let mut uids = open.session.uid_search(&format!("SINCE {since}"))?;
-                    uids.retain(|&uid| below.is_none_or(|below| uid < below));
+                    uids.retain(|&uid| listed(uid));
                     let start = uids
                         .len()
                         .saturating_sub(usize::try_from(LIST_PAGE).unwrap_or(usize::MAX));
@@ -968,7 +1002,7 @@ impl MailProviderWire for ImapMailWire<'_> {
                         let uids: Vec<u64> = fetched
                             .iter()
                             .filter_map(Fetched::uid)
-                            .filter(|&uid| below.is_none_or(|below| uid < below))
+                            .filter(|&uid| listed(uid))
                             .collect();
                         (uids, start > 1, Some(start - 1))
                     }
@@ -1081,6 +1115,8 @@ impl MailProviderWire for ImapMailWire<'_> {
         self.with_session(source, |open| {
             let mut changes = Vec::new();
             let mut reached = BTreeMap::new();
+            // Each message's labels as this read has set them so far.
+            let mut pending: BTreeMap<String, Vec<String>> = BTreeMap::new();
             for (at, folder) in open.folders.clone().into_iter().enumerate() {
                 if !folder.read() {
                     continue;
@@ -1108,14 +1144,20 @@ impl MailProviderWire for ImapMailWire<'_> {
                 let taken: Vec<u64> = new.iter().copied().take(NEW_PER_FOLDER).collect();
                 for headers in self.read_headers(open, at, status, &taken)? {
                     // A message already landed, filed here too, carries this
-                    // folder as well.
-                    match self.landed_labels(source, &headers.provider_id)? {
+                    // folder as well, over the labels this read gave it.
+                    let landed = match pending.get(&headers.provider_id) {
+                        Some(labels) => Some(labels.clone()),
+                        None => self.landed_labels(source, &headers.provider_id)?,
+                    };
+                    match landed {
                         Some(labels) if labels.contains(&folder.label) => {}
                         Some(mut labels) => {
                             labels.push(folder.label.clone());
+                            let labels = dedup(labels);
+                            pending.insert(headers.provider_id.clone(), labels.clone());
                             changes.push(MailHistoryChange::Labels {
                                 provider_id: headers.provider_id,
-                                labels: dedup(labels),
+                                labels,
                                 trash_or_spam: false,
                             });
                         }
@@ -1126,7 +1168,7 @@ impl MailProviderWire for ImapMailWire<'_> {
                     }
                 }
                 if kept_old < mark.count {
-                    self.departures(open, source, at, mark.uid_next, &mut changes)?;
+                    self.departures(open, source, at, mark.uid_next, &mut changes, &mut pending)?;
                 }
                 let next = match taken.last() {
                     Some(&last) if taken.len() < new.len() => last + 1,
@@ -1156,6 +1198,13 @@ impl MailProviderWire for ImapMailWire<'_> {
         })
     }
 
+    fn listed_labels(&self, provider_id: &str) -> Option<Vec<String>> {
+        self.seen
+            .borrow()
+            .get(provider_id)
+            .map(|(headers, _)| headers.labels.clone())
+    }
+
     fn attachment(
         &self,
         source: &MailSyncSource,
@@ -1172,6 +1221,16 @@ impl MailProviderWire for ImapMailWire<'_> {
 }
 
 impl ImapMailWire<'_> {
+    /// The change anchor the source stands at, per folder, as the importer
+    /// keeps it; `None` before it has one.
+    fn anchor_marks(&self, source: &MailSyncSource) -> Result<Option<BTreeMap<String, Mark>>> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(SYNC
+            .get(&self.vault.store, &txn, &source.source_ref)?
+            .and_then(|state| state.anchor)
+            .and_then(|anchor| parse_anchor(&anchor)))
+    }
+
     /// The labels of the source's live copy of `provider_id`, when it has
     /// landed one.
     fn landed_labels(
