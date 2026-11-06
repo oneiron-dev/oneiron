@@ -112,6 +112,24 @@ impl SentValue<'_> {
         clear_value(json, self.value, self.text);
     }
 
+    /// Clears `json` and reports whether its final parsed value changed.
+    pub(crate) fn clear_json_changed(&self, json: &mut Value) -> bool {
+        let two_passes = std::str::from_utf8(self.value).is_ok_and(|value| {
+            let trimmed = value.trim();
+            !trimmed.is_empty() && trimmed != value
+        });
+        if !two_passes {
+            // One replacement moves every changed key in the same shortlex
+            // direction, so a changed key cannot permute an unchanged key set.
+            return clear_value(json, self.value, self.text);
+        }
+        let before = json.clone();
+        self.clear_json(json);
+        let changed = *json != before;
+        crate::outbound_consent::zeroize_json(before);
+        changed
+    }
+
     /// Each copy of the value in `string`.
     pub fn clear_string(&self, string: &mut String) {
         clear_text(string, self.value, self.text);
@@ -122,9 +140,7 @@ impl SentValue<'_> {
     /// changed it; any other body is cleared byte for byte.
     pub fn clear_bytes(&self, bytes: &mut Vec<u8>) {
         if let Ok(mut parsed) = serde_json::from_slice::<Value>(bytes) {
-            let before = parsed.clone();
-            self.clear_json(&mut parsed);
-            if parsed != before
+            if self.clear_json_changed(&mut parsed)
                 && let Ok(cleared) = serde_json::to_vec(&parsed)
             {
                 *bytes = cleared;
@@ -294,41 +310,47 @@ pub(super) fn handle_text(handle: &str) -> String {
 }
 
 /// Each copy of `value` in `json`, in a string or a key at any depth,
-/// replaced by `text`.
-fn clear_value(json: &mut Value, value: &[u8], text: &str) {
+/// replaced by `text`. Reports whether any replacement pass changed a string.
+fn clear_value(json: &mut Value, value: &[u8], text: &str) -> bool {
     match json {
         Value::String(string) => clear_text(string, value, text),
-        Value::Array(items) => items
-            .iter_mut()
-            .for_each(|item| clear_value(item, value, text)),
+        Value::Array(items) => items.iter_mut().fold(false, |changed, item| {
+            clear_value(item, value, text) | changed
+        }),
         Value::Object(fields) => {
             let taken = std::mem::take(fields);
+            let mut changed = false;
             for (mut key, mut field) in taken {
-                clear_text(&mut key, value, text);
-                clear_value(&mut field, value, text);
+                changed |= clear_text(&mut key, value, text);
+                changed |= clear_value(&mut field, value, text);
                 fields.insert(key, field);
             }
+            changed
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
     }
 }
 
 /// Each copy of `value` in `string`, as held and with its surrounding
 /// whitespace trimmed (consumers trim before they present it), replaced by
-/// `text`.
-pub(super) fn clear_text(string: &mut String, value: &[u8], text: &str) {
+/// `text`. Reports whether either pass changed its input, not final equality.
+pub(super) fn clear_text(string: &mut String, value: &[u8], text: &str) -> bool {
     let Ok(value) = std::str::from_utf8(value) else {
-        return;
+        return false;
     };
     let trimmed = value.trim();
+    let mut changed = false;
     for form in [value, trimmed] {
         if !form.is_empty() && string.contains(form) {
-            *string = string.replace(form, text);
+            let cleared = string.replace(form, text);
+            changed |= cleared != *string;
+            *string = cleared;
         }
         if trimmed == value {
             break;
         }
     }
+    changed
 }
 
 /// `bytes` with each copy of `form` replaced by `text`.
