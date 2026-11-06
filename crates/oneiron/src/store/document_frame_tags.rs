@@ -39,4 +39,6 @@ pub mod document_sub_tags {
     /// names. As a notice with no payload, it marks a fork change at the
     /// authority.
     pub const NOTE_FORK_SET: u8 = 12;
+    /// One ordered piece of a logical document, verified whole before admission.
+    pub const PART: u8 = 13;
 }
