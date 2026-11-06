@@ -99,8 +99,9 @@ pub(crate) fn put_run_continuation_row_in_txn(
 /// published there. Ownership precedes the erase fence; no descriptor is
 /// republished after the fence releases it. Before the row, the child's
 /// read-world ledger is seeded from the source's proof of the calls before
-/// `cut`, the proved cut's bridge position (FIX 7085). A child whose copied
-/// calls do not end at `cut` begins a ledger that misses them.
+/// `cut`, the proved cut's bridge position, and before every copied call
+/// past it (FIX 7085). A child that copied fewer calls than `cut` begins a
+/// ledger that misses them.
 pub(crate) fn seed_continuation_run(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -120,7 +121,11 @@ pub(crate) fn seed_continuation_run(
     for output in inherited {
         vault.retain_inherited_result_in_txn(txn, child.run_id, source, output)?;
     }
-    let copied_cut = (child.bridge_calls.len() as u64 == cut).then_some(cut);
+    // The copied row holds the proved prefix through `cut` and, when the cut
+    // falls after a failed step, that step's recorded calls too: each copied
+    // position is the source's own call, so its proof covers it (FIX 7085).
+    let copied = child.bridge_calls.len() as u64;
+    let copied_cut = (copied >= cut).then_some(copied);
     seed_read_world_prefix_in_txn(vault, txn, source, copied_cut, child.run_id)?;
     let generation = child.generation()?;
     let child = fence_replay_in_txn(vault, txn, Cow::Borrowed(child))?;
