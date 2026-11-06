@@ -16,6 +16,15 @@
 //! leases it holds, and takes and renews none after
 //! (`Vault::executor_leases_released`).
 //!
+//! A run tree moves with its root (REVIEW-6638): only a root run, a dispatch
+//! with no parent attempt, gets a run TASK. A child the run spawns, at any
+//! depth, has none of its own: its claim walks `parent_attempt` up to its
+//! root's run TASK and runs it only while this machine holds the root's
+//! lease, under a fence at the root's generation, and takes, renews and
+//! settles nothing on it. When the root moves, every child on the old
+//! machine stands down at that fence, and the root, rerun on the machine
+//! that took it, spawns its children there.
+//!
 //! On one machine the lease is always its own, so nothing new refuses: a
 //! run with no run TASK (dispatched before this change) runs as before. A
 //! run whose run TASK stands but does not read is not one with none: it does
@@ -64,12 +73,13 @@ pub(crate) const AGENT_RUN_LEASE_FIRST_GENERATION: u64 = 1;
 /// least once a half hold keeps its lease.
 pub(crate) const AGENT_RUN_LEASE_HOLD_SECS: u64 = 15 * 60;
 
-/// How many `retry_of` links a claim or a settlement follows back to find
-/// the run TASK a retry, a landing successor, an owner's continuation or a
-/// try a handover queued here shares with the try its dispatch minted.
-/// Engine call (CALLS, FIX 4747): past it, or past a try this queue does not
-/// hold whose own id names no run TASK, the row has no run TASK and runs as
-/// before.
+/// How many links a claim or a settlement follows back to find the run TASK
+/// a try runs under: each `retry_of` link from a retry, a landing successor,
+/// an owner's continuation or a try a handover queued here to the try its
+/// dispatch minted, and each `parent_attempt` link from a spawned child up
+/// to its root (REVIEW-6638), all within this one bound. Engine call (CALLS,
+/// FIX 4747): past it, or past a try this queue does not hold whose own id
+/// names no run TASK, the row has no run TASK and runs as before.
 const AGENT_RUN_RETRY_CHAIN_WALK: usize = 64;
 
 /// The typed cause a local try ends with when its run TASK names another
@@ -153,6 +163,11 @@ pub struct AgentRunFence {
     pub task_ref: EntityId,
     pub node_id: u64,
     pub generation: u64,
+    /// A spawned child's fence on its root's run TASK (REVIEW-6638): it
+    /// holds the root's lease at the generation the child's claim read, and
+    /// renews nothing; only the root's own claim, steps, park and resume,
+    /// and the reaper's pass renew it.
+    pub child: bool,
 }
 
 impl AgentRunFence {
@@ -168,10 +183,11 @@ impl AgentRunFence {
 /// 4747).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentRunLeaseTake {
-    /// No entity stands under the run TASK id of the row, or of any try it
-    /// retries: it runs as before, unfenced.
+    /// No entity stands under the run TASK id of the row, of any try it
+    /// retries, or of its root: it runs as before, unfenced.
     NoRunTask,
-    /// This machine holds the lease; the run goes under this fence.
+    /// This machine holds the lease (for a spawned child, its root's); the
+    /// run goes under this fence.
     Taken(AgentRunFence),
     /// Another machine holds the lease: this machine does not run it.
     HeldElsewhere,
@@ -225,7 +241,6 @@ pub(super) struct AgentRunTaskBody {
     /// (`super::run_handover`), so the memo keys of its finished steps match.
     pub(super) live_attempt_ref: String,
     pub(super) run_id: Option<String>,
-    parent_attempt_ref: Option<String>,
     /// The TASK the dispatch realizes, when it realizes one.
     pub(super) realized_task_ref: Option<String>,
     agent_definition_ref: String,
@@ -366,6 +381,11 @@ pub(super) fn closing(vault: &Vault) -> bool {
 /// (`held_until` now). The TASK is born at the dispatch scope's world and
 /// facet, as `tasks.create` stamps a narrowed writer's TASKs.
 ///
+/// Only a root run gets one (REVIEW-6638): a dispatch with a parent attempt,
+/// a child its run spawned, mints none. The child runs under its root's run
+/// TASK and moves with it: the root, rerun on the machine that takes it,
+/// spawns its children there.
+///
 /// It never fails the dispatch it rides. Engine call (CALLS, FIX 4747): the
 /// mint runs in a savepoint, and one the batch refuses (the secret scan
 /// refuses a payload that carries a credential-shaped text) or that fails
@@ -392,7 +412,7 @@ pub(super) fn mint_agent_run_task_in_txn(
 }
 
 /// [`mint_agent_run_task_in_txn`]'s write: `false` when the run TASK already
-/// stands or the row is gone.
+/// stands, the row is gone, or the row is a spawned child's.
 fn put_agent_run_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -407,6 +427,11 @@ fn put_agent_run_task_in_txn(
     let Some(record) = AttemptQueue::new(vault).get_in_txn(&*wtxn, attempt)? else {
         return Ok(false);
     };
+    // Only a root run gets a run TASK (REVIEW-6638): a spawned child runs
+    // under its root's (`agent_run_task_ref_in`).
+    if spawning_parent(&record.payload).is_some() {
+        return Ok(false);
+    }
     // Only a run whose claim takes the lease gets a run TASK: a workflow
     // leaf and a resident's TASK-root run keep their pumps' path, and their
     // leases would never be renewed.
@@ -431,7 +456,6 @@ fn put_agent_run_task_in_txn(
     {
         return Ok(false);
     }
-    let parent = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
     let facet = input.scope.as_ref().and_then(|scope| scope.facet);
     let held_until = if closing(vault) {
@@ -446,7 +470,6 @@ fn put_agent_run_task_in_txn(
         attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
         live_attempt_ref: bytes_to_hex_lower(attempt.as_bytes()),
         run_id: record.run_id.clone(),
-        parent_attempt_ref: parent.map(|parent| bytes_to_hex_lower(parent.as_bytes())),
         realized_task_ref: record.task_ref.clone(),
         agent_definition_ref: input.target.agent_definition_ref()?.to_hex(),
         requester_ref: input
@@ -500,13 +523,21 @@ fn put_agent_run_task_in_txn(
 /// for its later try (`claim_standing`). Another machine's lease, another
 /// machine's settlement, or a run TASK this version does not read is left as
 /// it is. A closing process takes none.
+///
+/// A spawned child's claim (REVIEW-6638) reads its root's run TASK: while
+/// the root's lease names this machine, the child runs under a fence at the
+/// root's generation as it stands, and the claim writes nothing to the TASK;
+/// it takes, renews and reopens nothing, as only the root's own claim and
+/// the reaper's pass do. A root another machine holds or settled, or whose
+/// run TASK does not read, ends the child unrun, as it ends the root's try.
 pub(crate) fn take_agent_run_lease_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     row: &AttemptRecord,
     now: u64,
 ) -> Result<AgentRunLeaseTake> {
-    let Some(task_ref) = agent_run_task_ref_in(vault, &*wtxn, row)? else {
+    let Some(AgentRunTaskLink { task_ref, child }) = agent_run_task_ref_in(vault, &*wtxn, row)?
+    else {
         return Ok(AgentRunLeaseTake::NoRunTask);
     };
     if closing(vault) {
@@ -517,6 +548,12 @@ pub(crate) fn take_agent_run_lease_in_txn(
         ClaimStanding::HeldElsewhere => Ok(AgentRunLeaseTake::HeldElsewhere),
         ClaimStanding::Settled => Ok(AgentRunLeaseTake::Settled),
         ClaimStanding::Unreadable => Ok(AgentRunLeaseTake::Unreadable),
+        ClaimStanding::Own(held) if child => Ok(AgentRunLeaseTake::Taken(AgentRunFence {
+            task_ref,
+            node_id,
+            generation: held.generation,
+            child: true,
+        })),
         ClaimStanding::Own(held) => {
             let lease =
                 own_expired_agent_run_lease_retaken(held, now).unwrap_or(AgentRunExecutorLease {
@@ -537,21 +574,23 @@ pub(crate) fn take_agent_run_lease_in_txn(
                 task_ref,
                 node_id,
                 generation: lease.generation,
+                child: false,
             }))
         }
     }
 }
 
 /// The typed cause a queued `row` ends with unrun, judged in `wtxn` (FIX
-/// 4747): another machine holds its run, or settled it, or its run TASK
-/// stands but does not read. `None` for a row this machine may run, one with
-/// no run TASK, and any row while this process closes.
+/// 4747): another machine holds its run (for a spawned child, its root's),
+/// or settled it, or its run TASK stands but does not read. `None` for a row
+/// this machine may run, one with no run TASK, and any row while this
+/// process closes.
 pub(crate) fn agent_run_unrun_cause_in(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     row: &AttemptRecord,
 ) -> Result<Option<&'static str>> {
-    let Some(task_ref) = agent_run_task_ref_in(vault, &*wtxn, row)? else {
+    let Some(AgentRunTaskLink { task_ref, .. }) = agent_run_task_ref_in(vault, &*wtxn, row)? else {
         return Ok(None);
     };
     if closing(vault) {
@@ -566,12 +605,34 @@ pub(crate) fn agent_run_unrun_cause_in(
     })
 }
 
-/// The run TASK `row` shares, read in `txn`: the one its own dispatch
+/// The run TASK a try runs under (FIX 4747), and how the try stands to it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct AgentRunTaskLink {
+    pub(super) task_ref: EntityId,
+    /// The try is a child its run spawned, at any depth, or a retry of one
+    /// (REVIEW-6638): the run TASK is its root's. Its claim fences it on
+    /// the root's lease and takes nothing; its settlement settles nothing.
+    pub(super) child: bool,
+}
+
+/// Which links a walk to a try's run TASK follows (FIX 4747).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AgentRunTaskWalk {
+    /// `retry_of` only: the run TASK that froze this try's own payload or
+    /// the payload of a try it retries. What a hard erase takes.
+    Retries,
+    /// `parent_attempt` from a spawned child up to its root, then the
+    /// root's `retry_of` chain: the run TASK the try runs under.
+    Tree,
+}
+
+/// The run TASK `row` runs under, read in `txn`: the one its own dispatch
 /// minted, else the one of the try it retries, followed back through
-/// `retry_of` ([`AGENT_RUN_RETRY_CHAIN_WALK`]). A try this queue does not
-/// hold ends the walk at the run TASK its own id names: a try a handover
-/// queued here links the run's original try, which another machine ran
-/// (FIX 4747 slice 6). `None` for a row with none.
+/// `retry_of`; for a spawned child (REVIEW-6638), its root's, followed up
+/// through `parent_attempt` first ([`AGENT_RUN_RETRY_CHAIN_WALK`] bounds
+/// both). A try this queue does not hold ends the walk at the run TASK its
+/// own id names: a try a handover queued here links the run's original try,
+/// which another machine ran (FIX 4747 slice 6). `None` for a row with none.
 /// Any entity that stands under a run TASK id is that run's TASK, whether or
 /// not this version reads its body: only no entity there is no run TASK. A
 /// run TASK a hard erase took is none either (REVIEW-6615): the run runs
@@ -580,11 +641,24 @@ pub(super) fn agent_run_task_ref_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
-) -> Result<Option<EntityId>> {
-    Ok(
-        agent_run_task_slot_in(&vault.store, txn, row.id, row.retry_of)?
-            .and_then(|(task_ref, erased)| (!erased).then_some(task_ref)),
-    )
+) -> Result<Option<AgentRunTaskLink>> {
+    Ok(agent_run_task_slot_in(
+        &vault.store,
+        txn,
+        row.id,
+        row.retry_of,
+        spawning_parent(&row.payload),
+        AgentRunTaskWalk::Tree,
+    )?
+    .and_then(|(link, erased)| (!erased).then_some(link)))
+}
+
+/// The try that spawned the try whose queue payload is `payload`: `None` for
+/// a root, and for a payload that does not read as a dreamer attempt's. A
+/// try's retries, successors and continuations copy its payload, so a
+/// child's whole retry lineage names the same parent.
+fn spawning_parent(payload: &[u8]) -> Option<AttemptId> {
+    decode_dreamer_attempt_payload(payload).ok()?.parent_attempt
 }
 
 /// Whether a hard erase took the run TASK `task_ref`: its permanent
@@ -597,40 +671,67 @@ fn agent_run_task_erased_in(
     store.port_deletion_marked(txn, DeletionMarker::HardDelete, &task_ref)
 }
 
-/// The run TASK id the try `attempt`, retrying `retry_of`, shares, read in
-/// `txn`: the first id along its `retry_of` chain at which a run TASK stands
-/// or a hard erase took one, with whether one was taken.
+/// The run TASK the try `attempt`, retrying `retry_of` and spawned by
+/// `parent`, links to by `walk`, read in `txn`, with whether a hard erase
+/// took it. A tree walk ([`AgentRunTaskWalk::Tree`]) goes up
+/// `parent_attempt` first: a spawned child mints no run TASK, so the walk
+/// passes over its id to the try that spawned it (REVIEW-6638). At a try
+/// that names no parent, it takes the first id along the `retry_of` chain
+/// at which a run TASK stands or a hard erase took one. Every link counts
+/// against [`AGENT_RUN_RETRY_CHAIN_WALK`].
 fn agent_run_task_slot_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
     retry_of: Option<AttemptId>,
-) -> Result<Option<(EntityId, bool)>> {
+    parent: Option<AttemptId>,
+    walk: AgentRunTaskWalk,
+) -> Result<Option<(AgentRunTaskLink, bool)>> {
     let queue = AttemptQueue::from_store(store);
     let (mut id, mut retry_of) = (attempt, retry_of);
+    let mut parent = parent.filter(|_| walk == AgentRunTaskWalk::Tree);
+    let mut child = false;
     for _ in 0..AGENT_RUN_RETRY_CHAIN_WALK {
-        let task_ref = agent_run_task_id(id)?;
-        let erased = agent_run_task_erased_in(store, txn, task_ref)?;
-        if erased || store.port_entity_record(txn, &task_ref)?.is_some() {
-            return Ok(Some((task_ref, erased)));
-        }
-        let Some(parent) = retry_of else {
-            return Ok(None);
+        let next = if let Some(spawner) = parent {
+            child = true;
+            spawner
+        } else {
+            if let Some((task_ref, erased)) = agent_run_task_slot_at_in(store, txn, id)? {
+                return Ok(Some((AgentRunTaskLink { task_ref, child }, erased)));
+            }
+            let Some(prior) = retry_of else {
+                return Ok(None);
+            };
+            prior
         };
         // A try this queue does not hold (a handover queued this try after
         // another machine ran that one) ends the walk at its own run TASK id
         // (FIX 4747 slice 6).
-        let Some(parent_row) = queue.get_in_txn(txn, parent)? else {
-            let task_ref = agent_run_task_id(parent)?;
-            let erased = agent_run_task_erased_in(store, txn, task_ref)?;
-            return Ok(
-                (erased || store.port_entity_record(txn, &task_ref)?.is_some())
-                    .then_some((task_ref, erased)),
-            );
+        let Some(next_row) = queue.get_in_txn(txn, next)? else {
+            return Ok(agent_run_task_slot_at_in(store, txn, next)?
+                .map(|(task_ref, erased)| (AgentRunTaskLink { task_ref, child }, erased)));
         };
-        (id, retry_of) = (parent_row.id, parent_row.retry_of);
+        if walk == AgentRunTaskWalk::Tree {
+            parent = spawning_parent(&next_row.payload);
+        }
+        (id, retry_of) = (next_row.id, next_row.retry_of);
     }
     Ok(None)
+}
+
+/// The run TASK id `attempt` names, read in `txn`, with whether a hard erase
+/// took it, when a run TASK stands there or a hard erase took one.
+fn agent_run_task_slot_at_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<(EntityId, bool)>> {
+    let task_ref = agent_run_task_id(attempt)?;
+    let erased = agent_run_task_erased_in(store, txn, task_ref)?;
+    Ok(
+        (erased || store.port_entity_record(txn, &task_ref)?.is_some())
+            .then_some((task_ref, erased)),
+    )
 }
 
 /// Whether `task_ref` names an agent-run TASK, read in `txn`: the board and
@@ -771,7 +872,8 @@ fn log_agent_run_stand_down(fence: &AgentRunFence, held: Option<AgentRunExecutor
 /// [`Error::AgentRunExecutorMoved`] aborts the write, and the run stands
 /// down at its settlement. An attempt no claim fenced commits as before.
 /// Engine call (CALLS, FIX 4747): a run TASK this version cannot read stands
-/// the step down too, as the send fence does.
+/// the step down too, as the send fence does. A spawned child's step meets
+/// its root's fence and renews nothing (REVIEW-6638).
 pub(crate) fn fence_agent_run_step_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -793,6 +895,9 @@ pub(crate) fn fence_agent_run_step_in_txn(
         }
         Err(error) => return Err(error),
     };
+    if fence.child {
+        return Ok(());
+    }
     renew_held_agent_run_lease_in_txn(vault, wtxn, fence.task_ref, lease)
 }
 
@@ -800,13 +905,14 @@ pub(crate) fn fence_agent_run_step_in_txn(
 /// the caller's write, when less than half a hold is left and the run TASK
 /// still names the holding its claim took. A renewal never fails the write
 /// that parks or resumes the attempt: a run TASK that does not read, or a
-/// lease that moved, is left as it is.
+/// lease that moved, is left as it is. A spawned child's park or resume
+/// renews nothing (REVIEW-6638).
 pub(crate) fn renew_agent_run_lease_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
 ) -> Result<()> {
-    let Some(fence) = vault.agent_run_fence(attempt) else {
+    let Some(fence) = vault.agent_run_fence(attempt).filter(|fence| !fence.child) else {
         return Ok(());
     };
     match agent_run_fence_standing_in(vault, &*wtxn, &fence) {
@@ -971,6 +1077,11 @@ pub(crate) fn agent_run_moved_in(
 /// leaves its run TASK as it is. A run already settled is left as it is; a
 /// retry or a landing handoff settles no run, as its later try carries it
 /// on. For an unfenced try, a body that does not read is passed over.
+///
+/// Only the root's own try settles the run (REVIEW-6638): the try the TASK
+/// names live, or its retry lineage, as the walk finds it. A spawned child
+/// never does: its settlement only meets its root's fence above, so a child
+/// of a run that moved aborts and ends unrun.
 pub(crate) fn settle_agent_run_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1002,9 +1113,13 @@ pub(crate) fn settle_agent_run_task_in_txn(
     {
         require_agent_run_fence_in(vault, &*wtxn, fence)?;
     }
-    let Some(task_ref) = agent_run_task_ref_in(vault, &*wtxn, record)? else {
+    let Some(AgentRunTaskLink { task_ref, child }) = agent_run_task_ref_in(vault, &*wtxn, record)?
+    else {
         return Ok(());
     };
+    if child {
+        return Ok(());
+    }
     let Some(node_id) = crate::identity::read_client_id_in_txn(vault, &*wtxn)? else {
         return Ok(());
     };
@@ -1039,15 +1154,16 @@ pub(crate) fn settle_agent_run_task_in_txn(
 /// out of those tries' queue payloads (REVIEW-6615): the run TASK froze a
 /// copy of that payload, and its body names the run's agent and requester.
 /// Each is found by its try's derived id, following `retry_of` as a claim
-/// does, and goes by the engine row's hard erase in this transaction, as an
-/// erased participant's connector reply body goes in the same pass: its
-/// provenance, indexes and row, its permanent `dt:` marker, and its `pt:`
-/// tombstone in the window of its learned time, which that window's next
-/// load publishes. The marker puts it among the erased ids the erasure sweep
-/// takes out of every window it compacts, so the sweep the erase queues cuts
-/// the TASK's history with the erased actor's. A run whose TASK went has
-/// none: it stays on this machine and runs as before. A TASK a legal hold
-/// keeps stays whole, with a warning.
+/// does but never `parent_attempt`, as a spawned child's payload is in no
+/// run TASK (REVIEW-6638), and goes by the engine row's hard erase in this
+/// transaction, as an erased participant's connector reply body goes in the
+/// same pass: its provenance, indexes and row, its permanent `dt:` marker,
+/// and its `pt:` tombstone in the window of its learned time, which that
+/// window's next load publishes. The marker puts it among the erased ids the
+/// erasure sweep takes out of every window it compacts, so the sweep the
+/// erase queues cuts the TASK's history with the erased actor's. A run whose
+/// TASK went has none: it stays on this machine and runs as before. A TASK a
+/// legal hold keeps stays whole, with a warning.
 ///
 /// # Errors
 ///
@@ -1059,10 +1175,17 @@ pub(crate) fn erase_agent_run_tasks_in_txn(
 ) -> Result<()> {
     let mut tasks = BTreeSet::new();
     for (attempt, retry_of) in rows {
-        if let Some((task_ref, _)) =
-            agent_run_task_slot_in(write.store, &*wtxn, *attempt, *retry_of)?
-        {
-            tasks.insert(task_ref);
+        // The run TASK that froze this try's payload: a spawned child's
+        // payload is in no run TASK, as its root's froze only the root's.
+        if let Some((link, _)) = agent_run_task_slot_in(
+            write.store,
+            &*wtxn,
+            *attempt,
+            *retry_of,
+            None,
+            AgentRunTaskWalk::Retries,
+        )? {
+            tasks.insert(link.task_ref);
         }
     }
     for task_ref in tasks {
