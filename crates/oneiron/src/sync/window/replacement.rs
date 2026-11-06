@@ -346,12 +346,40 @@ pub(crate) fn replace_detached_mirror(
     let mut hard = hard_tombstones(&candidate);
     let (mut conflicts, written) = carry_over_unseen_writes(old, &candidate)?;
     carry_over_hard_deletes(vault, old, &candidate)?;
+    carry_over_mirror_hard_deletes(old, &candidate)?;
     hard.extend(hard_tombstones(&candidate));
     conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
     conflicts.extend(delete_wins(&candidate, &written)?);
     candidate.commit();
     conflicts.retain(|conflict| !holds_value(&candidate, conflict));
     Ok((candidate, conflicts.len()))
+}
+
+/// Every hard delete the mirror `old` holds that `candidate` does not hold
+/// hard, applied to the candidate with the removal of its carriers: a mirror
+/// keeps another machine's hard deletes, which this vault may never have
+/// marked, and no replacement softens or drops one, whatever order the two
+/// copies' writes take (FIX 17210).
+fn carry_over_mirror_hard_deletes(old: &LoroDoc, candidate: &LoroDoc) -> Result<()> {
+    let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    let mut hard = Vec::new();
+    for (key, raw) in hard_tombstones(old) {
+        let Ok(id) = EntityId::from_hex(&key) else {
+            continue;
+        };
+        if !tombstones
+            .values_for(&id)
+            .iter()
+            .any(|held| crate::deletion::decode_tombstone_value(held).is_hard())
+        {
+            hard.push((id, raw));
+        }
+    }
+    for (id, raw) in &hard {
+        apply_tombstone_to_indexed_window_doc(candidate, &tombstones, id, raw)?;
+    }
+    candidate.commit();
+    Ok(())
 }
 
 /// A persisted replacement, ready to install.
