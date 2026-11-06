@@ -215,6 +215,61 @@ impl Deref for ClaimValueRead {
     }
 }
 
+impl ClaimValueRead {
+    /// Moves a valid UTF-8 string and its existing memory custody without copying.
+    /// Other values, including invalid UTF-8 strings, retain their original owner.
+    pub fn try_into_string(self) -> Result<ClaimStringRead, Self> {
+        let Self { value, _memory } = self;
+        match value {
+            Value::String(value) if value.is_str() => Ok(ClaimStringRead {
+                value: value.into_str().expect("validated UTF-8 string"),
+                _memory,
+            }),
+            value => Err(Self { value, _memory }),
+        }
+    }
+}
+
+/// An owned canonical string whose original charge follows its backing.
+pub struct ClaimStringRead {
+    value: String,
+    _memory: Option<MemoryLease>,
+}
+
+impl ClaimStringRead {
+    pub fn is_memory_bound(&self) -> bool {
+        self._memory.is_some()
+    }
+
+    pub fn retained_bytes(&self) -> u64 {
+        self._memory.as_ref().map_or(0, MemoryLease::bytes)
+    }
+
+    /// Restores the value representation without copying or releasing its charge.
+    pub fn into_value(self) -> ClaimValueRead {
+        ClaimValueRead {
+            value: Value::from(self.value),
+            _memory: self._memory,
+        }
+    }
+
+    /// Only a genuinely unbound string may leave without memory custody.
+    pub fn try_into_unbound_string(self) -> Result<String, Self> {
+        if self._memory.is_some() {
+            return Err(self);
+        }
+        Ok(self.value)
+    }
+}
+
+impl Deref for ClaimStringRead {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
 pub(super) fn value_storage_bytes(value: &Value) -> u64 {
     match value {
         Value::Nil | Value::Boolean(_) | Value::Integer(_) | Value::F32(_) | Value::F64(_) => 0,
