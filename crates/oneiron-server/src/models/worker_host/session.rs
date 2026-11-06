@@ -45,6 +45,8 @@ mod append;
 #[cfg(unix)]
 mod commit;
 #[cfg(unix)]
+mod control;
+#[cfg(unix)]
 mod lifecycle;
 #[cfg(unix)]
 mod park;

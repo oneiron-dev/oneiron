@@ -33,6 +33,10 @@ pub(super) use session_ops::{
     AppendSourceCheck, AppendSourceFuture, ReleasedAppendFault,
     append_source_released as session_append_source_released,
 };
+pub(super) use session_ops::{
+    ControlSourceFuture, ReleasedControlFault,
+    control_source_released as session_control_source_released,
+};
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
 pub(super) use session_ops::{
     PrepareSourceCheck, PrepareSourceFuture, PrepareSourceMiss, ReleasedPrepareFault,

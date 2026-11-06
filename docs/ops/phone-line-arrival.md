@@ -216,7 +216,17 @@ next-state board filters unreadable loaded-skill handles only in its cloned read
 served rows, the live baseline and acknowledgments are not changed. Ordinary sessions
 without a live dispatch check retain their original send path. These checks do not
 qualify all historical or derived sources, erase a worker's already received descriptor,
-close the separate control-frame interval, or activate the phone call lifecycle.
+or activate the phone call lifecycle.
+
+The same live native sessions now check their original canonical authority before every
+physical write of the suffix-commit and checkpoint-publication control frames. These
+plain frames carry no input descriptor. Their separate checked writer leaves the existing
+FD writers unchanged and does not count a model attempt. The original call check runs
+before and after each off-runtime authority read, so a live release keeps its original
+error even when authority changed during that read. A canonical rejection uses the
+existing session-drop path. A partly sent control frame or staged worker state remains
+unknown; this source path is not a worker-disposal or runtime certificate. Sessions with
+no live dispatch callback still use the original plain control send.
 
 ## HTTP doors
 
