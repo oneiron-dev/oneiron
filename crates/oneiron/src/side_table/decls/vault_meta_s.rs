@@ -237,6 +237,10 @@ side_tables! {
     /// hours between and the newest kept, one row for the whole choice. Absent is no choice, and
     /// the deployment's `[backup]` section decides. Key: ().
     BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
+    /// The owner's board layout settings (BOARD-LAYOUT): the board cap, the default layout an
+    /// agent's board renders under until it lays out its own, and the override whose sections win
+    /// over every agent's own. Absent reads empty. Key: ().
+    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
@@ -368,6 +372,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// Last short-id counter per runtime (pack) kind, by its stable short-id prefix, kept across
+    /// uninstall, slot collection and reinstall (FIX 7741). Key: string.
+    SHORT_ID_KIND_COUNTER: VaultMeta b"sid_kind_counter:" Raw;
     /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
