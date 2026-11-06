@@ -16,8 +16,7 @@
 //! Entry: [`Memory::tasks_answer_forward`] on the replica;
 //! [`drain_ask_forward_intents`] at the admitting node.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -385,28 +384,25 @@ fn subkind(raw: &[u8]) -> Option<&'static str> {
         })
 }
 
-/// One vault open: its store's path and open nonce.
-type VaultOpen = (std::path::PathBuf, [u8; 16]);
-
-/// The intents this process saw land for asks its vault admitted.
+/// The intents that landed at one vault open for asks it admitted, not
+/// consumed yet (FIX 7494). The vault holds it
+/// ([`Vault::ask_forward_arrivals`]) and drops it when it closes; the next
+/// open reads the stored intents again.
 #[derive(Default)]
-struct Arrivals {
+pub(crate) struct AskForwardArrivals {
     /// Whether this open's stored intents were read once, for those that
-    /// landed before this process ran or while it was down.
+    /// landed before this open or while the vault was closed.
     recovered: bool,
     intents: BTreeSet<EntityId>,
 }
 
-/// Each vault open's [`Arrivals`].
-static ARRIVALS: Mutex<BTreeMap<VaultOpen, Arrivals>> = Mutex::new(BTreeMap::new());
-
 /// Runs `act` on `vault`'s arrivals, under their lock.
-fn with_arrivals<T>(vault: &Vault, act: impl FnOnce(&mut Arrivals) -> T) -> T {
-    let mut arrivals = ARRIVALS
+fn with_arrivals<T>(vault: &Vault, act: impl FnOnce(&mut AskForwardArrivals) -> T) -> T {
+    let mut arrivals = vault
+        .ask_forward_arrivals
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let open = (vault.store.env.path().to_path_buf(), vault.store.open_nonce);
-    act(arrivals.entry(open).or_default())
+    act(&mut arrivals)
 }
 
 /// The TASK put hook's part for relayed intents (FIX 7494), in the writing
@@ -467,8 +463,8 @@ fn deliver_result_in_txn(
 /// admitted (FIX 7494). The client sync lane calls it after an import, and
 /// the ask sweep every host already runs calls it, so no timer of its own
 /// runs. The first call of a vault open also reads the intents stored before
-/// this process ran. An intent whose rows have not all landed stays noted for
-/// the next call, and so does one whose consumption failed, which is logged.
+/// that open. An intent whose rows have not all landed stays noted for the
+/// next call, and so does one whose consumption failed, which is logged.
 ///
 /// # Errors
 /// A storage error reading the stored intents.

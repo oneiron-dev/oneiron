@@ -7,13 +7,16 @@
 //! ([`Vault::authenticate_owner`]) and bound to that verified slip, owner
 //! tier or person tier, as a direct `tasks.answer` binds it. Last, one writer
 //! revalidates that exact proof, makes the act's effect and saves the signed
-//! result, so a result exists exactly when its effect does. A refusal is
-//! saved in a writer of its own: the refused act made no effect.
+//! result, so a result exists exactly when its effect does. Before a word's
+//! effect, that writer checks the write a direct `tasks.answer` needs; a
+//! refusal there is its result in that same writer. Any other refusal is
+//! saved in a writer of its own. A refused act made no effect.
 
 use super::*;
 use crate::authority::VerifiedSlip;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, ErrorKind};
+use crate::memory::MEMORY_CODE_INTERNAL;
 
 /// Whether an intent is done with at this node, or waits for rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,14 +79,15 @@ pub(super) fn consume_intent(vault: &Vault, id: EntityId) -> Result<Standing> {
         Verdict::Refused => return refuse(vault, id, &intent, MEMORY_CODE_FORBIDDEN),
         Verdict::Verified(slip) => *slip,
     };
-    let authority = match authenticate(vault, intent.holder, slip) {
+    let authority = match authenticate(vault, intent.holder, slip.clone()) {
         Ok(authority) => authority,
         Err(error) if is_refusal(&error) => {
             return refuse(vault, id, &intent, MEMORY_CODE_FORBIDDEN);
         }
         Err(error) => return Err(error),
     };
-    match vault.with_write_txn_grouped(|txn| act_in_txn(vault, txn, id, &intent, &authority)) {
+    match vault.with_write_txn_grouped(|txn| act_in_txn(vault, txn, id, &intent, &slip, &authority))
+    {
         Ok(acted) => {
             // As `tasks_answer` does after its commit; a signal lost here is
             // replayed from the peer wait index.
@@ -242,12 +246,15 @@ fn authenticate(vault: &Vault, holder: EntityId, slip: VerifiedSlip) -> Result<H
 }
 
 /// The one writer: the intent's act, its effect and its signed result, or
-/// nothing. `Ok(false)` when another writer saved its result first.
+/// nothing. `Ok(false)` when it made no effect: another writer saved its
+/// result first, or `slip` does not carry the word's write, and that
+/// refusal is the result (FIX 7494).
 fn act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     intent: &AskForwardIntent,
+    slip: &VerifiedSlip,
     authority: &HolderAuthority,
 ) -> Result<bool> {
     if vault.get_raw_in(txn, &result_id(id)?)?.is_some() {
@@ -269,6 +276,15 @@ fn act_in_txn(
     }
     // The cutoff is this node's clock, never the replica's.
     let now = vault.store.clock.now_recorded_at();
+    // A word writes the holder's answer, so it needs the write a direct
+    // `tasks.answer` needs. Its refusal is settled here, before any effect.
+    if let AskForwardAct::Word(_) = &intent.act
+        && let Some(code) = word_write_refusal_in_txn(vault, txn, holder, slip)?
+    {
+        let outcome = AskForwardOutcome::Refused { code };
+        put_result_in_txn(vault, txn, id, intent, &group, outcome, now)?;
+        return Ok(false);
+    }
     let outcome = match &intent.act {
         AskForwardAct::Word(word) => {
             let owner = authority.owner();
@@ -312,6 +328,52 @@ fn act_in_txn(
     };
     put_result_in_txn(vault, txn, id, intent, &group, outcome, now)?;
     Ok(true)
+}
+
+/// The refusal code for `holder`'s word on `slip`, or `None` when the word
+/// may write (FIX 7494). It is the check a direct `tasks.answer` makes:
+/// the core write scope its door requires ([`carries_core_write`]), then
+/// the actor checks its writer runs, the shared-vault content write
+/// authorization among them ([`Memory::verify_actor_write_in_txn`]).
+/// Each refusal keeps the code that door answers.
+fn word_write_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    holder: EntityId,
+    slip: &VerifiedSlip,
+) -> Result<Option<String>> {
+    if !carries_core_write(slip) {
+        return Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()));
+    }
+    match vault
+        .memory(holder, crate::EdgeActorClass::Human)
+        .verify_actor_write_in_txn(txn)
+    {
+        Ok(()) => Ok(None),
+        // A store that did not read is no refusal: the intent stays pending.
+        Err(error) if error.code == MEMORY_CODE_INTERNAL => {
+            tracing::warn!(%error, "a relayed ask word's write check did not read");
+            Err(Error::InvariantViolation(
+                "a relayed ask word's write check did not read",
+            ))
+        }
+        Err(refusal) => Ok(Some(refusal.code)),
+    }
+}
+
+/// Whether `slip` carries the core write scope a direct `tasks.answer`
+/// requires (FIX 7494), read as the HTTP door grants it: the `write` or
+/// `core:write` verb on a slip no invitation bounds, with no record or
+/// channel caveat and every axis but its verbs at the top.
+fn carries_core_write(slip: &VerifiedSlip) -> bool {
+    let claims = slip.claims();
+    let mut whole = crate::federation::Scope::top();
+    whole.verbs = slip.scope().verbs.clone();
+    claims.invitation_ref.is_none()
+        && (slip.allows_verb("write") || slip.allows_verb("core:write"))
+        && claims.records.is_empty()
+        && claims.channels.is_empty()
+        && whole.is_narrowing_of(slip.scope())
 }
 
 /// Saves the ask's or the proof's refusal of the intent `id`, under the
