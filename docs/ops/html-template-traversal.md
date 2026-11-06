@@ -73,9 +73,19 @@ are not substituted for work checkpoints. An individual parser, matcher,
 encoding, sort or PDF-codec call is not preempted; this is not a wall-time bound
 on those calls. Full FIX 9615 memory and deadline coverage remains open.
 
-Native PDF output writing also checks the same work deadline at its `Write`
-callbacks before forwarding bytes or flushes to the original output vector.
+Native page-content encoding and final PDF output writing check the same work
+deadline at their `Write` callbacks before forwarding bytes or flushes to the
+original page or output vector.
 The first actual work-deadline refusal survives the native I/O error channel as
 `WorkDeadline`; a non-deadline I/O failure keeps the existing `Overflow` result.
 This adds no output copy or output-memory admission. Work between callbacks,
 including an allocation or one write, is not preempted.
+
+The native `Content::encode` vector-returning API delegates its unchanged
+encoding loop to `encode_to`, which also accepts a caller-owned `Write` target.
+The HTML flow keeps each page's original vector behind its work-deadline writer.
+Its owned operation/payload carrier stays alive through content encoding and
+error returns. Checkpoints now run at the native operand/separator/operator
+write boundaries within a page, not only before the page starts. Work inside
+one native formatting, string-escaping, allocation or forwarded write remains
+opaque and is not preempted. Page bytes and codec scratch remain unadmitted.

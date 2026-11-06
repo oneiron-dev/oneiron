@@ -382,9 +382,13 @@ impl Flow {
         let mut kids = Vec::new();
         for ops in self.pages {
             self.budget.checkpoint()?;
-            let bytes = Content { operations: ops }
-                .encode()
-                .map_err(|_| ContentTemplateError::Overflow)?;
+            let mut bytes = Vec::new();
+            let mut writer = WorkDeadlineWriter::new(&mut bytes, &self.budget);
+            let encoded = Content { operations: ops }.encode_to(&mut writer);
+            if let Some(refusal) = writer.into_refusal() {
+                return Err(refusal);
+            }
+            encoded.map_err(|_| ContentTemplateError::Overflow)?;
             let content = doc.add_object(Stream::new(Dictionary::new(), bytes));
             let page=doc.add_object(dictionary!{"Type"=>"Page","Parent"=>parent,"MediaBox"=>vec![0.into(),0.into(),Object::Real(self.page.width as f32),Object::Real(self.page.height as f32)],"Resources"=>dictionary!{"Font"=>fonts.clone()},"Contents"=>content});
             kids.push(Object::Reference(page));
