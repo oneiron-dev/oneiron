@@ -10,8 +10,6 @@
 //! incarnation it was sent to, under its request's id, names the checkpoint
 //! exactly, and its lengths and SHA-256 are the snapshot's. Any other answer
 //! is a cut: the caller drops what it got and goes cold.
-use std::path::Path;
-
 use oneiron::llm::{
     SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionAppend, SessionAppended, SessionCapability,
     SessionExport, SessionExported, SessionImport, SessionImported, SessionInvalidation, SessionOp,
@@ -19,11 +17,12 @@ use oneiron::llm::{
 use oneiron_driver::InferenceWorker;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Value as JsonValue, json};
+use serde_json::Value as JsonValue;
 
 use super::buffer::{InputRegion, SnapshotRegion};
 use super::transport::Channel;
 use super::wire::{self, Incoming};
+use super::worker_host::NativeLaunch;
 
 /// How a session op went wrong.
 pub(in crate::models) enum OpFault {
@@ -33,11 +32,13 @@ pub(in crate::models) enum OpFault {
     Cut,
 }
 
-/// The session ops the worker at `socket` advertises in its hello; `None`
+/// The session ops `launch` advertises in its authenticated hello; `None`
 /// when it advertises none at codec v1.1, or does not answer.
-pub(in crate::models) async fn capability(socket: &Path) -> Option<SessionCapability> {
-    let mut channel = Channel::connect(socket).await.ok()?;
-    let hello = channel.ask("hello", json!({})).await.ok()?;
+pub(in crate::models) async fn capability(
+    launch: &NativeLaunch,
+    epoch: &str,
+) -> Option<SessionCapability> {
+    let (_, hello) = Channel::connect_launch(launch, Some(epoch)).await.ok()?;
     let advertised = hello.get("capabilities")?.get(SESSIONS_CAPABILITY)?;
     serde_json::from_value::<SessionCapability>(advertised.clone())
         .ok()
@@ -49,7 +50,7 @@ pub(in crate::models) async fn capability(socket: &Path) -> Option<SessionCapabi
 /// answer. The cheap stats an answer carries feed `worker`'s activity, and
 /// so its device ledger, as a `final`'s do.
 pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     op: SessionOp,
     body: &B,
@@ -64,7 +65,9 @@ pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
         }
         None => None,
     };
-    let mut channel = Channel::connect(socket).await.map_err(|_| OpFault::Cut)?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| OpFault::Cut)?;
     let frame = channel
         .exchange(
             op.wire_name(),
@@ -92,7 +95,7 @@ pub(in crate::models) enum ReleasedOpFault {
 }
 
 pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     op: SessionOp,
     body: &B,
@@ -101,14 +104,14 @@ pub(in crate::models) async fn send_released<B: Serialize, R: DeserializeOwned>(
     lease: &oneiron::BudgetLease,
 ) -> Result<R, ReleasedOpFault> {
     if !lease.has_dispatch_release() {
-        return send(socket, epoch, op, body, Some(conversation), worker)
+        return send(launch, epoch, op, body, Some(conversation), worker)
             .await
             .map_err(ReleasedOpFault::Op);
     }
     let body = serde_json::to_value(body).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
     let bytes = serde_json::to_vec(conversation).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
     let input = InputRegion::new(&bytes).map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
-    let mut channel = Channel::connect(socket)
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
         .await
         .map_err(|_| ReleasedOpFault::Op(OpFault::Cut))?;
     let frame = channel
@@ -148,7 +151,7 @@ pub(in crate::models) enum ReleasedAppendFault {
 }
 
 pub(in crate::models) async fn append_source_released(
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     body: &SessionAppend,
     conversation: &JsonValue,
@@ -158,7 +161,7 @@ pub(in crate::models) async fn append_source_released(
 ) -> Result<SessionAppended, ReleasedAppendFault> {
     let op = SessionOp::Append;
     if !lease.has_dispatch_release() {
-        return send(socket, epoch, op, body, Some(conversation), worker)
+        return send(launch, epoch, op, body, Some(conversation), worker)
             .await
             .map_err(ReleasedAppendFault::Op);
     }
@@ -166,7 +169,7 @@ pub(in crate::models) async fn append_source_released(
     let bytes =
         serde_json::to_vec(conversation).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
     let input = InputRegion::new(&bytes).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
-    let mut channel = Channel::connect(socket)
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
         .await
         .map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))?;
     let frame = channel
@@ -211,14 +214,16 @@ pub(in crate::models) async fn append_source_released(
 /// hashes to `snapshot_sha256`. An export changes nothing on the worker, so
 /// a cut may be asked again.
 pub(in crate::models) async fn export(
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     body: &SessionExport,
     worker: &InferenceWorker,
 ) -> Result<(SessionExported, SnapshotRegion), OpFault> {
     let op = SessionOp::Export;
     let request = serde_json::to_value(body).map_err(|e| cut(op, &e))?;
-    let mut channel = Channel::connect(socket).await.map_err(|e| cut(op, &e))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|e| cut(op, &e))?;
     let (frame, mut fds) = channel
         .exchange_with_fds(op.wire_name(), Some(epoch), request, None)
         .await
@@ -248,7 +253,7 @@ pub(in crate::models) async fn export(
 /// checkpoint exactly, and read all of `snapshot_bytes` under the same
 /// SHA-256. Anything else is a cut, and the caller drops the session.
 pub(in crate::models) async fn import(
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     body: &SessionImport,
     snapshot: &SnapshotRegion,
@@ -259,7 +264,9 @@ pub(in crate::models) async fn import(
         return Err(cut(op, &"the region is not the snapshot the body names"));
     }
     let request = serde_json::to_value(body).map_err(|e| cut(op, &e))?;
-    let mut channel = Channel::connect(socket).await.map_err(|e| cut(op, &e))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|e| cut(op, &e))?;
     let frame = channel
         .exchange(
             op.wire_name(),
@@ -306,7 +313,7 @@ pub(in crate::models) enum SnapshotImportFault {
 /// Imports a kept snapshot under the turn's live conditions and its own
 /// stored-source authority, checked again at each descriptor write.
 pub(in crate::models) async fn import_released(
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     body: &SessionImport,
     snapshot: &SnapshotRegion,
@@ -315,7 +322,7 @@ pub(in crate::models) async fn import_released(
     source: &SnapshotSourceCheck<'_>,
 ) -> Result<SessionImported, SnapshotImportFault> {
     if !lease.has_dispatch_release() {
-        return import(socket, epoch, body, snapshot, worker)
+        return import(launch, epoch, body, snapshot, worker)
             .await
             .map_err(SnapshotImportFault::Op);
     }
@@ -327,7 +334,7 @@ pub(in crate::models) async fn import_released(
         )));
     }
     let request = serde_json::to_value(body).map_err(|e| SnapshotImportFault::Op(cut(op, &e)))?;
-    let mut channel = Channel::connect(socket)
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
         .await
         .map_err(|e| SnapshotImportFault::Op(cut(op, &e)))?;
     let frame = channel
