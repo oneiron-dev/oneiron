@@ -257,6 +257,36 @@ impl ProviderConnectionChecks {
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
     }
 
+    /// A fresh access token for a stored grant that carries its OAuth client.
+    /// Called only inside an admitted credential door; nothing is persisted.
+    pub(crate) fn refresh_stored_google_grant(
+        client: &reqwest::blocking::Client,
+        value: &[u8],
+    ) -> Result<Option<Zeroizing<String>>> {
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return Ok(None);
+        }
+        let grant: StoredGoogleGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
+        let (Some(refresh_token), Some(client_id)) =
+            (present(&grant.refresh_token), present(&grant.client_id))
+        else {
+            return Ok(None);
+        };
+        let checks = Self {
+            client: client.clone(),
+        };
+        let (token, _) = checks.exchange_google_refresh(
+            refresh_token,
+            client_id,
+            present(&grant.client_secret),
+        )?;
+        Ok(Some(token))
+    }
+
     /// Exchanges a stored refresh token for a fresh access token at Google's
     /// token endpoint: the token, held only for the call that presents it,
     /// and the scopes Google granted it, as its reply names them.
