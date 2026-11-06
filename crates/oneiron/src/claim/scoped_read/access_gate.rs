@@ -186,6 +186,22 @@ impl ScopedRead<'_> {
         Ok(self.vault.store.env.read_txn()?)
     }
 
+    /// Runs `read` in one read snapshot of this lane's vault, opened as this
+    /// lane's own reads open theirs: its grant time persisted first, never
+    /// inside the snapshot. A door that judges a row for this lane and
+    /// serves it does both here, in one snapshot (FIX 10782).
+    ///
+    /// # Errors
+    ///
+    /// The grant time's or the snapshot's failure, or `read`'s.
+    pub fn with_grant_read_snapshot<T, E: From<crate::Error>>(
+        &self,
+        read: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        let txn = self.grant_read_txn()?;
+        read(&txn)
+    }
+
     /// Whether this read's relationship gate binds in `txn`; see
     /// [`ScopedReadActorKey::relationship_gated_in`].
     pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
