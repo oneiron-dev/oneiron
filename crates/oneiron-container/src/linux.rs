@@ -116,6 +116,7 @@ pub(crate) const PATHS: &[(&str, bool)] = &[
     ("/proc", false),
     ("/sys", false),
     ("/srv", false),
+    ("/app", false),
     ("/mnt", false),
     ("/tmp", true),
     ("/dev/shm", true),

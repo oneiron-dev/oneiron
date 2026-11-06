@@ -78,7 +78,9 @@ and writable scratch remain separate. Source directories are bind-mounted
 read-only, nosuid and nodev. Archive extraction and the overlay upper tree share
 the configured tmpfs budget; no additional file-count or bundle-size default is
 introduced. The ordinary component guest keeps its existing identity defaults;
-native sessions use the caller's actual non-root uid and gid.
+native sessions use the caller's actual non-root uid and gid. The native fence
+includes `/app` in its read/execute-only Landlock paths; it grants no write
+access to the code mount.
 
 On the artifact listener, use `/_apps/<artifact>/`. The native `_t/<token>` and
 `_s/<selector-kind>/<selector-value>` URL positions work after the artifact id,
