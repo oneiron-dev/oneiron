@@ -41,7 +41,7 @@ use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
-use oneiron::context_board::StreamConnectionId;
+use oneiron::context_board::{BriefRunCeiling, StreamConnectionId};
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
     closed_outcome_windows_in_lane, create_question_with_lane, edit_question_with_lane,
@@ -73,7 +73,8 @@ use super::wave_door::resume_held_wave;
 use super::{SyncServer, wave_plan, wave_receipt};
 use crate::ai_host::live_lease::LeaseLine;
 use crate::api::{
-    RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    BriefHostFacts, RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board,
+    execute_run_board_verb,
 };
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
@@ -124,6 +125,11 @@ pub(crate) struct RunHostDoor {
     /// The attempt the run's entry in flight serves (hex), which keys its
     /// media calls (FIX 2245); empty between entries and for a turn program.
     attempt: Mutex<Option<String>>,
+    /// The run ceiling of the dispatch attempt the run's entry in flight
+    /// serves, which its `describe(self)` states and reads its parent
+    /// ceiling from (FIX 17594); empty between entries and for a turn
+    /// program, which is bound to no dispatch attempt.
+    run_ceiling: Mutex<Option<BriefRunCeiling>>,
     media_step: Mutex<Option<RunMediaStep>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
@@ -147,6 +153,7 @@ impl RunHostDoor {
             line: Mutex::new(None),
             lease: Mutex::new(None),
             attempt: Mutex::new(None),
+            run_ceiling: Mutex::new(None),
             media_step: Mutex::new(None),
             server: Arc::clone(server),
             actor,
@@ -200,6 +207,17 @@ impl RunHostDoor {
     /// (FIX 11747). `None` clears it once the entry ends.
     pub(crate) fn bind_lease(&self, lease: Option<LeaseLine>) {
         *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
+    }
+
+    /// Binds the run ceiling of the dispatch attempt the run's next entry
+    /// serves, built from the facts its host already holds, so its
+    /// `describe(self)` states it and reads its parent ceiling from that
+    /// attempt (FIX 17594). `None` clears it once the entry ends.
+    pub(crate) fn bind_run_ceiling(&self, run_ceiling: Option<BriefRunCeiling>) {
+        *self
+            .run_ceiling
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = run_ceiling;
     }
 
     /// Binds the attempt the run's next entry serves, which keys its media
@@ -308,6 +326,12 @@ impl AgentVerbDoor for RunHostDoor {
             })
             .flatten();
         let resident = resident_row(call.verb, &call.input);
+        // What the door holds for the run's own brief (FIX 17594), read only
+        // for `describe(self)`.
+        let brief = match resident {
+            Some(ResidentRow::SelfBrief) => self.brief_host_facts(),
+            _ => BriefHostFacts::default(),
+        };
         let (board, run_id) = (self.board.clone(), self.run_id);
         // The run's thread drives its own reactor; the row runs on the
         // server's runtime, which its model rungs block on, and the run's
@@ -337,6 +361,7 @@ impl AgentVerbDoor for RunHostDoor {
                     invocation,
                     &board,
                     line.as_ref(),
+                    &brief,
                     input,
                 )
                 .map(|(output, rows)| (output, Some(rows))),

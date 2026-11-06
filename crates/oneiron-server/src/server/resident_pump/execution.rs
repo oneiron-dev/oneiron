@@ -607,6 +607,13 @@ fn enter_run(
         .enter();
     door.bind_meter(line);
     door.bind_lease(lease);
+    // FIX 17594: the run ceiling its `describe(self)` states, from the
+    // admitted dispatch this entry serves.
+    door.bind_run_ceiling(Some(oneiron::context_board::brief_run_ceiling(
+        config.run_id,
+        status.attempt.id,
+        &status.input,
+    )));
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
@@ -630,6 +637,7 @@ fn enter_run(
     );
     door.bind_meter(None);
     door.bind_lease(None);
+    door.bind_run_ceiling(None);
     door.bind_attempt(None);
     entered
 }

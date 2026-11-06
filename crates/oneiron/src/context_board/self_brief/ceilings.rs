@@ -9,13 +9,22 @@
 //! A `null` value is the source's own none (no bound, no holder); a whole
 //! description no host produced is left out of the brief and named on its
 //! unavailable line.
+//!
+//! A host builds the run ceiling from the dispatch attempt it bound
+//! ([`brief_run_ceiling`]) and the credential ceiling from the slip it
+//! verified ([`brief_credential_ceiling`]); the parent ceiling is read from
+//! the store ([`crate::Vault::self_brief_parent_ceiling`]). None of them
+//! reads or writes anything else.
 
 use std::collections::BTreeSet;
 
+use crate::agent_dispatch::AgentDispatchInput;
 use crate::attempt_queue::AttemptId;
+use crate::authority::VerifiedSlip;
+use crate::claim::ScopedReadActorKey;
 use crate::context_projection::ContextSpec;
 use crate::entity_id::EntityId;
-use crate::federation::{Scope, ScopeAxis, ScopeId};
+use crate::federation::Scope;
 use crate::policy_manifest_doors::PolicyCeiling;
 
 /// A run's branch-resource bound, as its admitted dispatch stored it.
@@ -30,6 +39,16 @@ pub enum BriefBranchBound {
     Restricted { scope: crate::llm::Scope },
 }
 
+impl BriefBranchBound {
+    /// The bound a dispatch's stored branch scope states: no scope is no
+    /// branch-resource access.
+    pub(crate) fn of_dispatch(scope: Option<&crate::llm::Scope>) -> Self {
+        scope.map_or(Self::NoBranchResourceAccess, |scope| Self::Restricted {
+            scope: scope.clone(),
+        })
+    }
+}
+
 /// A run's projection descriptor, as its admitted dispatch stored it. It
 /// names what the run may see; it is no saved selection of content.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -42,7 +61,23 @@ pub enum BriefContextBound {
     },
 }
 
+impl BriefContextBound {
+    /// The descriptor a dispatch stored, without its dev-only `_annotation`,
+    /// which resolution drops so it reaches no prompt; the note bounds
+    /// nothing.
+    pub(crate) fn of_dispatch(spec: Option<&ContextSpec>) -> Self {
+        spec.map_or(Self::NoDeclaredSpec, |spec| Self::Declared {
+            spec: ContextSpec {
+                annotation: None,
+                ..spec.clone()
+            },
+        })
+    }
+}
+
 /// The run ceiling: the bounds the run's admitted dispatch attempt stored.
+/// A spawned child's branch bound is the one its dispatch stored after
+/// attenuating it against its parent, never the spawn's request.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BriefRunCeiling {
     pub run_id: EntityId,
@@ -51,8 +86,27 @@ pub struct BriefRunCeiling {
     pub context: BriefContextBound,
 }
 
+/// The run ceiling of run `run_id`, which serves dispatch attempt `attempt`
+/// whose admitted input is `input`: the branch bound and the projection
+/// descriptor that input stored. It reads nothing: only the host that bound
+/// the run to that attempt holds the three together.
+#[must_use]
+pub fn brief_run_ceiling(
+    run_id: EntityId,
+    attempt: AttemptId,
+    input: &AgentDispatchInput,
+) -> BriefRunCeiling {
+    BriefRunCeiling {
+        run_id,
+        attempt,
+        branch: BriefBranchBound::of_dispatch(input.scope.as_ref()),
+        context: BriefContextBound::of_dispatch(input.context_spec.as_ref()),
+    }
+}
+
 /// The credential ceiling: the bounds of the verified credential the caller
-/// presented.
+/// presented. A registered connector's own bounds are a separate
+/// description, which no host produces yet.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BriefCredentialCeiling {
     /// The verified slip's effective six-axis scope.
@@ -64,22 +118,23 @@ pub struct BriefCredentialCeiling {
     /// The scope the admitted read key reads under, a separate projection of
     /// `scope`; `null` when the read key carries no proof scope.
     pub read_scope: Option<Scope>,
-    /// The registered connector's own bounds; `null` for a credential that is
-    /// no registered connector's.
-    pub connector: Option<BriefConnectorCeiling>,
 }
 
-/// A registered connector's bounds beside its credential's.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BriefConnectorCeiling {
-    pub world_ref: Option<EntityId>,
-    /// The facet the connector's writes are born in.
-    pub facet_ref: Option<EntityId>,
-    /// The facets the connector reads.
-    pub facets: ScopeAxis<ScopeId>,
-    /// The registered bound-verb ceiling; `null` when the registration names
-    /// none.
-    pub bound_verbs: Option<BTreeSet<String>>,
+/// The credential ceiling of verified slip `proof`, beside the scope the
+/// read key `read_key` its host admitted for the caller reads under. It
+/// copies the slip's effective scope, record and channel bounds and the
+/// read key's proof scope; it reads nothing.
+#[must_use]
+pub fn brief_credential_ceiling(
+    proof: &VerifiedSlip,
+    read_key: &ScopedReadActorKey,
+) -> BriefCredentialCeiling {
+    BriefCredentialCeiling {
+        scope: proof.scope().clone(),
+        records: proof.claims().records.clone(),
+        channels: proof.claims().channels.clone(),
+        read_scope: read_key.authority_scope().cloned(),
+    }
 }
 
 /// One delegation ancestor's live bounds.
@@ -94,8 +149,9 @@ pub struct BriefParentBound {
     pub approval: Option<PolicyCeiling>,
 }
 
-/// The parent ceiling: each delegation ancestor's live bounds, in lineage
-/// order. A root run has an empty list.
+/// The parent ceiling: each delegation ancestor's live bounds, nearest
+/// first. A root run has an empty list. It describes the chain; it is no
+/// Gate verdict, and every write meets the chain live.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BriefParentCeiling {
     pub ancestors: Vec<BriefParentBound>,
