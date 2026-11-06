@@ -403,6 +403,10 @@ side_tables! {
     /// DOOR-141: the waking actor one turn program attempt runs as, never a base-agent stamp, and
     /// the admission that bound it. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named;
+    /// FIX 5266: a turn program wake the elected home decided on another machine: the admission's
+    /// identity, kept so no later landing of the turn wakes the program here again.
+    /// Key: id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_DECIDED: VaultMeta b"dreamer:turn_program:decided:v1:" Named;
     /// FIX 5266: a turn program this machine knows was disarmed, and when, so an older window's
     /// arming of it never arms it here again; the ARM entry's scrub clears it.
     /// Key: id16(actor) + id16(registration).

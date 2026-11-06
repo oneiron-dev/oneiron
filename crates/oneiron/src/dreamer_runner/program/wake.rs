@@ -11,7 +11,7 @@ use crate::error::Result;
 use super::admit::WakeAdmission;
 use super::authority::TurnProgramAuthority;
 use super::types::{LandedTurnRef, TurnProgramAdmissionOutcome, TurnProgramDrain, TurnProgramWake};
-use super::{ADMISSION, ARM, WAKE};
+use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 /// How many owed wakes one drain admits; [`TurnProgramDrain::more`] asks for
 /// the next batch. A batch size, never a cap: every wake is drained.
@@ -60,6 +60,7 @@ pub(crate) fn record_turn_program_wakes_in_txn(
         };
         if WAKE.contains(vault, &*txn, &wake.key())?
             || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
+            || DECIDED.get(vault, &*txn, &wake.key())? == Some(wake.admission_id())
         {
             continue;
         }

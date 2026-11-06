@@ -214,6 +214,14 @@ fn rebind_owed_wake(
                 "this wake was admitted; rebind its try by attempt".to_owned(),
             ));
         }
+        // A riding wake is the elected home's to admit (FIX 5266): its
+        // rebind runs there, where the admission it commits with can.
+        #[cfg(feature = "sync")]
+        if super::replica::wake_is_the_homes_in_txn(vault, &*txn, &wake)? {
+            return Err(Error::InvalidConfig(
+                "this wake is the elected home's to admit; rebind it on the home".to_owned(),
+            ));
+        }
         let (authority, rebind) =
             rebound_in_txn(vault, txn, &wake.authority, successor, actor, class)?;
         wake.authority = authority;

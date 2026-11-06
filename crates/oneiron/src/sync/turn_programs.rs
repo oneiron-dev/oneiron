@@ -199,6 +199,17 @@ pub(crate) fn mirror_turn_program_armings(
     if rows.is_empty() && ended.is_empty() {
         return Ok(false);
     }
+    // A carried arming row replaced or dropped here keeps its payload, its
+    // arguments too, in the window's history: the window is pinned
+    // history-free first, so no later export carries the obsolete operation,
+    // whatever erase comes after (FIX 5266).
+    if !ended.is_empty()
+        || rows
+            .iter()
+            .any(|(map_key, ours)| carried.get(map_key).is_some_and(|held| held != ours))
+    {
+        super::window::require_history_free_window(vault, key)?;
+    }
     let map = doc.get_map(TURN_PROGRAM_ARMS_MAP);
     let mut wrote = write_rows(&map, &rows)?;
     for map_key in &ended {

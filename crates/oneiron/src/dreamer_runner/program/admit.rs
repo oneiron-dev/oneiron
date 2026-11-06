@@ -111,6 +111,13 @@ pub(super) fn admit_in_txn(
         super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(WakeAdmission::Decided(existing.receipt(false)));
     }
+    // A riding wake is the elected home's to admit, through every door into
+    // this writer (FIX 5266): elsewhere its row stays owed as it stands, and
+    // rides there.
+    #[cfg(feature = "sync")]
+    if super::replica::wake_is_the_homes_in_txn(vault, &*txn, &wake)? {
+        return Ok(WakeAdmission::Held);
+    }
     let judged = judge_in_txn(vault, &*txn, &wake)?;
     let refused = judged.as_ref().err().copied();
     let expires_at = held.as_ref().map_or_else(

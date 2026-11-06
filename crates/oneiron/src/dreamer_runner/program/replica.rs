@@ -34,7 +34,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{TurnProgramArming, TurnProgramDisarm, TurnProgramWake};
-use super::{ADMISSION, ARM, DISARMED, WAKE};
+use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::entity_id::EntityId;
@@ -338,6 +338,7 @@ pub(crate) fn merge_wake_row_in_txn(
     }
     if WAKE.contains(vault, &*txn, &wake.key())?
         || ADMISSION.contains(vault, &*txn, &wake.admission_id())?
+        || DECIDED.get(vault, &*txn, &wake.key())? == Some(wake.admission_id())
     {
         return Ok(RowMerge::Held);
     }
@@ -356,8 +357,10 @@ pub(crate) fn merge_wake_row_in_txn(
 /// home that admitted it wrote that terminal row, so this machine never
 /// admits it again, whatever its own home role or the arming's state now (a
 /// machine elected home after the old home decided still holds the wake it
-/// recorded). Only a wake whose own authority rides and whose admission the
-/// row names goes. Answers whether a wake went.
+/// recorded). The decision's identity is kept here (`DECIDED`), with or
+/// without a wake to consume, so no later landing of the turn records the
+/// wake again (FIX 5266). Only a wake whose own authority rides and whose
+/// admission the row names goes. Answers whether a row changed.
 fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -367,11 +370,19 @@ fn consume_decided_wake_in_txn(
     let Some(key) = wake_key_ids(map_key) else {
         return Ok(false);
     };
+    let kept = if DECIDED.get(vault, &*txn, &key)? == Some(admission)
+        || ADMISSION.contains(vault, &*txn, &admission)?
+    {
+        false
+    } else {
+        DECIDED.put(vault, txn, &key, &admission)?;
+        true
+    };
     let Some(wake) = WAKE.get(vault, &*txn, &key)? else {
-        return Ok(false);
+        return Ok(kept);
     };
     if !wake.authority.rides_to_home() || wake.admission_id() != admission {
-        return Ok(false);
+        return Ok(kept);
     }
     WAKE.delete(vault, txn, &key)?;
     super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), key)?;
