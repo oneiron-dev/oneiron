@@ -1,5 +1,10 @@
 //! Metadata of an authenticated record/document transport, not native admission.
 
+mod history;
+mod retained;
+pub(crate) use history::remove_history_in_txn;
+pub(crate) use retained::{RetainedRecordDocumentSource, retained_in_txn};
+
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
@@ -105,7 +110,10 @@ pub(crate) fn remove_entity_in_txn(
     Ok(())
 }
 
-fn source_from_row(key: &[u8], value: &[u8]) -> Option<(EntityId, EntityId)> {
+fn decode_source_from_row(
+    key: &[u8],
+    value: &[u8],
+) -> Option<(EntityId, EntityId, StoredSource, CarriedRecordDocument)> {
     let key = key
         .strip_prefix(side_table::SYNC_RECORD_DOCUMENT_SOURCE.prefix)
         .and_then(|key| std::str::from_utf8(key).ok())?;
@@ -128,7 +136,11 @@ fn source_from_row(key: &[u8], value: &[u8]) -> Option<(EntityId, EntityId)> {
         return None;
     }
     let machine = EntityId::from_bytes(source.machine).ok()?;
-    Some((entity, machine))
+    Some((entity, machine, source, head))
+}
+
+fn source_from_row(key: &[u8], value: &[u8]) -> Option<(EntityId, EntityId)> {
+    decode_source_from_row(key, value).map(|(entity, machine, _, _)| (entity, machine))
 }
 
 /// Invalid or mismatched data is not silently treated as metadata-only structure.

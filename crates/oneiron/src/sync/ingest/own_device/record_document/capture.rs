@@ -7,7 +7,7 @@ use heed::RwTxn;
 use loro::LoroDoc;
 
 use super::{ImportSpan, PairDigest};
-use crate::error::{Error, Result, SyncError};
+use crate::error::Result;
 use crate::store::Store;
 use crate::store::window_record_sources::RecordDocumentSource;
 use crate::sync::loro_support::map_get_bytes;
@@ -122,19 +122,7 @@ impl CapturedRecordDocuments {
         txn: &'write mut RwTxn<'env>,
         window: &'write WindowKey,
     ) -> Result<RecordDocumentSources<'write, 'env>> {
-        use crate::sync::window::{
-            apply_pending_window_updates_in_txn, load_window_from_state_in_txn,
-        };
-
-        let durable = match load_window_from_state_in_txn(vault, txn, window) {
-            Ok(doc) => doc,
-            Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-                let doc = LoroDoc::new();
-                apply_pending_window_updates_in_txn(vault, txn, &doc, window)?;
-                doc
-            }
-            Err(error) => return Err(error),
-        };
+        let durable = super::retained::durable_window_in_txn(vault, txn, window)?;
         let sources = self.matching_sources(vault, txn, &durable, window)?;
         Ok(RecordDocumentSources {
             store: &vault.store,

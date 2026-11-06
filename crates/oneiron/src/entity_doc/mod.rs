@@ -23,6 +23,8 @@ mod metadata;
 mod native_skill_state;
 pub mod office;
 mod pins;
+#[cfg(feature = "sync")]
+pub(crate) use pins::RecordDocumentHistoryCut;
 mod promotion_evidence;
 mod proposal_lineage;
 mod prose_admission;
@@ -108,9 +110,9 @@ pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use record_carried::{
-    CarriedRecordDocument, RecordDocumentCandidate, RecordDocumentPreparation, RecordDocumentStand,
-    RefinementOriginSource, export_skill_record_document_in_txn,
-    InstalledRecordDocument, PendingRecordDocument, install_record_document_in_txn,
+    CarriedRecordDocument, InstalledRecordDocument, PendingRecordDocument, RecordDocumentCandidate,
+    RecordDocumentPreparation, RecordDocumentStand, RefinementOriginSource,
+    export_skill_record_document_in_txn, install_record_document_in_txn,
 };
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
@@ -209,7 +211,6 @@ use crate::error::{ArtifactError, Error};
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(reason))
 }
-
 /// Fault injection for recovery checks: drops `entity`'s document head row
 /// alone, as a damaged vault can lose it, keeping the stored history. The
 /// returned closure puts the row back.

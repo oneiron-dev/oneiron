@@ -5,8 +5,9 @@
 //! permission. Ordinary batch admission must still judge the logical body.
 
 mod capture;
-pub(crate) use capture::{CapturedRecordDocuments, RecordDocumentSources};
+mod retained;
 pub(in crate::sync) use capture::persist_record_document_update;
+pub(crate) use capture::{CapturedRecordDocuments, RecordDocumentSources};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -154,13 +155,18 @@ pub(in crate::sync) fn record_document_materializer_failed(
     });
 }
 
-/// Facts of the actual selected transport. Private construction binds the
-/// exact row, document and snapshot to this import and its selected window.
-/// This is not a native admission proof and cannot mint SkillStateWrite.
+enum RecordDocumentTransport {
+    Live(Weak<()>),
+    Retained(crate::store::window_record_sources::RetainedRecordDocumentSource),
+}
+
+/// Facts of the selected transport, from the current import or its retained
+/// Store source and exact durable carrier. Neither is native admission and
+/// neither can mint SkillStateWrite.
 pub(crate) struct SelectedRecordDocument<'a> {
     vault: &'a Vault,
     carrier: &'a LoroDoc,
-    scope: Weak<()>,
+    transport: RecordDocumentTransport,
     machine: EntityId,
     window: String,
     raw: Vec<u8>,
@@ -170,9 +176,9 @@ pub(crate) struct SelectedRecordDocument<'a> {
 }
 
 impl SelectedRecordDocument<'_> {
-    /// Recheck at actual batch consumption. Retained data from an import
-    /// that returned, or from an enclosing rather than current import,
-    /// cannot authorize this transport in another write.
+    /// Recheck at actual batch consumption. A live scope cannot outlive its
+    /// import; a retained source must still match its Store row and the
+    /// actual durable carrier in this same transaction.
     pub(crate) fn recheck_transport_in_txn(
         &self,
         store: &crate::store::Store,
@@ -188,15 +194,20 @@ impl SelectedRecordDocument<'_> {
             &self.snapshot,
             self.refinement.as_ref(),
         )?;
-        let current = RECORD_DOCUMENT_SPAN.with(|slot| {
-            slot.borrow().as_ref().is_some_and(|span| {
-                Weak::ptr_eq(&self.scope, &Rc::downgrade(&span.scope))
-                    && span.vault == store.env.path()
-                    && span.window == self.window
-                    && span.machine == self.machine
-                    && span.pairs.get(&entity) == Some(&expected)
-            })
-        });
+        let current = match &self.transport {
+            RecordDocumentTransport::Live(scope) => RECORD_DOCUMENT_SPAN.with(|slot| {
+                slot.borrow().as_ref().is_some_and(|span| {
+                    Weak::ptr_eq(scope, &Rc::downgrade(&span.scope))
+                        && span.vault == store.env.path()
+                        && span.window == self.window
+                        && span.machine == self.machine
+                        && span.pairs.get(&entity) == Some(&expected)
+                })
+            }),
+            RecordDocumentTransport::Retained(source) => {
+                retained::recheck_in_txn(self, source, txn, &entity, &expected)?
+            }
+        };
         if !current {
             return Ok(false);
         }
@@ -279,22 +290,31 @@ pub(in crate::sync) fn selected_in_txn<'a>(
             Some((span.machine, Rc::downgrade(&span.scope), digest))
         })
     });
-    let Some((machine, scope, expected)) = transport else {
-        return Ok(None);
-    };
     let Some((head, snapshot, refinement)) = selected_record_document(doc, entity, raw)? else {
         return Ok(None);
     };
-    if PairDigest::of(raw, &head, &snapshot, refinement.as_ref())? != expected {
-        return Ok(None);
-    }
+    let expected = PairDigest::of(raw, &head, &snapshot, refinement.as_ref())?;
+    let (machine, transport) = match transport {
+        Some((machine, scope, imported)) => {
+            if imported != expected {
+                return Ok(None);
+            }
+            (machine, RecordDocumentTransport::Live(scope))
+        }
+        None => {
+            let Some(source) = retained::select_in_txn(ctx, txn, entity, raw, &expected)? else {
+                return Ok(None);
+            };
+            (source.machine(), RecordDocumentTransport::Retained(source))
+        }
+    };
     if crate::sync::ingest::peer_row_in_txn(ctx.vault, txn, ctx.window_key, entity, raw)? {
         return Ok(None);
     }
     Ok(Some(SelectedRecordDocument {
         vault: ctx.vault,
         carrier: doc,
-        scope,
+        transport,
         machine,
         window: ctx.window_key.to_owned(),
         raw: raw.to_vec(),
