@@ -36,11 +36,14 @@ mod relay_observation;
 mod report;
 mod sweep;
 mod turn;
+mod upload;
+mod work;
 
 pub use self::access::PadAdmissionReport;
 pub(crate) use self::relay_observation::observe_sealed_bundle_relay;
 pub use self::relay_observation::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
 pub use self::report::SealedBundleRelay;
+use self::upload::{put_object, upload_refused};
 
 use std::sync::Arc;
 
@@ -52,19 +55,18 @@ use super::kit_fetch::KitHome;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, Destination, PeerMachine};
+use crate::entity_id::EntityId;
 use crate::error::{Error, SecretError};
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject,
-    holds_sealed_bundle, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
-    sealed_generation_hex,
+    SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject, holds_sealed_bundle, sealed_digest_from_hex,
+    sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
-    RecoveryRootId, RecoveryRootSeed, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
-    sealed_bundle_slot,
+    RecoveryRootSeed, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle, sealed_bundle_slot,
 };
 
 /// The slot this machine last finished and the generation it last took in.
@@ -133,21 +135,6 @@ fn home_holds_sealed_bundle(vault: &Vault, home: PeerMachine) -> crate::error::R
     Ok(class.is_none_or(holds_sealed_bundle))
 }
 
-/// The entry a commit's reply names: what the home acknowledged.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BundleCommitReply {
-    generation: String,
-    bundle_digest: String,
-}
-
-/// A generation the home acknowledged committing, and its bundle's digest.
-#[derive(Clone, Copy, Debug)]
-struct CommittedBundle {
-    generation: SealedBundleGeneration,
-    bundle_digest: [u8; 32],
-}
-
 #[derive(Deserialize)]
 struct BundleGetReply {
     generation: String,
@@ -169,10 +156,6 @@ struct Cursor {
 
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
-}
-
-fn upload_refused() -> TransportError {
-    TransportError::Storage("home refused the sealed bundle upload".into())
 }
 
 fn load_cursor(vault: &Vault) -> crate::error::Result<Cursor> {
@@ -300,7 +283,7 @@ pub(crate) async fn relay_sealed_bundle(
         return Ok(relay);
     }
     let now_slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
-    let cursor = load_cursor(vault).map_err(storage)?;
+    let mut cursor = load_cursor(vault).map_err(storage)?;
     let owed = pad_sweep::owed_subjects(vault).map_err(storage)?;
     let erase_due = owed.iter().any(|owed| owed.due_unlisted(now_slot));
     // A phone takes no generation in and uploads none (FIX 3349).
@@ -343,6 +326,27 @@ pub(crate) async fn relay_sealed_bundle(
         let slots = (now_slot, now_slot);
         sweep::sweep_erased(vault, &mut rpc, owed, slots, None, &mut relay).await?;
         relay.swept = true;
+    }
+    // The route address this socket dialed: automatic attempts persist and
+    // resume by it on every tick that reaches the home, whether the slot is
+    // due or not and whether the home's proof stands here or not (FIX 9254).
+    // A finished exact attempt commits into the shared cursor, a pending or
+    // unanswered one ends the pass, and only an open one reaches the slot
+    // below. Resume never assembles or uploads, so a tick whose slot was not
+    // due still publishes nothing fresh.
+    let address = rpc.address;
+    match work::reconcile_auto(&mut rpc, vault, address).await? {
+        work::WorkFate::Open => {}
+        work::WorkFate::Uncertain => return Ok(relay),
+        work::WorkFate::Committed(attempt) => {
+            attempt::settle_one(vault, attempt::AttemptKey::Auto(address), &attempt)
+                .map_err(storage)?;
+            cursor.taken = Some(attempt.generation);
+            relay.published = Some(attempt.generation);
+            relay.incomplete_authority = attempt.incomplete_authority;
+            relay.awaiting_reader = attempt.awaiting_reader;
+            store_cursor(vault, cursor).map_err(storage)?;
+        }
     }
     if slot_due {
         let slot = SlotRelay {
@@ -387,6 +391,15 @@ impl SlotRelay<'_> {
     ) -> Result<(), TransportError> {
         let vault = self.manager.vault();
         let holder = holder_destination(vault, rpc.home);
+        let address = rpc.address;
+        // The home for the work this slot may begin: the proven machine, or
+        // unknown. An unknown home publishes under its explicit unknown-home
+        // address exactly as a proven one does (FIX 9254): the absence of a
+        // local proof never holds an eligible publisher back.
+        let home: Option<EntityId> = match vault.peer_machine_stands(rpc.home) {
+            PeerMachine::Proven { machine, .. } => Some(machine),
+            PeerMachine::Unknown => None,
+        };
         // The newest generation's objects, once fetched: an upload carries
         // what this machine cannot read from them.
         let mut held: Option<(SealedVaultBundle, SealedKeyPads)> = None;
@@ -465,6 +478,12 @@ impl SlotRelay<'_> {
                     return Ok(());
                 }
             }
+            // Without an executor identity no begin addresses: the next
+            // machine waiting need not wait out the lease.
+            let Some(executor) = work::executor_id(vault).map_err(storage)? else {
+                let _ = turn::ask_turn(rpc, true).await;
+                return Ok(());
+            };
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
             // A full machine lands what the assembly merges (FIX 4788).
@@ -498,7 +517,7 @@ impl SlotRelay<'_> {
                 }
             };
             let generation = upload.bundle.generation();
-            if put_object(
+            let staged = put_object(
                 rpc,
                 &generation,
                 SealedBundleObject::Bundle,
@@ -511,20 +530,85 @@ impl SlotRelay<'_> {
                     SealedBundleObject::Pads,
                     upload.pads.as_bytes(),
                 )
-                .await?
-                && commit_generation(rpc, &generation, latest, upload.kit_root, None)
-                    .await?
-                    .is_some()
-            {
-                cursor.taken = Some(generation);
-                relay.published = Some(generation);
-                relay.incomplete_authority = upload.incomplete_authority;
-                relay.awaiting_reader = awaiting;
-                break;
-            }
+                .await?;
+            // A terminal begin says itself whether the parent went stale, so
+            // the moved recheck below runs only when a part did not stage.
+            let terminal: Option<bool> = if !staged {
+                None
+            } else {
+                let attempt = attempt::BundleAttempt {
+                    home,
+                    executor,
+                    generation,
+                    bundle_digest: upload.bundle.digest(),
+                    parent: latest,
+                    root: upload.kit_root,
+                    request: None,
+                    bundle_total: upload.bundle.as_bytes().len() as u64,
+                    pads_total: upload.pads.as_bytes().len() as u64,
+                    pads_digest: upload.pads.digest(),
+                    incomplete_authority: upload.incomplete_authority.clone(),
+                    awaiting_reader: awaiting.clone(),
+                };
+                // The exact attempt persists before the first commit send, so
+                // an ack lost on the way resumes, never reuploads.
+                attempt::persist(vault, attempt::AttemptKey::Auto(address), &attempt)
+                    .map_err(storage)?;
+                match work::begin_work(rpc, &attempt).await? {
+                    work::WorkOutcome::Accepted(status) => match status.state {
+                        work::WorkState::Pending => return Ok(()),
+                        work::WorkState::Committed => {
+                            let entry = status.entry.ok_or_else(refused)?;
+                            if entry.generation != generation
+                                || entry.bundle_digest != upload.bundle.digest()
+                                || entry.pads_digest != upload.pads.digest()
+                            {
+                                return Err(refused());
+                            }
+                            attempt::settle_one(
+                                vault,
+                                attempt::AttemptKey::Auto(address),
+                                &attempt,
+                            )
+                            .map_err(storage)?;
+                            cursor.taken = Some(generation);
+                            relay.published = Some(generation);
+                            relay.incomplete_authority = upload.incomplete_authority;
+                            relay.awaiting_reader = awaiting;
+                            break;
+                        }
+                        work::WorkState::NeedsRebase => {
+                            attempt::settle_one(
+                                vault,
+                                attempt::AttemptKey::Auto(address),
+                                &attempt,
+                            )
+                            .map_err(storage)?;
+                            Some(true)
+                        }
+                        work::WorkState::Refused => {
+                            attempt::settle_one(
+                                vault,
+                                attempt::AttemptKey::Auto(address),
+                                &attempt,
+                            )
+                            .map_err(storage)?;
+                            Some(false)
+                        }
+                    },
+                    work::WorkOutcome::Refused => {
+                        attempt::settle_one(vault, attempt::AttemptKey::Auto(address), &attempt)
+                            .map_err(storage)?;
+                        Some(false)
+                    }
+                }
+            };
             // A refused upload: when the newest generation moved meanwhile,
             // the parent went stale.
-            let moved = list_generations(rpc).await?.first().copied() != latest;
+            let moved = match terminal {
+                Some(moved) => moved,
+                None => list_generations(rpc).await?.first().copied() != latest,
+            };
             if moved {
                 if retries == STALE_PARENT_RETRIES {
                     return Err(upload_refused());
@@ -684,69 +768,6 @@ pub(super) async fn fetch_generation(
         return Err(refused());
     }
     Ok(Some((bundle, pads)))
-}
-
-/// Stages one object on the home in parts; `false` when the home refused a
-/// part (FIX 3353). A part that did not reach the home is an error.
-async fn put_object(
-    rpc: &mut ResidenceRpc,
-    generation: &SealedBundleGeneration,
-    object: SealedBundleObject,
-    bytes: &[u8],
-) -> Result<bool, TransportError> {
-    let generation = sealed_generation_hex(generation);
-    let digest = sealed_digest_hex(blake3::hash(bytes).as_bytes());
-    let mut offset = 0;
-    for part in bytes.chunks(SEALED_BUNDLE_PUT_PART_MAX) {
-        let staged = rpc
-            .call(
-                "residence.bundle.put",
-                json!({
-                    "generation": generation.as_str(),
-                    "object": object.name(),
-                    "total": bytes.len(),
-                    "digest": digest.as_str(),
-                    "offset": offset,
-                    "part": base64::engine::general_purpose::STANDARD.encode(part),
-                }),
-            )
-            .await?;
-        if staged.is_err() {
-            return Ok(false);
-        }
-        offset += part.len();
-    }
-    Ok(true)
-}
-
-/// Commits the generation staged here on `parent`, naming `root`, the
-/// recovery root whose kit may read it, and `request`, the owner's ask it
-/// publishes for, which the home records it under (FIX 4787): the entry the
-/// home acknowledged, or `None` when the home refused it. A commit that did
-/// not reach the home, or a reply naming no entry, is an error.
-async fn commit_generation(
-    rpc: &mut ResidenceRpc,
-    generation: &SealedBundleGeneration,
-    parent: Option<SealedBundleGeneration>,
-    root: Option<RecoveryRootId>,
-    request: Option<AuthorityEntryHash>,
-) -> Result<Option<CommittedBundle>, TransportError> {
-    let mut params = json!({
-        "generation": sealed_generation_hex(generation),
-        "parent": parent.as_ref().map(sealed_generation_hex),
-        "root": root.as_ref().map(|root| sealed_digest_hex(&root.0)),
-    });
-    if let Some(request) = request {
-        params["request"] = json!(sealed_digest_hex(&request));
-    }
-    let Ok(reply) = rpc.call("residence.bundle.commit", params).await? else {
-        return Ok(None);
-    };
-    let reply: BundleCommitReply = serde_json::from_value(reply).map_err(|_| refused())?;
-    Ok(Some(CommittedBundle {
-        generation: sealed_generation_from_hex(&reply.generation).ok_or_else(refused)?,
-        bundle_digest: sealed_digest_from_hex(&reply.bundle_digest).ok_or_else(refused)?,
-    }))
 }
 
 /// Replaces one kept pad object with its rewrite, on the digest of the object

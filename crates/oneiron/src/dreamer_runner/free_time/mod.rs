@@ -91,6 +91,12 @@ const CLOCK: SideTable<EntityId, FreeTimeClock, Named> =
 /// Each cycle, by agent and boundary, so an agent's cycles read in time order.
 const CYCLE: SideTable<(EntityId, u64), cycle::FreeTimeCycle, Named> =
     SideTable::new(&side_table::DREAMER_FREE_TIME_CYCLE);
+/// Whether a masked copy of a `DREAMER_FREE_TIME_CYCLE` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn dreamer_free_time_cycle_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<cycle::FreeTimeCycle, Named>(bytes)
+}
+
 /// Each item attempt's binding, by the attempt its cycle queued.
 const ITEM: SideTable<AttemptId, items::FreeTimeItemBinding, Named> =
     SideTable::new(&side_table::DREAMER_FREE_TIME_ITEM);

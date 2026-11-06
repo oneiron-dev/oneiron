@@ -6,12 +6,14 @@
 //!
 //! [`ExecutorStorage::reader_txn`]: crate::code_run::ExecutorStorage::reader_txn
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::scoped_child::{
-    READER_SOURCE_NAME, SCOPED_CHILD_PORT_NOT_LENT, scoped_child_call_allowed, scoped_child_input,
+    READER_SOURCE_NAME, SCOPED_CHILD_PARENT_LEASE_LOST, SCOPED_CHILD_PORT_NOT_LENT,
+    scoped_child_call_allowed, scoped_child_input,
 };
 use crate::code_run::storage::{
     NewReaderJob, ReportOutcome, SpawnAdmission, WaitSetOutcome, runs_program_steps,
@@ -21,11 +23,11 @@ use crate::code_run::types::{
     SelfEffect, SelfFailedResult,
 };
 use crate::code_run::{
-    DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
-    ReaderSpawnReceipt, ResultOccurrence, ScopedChildPorts, ScopedChildSpec, SelfReaderReportCall,
-    SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
-    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_cutoff, reader_wait_id,
-    valid_reader_key, vault_ref,
+    DelegatedSource, READER_TASK_SETTLED, ReaderActor, ReaderJobState, ReaderReportReceipt,
+    ReaderRoute, ReaderSpawnReceipt, ResultOccurrence, ScopedCallControl, ScopedChildPorts,
+    ScopedChildSpec, SelfReaderReportCall, SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy,
+    TaskWaitSet, TaskWaitSetCall, reader_attempt_id, reader_run_id, reader_task_id,
+    reader_wait_cutoff, reader_wait_id, valid_reader_key, vault_ref,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
@@ -39,13 +41,15 @@ pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 const TASK_WAIT_SET_PROMPT: &str = "task_wait_set:";
 
 /// What binds a dispatcher to one reader child's job: its task, the
-/// generation its runner claimed it at, the source it reads, and what its
-/// parent lent it when it is a scoped child (FIX 7507).
+/// generation its runner claimed it at, the source it reads, what its
+/// parent lent it when it is a scoped child (FIX 7507), and the live cutoff
+/// its runner bound for that child's port calls and reads (FIX 8233).
 pub(crate) struct ReaderChildBinding {
     pub(crate) task: EntityId,
     pub(crate) generation: u32,
     pub(crate) source: DelegatedSource,
     pub(crate) scoped: Option<ScopedChildSpec>,
+    pub(crate) control: Option<ScopedCallControl>,
 }
 
 /// Whether run `owner`'s occurrence at `path` is the `wanted` hex.
@@ -53,41 +57,67 @@ fn matches_occurrence(owner: EntityId, path: &str, wanted: &str) -> bool {
     ResultOccurrence::owned(owner, path).is_ok_and(|occurrence| occurrence.id().to_hex() == wanted)
 }
 
+/// The input `reference` names for a reader child that reads `source`, by
+/// its name (`by_name`) or by its handle, with the name it is read by: a read
+/// child's one source as `src`; a scoped child's lent `inputs` only
+/// (`scoped_child_input`). Any other reference names nothing. A shadow arm
+/// resolves a captured binding by the same rule (FIX 6352).
+pub(crate) fn delegated_input<'s>(
+    source: &'s DelegatedSource,
+    inputs: Option<&'s BTreeMap<String, DelegatedSource>>,
+    by_name: bool,
+    reference: &str,
+) -> Option<(&'s str, &'s DelegatedSource)> {
+    if let Some(inputs) = inputs {
+        return scoped_child_input(inputs, by_name, reference);
+    }
+    let names = if by_name {
+        reference == READER_SOURCE_NAME
+    } else {
+        reference == source.handle
+    };
+    names.then_some((READER_SOURCE_NAME, source))
+}
+
+/// The delegated source an `occurrence:<hex>` ref names for a reader child
+/// that reads `source`, with the name it is read by: the child's authorized
+/// sources only, a scoped child's lent `inputs` or the read child's one
+/// source, each matched by the occurrence of its owner at its path. The
+/// caller keeps the source's delegated range.
+pub(crate) fn delegated_occurrence_input<'s>(
+    source: &'s DelegatedSource,
+    inputs: Option<&'s BTreeMap<String, DelegatedSource>>,
+    wanted: &str,
+) -> Option<(&'s str, &'s DelegatedSource)> {
+    if let Some(inputs) = inputs {
+        return inputs.iter().find_map(|(name, source)| {
+            matches_occurrence(source.owner, &source.path, wanted)
+                .then_some((name.as_str(), source))
+        });
+    }
+    matches_occurrence(source.owner, &source.path, wanted).then_some((READER_SOURCE_NAME, source))
+}
+
 impl ReaderChildBinding {
     /// The input `reference` names for this child, by its name (`by_name`)
-    /// or by its handle, with the name it is read by: a read child's one
-    /// source as `src`; a scoped child's lent inputs only
-    /// (`scoped_child_input`). Any other reference names nothing.
+    /// or by its handle, with the name it is read by ([`delegated_input`]).
     pub(crate) fn delegated(
         &self,
         by_name: bool,
         reference: &str,
     ) -> Option<(&str, &DelegatedSource)> {
-        if let Some(spec) = &self.scoped {
-            return scoped_child_input(spec, by_name, reference);
-        }
-        let names = if by_name {
-            reference == READER_SOURCE_NAME
-        } else {
-            reference == self.source.handle
-        };
-        names.then_some((READER_SOURCE_NAME, &self.source))
+        delegated_input(&self.source, self.scoped_inputs(), by_name, reference)
     }
 
     /// The delegated source an `occurrence:<hex>` ref names for this child,
-    /// with the name it is read by: the child's authorized sources only, a
-    /// scoped child's lent inputs or the read child's one source, each
-    /// matched by the occurrence of its owner at its path. The caller keeps
-    /// the source's delegated range.
+    /// with the name it is read by ([`delegated_occurrence_input`]).
     pub(crate) fn delegated_occurrence(&self, wanted: &str) -> Option<(&str, &DelegatedSource)> {
-        if let Some(spec) = &self.scoped {
-            return spec.inputs.iter().find_map(|(name, source)| {
-                matches_occurrence(source.owner, &source.path, wanted)
-                    .then_some((name.as_str(), source))
-            });
-        }
-        matches_occurrence(self.source.owner, &self.source.path, wanted)
-            .then_some((READER_SOURCE_NAME, &self.source))
+        delegated_occurrence_input(&self.source, self.scoped_inputs(), wanted)
+    }
+
+    /// The inputs a scoped child was lent, by name; `None` for a read child.
+    fn scoped_inputs(&self) -> Option<&BTreeMap<String, DelegatedSource>> {
+        self.scoped.as_ref().map(|spec| &spec.inputs)
     }
 }
 
@@ -130,6 +160,7 @@ impl HostSelfDispatcher<'_> {
             generation,
             source: job.binding.source,
             scoped,
+            control: None,
         });
         self.bound_run = Some(job.run);
         Ok(self)
@@ -151,6 +182,29 @@ impl HostSelfDispatcher<'_> {
             ));
         }
         self.scoped_ports = Some(ports);
+        Ok(self)
+    }
+
+    /// Binds the bound scoped child's live cutoff (FIX 8233): `control`,
+    /// which its runner derived from the job's frozen cutoff and its
+    /// parent's live clock, and keeps a copy of. Each port call and read of
+    /// the child checks it as well as the job's row.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when this dispatcher is bound to no scoped
+    /// child.
+    pub fn with_scoped_call_control(mut self, control: ScopedCallControl) -> Result<Self> {
+        let Some(child) = self
+            .reader_child
+            .as_mut()
+            .filter(|child| child.scoped.is_some())
+        else {
+            return Err(Error::InvalidConfig(
+                "a scoped call control needs a scoped child".to_owned(),
+            ));
+        };
+        child.control = Some(control);
         Ok(self)
     }
 
@@ -176,27 +230,51 @@ impl HostSelfDispatcher<'_> {
         self.reader_child.as_ref()
     }
 
+    /// The live cutoff the bound scoped child's runner bound (FIX 8233), if
+    /// it bound one. The child's guest reads check it at each step.
+    pub(crate) fn scoped_call_control(&self) -> Option<&ScopedCallControl> {
+        self.reader_child.as_ref()?.control.as_ref()
+    }
+
     /// Whether the bound reader child's job is still active at the
     /// generation it was claimed at: a child its cutoff settled, or one
     /// claimed again since, reads nothing more. A scoped child (FIX 7507)
     /// reads and calls its ports only before its cutoff, not just until its
-    /// run's next await, and, when it borrowed its parent attempt's lease,
-    /// only while that lease holds (`scoped_parent_lease_holds`).
+    /// run's next await, its live cutoff included (FIX 8233), and, when it
+    /// borrowed its parent attempt's lease, only while that lease holds
+    /// (`scoped_parent_lease_holds`).
     pub(crate) fn reader_job_live(&self) -> Result<bool> {
+        Ok(self.reader_job_standing()?.is_ok())
+    }
+
+    /// [`Self::reader_job_live`], with the refusal of the check that failed
+    /// (FIX 8233): `reader_task_settled` for a job settled, claimed again or
+    /// past its cutoff, its live cutoff ([`ScopedCallControl`]) included,
+    /// and `scoped_child_parent_lease_lost` for a borrowed lease that no
+    /// longer holds.
+    pub(crate) fn reader_job_standing(&self) -> Result<std::result::Result<(), &'static str>> {
         let Some(child) = &self.reader_child else {
-            return Ok(false);
+            return Ok(Err(READER_TASK_SETTLED));
         };
         let Some(job) = self.storage.reader_job(child.task)?.filter(|job| {
             job.state == ReaderJobState::Active && job.generation == child.generation
         }) else {
-            return Ok(false);
+            return Ok(Err(READER_TASK_SETTLED));
         };
         if job.scoped_spec().is_some()
-            && crate::unix_millis_now() >= job.binding.child_cutoff_unix_ms
+            && (child
+                .control
+                .as_ref()
+                .is_some_and(|control| control.expired(Instant::now()))
+                || crate::unix_millis_now() >= job.binding.child_cutoff_unix_ms)
         {
-            return Ok(false);
+            return Ok(Err(READER_TASK_SETTLED));
         }
-        self.storage.scoped_parent_lease_holds(&job)
+        Ok(if self.storage.scoped_parent_lease_holds(&job)? {
+            Ok(())
+        } else {
+            Err(SCOPED_CHILD_PARENT_LEASE_LOST)
+        })
     }
 
     /// A bound reader child's refusal of `effect`, when it is one it may
@@ -275,6 +353,8 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::ReaderSpawn,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             })
         };
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
@@ -345,6 +425,8 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::ReaderReport,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             })
         };
         let Some(child) = self
@@ -357,6 +439,7 @@ impl HostSelfDispatcher<'_> {
         let Some(finding) = call.bound else {
             return Ok(failed("finding_not_own"));
         };
+        let reference = finding.reference()?;
         let reported = self.storage.report_reader_finding(
             call.task,
             child.generation,
@@ -370,7 +453,7 @@ impl HostSelfDispatcher<'_> {
         };
         Ok(SelfDispatchOutcome::ReaderReport(ReaderReportReceipt {
             task: call.task,
-            finding: finding.handle,
+            finding: reference,
             replay,
         }))
     }
@@ -394,6 +477,8 @@ impl HostSelfDispatcher<'_> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::TasksWaitSet,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             })
         };
         // FIX 4706: a wait on a world-privacy request, no children.

@@ -20,7 +20,9 @@ use crate::claim::ScopedReadActorKey;
 use crate::code_run::SessionHookDisposition;
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
 use crate::runtime_hooks::verb::RoomHookCall;
-use crate::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
+use crate::runtime_hooks::{
+    InvocationId, VerbCall, VerbCallScope, VerbHookPre, VerbHookStop, hook_class,
+};
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::validate_input;
 use crate::{EntityId, Result, WriteActor};
@@ -52,7 +54,7 @@ pub(crate) fn session_row_call(
         class: hook_class(actor.actor_class()),
         scope: key
             .room_turn()
-            .map(|turn| format!("room:{}", turn.room.to_hex())),
+            .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex()))),
         board_epoch: None,
         turn: None,
         domain: row_domain(verb),

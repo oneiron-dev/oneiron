@@ -11,7 +11,7 @@
 use rmpv::Value;
 
 use crate::Result;
-use crate::code_run::types::{SelfDispatchOutcome, SelfMemorySearchResult};
+use crate::code_run::types::{SelfDispatchOutcome, SelfMemorySearchResult, SessionHookDisposition};
 
 use super::super::support::{
     decode_array, entity_id_value, invalid_code_run_replay, map_get, request_map, str_value,
@@ -42,22 +42,39 @@ pub(super) fn memory_search_value(result: &SelfMemorySearchResult) -> Result<Val
             ),
         ),
     ];
-    if !result.hooks.is_empty() {
-        let hooks = serde_json::to_string(&result.hooks)
+    keep_hooks(&mut entries, &result.hooks)?;
+    Ok(request_map(entries))
+}
+
+/// `hooks` kept beside an outcome's own `entries` under [`HOOKS`], as their
+/// JSON; none when no hook ran (FIX 5425: a room's forwarded reads and
+/// writes keep theirs as its search does).
+pub(super) fn keep_hooks(
+    entries: &mut Vec<(&'static str, Value)>,
+    hooks: &[SessionHookDisposition],
+) -> Result<()> {
+    if !hooks.is_empty() {
+        let hooks = serde_json::to_string(hooks)
             .map_err(|_| invalid_code_run_replay("verb hook dispositions do not encode"))?;
         entries.push((HOOKS, Value::from(hooks)));
     }
-    Ok(request_map(entries))
+    Ok(())
+}
+
+/// The hooks an outcome's map `entries` kept under [`HOOKS`]; none when it
+/// kept none.
+pub(super) fn decode_hooks(entries: &[(Value, Value)]) -> Result<Vec<SessionHookDisposition>> {
+    match map_get(entries, HOOKS) {
+        Ok(hooks) => serde_json::from_str(str_value(hooks)?)
+            .map_err(|_| invalid_code_run_replay("invalid verb hook dispositions")),
+        Err(_) => Ok(Vec::new()),
+    }
 }
 
 /// A `memory_search` outcome the run's record kept, from its map `entries`.
 pub(super) fn decode_memory_search(entries: &[(Value, Value)]) -> Result<SelfDispatchOutcome> {
     let results = decode_array(map_get(entries, "results")?, decode_scored_entity)?;
-    let hooks = match map_get(entries, HOOKS) {
-        Ok(hooks) => serde_json::from_str(str_value(hooks)?)
-            .map_err(|_| invalid_code_run_replay("invalid verb hook dispositions"))?,
-        Err(_) => Vec::new(),
-    };
+    let hooks = decode_hooks(entries)?;
     Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
         query: str_value(map_get(entries, "query")?)?.to_owned(),
         results,

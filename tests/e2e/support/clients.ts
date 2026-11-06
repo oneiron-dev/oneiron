@@ -4,8 +4,8 @@ import { createPrivateKey, sign } from "node:crypto";
 import { blake3 } from "@noble/hashes/blake3";
 import { encode, decode } from "@msgpack/msgpack";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import type { ClaimInput, WitnessTurn, RecallOptions } from "oneiron";
-import { LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource } from "./run.ts";
+import type { WitnessTurn, RecallOptions } from "oneiron";
+import { BlockedDoor, LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource } from "./run.ts";
 import type { Artifacts, ProcessResult } from "./run.ts";
 import { requireAsset } from "./fixtures.ts";
 import type { BuildManifest } from "./fixtures.ts";
@@ -213,7 +213,7 @@ export class CliClient {
   }
   async json<T = unknown>(args: readonly string[], input?: unknown): Promise<T> {
     const result = await this.run(args,input === undefined ? undefined : JSON.stringify(input));
-    if (result.exitCode !== 0) throw new CliError(result);
+    if (result.exitCode !== 0) throw new CliError(result,"cli-json");
     return JSON.parse(result.stdout) as T;
   }
   /** Typed facade only. A designed verb without this typed call remains test.todo. */
@@ -221,22 +221,28 @@ export class CliClient {
     return this.json(["api","call",verb,"--data","-"],input);
   }
 }
+type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
 export class CliError extends Error {
   override name = "CliError";
-  constructor(readonly result: ProcessResult) { super(`CLI exited ${result.exitCode}`) }
+  constructor(readonly result: ProcessResult, readonly stage: CliStage = "cli") {
+    super(`CLI exited ${result.exitCode} at ${stage} (signal ${result.signal ?? "none"})`);
+  }
 }
 export type SdkOperation =
   | { readonly verb:"witness";readonly input:WitnessTurn }
-  | { readonly verb:"claimUpsert";readonly input:ClaimInput }
+  | { readonly verb:"claimUpsert";readonly input:FacadeInput<"vault.claims.upsert"> }
   | { readonly verb:"recall";readonly query:string;readonly options?:RecallOptions }
-  | { readonly verb:"receipts";readonly limit?:number };
+  | { readonly verb:"receipts";readonly limit?:number }
+  | { readonly verb:"selfActor" }
+  | { readonly verb:"neighbors";readonly input:FacadeInput<"vault.neighbors"> }
+  | { readonly verb:"get";readonly input:FacadeInput<"vault.get"> };
 export interface PythonWitnessTurn {
   readonly conversation_ref:string;readonly turn_ref?:string;readonly occurred_at?:number;
   readonly messages:readonly {readonly id?:string;readonly author:"user"|"companion"|"system";readonly message_type:string;readonly content:string;readonly order:number}[];
 }
 export type PythonSdkOperation =
   | {readonly verb:"witness";readonly input:PythonWitnessTurn}
-  | {readonly verb:"claimUpsert";readonly input:{readonly predicate:string;readonly subject_ref:string;readonly value:unknown;readonly confidence:number;readonly source:string;readonly world_ref?:string;readonly scope?:unknown}}
+  | {readonly verb:"claimUpsert";readonly input:FacadeInput<"vault.claims.upsert">}
   | {readonly verb:"recall";readonly query:string;readonly options?:{readonly effort?:string;readonly scope?:unknown;readonly limit?:number;readonly as_of?:number}}
   | {readonly verb:"receipts";readonly limit?:number};
 export type SdkTarget = {readonly mode:"remote";readonly url:string;readonly credential:string} |
@@ -255,12 +261,14 @@ try {
   const results=p.operations.map(o=>{try {
    let value;
    switch(o.verb){case 'witness':value=m.vault.witness(o.input);break;case 'claimUpsert':value=m.vault.claims.upsert(o.input);break;
-    case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;default:throw new Error('Unknown SDK operation')}
+    case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;
+    case 'selfActor':value=m.self.actor({});break;case 'neighbors':value=m.vault.neighbors(o.input);break;
+    case 'get':value=m.vault.get(o.input);break;default:throw new Error('Unknown SDK operation')}
    return {ok:true,value};
   }catch(e){return {ok:false,error:error(e)}}});
   process.stdout.write(JSON.stringify(results));
  }
-}catch(e){process.stdout.write(JSON.stringify({error:error(e)}));process.exitCode=1;}
+}catch(e){const failure=JSON.stringify({error:error(e)});process.stdout.write(failure);process.stderr.write(failure);process.exitCode=1;}
 `;
 const PY_DRIVER = String.raw`
 import json,sys
@@ -284,27 +292,29 @@ try:
   except Exception as e: results.append({'ok':False,'error':err(e)})
  json.dump(results,sys.stdout)
 except Exception as e:
- json.dump({'error':err(e)},sys.stdout);sys.exit(1)
+ failure={'error':err(e)};json.dump(failure,sys.stdout);json.dump(failure,sys.stderr);sys.exit(1)
 `;
 export class SdkProcessDriver {
-  constructor(readonly build:BuildManifest,readonly cwd:string,readonly env:Readonly<Record<string,string>>) {}
+  constructor(readonly build:BuildManifest,readonly cwd:string,readonly env:Readonly<Record<string,string>>,readonly artifacts?:Artifacts) {}
   async pair(link:string): Promise<{credential:string;pin:unknown}> {
     redactor.add(link);
     const result=await runProcess([requireAsset(this.build,"node"),"--input-type=module","-e",JS_DRIVER],
-      {cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),pair:link}),privateOutput:true,label:"sdk-pair"});
-    if(result.exitCode!==0) throw new CliError(result);
+      {cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),pair:link}),privateOutput:true,label:"sdk-pair",...(this.artifacts ? {artifacts:this.artifacts} : {})});
+    if(result.exitCode!==0) throw new CliError(result,"sdk-pair");
     const paired=JSON.parse(result.stdout) as {credential:string;pin:unknown};credentialParts(paired.credential);return paired;
   }
   /** Python inputs use the Python SDK's native snake_case fields; no harness casing conversion. */
   async run(language:"typescript"|"napi",target:SdkTarget,operations:readonly SdkOperation[]):Promise<SdkDriverResult>;
   async run(language:"python",target:SdkTarget,operations:readonly PythonSdkOperation[]):Promise<SdkDriverResult>;
   async run(language:"typescript"|"python"|"napi",target:SdkTarget,operations:readonly SdkOperation[] | readonly PythonSdkOperation[]):Promise<SdkDriverResult> {
+    if (language === "python") for (const id of ["python","python-wheel"])
+      if (!this.build.assets[id]) throw new BlockedDoor(`waits on pinned build asset ${id}`);
     if(target.mode==="embedded"&&(!isAbsolute(target.path)||resolve(target.path)===resolve(this.cwd,"vault")))
       throw new TypeError("Embedded SDK requires its own absolute vault path, never the served vault");
     if(target.mode==="remote") credentialParts(target.credential);
     const argv=language==="python" ? [requireAsset(this.build,"python"),"-c",PY_DRIVER] : [requireAsset(this.build,"node"),"--input-type=module","-e",JS_DRIVER];
-    const result=await runProcess(argv,{cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),target,operations}),privateOutput:true,label:`sdk-${language}`});
-    if(result.exitCode!==0) throw new CliError(result);
+    const result=await runProcess(argv,{cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),target,operations}),privateOutput:true,label:`sdk-${language}`,...(this.artifacts ? {artifacts:this.artifacts} : {})});
+    if(result.exitCode!==0) throw new CliError(result,`sdk-${language}`);
     return {process:result,results:JSON.parse(result.stdout) as SdkDriverResult["results"]};
   }
 }

@@ -1,13 +1,13 @@
-//! Markdown table and compact plaintext writers, plus the shared value-to-text
-//! rendering they use.
+//! Core half of `serialize::markdown_plaintext_format`: its store-layer items live in `oneiron_store::serialize::markdown_plaintext_format` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::HashSet;
-
-use serde_json::Value;
+pub(crate) use oneiron_store::serialize::markdown_plaintext_format::*;
 
 use super::group_labels::{group_name, group_title};
 use super::pack_entry::PreparedEntity;
 use super::types::GroupKey;
+use serde_json::Value;
+use std::collections::HashSet;
 
 pub(super) fn write_markdown_groups(
     out: &mut String,
@@ -133,34 +133,4 @@ fn collect_columns(rows: &[PreparedEntity]) -> Vec<String> {
     }
 
     columns
-}
-
-fn value_to_text(value: &Value, spaced_arrays: bool) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::Bool(v) => v.to_string(),
-        Value::Number(v) => v.to_string(),
-        Value::String(v) => v.clone(),
-        Value::Array(values) => {
-            let sep = if spaced_arrays { ", " } else { "," };
-            values
-                .iter()
-                .map(|value| value_to_text(value, spaced_arrays))
-                .collect::<Vec<_>>()
-                .join(sep)
-        }
-        Value::Object(_) => value_to_compact_string(value),
-    }
-}
-
-pub(super) fn value_to_compact_string(value: &Value) -> String {
-    serde_json::to_string(value).unwrap_or_default()
-}
-
-fn escape_markdown(value: &str) -> String {
-    value.replace('|', "\\|").replace('\n', "<br>")
-}
-
-fn escape_plaintext(value: &str) -> String {
-    value.replace('|', "\\|").replace('\n', "\\n")
 }

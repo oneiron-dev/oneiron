@@ -24,6 +24,27 @@ use super::publication_types::{
 // ---------------------------------------------------------------------------
 
 impl Vault {
+    /// Stages the stable projection's owner after its physical root is written
+    /// under the repository coordinator. The caller commits this row with
+    /// ENGINE_EXPORTS, independently of any publication's lifetime.
+    pub(in crate::origin) fn keep_engine_export_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_id: &EntityId,
+        oid: &GitOid,
+        revision: EntityId,
+        learned_at: u64,
+    ) -> Result<()> {
+        let key = keep_owner_key(
+            repo_id,
+            oid,
+            OriginKeepRefKind::EngineExport,
+            &revision.to_hex(),
+        );
+        KEEP_OWNER.put(&self.store, txn, &key, &learned_at.to_le_bytes())?;
+        Ok(())
+    }
+
     /// Pins one git object behind a physical keep-ref and one logical owner.
     ///
     /// Crate-local inherent impl in the feature module: `vault.rs` is never
@@ -69,8 +90,8 @@ impl Vault {
     /// The owner row goes first and the keep-ref second, for the same reason
     /// [`Vault::pin_origin_object`] writes them the other way round: an
     /// interrupted release leaves an unclaimed keep-ref, never a claim with no
-    /// root. Deletion happens ONLY when no publication, change, conflict,
-    /// recovery or snapshot owner still references the object.
+    /// root. Deletion happens ONLY when no logical owner still references
+    /// the object.
     pub fn unpin_origin_object(
         &self,
         git: &GitWire<'_>,
@@ -277,7 +298,7 @@ impl Vault {
     ///
     /// `None` includes every repository. The list is whole: the scan never
     /// refuses for its length, and past its threshold row it raises an
-    /// [`ScanCheck`](crate::scan_check::ScanCheck).
+    /// [`ScanCheck`](crate::store::ScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.

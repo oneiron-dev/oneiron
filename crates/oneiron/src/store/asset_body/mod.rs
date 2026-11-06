@@ -52,10 +52,11 @@ use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
 use crate::error::{Error, Result};
 use crate::provenance::body::{
-    owned_body_in_txn, publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
+    publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
+use crate::store::owned_body::owned_body_in_txn;
 
 /// FIX 3677 (CALLS "ASSET inline body bound"): an opaque ASSET body longer
 /// than this lives in a body file; a body this long or shorter, and every
@@ -83,14 +84,16 @@ pub(crate) enum AssetFileKind {
 }
 
 impl AssetFileKind {
-    const fn code(self) -> u8 {
+    /// The kind's byte, in a manifest and in a sync body reference alike.
+    pub(crate) const fn code(self) -> u8 {
         match self {
             Self::Opaque => 1,
             Self::Record => 2,
         }
     }
 
-    const fn from_code(code: u8) -> Option<Self> {
+    /// The kind a [`Self::code`] byte names.
+    pub(crate) const fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
@@ -292,10 +295,19 @@ pub(crate) fn asset_file_in_txn(
     id: &EntityId,
     body: &[u8],
 ) -> Result<Option<AssetFileManifest>> {
-    let Some(held) = owned_body_in_txn(store, txn, id, &current_occurrence(id)?)? else {
+    let occurrence = current_occurrence(id)?;
+    let Some(held) = owned_body_in_txn(store, txn, id, &occurrence)? else {
         return Ok(None);
     };
     if body.is_empty() {
+        return Ok(None);
+    }
+    // A room's inline row does not inherit the base row's file descriptor.
+    if store.entities().stages_row(id.as_bytes())
+        && !store
+            .vault_meta()
+            .stages_row(&super::owned_body::BODY.key_bytes(&(*id, occurrence)))
+    {
         return Ok(None);
     }
     let manifest =

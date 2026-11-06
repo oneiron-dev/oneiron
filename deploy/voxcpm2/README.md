@@ -59,6 +59,15 @@ when that makes it smaller. A codec the worker cannot read is answered 415;
 the engine then sends that upload again, plain, and sends plain until it
 restarts. `VoxCpm2HttpQueue` sends plain.
 
+Beside its warm target, `/ready` names whether the worker reads the framed
+wire: its answer is the worker's target pins plus `transcript_frame`, and
+`target()` itself is unchanged. A `/render` upload is a 4-byte big-endian
+JSON length, the JSON header, then — only when the header names
+`transcript_bytes` — exactly that many UTF-8 bytes of reference transcript
+ahead of the WAV; a header without the field keeps the inline transcript.
+Readiness capabilities are not warm identity: each render still matches and
+echoes the request's target against the exact pins `/ready` named.
+
 The CPU-only harness uses an injected fake model to prove request framing,
 ref forwarding, PCM conversion, and target metadata. It is **not** a GPU
 latency/quality or owner-ear verdict. Run: `uv run --with numpy python3 -m unittest
@@ -106,8 +115,11 @@ hashes every pinned file again and loads that directory alone; nothing is
 downloaded. It listens on its provider's loopback `base_url`, takes the
 provider's `key_env` credential (passed to it under that name alone), and
 renders one at a time. The supervisor counts it ready only after one
-actual render of a fixed text from a synthetic silent reference, whose
-header names this launch; `/ready` alone never qualifies. It restarts it
+actual render of a fixed text from a synthetic tone reference (FIX 11374:
+a silent clip cannot tell a rendered answer from a dropped one), whose
+header names this launch; `/ready` alone never qualifies. A failed render
+with no contradicting body retries the next probe instead of parking the
+worker until its config changes. It restarts it
 after a crash, and stops it when idle only when `idle_stop_secs` asks.
 
 ```toml
@@ -130,9 +142,14 @@ ONEIRON_VOICE_POLICY_FILE = "<host-home>/oneiron-config/voice-policy.json"
 rungs = ["voice:voxcpm2"]
 ```
 
-The row's `env` names the serving-policy file and nothing else; it holds
-the vault's resolved ceiling, as above. A row names no `args`, `draft` or
-`server`. `mode = "external"` keeps a worker you run yourself (this unit,
+The row names the serving-policy file, which holds the vault's resolved
+ceiling, either as `policy_file` (FIX 11377) or, as above, in `env` under
+`ONEIRON_VOICE_POLICY_FILE`; naming both at once is an error. `env` names
+nothing else. The worker refuses to start when the file's
+`max_header_bytes` cannot fit a reply with the required warm identity,
+valid narrowed limits and minimum nonempty reference-identity fields.
+
+A row names no `args`, `draft` or `server`. `mode = "external"` keeps a worker you run yourself (this unit,
 say): it is probed with the same one render and never started or stopped.
 It stays unverified unless `expected.model` and `expected.runtime` pin it
 and its answer names them; its calls go to it either way. Each render's

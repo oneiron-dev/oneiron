@@ -623,8 +623,9 @@ fn skill_in_force(
 /// The manifest's row in force: present, read by a resolved policy that is not fail-closed,
 /// and among its contributors, trusted; each revision its body's digest (FIX 7344). It is in
 /// force from the second this vault first trusted that body, which a rewrite of the same body
-/// keeps (FIX 10936); the row's own time moves with any such rewrite, so it is never read. A
-/// stamp with no time (the bootstrap seed's) counts from the pass that first proves it.
+/// keeps (FIX 10936); the row's own time moves with any such rewrite, so it is never read. The
+/// bootstrap seed records its first-trusted second (FIX 11770). A stamp with no time counts
+/// from the pass that first proves it.
 fn manifest_in_force(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

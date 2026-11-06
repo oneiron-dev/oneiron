@@ -56,7 +56,8 @@ pub trait HookBodyRuntime: Send + Sync {
 pub struct HookBodyRun {
     /// The one outcome the body emitted, as JSON.
     pub outcome_json: String,
-    pub fuel_used: u64,
+    /// Fuel the runtime measured; `None` when no count was available.
+    pub fuel_used: Option<u64>,
     /// Reads, verdicts and the emit.
     pub host_calls: u32,
 }

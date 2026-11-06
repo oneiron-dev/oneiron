@@ -89,9 +89,10 @@ impl Vault {
 
     /// The GitPush grants a revoke withdrew, in id order, each as its signed
     /// mint carried it: every GitPush mint act the authority fold counted
-    /// whose grant a counted revoke names, the owner's own revoke act or the
+    /// whose grant a counted revoke names, the owner's own revoke act, the
     /// host's signed withdrawal (`SlipGrantRevoke`) a membership change
-    /// logged. An entry whose body this vault no longer holds (an adopted
+    /// logged, or the carrier-signed record of a membership change no host
+    /// issuer signed (FIX 12335). An entry whose body this vault no longer holds (an adopted
     /// checkpoint covers it) names none.
     fn revoked_git_push_grants_in_txn(
         &self,
@@ -114,6 +115,14 @@ impl Vault {
             let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
                 continue;
             };
+            // A membership change no host issuer signed, signed later by its
+            // carrier (FIX 12335), withdraws each Grant it names.
+            if let AuthorityOp::MembershipExecution(record) = &entry.op {
+                if fold.valid_entries.contains(&authority_entry_hash(&entry)?) {
+                    revoked.extend(record.withdrawn_grants.iter().copied());
+                }
+                continue;
+            }
             let named = match &entry.op {
                 AuthorityOp::AgentGrantAct(record) => match &record.change {
                     AgentGrantChange::Mint {
@@ -136,7 +145,7 @@ impl Vault {
                         }),
                     )),
                     AgentGrantChange::Mint { .. } => None,
-                    AgentGrantChange::Revoke => Some((record.grant, None)),
+                    AgentGrantChange::Revoke { .. } => Some((record.grant, None)),
                 },
                 AuthorityOp::SlipGrantRevoke { grant_ref } => Some((*grant_ref, None)),
                 _ => None,

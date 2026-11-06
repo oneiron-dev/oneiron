@@ -40,7 +40,7 @@ pub use self::calibration::{
 };
 mod causes;
 pub use self::causes::AttributionCauseRecord;
-pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_entity_in_txn};
+pub(crate) use self::causes::attempt_attribution_causes;
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 pub(crate) mod health_review;
@@ -57,33 +57,38 @@ pub(crate) use judge_supersession::{
     judgment_displaced_in_txn, judgment_judge_in_txn,
 };
 mod contribution;
+pub(crate) use contribution::record_contribution_pair_in_txn;
 pub use contribution::{
     ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
     contributed, contribution_check_candidates_after, record_contribution_pair,
 };
 mod contribution_admission;
-pub(crate) use contribution_admission::erase_contribution_checks_in_txn;
 pub use contribution_admission::{ContributionRecord, UnmatchedReason};
+pub(crate) use contribution_admission::{
+    erase_contribution_checks_in_txn, rebind_contribution_fork_receipts_in_txn,
+};
 mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
+pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
-pub(crate) use credit_join::standing_credit_observation_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
+pub(crate) use credit_join::{StandingCreditObservation, standing_credit_observation_in_txn};
 mod decay_fit;
 mod late_credit;
+mod outcome_source;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
 pub(crate) use late_credit::late_credit_receipt_in_txn;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };
+pub use outcome_source::{OutcomeWitness, WitnessedPackOutcome, stored_anchored_outcome};
 pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
 mod positive;
-pub(crate) use self::positive::erase_positive_proposals_in_txn;
 pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
@@ -97,10 +102,7 @@ pub(crate) use oneiron_skill_attribution::row_ids::{
     attribution_judgment_row_ids, edit_proposal_row_ids,
 };
 mod skill_erase;
-pub(crate) use self::skill_erase::{
-    erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
-    erase_scan_in_txn,
-};
+pub(crate) use self::skill_erase::erase_scan_in_txn;
 mod split;
 pub(crate) use self::split::{
     classify_split_traced, measure_split_notes, settled_split, split_from_verdicts, unclear_floor,
@@ -153,23 +155,26 @@ mod host;
 pub use host::{
     bind_agent_run_attribution, bind_dreamer_weave_attribution, witness_agent_run_close,
 };
-pub(crate) use host::{run_executor_model, run_executor_model_in_txn};
+pub(crate) use host::{
+    run_executor_model, run_executor_model_in_txn, witness_agent_run_close_in_txn,
+};
 mod judge_binding;
-pub(crate) use judge_binding::finalize_run_judge_in_txn;
+pub(crate) use judge_binding::{finalize_run_judge_in_txn, pinned_judge_model};
 mod derivation_witness;
+mod queue_revision;
 pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
 };
+pub(crate) use queue_revision::note_queue_revision_derivations_in_txn;
 mod site_exposure;
-pub(crate) use site_exposure::erase_site_exposure_in_txn;
 pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;
 pub(crate) use run_writes::{
     RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
-    run_derivations,
+    run_derivations, run_write_token_from_lease,
 };
-pub use run_writes::{RunWriteToken, with_run_write_token};
+pub use run_writes::{RunWriteToken, run_write_token_of_origin, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

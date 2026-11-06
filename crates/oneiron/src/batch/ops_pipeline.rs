@@ -80,9 +80,10 @@ impl BaseWriteOrigin<'_> {
 /// separate table that could drift: it is this function's own exhaustive match
 /// over [`BatchOp`], so a new id-bearing variant fails to compile until it names
 /// its refs here. Raw base CLAIM puts hide their subject/world refs inside an
-/// opaque body, so they decode through the same landed decoder their apply path
-/// uses ([`crate::claim::validate_claim_body_and_decode`]) and an undecodable
-/// body fails closed.
+/// opaque body, so they envelope-decode through
+/// [`crate::claim::decode_claim_body`] for ref enumeration, and an undecodable
+/// body fails closed. Full class validation runs in the actual write transaction
+/// at `admit_claim_put`, using its synchronized descriptor rather than a seed.
 ///
 /// Membership is read from live registry state INSIDE the transaction, at the
 /// moment the op is decoded — there is no preflight pass and no membership-epoch
@@ -168,8 +169,7 @@ pub(super) fn check_decode_point_taint_guard(
             // cannot see — the ones below, which materialize nothing and so
             // never reach it.
             if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                let Ok(body) =
-                    crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)
+                let Ok(body) = crate::claim::decode_claim_body(data, *allow_reserved_predicate)
                 else {
                     // Undecodable body: its refs cannot be enumerated, so
                     // membership cannot be disproved. FAIL CLOSED with the
@@ -296,9 +296,10 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// jobs, reconciles the identity-topology fold across the whole ledger, and
 /// schedules legacy HNSW rebuilds off the base `vectors` DB. Threading a
 /// target through it would put a live `if session { skip }` in front of each —
-/// four chances for a later edit to leak a room into base. Here the leak is
-/// structurally impossible instead: this function has no access to a `Store`,
-/// so there is no base row it *could* write.
+/// four chances for a later edit to leak a room into base. Here content and
+/// indexes stage only through the session view. CLAIM origin-write ordering
+/// alone observes the canonical scalar floor in the same base transaction;
+/// it publishes none of the room's content.
 ///
 /// What it shares with base is exactly what must not drift — the row STAGING
 /// (`stage_entity_body_row`, `stage_entity_index_rows`, `stage_edge_rows`,
@@ -400,12 +401,13 @@ pub(crate) fn apply_ops_session(
             ));
         }
     }
-    for entry in entries {
-        match &entry.op {
+    for mut entry in entries {
+        match &mut entry.op {
             BatchOp::Put {
                 id,
                 entity_type,
                 data,
+                row_version,
                 allow_maintenance,
                 allow_reserved_predicate,
                 ..
@@ -447,7 +449,9 @@ pub(crate) fn apply_ops_session(
                 // divergent retry is refused before any overlay mutation or
                 // journal entry stages.
                 if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-                    crate::gate::validate_canonical_witness_message_body(data)?;
+                    crate::store::witness_message_body::validate_canonical_witness_message_body(
+                        data,
+                    )?;
                 }
                 // Every row keeps its type, as on base (`apply_put`, which
                 // reads the old row wiped too): promote would refuse the
@@ -477,6 +481,14 @@ pub(crate) fn apply_ops_session(
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).
+                let version = crate::ports::claim_order::for_put_in_txn(
+                    view.read(),
+                    wtxn,
+                    id,
+                    (*entity_type, entry.occurred, entry.learned_at),
+                    data,
+                    *row_version,
+                )?;
                 stage_entity_body_row(
                     view,
                     wtxn,
@@ -484,8 +496,10 @@ pub(crate) fn apply_ops_session(
                     *entity_type,
                     entry.occurred,
                     entry.learned_at,
+                    version,
                     data,
                 )?;
+                *row_version = Some(version);
                 stage_entity_index_rows(
                     view,
                     wtxn,

@@ -23,7 +23,9 @@ mod staging;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use oneiron::sync::transport::{TAG_CODEC, WireCodecs, decode_codec_frame, encode_codec_frame};
+use oneiron::sync::transport::{
+    LinkBytes, TAG_CODEC, WireCodecs, decode_codec_frame, encode_codec_frame,
+};
 use oneiron_mesh_transport::{MeshConnection, MeshError};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -42,6 +44,43 @@ const PIECE: usize = (1 << 20) - 4096;
 const INLINE: usize = 256 * 1024;
 /// The transport's message cap, which a codec frame also decodes to at most.
 const MESSAGE_MAX: usize = 1 << 20;
+
+// LinkBytes accounting labels only; these are never encoded on the wire.
+const MESH_REQ_PUT: u8 = 41;
+const MESH_REQ_GET: u8 = 42;
+const MESH_REQ_GENERATE: u8 = 43;
+const MESH_REQ_STREAM: u8 = 44;
+const MESH_REQ_NEXT: u8 = 45;
+const MESH_REQ_CANCEL: u8 = 46;
+const MESH_REQ_CATALOG: u8 = 47;
+const MESH_REP_PUT: u8 = 48;
+const MESH_REP_PIECE: u8 = 49;
+const MESH_REP_GENERATED: u8 = 50;
+const MESH_REP_STARTED: u8 = 51;
+const MESH_REP_EVENTS: u8 = 52;
+const MESH_REP_CANCELLED: u8 = 53;
+const MESH_REP_CATALOG: u8 = 54;
+const MESH_REP_REFUSED: u8 = 55;
+const MESH_UNDECODABLE: u8 = 56;
+
+/// One dialled connection and its counters, retained through all its streams.
+struct CountedConnection {
+    inner: Box<dyn MeshConnection>,
+    bytes: LinkBytes,
+}
+
+impl CountedConnection {
+    fn new(inner: Box<dyn MeshConnection>) -> Self {
+        Self {
+            inner,
+            bytes: LinkBytes::default(),
+        }
+    }
+
+    fn close(&self) {
+        self.inner.close();
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +127,35 @@ enum Reply {
     Refused(String),
 }
 
+impl Request {
+    fn mesh_tag(&self) -> u8 {
+        match self {
+            Self::Put { .. } => MESH_REQ_PUT,
+            Self::Get { .. } => MESH_REQ_GET,
+            Self::Generate { .. } => MESH_REQ_GENERATE,
+            Self::Stream { .. } => MESH_REQ_STREAM,
+            Self::Next { .. } => MESH_REQ_NEXT,
+            Self::Cancel { .. } => MESH_REQ_CANCEL,
+            Self::Catalog => MESH_REQ_CATALOG,
+        }
+    }
+}
+
+impl Reply {
+    fn mesh_tag(&self) -> u8 {
+        match self {
+            Self::Put => MESH_REP_PUT,
+            Self::Piece(_) => MESH_REP_PIECE,
+            Self::Generated(_) => MESH_REP_GENERATED,
+            Self::Started(_) => MESH_REP_STARTED,
+            Self::Events { .. } => MESH_REP_EVENTS,
+            Self::Cancelled => MESH_REP_CANCELLED,
+            Self::Catalog(_) => MESH_REP_CATALOG,
+            Self::Refused(_) => MESH_REP_REFUSED,
+        }
+    }
+}
+
 /// A body, inline or staged by hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,20 +181,36 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, MeshError> {
 /// One message as it crosses (ARCH-0081 §7): its MessagePack bytes, in the
 /// /ws codec frame when that is smaller. MessagePack never starts with the
 /// frame's tag, so a plain message needs no mark.
-fn seal<T: Serialize>(message: &T) -> Result<Vec<u8>, MeshError> {
+fn seal<T: Serialize>(message: &T, tag: u8, counts: &LinkBytes) -> Result<Vec<u8>, MeshError> {
     let bytes = encode(message)?;
-    Ok(encode_codec_frame(&bytes, WireCodecs::OURS).unwrap_or(bytes))
+    let raw = bytes.len();
+    let wire = encode_codec_frame(&bytes, WireCodecs::OURS).unwrap_or(bytes);
+    counts.record_sent(tag, raw, wire.len());
+    Ok(wire)
 }
 
 /// One message as it arrived, a codec frame decoded to at most
 /// [`MESSAGE_MAX`] first.
-fn unseal<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, MeshError> {
-    if bytes.first() != Some(&TAG_CODEC) {
-        return decode(bytes);
+fn unseal<T: DeserializeOwned>(
+    bytes: &[u8],
+    counts: &LinkBytes,
+    tag_of: fn(&T) -> u8,
+) -> Result<T, MeshError> {
+    let inner = if bytes.first() == Some(&TAG_CODEC) {
+        Some(
+            decode_codec_frame(bytes, MESSAGE_MAX)
+                .map_err(|err| MeshError::Io(format!("llm mesh codec: {err}")))?,
+        )
+    } else {
+        None
+    };
+    let raw = inner.as_deref().unwrap_or(bytes);
+    let decoded = decode(raw);
+    if !raw.is_empty() {
+        let tag = decoded.as_ref().map_or(MESH_UNDECODABLE, tag_of);
+        counts.record_received(tag, raw.len(), bytes.len());
     }
-    let inner = decode_codec_frame(bytes, MESSAGE_MAX)
-        .map_err(|err| MeshError::Io(format!("llm mesh codec: {err}")))?;
-    decode(&inner)
+    decoded
 }
 
 fn hash(bytes: &[u8]) -> [u8; 32] {
@@ -134,10 +218,12 @@ fn hash(bytes: &[u8]) -> [u8; 32] {
 }
 
 /// One message out on a fresh stream, one back.
-async fn exchange(conn: &dyn MeshConnection, request: &Request) -> Result<Reply, MeshError> {
-    let mut stream = conn.open_stream().await?;
-    stream.send(&seal(request)?).await?;
-    unseal(&stream.recv().await?)
+async fn exchange(conn: &CountedConnection, request: &Request) -> Result<Reply, MeshError> {
+    let mut stream = conn.inner.open_stream().await?;
+    stream
+        .send(&seal(request, request.mesh_tag(), &conn.bytes)?)
+        .await?;
+    unseal(&stream.recv().await?, &conn.bytes, Reply::mesh_tag)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -145,7 +231,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Stages a body on the serving node, unless it rides inline.
-async fn put(conn: &dyn MeshConnection, bytes: Vec<u8>) -> Result<Carried, MeshError> {
+async fn put(conn: &CountedConnection, bytes: Vec<u8>) -> Result<Carried, MeshError> {
     if bytes.len() <= INLINE {
         return Ok(Carried::Inline(bytes));
     }
@@ -173,7 +259,7 @@ async fn put(conn: &dyn MeshConnection, bytes: Vec<u8>) -> Result<Carried, MeshE
 /// hash, and booked on `budget` until its holder lets it go (FIX 8619): its
 /// whole room before its first piece, waiting its turn, however long it is.
 async fn take(
-    conn: &dyn MeshConnection,
+    conn: &CountedConnection,
     carried: Carried,
     budget: &StagingBudget,
 ) -> Result<staging::BookedBody, MeshError> {

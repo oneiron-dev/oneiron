@@ -120,6 +120,27 @@ fn digest_instances_in_txn<D: SideTableDbs>(
     Ok(instances)
 }
 
+/// The governed instances that exist before an erase releases its body
+/// references: current and remembered digest instances, plus actual inline
+/// ASSET bindings. Unlike ERASED notes, this inventory precedes the erase.
+pub(crate) fn governed_body_instances_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digests: &[[u8; 32]],
+    inline_assets: &[EntityId],
+) -> Result<BTreeSet<[u8; 16]>> {
+    let mut instances = BTreeSet::new();
+    for digest in digests {
+        instances.extend(digest_instances_in_txn(store, txn, digest)?);
+    }
+    for asset in inline_assets {
+        if let Some(instance) = INLINE_ASSETS.get(store, txn, asset)? {
+            instances.insert(instance);
+        }
+    }
+    Ok(instances)
+}
+
 /// Drops the remembered `instances` of `digest`, each retired now.
 fn forget_remembered_in_txn<D: SideTableDbs>(
     dbs: &D,
@@ -177,7 +198,7 @@ pub(crate) fn erase_bodies_for_owner_in_txn(
         // Every instance the digest was bound under, so an inline/file
         // switch or a release leaves no older image's copy behind (FIX 6023).
         let instances = digest_instances_in_txn(store, wtxn, digest)?;
-        if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
+        if crate::store::owned_body::digest_is_held_in_txn(store, wtxn, digest)? {
             for instance in &instances {
                 ERASE_PENDING.put(store, wtxn, instance, digest)?;
                 notes.note(store, wtxn, erase_owner, instance)?;

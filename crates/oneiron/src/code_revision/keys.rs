@@ -8,9 +8,7 @@ use super::types::{
     CodeRevision, CodeRevisionFork, CodeRevisionFrontierRecord, CodeRevisionIntegrityRecord,
 };
 
-/// Finalized code-revision row (hand-rolled MessagePack map). Key: revision id.
-pub(super) const RECORDS: SideTable<EntityId, CodeRevision, Raw> =
-    SideTable::new(&side_table::CODE_REVISION_RECORD);
+pub(super) use crate::store::code_revision_record::tables::RECORDS;
 
 /// Recorded code-revision fork/branch row. Key: fork session id.
 pub(super) const FORKS: SideTable<EntityId, CodeRevisionFork, Raw> =

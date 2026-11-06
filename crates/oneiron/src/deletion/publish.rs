@@ -200,10 +200,7 @@ impl Vault {
         use crate::store::window_rows::CarrierRemoval;
         use crate::sync::bridge::with_deletion_tombstone_observer_a_suppressed;
         use crate::sync::schema::create_window_doc;
-        use crate::sync::window::{
-            apply_tombstone_to_window_doc, load_window_from_state, mark_removed_carriers_first,
-            merge_persisted_state_into_doc,
-        };
+        use crate::sync::window::{load_window_from_state, merge_persisted_state_into_doc};
         use crate::window_key::WindowKey;
         use loro::CommitOptions;
 
@@ -258,7 +255,7 @@ impl Vault {
                 // Marked before the publish txn opens, which LMDB cannot nest:
                 // a failed publish keeps the mutated live doc, and a later
                 // persist would make its removal durable without the mark.
-                mark_removed_carriers_first(
+                self.store.sync_hooks.mark_removed_carriers_first(
                     self,
                     CarrierRemoval::LocalPublication,
                     &entity_carriers(&window.doc, &[*id]),
@@ -276,7 +273,11 @@ impl Vault {
                 let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
                         *doc_mutated = true;
-                        apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
+                        self.store.sync_hooks.apply_tombstone_to_window_doc(
+                            &window.doc,
+                            id,
+                            &value.encode(),
+                        )?;
                         window
                             .doc
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
@@ -338,7 +339,7 @@ impl Vault {
             gate_decision.map(|decision| decision.decision_id),
         );
         super::tombstone_scope::capture_deleted_scope(self, id, value);
-        mark_removed_carriers_first(
+        self.store.sync_hooks.mark_removed_carriers_first(
             self,
             CarrierRemoval::LocalPublication,
             &entity_carriers(&doc, &[*id]),
@@ -356,7 +357,9 @@ impl Vault {
             due,
         )?;
         let vv_before = doc.oplog_vv();
-        apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
+        self.store
+            .sync_hooks
+            .apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
@@ -413,6 +416,12 @@ impl Vault {
         // FIX 10466: the host's live snapshot copies that may depend on an
         // erased id go too, whatever the build's features.
         self.inference_snapshots_erased(ids);
+        // FIX 14976: an erase that reached a drafter returned its binding to
+        // stock in its own transaction; the serving host now drops the
+        // plaintext and restarts its worker with stock.
+        if !ids.is_empty() {
+            self.notify_drafter_serving();
+        }
         #[cfg(feature = "sync")]
         {
             let manager = self
@@ -543,7 +552,9 @@ impl Vault {
                         .delete_guards
                         .reject_ruling_delete(&self.store, &wtxn, id)
                 })
-                .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
+                .and_then(|()| {
+                    crate::store::task_authority_guard::reject_fact_delete(&self.store, &wtxn, id)
+                })
                 .and_then(|()| {
                     self.store
                         .delete_guards
@@ -646,7 +657,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     fn window_update_keys(&self, window_key: &crate::window_key::WindowKey) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut count = crate::scan_check::ScanCount::start_at(
+        let mut count = crate::store::scan_count::ScanCount::start_at(
             crate::store::EngineScan::SyncPrefixRows,
             window_key.as_str().as_bytes(),
             crate::vault::MAX_SYNC_STATE_KEYS as u64,
@@ -790,6 +801,8 @@ impl Vault {
                 decision,
                 id.as_bytes(),
                 value.reason.wire_byte(),
+                gate.and_then(GatedDeletion::claimed_authority_act)
+                    .map(|act| *act.as_bytes()),
             )
         })?;
         // The staging txn has COMMITTED and dropped its snapshot here — the
@@ -826,7 +839,9 @@ impl Vault {
             persistence.version_vector,
         )?;
         if persistence.owes_compaction {
-            crate::sweep::owed::owe_window_compaction_in_txn(self, wtxn, window_key)?;
+            crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
+                self, wtxn, window_key,
+            )?;
         }
         if is_hard {
             // ARCH-0038 carrier 15: pending `q:` rows for this window
@@ -865,7 +880,7 @@ impl Vault {
                 window_key.as_str(),
                 update.as_bytes(),
             )?;
-            crate::sync::queue::push_delete_bearing_in_txn(
+            self.store.sync_hooks.push_delete_bearing_in_txn(
                 self,
                 wtxn,
                 window_key.as_str(),

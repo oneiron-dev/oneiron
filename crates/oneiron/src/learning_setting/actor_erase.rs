@@ -32,6 +32,7 @@ pub(crate) fn erase_setting_actor_in_txn(
     for (key, mut row) in SETTING.scan(&vault.store, wtxn)? {
         if row.by == hex {
             row.by = ERASED_CALL_IDENTITY.to_owned();
+            row.witness = None;
             rows.push((key, row));
         }
     }

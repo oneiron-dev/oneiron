@@ -1,4 +1,5 @@
 use super::*;
+use crate::skill_hub::SkillHubTrustTier;
 use crate::{error::ErrorKind, skill::SkillLifecycle};
 
 #[test]
