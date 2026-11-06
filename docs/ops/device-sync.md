@@ -306,7 +306,8 @@ still required to reopen it after restart.
 - Not yet built:
   - binding mesh addresses: no command pairs the home and this machine on the mesh yet, so a
     machine dials the home at `home_url`;
-  - bootstrapping a fresh vault from the home, rather than a copy of it;
+  - automatic personal-vault device-sync bootstrap from the home (the native accepted-member
+    target bootstrap above is separate);
   - moving to a new home when the election changes;
   - the apps.
 
