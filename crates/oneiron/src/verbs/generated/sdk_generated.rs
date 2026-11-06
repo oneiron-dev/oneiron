@@ -31353,7 +31353,7 @@ pub fn vault_campaign_held(
     crate::task_verb::sdk::campaign_enrollment_held(
         memory.vault(),
         &memory.embedded_owner("vault.campaign.held")?,
-        input,
+        _input,
     )
 }
 pub fn vault_campaign_approve_once(
