@@ -9,9 +9,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod documents;
 mod entity_documents;
+mod manifest;
 mod window_rows;
 pub(super) use documents::DocumentRows;
 pub(super) use entity_documents::EntityDocumentRows;
+pub(super) use manifest::ManifestValidation;
 pub(super) use window_rows::WindowRows;
 
 /// Drain the NOTE-only validator for native document capture callers.
@@ -97,91 +99,6 @@ pub(crate) fn trusted_soft_addressing_edge(
         ));
     }
     Ok(true)
-}
-
-pub(super) fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
-    if crate::deletion::parse_window_label(&snapshot.window).is_none() {
-        return Err(invalid("window key"));
-    }
-    if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
-        || snapshot.schema_manifest.container_schema_version != 3
-        || snapshot.schema_manifest.loro_version.is_empty()
-    {
-        return Err(invalid("unsupported schema manifest"));
-    }
-    strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
-    strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
-    strict(
-        snapshot
-            .custody_transitions
-            .iter()
-            .map(|row| (row.id, row.piece)),
-    )?;
-    strict(snapshot.room_turns.iter().map(|row| row.key.as_str()))?;
-    for row in &snapshot.room_turns {
-        if !crate::room_codec::carrier_parts::is_part_key(&row.key) {
-            super::canonical::parse_id(&row.key)?;
-        }
-    }
-    strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
-    strict(snapshot.document_pins.iter().map(|row| row.key.as_str()))?;
-    strict(snapshot.peer_origins.iter().map(|row| row.id))?;
-    // Custody transitions ride base windows only (OF-422).
-    if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
-        return Err(invalid("custody transition in a world window"));
-    }
-    // Room turn rows ride base windows only (OF-522).
-    if snapshot.window.contains('@') && !snapshot.room_turns.is_empty() {
-        return Err(invalid("room turn row in a world window"));
-    }
-    // Room side rows too (FIX 1794).
-    if snapshot.window.contains('@') && !snapshot.room_facts.is_empty() {
-        return Err(invalid("room side row in a world window"));
-    }
-    // And document quote pins (FIX 853).
-    if snapshot.window.contains('@') && !snapshot.document_pins.is_empty() {
-        return Err(invalid("document pin in a world window"));
-    }
-    strict(
-        snapshot
-            .base_edges
-            .iter()
-            .map(|row| (row.source, row.kind, row.target)),
-    )?;
-    strict(snapshot.tombstones.iter().map(|row| row.id))?;
-    strict(snapshot.suppressed_tasks.iter())?;
-    for task in &snapshot.suppressed_tasks {
-        let held = snapshot
-            .entity_blobs
-            .binary_search_by_key(task, |row| row.id)
-            .ok()
-            .and_then(|at| EntityMetadataHeader::parse(&snapshot.entity_blobs[at].blob));
-        if held.is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TASK) {
-            return Err(invalid("suppressed task outside the window"));
-        }
-    }
-    // A peer origin names a row the window holds, by the digest of its whole
-    // blob (FIX 4550): never an absent row's, nor an earlier body's.
-    for origin in &snapshot.peer_origins {
-        let held = snapshot
-            .entity_blobs
-            .binary_search_by_key(&origin.id, |row| row.id)
-            .ok()
-            .map(|at| *blake3::hash(&snapshot.entity_blobs[at].blob).as_bytes());
-        if held != Some(origin.digest) {
-            return Err(invalid("peer origin outside the window"));
-        }
-    }
-    strict(
-        snapshot
-            .container_manifests
-            .iter()
-            .map(|row| row.container_id.as_str()),
-    )?;
-    if snapshot.container_manifests != snapshot.expected_containers() {
-        return Err(invalid("container manifest coverage"));
-    }
-    Ok(())
 }
 
 /// A document pointer in a raw entity row MUST have its value in the artifact.
