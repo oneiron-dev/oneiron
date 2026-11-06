@@ -462,6 +462,13 @@ pub(super) async fn handle_window_sync(
             // The machine this own-device socket proved sent them: their MESSAGE rows
             // take the own-device lane as they land (FIX 12112).
             let origin = format!("conn:{conn_id}");
+            let positions = oneiron::sync::prepare_own_device_push_positions(
+                server.vault(),
+                conn_state.peer_machine(server.vault()),
+                &key,
+                &doc,
+                update,
+            );
             let imported = match oneiron::sync::with_own_device_push(
                 server.vault(),
                 conn_state.peer_machine(server.vault()),
@@ -477,6 +484,12 @@ pub(super) async fn handle_window_sync(
                     return Err(ProtocolError::LoroImport(format!("{e}")));
                 }
             };
+            if imported.pending.is_none()
+                && let Some(positions) = positions
+                && let Err(error) = positions.finish(server.vault(), &doc)
+            {
+                tracing::warn!(%error, "optional own-device position import did not settle");
+            }
 
             // Each socket's delivery judges the update for the machine it
             // serves, so a private world's window reaches only the machines
