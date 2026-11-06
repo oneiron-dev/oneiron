@@ -288,7 +288,7 @@ pub(crate) async fn send_seat_model(
         body,
     );
     let Some(offer) = offer else {
-        return Err(SeatModelRefusal::Denied(meter.refuse_unoffered(&model)));
+        return Err(meter.refuse_unoffered(&model));
     };
     let mut call = meter.admit(&offer, &model, &header.digest, provider.protocol)?;
     // The broker echoes the permit's lease as the call's id.

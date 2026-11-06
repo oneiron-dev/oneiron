@@ -11,23 +11,24 @@
 //! attempt's spend scope as it settles.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use oneiron::agent_dispatch::AgentDispatcher;
+use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::dispatch_byoa::ByoaExecutionFence;
 use oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
 use oneiron::llm::run_admission::{
     CallOutcome, OfferBinding, RawDispatch, RunAdmission, RunCall, RunDenied, RunPermit,
 };
 use oneiron::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId,
-    LlmRequest, LlmResult, LlmUsage, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, EdgeActorClass,
+    EntityId, LlmRequest, LlmResult, LlmUsage, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
     WriteActor,
 };
 use oneiron_llm_anthropic::parse_anthropic_usage;
 use oneiron_llm_openai::parse_openai_usage;
 use serde_json::Value as JsonValue;
 
+use super::ModelRuntime;
 use super::seat_model::SeatModelRefusal;
 use super::sse::{SseDecoder, SseEvent};
 use crate::ai_host::live_lease::{LiveLease, LiveLeaseState};
@@ -41,12 +42,19 @@ const SEAT_MODEL_PURPOSE: &str = "seat.model";
 /// One seat claim's paid model calls: its run and its spend scope's lease.
 pub(crate) struct SeatModelMeter {
     vault: Arc<Vault>,
-    run: RunAdmission,
+    models: Arc<ModelRuntime>,
+    run_id: String,
+    guard: BudgetGuard,
+    /// The claim's own agent, every call's initiator.
+    holder: EntityId,
+    scope: Option<SpendScopeId>,
+    payer_required: bool,
     lease: LiveLeaseState,
-    /// Why the claim's calls have no account to bill: its spend scope's
-    /// payer could not be read, or holds on the owners' payer-needed ask.
-    /// Every call is then refused, never billed to the vault owner.
-    unfunded: Option<&'static str>,
+    /// The claim's run, built once its spend scope's payer resolves. Until
+    /// then its payer is read again at each call, which is refused while it
+    /// cannot be read or holds on the owners' payer-needed ask, never billed
+    /// to the vault owner.
+    run: OnceLock<RunAdmission>,
 }
 
 impl SeatModelMeter {
@@ -87,24 +95,51 @@ impl SeatModelMeter {
             actor,
         )?;
         let payer_required = requires_payer(&vault, fence.attempt_id, false)?;
-        let (payer, unfunded) = match scope_funding(&vault, scope.as_ref(), payer_required) {
-            Ok(payer) => (payer, None),
+        let lease = LiveLease::new(&vault, scope.clone(), meter.clone(), limit, 0).state();
+        let claim = Arc::new(Self {
+            vault,
+            models: Arc::clone(server.ai.models()),
+            run_id,
+            guard: meter,
+            holder,
+            scope,
+            payer_required,
+            lease,
+            run: OnceLock::new(),
+        });
+        // Reading the payer now queues the owners' payer-needed ask as the
+        // claim opens, not at its first call.
+        let _ = claim.funded();
+        Ok(claim)
+    }
+
+    /// The claim's run, its payer read first while it has none: the payer
+    /// the spend scope's root names (OF-531), every permit initiated by the
+    /// claim's own agent, so a host-paid call draws on that resident's
+    /// pinned share and settles on it.
+    ///
+    /// # Errors
+    ///
+    /// [`SeatModelRefusal::Unfunded`] while the payer cannot be read or
+    /// holds on the owners' payer-needed ask.
+    fn funded(&self) -> Result<&RunAdmission, SeatModelRefusal> {
+        if let Some(run) = self.run.get() {
+            return Ok(run);
+        }
+        match scope_funding(&self.vault, self.scope.as_ref(), self.payer_required) {
+            Ok(payer) => Ok(self.run.get_or_init(|| {
+                self.models
+                    .funded_run(self.run_id.clone(), self.guard.clone(), payer)
+                    .initiated_by(Some(self.holder))
+            })),
             Err(fault) => {
                 tracing::warn!(
                     reason = fault.reason(),
                     "a seat claim's model calls have no account to bill; they are refused"
                 );
-                (None, Some(fault.reason()))
+                Err(SeatModelRefusal::Unfunded(fault.reason()))
             }
-        };
-        let lease = LiveLease::new(&vault, scope, meter.clone(), limit, 0).state();
-        let run = server.ai.model_runtime().funded_run(run_id, meter, payer);
-        Ok(Arc::new(Self {
-            vault,
-            run,
-            lease,
-            unfunded,
-        }))
+        }
     }
 
     /// Books on the spend scope what the claim spent since the last look,
@@ -121,15 +156,19 @@ impl SeatModelMeter {
     }
 
     /// Refuses a request whose model no offer of its provider serves: one
-    /// `Denied` row, nothing reserved.
-    pub(crate) fn refuse_unoffered(&self, wire_model: &str) -> RunDenied {
-        self.run.refuse(
-            None,
-            oneiron::llm::run_admission::UNRESOLVED_SELECTOR,
-            RunDenied::UnknownSelector {
-                len: wire_model.len(),
-            },
-        )
+    /// `Denied` row, nothing reserved; a claim with no account to bill is
+    /// refused as unfunded.
+    pub(crate) fn refuse_unoffered(&self, wire_model: &str) -> SeatModelRefusal {
+        match self.funded() {
+            Ok(run) => SeatModelRefusal::Denied(run.refuse(
+                None,
+                oneiron::llm::run_admission::UNRESOLVED_SELECTOR,
+                RunDenied::UnknownSelector {
+                    len: wire_model.len(),
+                },
+            )),
+            Err(refusal) => refusal,
+        }
     }
 
     /// Admits one request through `offer`, for the bytes whose digest is
@@ -147,13 +186,10 @@ impl SeatModelMeter {
         digest: &str,
         protocol: SeatModelProtocol,
     ) -> Result<SeatModelCall, SeatModelRefusal> {
-        if let Some(reason) = self.unfunded {
-            return Err(SeatModelRefusal::Unfunded(reason));
-        }
+        let run = self.funded()?;
         self.book();
         let request = admission_request(offer);
-        let permit = self
-            .run
+        let permit = run
             .admit_request(
                 RunCall {
                     selector: Some(wire_model),
@@ -163,7 +199,7 @@ impl SeatModelMeter {
                 digest,
             )
             .map_err(SeatModelRefusal::Denied)?;
-        let dispatch = self.run.raw_dispatch(&permit, offer, digest, None);
+        let dispatch = run.raw_dispatch(&permit, offer, digest, None);
         Ok(SeatModelCall {
             meter: Arc::clone(self),
             permit: Some(permit),
