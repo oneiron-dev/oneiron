@@ -113,7 +113,7 @@ pub fn render_html_template(
     render_html_template_in(template, values, budget::Budget::UNADMITTED)
 }
 
-/// Native HTML rendering with traversal/layout backing and owned run-text bytes
+/// Native HTML rendering with traversal/layout and operation-owned backing
 /// admitted on `memory`, plus cooperative checks of `work_deadline`.
 ///
 /// This does not count the DOM, CSS/merge or normalization strings, other PDF

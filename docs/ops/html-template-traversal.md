@@ -40,7 +40,7 @@ surplus reported by the standard allocator is settled after allocation. This is
 not a bound on transient allocator surplus or allocator metadata. Container
 backing by itself does not count the heap payload owned by its elements.
 DOM/parser and selector internals, merge/CSS and text-normalization strings,
-encoding scratch, sorting scratch, other operation payloads, fonts, PDF objects
+encoding scratch, sorting scratch, font dictionaries, PDF document/codec objects
 and output bytes remain outside this admission slice.
 A drained line keeps its backing admission. Page-operation containers remain
 owned by the generic native `Content` while it encodes them; `AsRef` borrows the
@@ -51,11 +51,19 @@ Owned Windows-1252 run-text bytes also use the caller's memory admission. Each
 run retains its actual backing capacity, including an optional leading space.
 Moving text into a PDF string transfers that exact admission to the owning
 page before moving the bytes, without cloning or charging them again. A page
-owns its operations before its aggregate text guard, so it frees those bytes
+owns its operations before its aggregate payload guard, so it frees those bytes
 before returning their admission. Table-cell pages transfer both their text
 admission and operations into the parent. The generic native `Content` owns
 that page through encoding, including error returns. The encoded PDF buffer
 and the codec's own string-escaping scratch are not counted by this guard.
+
+PDF operation names, operand-vector backing and the `F0`–`F3` font-name byte
+vectors use that same page payload admission. Numeric operands own no further
+heap allocation. Each owned allocation transfers its measured capacity to the
+page before the native operation takes it; the original buffers move without
+cloning or a second charge. Operation names keep their original valid UTF-8
+bytes when their admitted vector becomes a `String`. This does not admit the
+PDF font dictionaries or the document/codec's own allocations.
 
 Cooperative checkpoints run through validation, merge/CSS, render, text/run,
 table and page loops, and around parsing and PDF writing. Expiry returns
