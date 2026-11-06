@@ -1,11 +1,11 @@
 //! Pure equality of one owned recapture after native pad normalization.
-//! Entity blobs, current document text, titles and fields resume one byte per work unit.
+//! Payload bytes, titles and fields resume one byte per existing work unit.
 
 use crate::error::Result;
-use crate::recovery::CanonicalDocument;
 use crate::recovery::canonical::{
     CanonicalEntity, CanonicalEntityDocument, CanonicalSnapshot, invalid,
 };
+use crate::recovery::{CanonicalDocument, CanonicalHeadMove};
 
 pub(in crate::recovery) struct CanonicalComparison {
     actual: CanonicalSnapshot,
@@ -148,10 +148,11 @@ impl CanonicalComparison {
                 Group::HeadMoveReceipts,
             ),
             Group::HeadMoveReceipts => (
-                compare_rows(
+                compare_head_receipts(
                     head_move_receipts,
                     &wanted.head_move_receipts,
                     &mut self.next,
+                    &mut self.byte,
                 )?,
                 Group::NoteForks,
             ),
@@ -358,6 +359,37 @@ fn compare_entity_documents(
         *next += 1;
         *byte = 0;
         *payload = PayloadPart::First;
+    }
+    Ok(false)
+}
+
+fn compare_head_receipts(
+    actual: &[CanonicalHeadMove],
+    wanted: &[CanonicalHeadMove],
+    next: &mut usize,
+    byte: &mut usize,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(CanonicalHeadMove {
+        id,
+        entity_id,
+        receipt,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let CanonicalHeadMove {
+        id: expected_id,
+        entity_id: expected_entity,
+        receipt: expected_receipt,
+    } = &wanted[*next];
+    if *byte == 0 {
+        compare_value(id, expected_id)?;
+        compare_value(entity_id, expected_entity)?;
+    }
+    if compare_bytes(receipt, expected_receipt, byte)? {
+        *next += 1;
+        *byte = 0;
     }
     Ok(false)
 }
