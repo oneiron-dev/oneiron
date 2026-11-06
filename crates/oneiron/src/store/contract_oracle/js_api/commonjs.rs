@@ -113,9 +113,13 @@ pub(super) fn collect(
                 replacement_chain(assignment, semantic, alias, native_module, &mut accounted)
             {
                 commonjs = true;
-                alias = assigns_exports;
-                module.bindings.clear();
-                value_bindings(value, module);
+                if fresh_value(value) {
+                    alias = assigns_exports;
+                    module.bindings.clear();
+                    value_bindings(value, module);
+                } else if assigns_exports {
+                    alias = true;
+                }
                 continue;
             }
             if let Some((references, value)) =
@@ -315,11 +319,15 @@ fn replacement_chain<'ast, 'src>(
         }
         match assignment.right.get_inner_expression() {
             Expression::AssignmentExpression(next) => assignment = next,
-            value if assigns_whole && fresh_value(value) => {
-                // These references are stable: no link rebinds `module` or
-                // targets a property of the replaceable exports value. Every
-                // store receives this same value; only an actual `exports`
-                // assignment reconnects that wrapper binding.
+            value
+                if assigns_whole
+                    && (fresh_value(value)
+                        || whole_value(value, semantic, &mut chain_accounted)
+                        || (alias
+                            && wrapper(value, "exports", semantic, &mut chain_accounted))) =>
+            {
+                // Every stable slot receives the same value. Only an actual
+                // `exports` assignment can reconnect that wrapper binding.
                 accounted.extend(chain_accounted);
                 return Some((value, assigns_exports));
             }
