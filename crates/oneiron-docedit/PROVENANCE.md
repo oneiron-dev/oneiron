@@ -139,9 +139,10 @@ The same-count later-paragraph fallback (2026-11-06, FIX 17480) touches
 paragraph count, later lines reuse the same-index paragraph's properties;
 new replacement text uses its first run's (else first field's, else the global
 run's) properties. A later-template error falls back to the first paragraph's
-template, and the first line and count-changed rebuilds keep the existing
-first-paragraph template. Field-removal receipts, expected-text checks and
-the retained/cut paths are unchanged.
+template. The first line of a same-count rebuild and the changed middle of
+a count-changing rebuild keep the existing first-paragraph template.
+Field-removal receipts, expected-text checks and the retained/cut paths are
+unchanged.
 
 The same-count later-paragraph run carry (2026-11-06, FIX 17480) keeps the
 common character prefix and suffix in their actual source run or field's
@@ -152,3 +153,14 @@ template. Unknown text coverage or unreadable copied properties retain the
 existing one-template rebuild rather than refusing the write. This is a
 source-level text-diff assignment, not canonical text identity or a
 PowerPoint rendering proof; count-changing formatting remains partial.
+
+The count-changing outer-paragraph carry (2026-11-06, FIX 17480) maps an
+unchanged common whole-paragraph text prefix and suffix back to their actual
+original paragraphs, using nonoverlapping text equality as the retained
+mapping does. These paragraphs keep their own paragraph, terminal and run
+properties through the static-run renderer, including field text converted
+to ordinary runs. Changed middle and added paragraphs still use the existing
+first-paragraph template; unknown coverage or copied-property errors fall
+back directly to that same template. No field wrapper survives the rebuild,
+and its field-removal receipts are unchanged. This is a deterministic current
+text assignment, not canonical paragraph identity or a PowerPoint proof.
