@@ -27,6 +27,12 @@ answers fail closed. `usage` reports per-measurement input and output tokens. Th
 orchestrator admits a fresh `BudgetGuard` lease per measurement and settles each
 one from these counts; failed calls settle their reserved charge. When budget
 denies the optional recheck, the decision holds without another HTTP call.
+
+The server's System One rung also observes an explicit retrieval cancellation while
+waiting on a caller-run measurement. Cancellation stops that local wait; it does
+not prove that the remote provider stopped work or waived its charge. The
+already-dispatched measurement settles as failed and keeps its reserved charge.
+
 The host owns its budget policy and retry policy. The decision receipt records the model
 and exact version per measurement. A confident negative accept-type noul is
 measured twice when separately admitted. A disagreement or a noul band hit
