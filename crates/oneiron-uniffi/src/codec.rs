@@ -64,6 +64,8 @@ pub(crate) use connector_manifests::{
 };
 mod decision_asks;
 pub(crate) use decision_asks::{lift_decision_ask, lift_decision_asks};
+mod drafters;
+pub(crate) use drafters::{lift_drafter_policy, lift_drafter_status};
 mod diagnostics;
 mod feedback;
 mod generated_lenses;
