@@ -45,6 +45,7 @@
 //! T0 door's, never this host's.
 
 mod child_run;
+mod helper_run;
 mod lease;
 mod terminal;
 
@@ -61,8 +62,9 @@ use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoEndpointSpec, ByoaCliExecutor, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaInputStager, ByoaResult, CLAUDE_CODE_PROGRAM,
-    CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM, declared_host_secrets, seat_secret_caller,
+    ByoaEgressPort, ByoaError, ByoaExecutionFence, ByoaExhaust, ByoaInputStager, ByoaResult,
+    CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM, declared_host_secrets,
+    seat_secret_caller,
 };
 use oneiron::entity_id::EntityId;
 use oneiron::git_wire::GitWire;
@@ -74,6 +76,7 @@ use oneiron_vault_contract::now_ts;
 use tokio::sync::broadcast;
 
 use self::child_run::{NoSeatChildRuns, SeatChildRun};
+use self::helper_run::SeatHelper;
 use super::seat_login::{OfficialCliSeatExecutor, RunnerSeatPolicySettings, SEAT_ENV_REMOVED};
 use super::secret_destinations::{RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX};
 use super::staged_input::WorkdirStager;
@@ -171,6 +174,8 @@ impl SyncServer {
         let child = SeatChildRun::begin(self, &fence, &NoSeatChildRuns);
         let mut executor = CheckoutSeat {
             vault,
+            server: self,
+            fence: &fence,
             run: fence.attempt_id,
             floor: Arc::new(self.transfers.disk.clone()),
             destinations: child.destinations(),
@@ -238,6 +243,11 @@ fn runs_here(spec: &CliSandboxSpec) -> bool {
 /// bound to, over the host's disk floor and the run's destinations.
 struct CheckoutSeat<'a> {
     vault: &'a Vault,
+    /// The server whose helper registrations and issuer the run's
+    /// credential helper uses (FIX 10624 step 2).
+    server: &'a SyncServer,
+    /// The run's claim.
+    fence: &'a ByoaExecutionFence,
     /// The leased attempt: the run its T1 grants are held for.
     run: AttemptId,
     floor: Arc<dyn ProposalSpoolFloor>,
@@ -260,17 +270,35 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             secret_destinations: self.destinations.clone(),
             floor: Some(Arc::clone(&self.floor)),
             stop: self.stop.clone(),
-        };
-        let Some(destinations) = &self.destinations else {
-            return seat.run(spec, checkout, boundary, budget, authorize);
+            helper_env: None,
+            model_env: None,
         };
         let ttl_secs = budget.wall_clock_secs.clamp(1, SECRET_GRANT_MAX_TTL_SECS);
-        let grants =
-            SeatGrants::materialize(self.vault, self.run, destinations, checkout, ttl_secs)?;
+        let grants = match &self.destinations {
+            Some(destinations) => {
+                SeatGrants::materialize(self.vault, self.run, destinations, checkout, ttl_secs)?
+            }
+            None => None,
+        };
+        let helper = match SeatHelper::begin(self.server, self.fence, checkout, ttl_secs) {
+            Ok(helper) => helper,
+            Err(error) => {
+                if let (Some(grants), Some(destinations)) = (grants, &self.destinations) {
+                    grants.revoke(self.vault, self.run, destinations);
+                }
+                return Err(error);
+            }
+        };
+        seat.helper_env = helper.as_ref().and_then(SeatHelper::env);
+        seat.model_env = helper.as_ref().and_then(SeatHelper::model_env);
         let ran = seat.run(spec, checkout, boundary, budget, authorize);
-        let taints = grants
-            .map(|grants| grants.revoke(self.vault, self.run, destinations))
-            .unwrap_or_default();
+        let mut taints = match (grants, &self.destinations) {
+            (Some(grants), Some(destinations)) => grants.revoke(self.vault, self.run, destinations),
+            _ => Vec::new(),
+        };
+        if let Some(helper) = helper {
+            taints.extend(helper.end(self.server));
+        }
         ran.map(|mut exhaust| {
             for taint in taints {
                 if !exhaust.secret_taint_refs.contains(&taint) {
