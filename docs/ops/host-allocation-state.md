@@ -99,6 +99,20 @@ admitted producer material before the reservation returns. The callback must
 use only the supplied transaction and must not acquire another writer. It must
 not call a void receipt sink and treat that as durability.
 
+A caller can attach an `AllocationCallIntent` to one cloned admission handle
+with `RunAdmission::with_allocation_intent`. For a native host-paid call, its
+callback runs in the same reserve writer as the original admitted producer.
+It receives that original receipt and hold, so it can retain the call key
+without copying balances, rates or producer facts. Failure aborts both writes.
+Ordinary, free and memory-work admissions do not invoke the callback.
+`RunPermit::allocation_call_key` exposes only the committed original key.
+
+`Vault::media_job_put_in_write_txn` uses the existing media key and erase fences
+in the caller's supplied writer. It opens no writer and commits nothing by
+itself. The ordinary media put and update wrappers are unchanged. These are
+integration ports, not a restored media permit or an automatic media recovery
+path; native continuation and its original pending hold still need to be wired.
+
 The physical dispatch adapter must commit `begin_dispatch` before releasing
 request bytes. A hold from another acquisition cannot start under the new
 serving fence; it remains pending for original-terminal reconciliation. Admission,

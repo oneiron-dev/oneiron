@@ -71,6 +71,9 @@ pub struct RunAdmission {
     /// The idempotency key a job submitted through this handle goes out
     /// with ([`Self::submit_keyed`], FIX 2248); `None` on the run itself.
     submit_key: Option<String>,
+    /// The caller's durable intent for calls admitted through this handle,
+    /// retained with the original usage producer in the native reserve writer.
+    allocation_intent: Option<Arc<dyn super::allocation::AllocationCallIntent>>,
     /// Host scheduling and physical-custody context for this handle (R4).
     work_context: Option<WorkContext>,
 }
@@ -259,6 +262,7 @@ impl RunAdmission {
             sources: None,
             initiator: None,
             submit_key: None,
+            allocation_intent: None,
             work_context: None,
         }
     }
@@ -355,6 +359,20 @@ impl RunAdmission {
     #[must_use]
     pub fn principal(&self) -> Option<crate::EntityId> {
         self.initiator.or_else(|| self.inner.guard.actor())
+    }
+
+    /// This handle with the caller's original durable intent. Only a native
+    /// allocation reserve invokes it, in the same writer as the hold and its
+    /// admitted usage. Other backends keep their ordinary admission path.
+    #[must_use]
+    pub fn with_allocation_intent(
+        &self,
+        intent: Arc<dyn super::allocation::AllocationCallIntent>,
+    ) -> Self {
+        Self {
+            allocation_intent: Some(intent),
+            ..self.clone()
+        }
     }
 
     /// This run, for a job whose submit goes out under `key` (FIX 2248):
@@ -478,6 +496,7 @@ impl RunAdmission {
             call.request.model.as_str(),
             admitted,
             Some(call.request.model.clone()),
+            self.allocation_intent.as_deref(),
         )
     }
 
@@ -492,8 +511,14 @@ impl RunAdmission {
         let admitted =
             self.inner
                 .admit_connector(&declaration, revision, connector, quantity, self.origin());
-        self.inner
-            .receipt_for(revision, None, &connector.connector, admitted, None)
+        self.inner.receipt_for(
+            revision,
+            None,
+            &connector.connector,
+            admitted,
+            None,
+            self.allocation_intent.as_deref(),
+        )
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,

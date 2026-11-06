@@ -10,14 +10,18 @@ impl RunInner {
         subject: &str,
         admitted: Result<RunPermit, RunDenied>,
         model: Option<ModelId>,
+        intent: Option<&dyn crate::llm::run_admission::AllocationCallIntent>,
     ) -> Result<RunPermit, RunDenied> {
-        let admitted = admitted.and_then(|mut permit| match self.freeze_allocation(&mut permit) {
-            Ok(receipt) => Ok((permit, receipt)),
-            Err(error) => {
-                permit.discard_unadmitted();
-                Err(error)
-            }
-        });
+        let admitted =
+            admitted.and_then(
+                |mut permit| match self.freeze_allocation(&mut permit, intent) {
+                    Ok(receipt) => Ok((permit, receipt)),
+                    Err(error) => {
+                        permit.discard_unadmitted();
+                        Err(error)
+                    }
+                },
+            );
         match admitted {
             Ok((permit, receipt)) => {
                 if let Some(model) = model {
