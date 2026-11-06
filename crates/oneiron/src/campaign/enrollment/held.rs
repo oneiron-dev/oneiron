@@ -270,7 +270,7 @@ pub(super) fn observe_outbound_result(
                     )?;
                     return Ok(());
                 }
-                withdraw_owner_ask_in_txn(vault, txn, Some(old));
+                let _ = withdraw_owner_ask_in_txn(vault, txn, Some(old));
             }
             let mut fresh = HeldEnrollmentCall {
                 owner_actor: snapshot.owner_actor,
@@ -305,7 +305,7 @@ pub(super) fn observe_outbound_result(
             Ok(())
         } else {
             if let Some(old) = existing.held.as_ref() {
-                withdraw_owner_ask_in_txn(vault, txn, Some(old));
+                let _ = withdraw_owner_ask_in_txn(vault, txn, Some(old));
                 RETAINED.put(
                     &vault.store,
                     txn,
@@ -332,18 +332,15 @@ pub(super) fn withdraw_owner_ask_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     held: Option<&HeldEnrollmentCall>,
-) {
-    let Some(held) = held else {
-        return;
-    };
-    let Some(seq) = held.owner_ask_seq else {
-        return;
-    };
+) -> Option<u64> {
+    let held = held?;
+    let seq = held.owner_ask_seq?;
     match vault.withdraw_decision_ask_in_txn(txn, seq) {
         Ok(true) => {
             crate::batch::queue_decision_answer(vault, txn, seq);
+            Some(seq)
         }
-        Ok(false) => {}
+        Ok(false) => None,
         Err(error) => {
             tracing::warn!(
                 reason = "campaign_enrollment_held_withdraw",
@@ -351,6 +348,7 @@ pub(super) fn withdraw_owner_ask_in_txn(
                 %error,
                 "a campaign enrollment held ask was not withdrawn"
             );
+            None
         }
     }
 }
@@ -519,7 +517,7 @@ impl Vault {
                 }
             };
             held.approved_redrive = Some(record.id.clone());
-            withdraw_owner_ask_in_txn(self, txn, Some(&held));
+            let _ = withdraw_owner_ask_in_txn(self, txn, Some(&held));
             request.held = Some(held);
             RETAINED.put(&self.store, txn, &key, &request)?;
             Ok(receipt)
@@ -640,7 +638,7 @@ pub(super) fn observe_nothing_owed(
             {
                 continue;
             }
-            withdraw_owner_ask_in_txn(vault, txn, request.held.as_ref());
+            let _ = withdraw_owner_ask_in_txn(vault, txn, request.held.as_ref());
             request.held = None;
             RETAINED.put(&vault.store, txn, &key, &request)?;
         }
