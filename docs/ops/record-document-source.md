@@ -143,3 +143,21 @@ variable native write expansion, source-aware restore and authenticated applying
 writer still need integration. Opening a holder compartment is custody/data
 authentication, not native operation authority. No source is selected in place
 of another, no extra part is discarded and no old part count becomes a bound.
+
+## Authenticated window restore source and writer
+
+The real checkpoint payload open now constructs a private window restore
+source only after the artifact's custody plan has opened its original
+bundles. It binds the same image carrier records, authenticated window
+compartments and unopened-owner set. The sync restore port consumes this
+source instead of accepting those three independently supplied arguments.
+Holder metadata and an opened-home answer remain data checks, not a way to
+construct the source or admit a native operation.
+
+The joined rows remain in a private prepared product through the original
+write-budget calculation. The original restore writer consumes that product
+after the content/carrier bundles and before call rows. Row order, errors,
+markers, erasure filtering and snapshot/pending/queue slicing are unchanged.
+This connects the authenticated source to the actual applying writer; it does
+not yet connect the native source bank or implement variable piece-count
+reconstruction. Native root and producer activation remain off.
