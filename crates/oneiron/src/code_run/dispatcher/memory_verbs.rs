@@ -342,15 +342,16 @@ impl HostSelfDispatcher<'_> {
             ));
         }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
-        match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault.put_claim_candidate_with_landing(
-                &call.id,
-                candidate,
-                &envelope,
-                call.occurred,
-                call.learned_at,
-                |_| Ok(()),
-            )?,
+        let actual_id = match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .put_claim_candidate_with_landing_returning_actual(
+                    &call.id,
+                    candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                    |_| Ok(()),
+                )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,
@@ -359,20 +360,20 @@ impl HostSelfDispatcher<'_> {
                 call.occurred,
                 call.learned_at,
             )?,
-        }
+        };
 
         if let Some(json) = authored_rules {
             let admitted = match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
                     crate::dreamer_consolidation::admitted_authored_claim(
-                        vault, &call.id, self.actor,
+                        vault, &actual_id, self.actor,
                     )?
                 }
-                ExecutorStorage::Session(binding) => {
-                    binding
-                        .session
-                        .admitted_executor_claim(&binding.route, &call.id, self.actor)?
-                }
+                ExecutorStorage::Session(binding) => binding.session.admitted_executor_claim(
+                    &binding.route,
+                    &actual_id,
+                    self.actor,
+                )?,
             };
             if !admitted {
                 return Err(Error::InvalidConfig(
@@ -380,10 +381,10 @@ impl HostSelfDispatcher<'_> {
                 ));
             }
             let record =
-                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&call.id))?;
+                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&actual_id))?;
             match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
-                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &call.id)?;
+                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &actual_id)?;
                 }
                 ExecutorStorage::Session(binding) => {
                     binding.session.side_table_put_routed(
@@ -396,7 +397,7 @@ impl HostSelfDispatcher<'_> {
             }
         }
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
-            id: call.id,
+            id: actual_id,
         }))
     }
 
