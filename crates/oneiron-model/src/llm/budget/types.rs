@@ -95,7 +95,7 @@ pub struct BudgetLadderEvent {
     /// in `connector_key.rs`, already filter their own meter's events.
     /// Wire-compatible: absent when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_index: Option<u16>,
+    pub row_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

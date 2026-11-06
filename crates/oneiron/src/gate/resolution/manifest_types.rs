@@ -296,7 +296,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) voice_ref_defaults: Option<crate::gate::voice_ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
     pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
-    pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) sheet_answer_default_max_count: Option<u64>,
     pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
     pub(super) linear_mirror: Option<LinearMirrorPolicy>,
