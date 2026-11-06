@@ -28,11 +28,15 @@
 //! A row also holds the answering agent's instructions and the words read
 //! for its reader (FIX 5033). Erasing the agent's definition drops every
 //! breakpoint it answered. A hard erase of an actor drops every breakpoint
-//! read as it or answered by it. A keep re-checks, in its own write, that
-//! no record its row binds is gone, so a late keep never brings a row back.
-//! Keeping a generation forgets the older generations of the same MESSAGE
-//! that no read addresses. No age, count or size bound applies across a
-//! conversation.
+//! read as it or answered by it. A row binds the user turn its request
+//! answers, by the TURN and MESSAGE rows its witness wrote, apart from its
+//! log: a first turn's log holds no line, but its request holds the user's
+//! words. Erasing any record a row was read from drops that row, and
+//! withdrawing a summary drops each row that holds it. A keep re-checks, in
+//! its own write, that no record its row binds is gone or withdrawn, so a
+//! late keep never brings a row back. Keeping a generation forgets the
+//! older generations of the same MESSAGE that no read addresses. No age,
+//! count or size bound applies across a conversation.
 
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +75,17 @@ pub struct ChatBreakpointRung {
     pub offer_digest: String,
 }
 
+/// The user turn a breakpoint's request answers, by the rows its witness
+/// wrote (FIX 5033). The request holds its words; no span of the log names
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatBreakpointUserTurn {
+    /// The user's TURN.
+    pub turn: EntityId,
+    /// The MESSAGE rows its words were witnessed into.
+    pub messages: Vec<EntityId>,
+}
+
 /// One reply's breakpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatBreakpoint {
@@ -97,6 +112,9 @@ pub struct ChatBreakpoint {
     pub sources: Vec<ConversationTurnSpan>,
     /// The landed summaries the request holds in place of their turns.
     pub summaries: Vec<EntityId>,
+    /// The user turn the request answers (FIX 5033). A breakpoint that
+    /// binds none, or none of its MESSAGEs, is never kept.
+    pub user_turn: Option<ChatBreakpointUserTurn>,
     /// The craft rows the request shows as the host's own snapshot read them
     /// when it assembled the request (FIX 9439), frozen with the request its
     /// digest names: a reuse names these, never rows read from the
@@ -150,6 +168,21 @@ impl ChatBreakpoint {
         EdgeActorClass::try_from_u8(self.reader_class)
             .map(|class| WriteActor::new(self.reader, class))
     }
+
+    /// Every record the request was read from (FIX 5033): each turn of its
+    /// log with its MESSAGEs, the user turn it answers with its MESSAGEs,
+    /// and each summary it holds.
+    fn read_records(&self) -> impl Iterator<Item = EntityId> + '_ {
+        let log = self
+            .sources
+            .iter()
+            .flat_map(|span| std::iter::once(span.turn).chain(span.messages.iter().copied()));
+        let user = self
+            .user_turn
+            .iter()
+            .flat_map(|user| std::iter::once(user.turn).chain(user.messages.iter().copied()));
+        log.chain(user).chain(self.summaries.iter().copied())
+    }
 }
 
 /// Keeps `seed` as the breakpoint of `message`'s stream `generation`. A
@@ -160,8 +193,9 @@ impl ChatBreakpoint {
 /// writes nothing again.
 ///
 /// The same write re-checks the records the seed binds (FIX 5033). When one
-/// is gone, nothing is kept: its erase already took the rows that hold it,
-/// and a reuse finds the breakpoint missing. The write then forgets each
+/// is gone or withdrawn, or the seed binds no user turn, nothing is kept:
+/// its erase or withdrawal already took the rows that hold it, and a reuse
+/// finds the breakpoint missing. The write then forgets each
 /// other generation of `message` that is neither its latest terminal's nor
 /// its stream's in flight: no read addresses it again.
 ///
@@ -211,22 +245,29 @@ pub fn forget_superseded_chat_breakpoints(
     })
 }
 
-/// Whether a record `seed` binds is missing or gone in `txn` (FIX 5033).
-/// The answering agent's definition, the conversation, each turn and
-/// MESSAGE it was read from, each summary it holds and each craft note it
-/// shows must be stored and not deleted. The reader, the reply MESSAGE and
-/// the conversation's HEAD must not be deleted; a Retry's MESSAGE that has
-/// not landed yet is not.
+/// Whether a record `seed` binds is missing, gone or withdrawn in `txn`
+/// (FIX 5033). The seed must bind the user turn it answers and at least one
+/// of its MESSAGEs. The answering agent's definition, the conversation,
+/// each record the request was read from and each craft note it shows must
+/// be stored and not deleted. No record it was read from may read
+/// withdrawn: a withdrawn summary keeps its row without its words, and a
+/// pending walk's withdrawal counts. The reader, the reply MESSAGE and the
+/// conversation's HEAD must not be deleted; a Retry's MESSAGE that has not
+/// landed yet is not.
 fn seed_binds_gone_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     message: EntityId,
     seed: &ChatBreakpoint,
 ) -> Result<bool> {
-    let read = seed
-        .sources
-        .iter()
-        .flat_map(|span| std::iter::once(span.turn).chain(span.messages.iter().copied()));
+    if seed
+        .user_turn
+        .as_ref()
+        .is_none_or(|user| user.messages.is_empty())
+    {
+        return Ok(true);
+    }
+    let read: Vec<EntityId> = seed.read_records().collect();
     let craft = seed
         .craft_entries
         .iter()
@@ -234,12 +275,16 @@ fn seed_binds_gone_in_txn(
         .filter_map(|entry| EntityId::from_hex(&entry.reference).ok());
     let stored: Vec<EntityId> = [seed.agent, seed.conversation]
         .into_iter()
-        .chain(read)
-        .chain(seed.summaries.iter().copied())
+        .chain(read.iter().copied())
         .chain(craft)
         .collect();
     for id in &stored {
         if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)? {
+            return Ok(true);
+        }
+    }
+    for id in &read {
+        if crate::ports::stale_in_txn(&vault.store, txn, id)? {
             return Ok(true);
         }
     }
@@ -440,11 +485,14 @@ fn craft_entry_stands_in(
 
 /// Drops the breakpoints an erase of `id` covers: every one of the
 /// conversation `id` is, or that its TURN, MESSAGE or landed summary belongs
-/// to; for a CLAIM, each one whose request shows it as craft (FIX 8135); for
-/// an AGENT_DEF, each one that agent answered, since its request holds the
-/// agent's instructions (FIX 5033). Every other prefix is kept as it was. A
-/// source whose conversation does not resolve drops every breakpoint, since
-/// one may hold its words. Registered in `deletion/derived_rows.rs`.
+/// to, and each one whose request was read from that TURN, MESSAGE or
+/// summary, the user turn it answers included, whatever conversation keys
+/// it (FIX 5033); for a CLAIM, each one whose request shows it as craft (FIX
+/// 8135); for an AGENT_DEF, each one that agent answered, since its request
+/// holds the agent's instructions (FIX 5033). Every other row is kept as it
+/// was. A source whose conversation does not resolve drops every
+/// breakpoint, since one may hold its words. Registered in
+/// `deletion/derived_rows.rs`.
 pub(crate) fn erase_chat_breakpoints_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -491,7 +539,29 @@ pub(crate) fn erase_chat_breakpoints_in_txn(
             BREAKPOINTS.delete_from(store, txn, &[])?;
         }
     }
+    if record.entity_type != ENTITY_TYPE_CONVERSATION {
+        forget_breakpoints_where_in_txn(write, txn, |seed| {
+            seed.read_records().any(|read| read == *id)
+        })?;
+    }
     Ok(())
+}
+
+/// Drops each breakpoint whose request holds summary `id`, as a withdrawal
+/// marks it stale (FIX 5033). The summary keeps its row without its words,
+/// so a presence check does not fence it. Called where a withdrawal marks a
+/// row; any other row is passed by.
+pub(crate) fn forget_withdrawn_summary_breakpoints_in_txn(
+    write: &CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let summary = crate::ports::EntityStoreRead::port_entity_record(write.store, txn, id)?
+        .is_some_and(|record| record.entity_type == ENTITY_TYPE_SUMMARY);
+    if !summary {
+        return Ok(());
+    }
+    forget_breakpoints_where_in_txn(write, txn, |seed| seed.summaries.contains(id))
 }
 
 /// Drops each breakpoint whose request shows claim `claim` as craft.
