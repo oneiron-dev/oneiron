@@ -18,7 +18,7 @@
 //! that does not fit, or a disk at its reserve answers typed:
 //! [`RENDER_DEADLINE`], [`RENDER_MEMORY_FLOOR`], [`RENDER_DISK_FLOOR`].
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -30,14 +30,13 @@ use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{EntityId, Error, Result};
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::libreoffice::{Ran, Scratch, Soffice, Under, on_path, profile_arg};
 use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
 use crate::server::SyncServer;
 
 /// The whole deck's export to PDF, and one page's raster.
 const CONVERT_TIMEOUT: Duration = Duration::from_secs(120);
 const PAGE_TIMEOUT: Duration = Duration::from_secs(30);
-/// How often a running child is looked at.
-const POLL: Duration = Duration::from_millis(50);
 /// One render's whole time, from its turn to its last page; each child runs
 /// for the least of its own timeout and what is left of it (CALLS "FIX 7653
 /// render deadline").
@@ -102,37 +101,16 @@ fn host_renderer(spool: &Path) -> Option<&'static LibreOfficeSlides> {
 
 impl LibreOfficeSlides {
     fn find(spool: &Path) -> Option<Self> {
-        let soffice = on_path("soffice")?;
         let pdftoppm = on_path("pdftoppm")?;
-        let scratch = Scratch::new(spool).ok()?;
-        let out = scratch.path.join("version");
-        let mut version = Command::new(&soffice);
-        version
-            .arg(profile_arg(&scratch.path))
-            .arg("--version")
-            .env("TMPDIR", &scratch.path)
-            .stdout(std::fs::File::create(&out).ok()?);
         // The one look keeps its own timeout: no caller's deadline or
         // leaving ends it, as its answer stands for every later render.
-        let alone = AtomicBool::new(false);
-        let under = Under {
-            deadline: Instant::now() + CONVERT_TIMEOUT,
-            stop: &alone,
-        };
-        if run(version, CONVERT_TIMEOUT, &under).ok()?.is_some() {
-            return None;
-        }
-        let version = std::fs::read_to_string(&out).ok()?;
-        let version = version.lines().next()?.trim();
-        if version.is_empty() {
-            return None;
-        }
+        let Soffice { path, version } = Soffice::find(spool)?;
         let mut name = format!("{version}; pdftoppm {PAGE_DPI} dpi");
         while name.len() > MAX_NAME_BYTES {
             name.pop();
         }
         Some(Self {
-            soffice,
+            soffice: path,
             pdftoppm,
             name,
         })
@@ -385,7 +363,7 @@ impl AdmittedRenderer {
             deadline,
             stop: &self.stop,
         };
-        let scratch = Scratch::new(&self.spool)?;
+        let scratch = Scratch::new(&self.spool, "oneiron-slides")?;
         let input = scratch.path.join("deck.pptx");
         let deck_bytes = u64::try_from(deck.len()).unwrap_or(u64::MAX);
         let writing = self.claim(deck_bytes)?;
@@ -554,40 +532,6 @@ pub(crate) fn rendered(
     }
 }
 
-/// A private directory removed with everything in it when dropped.
-struct Scratch {
-    path: PathBuf,
-}
-
-impl Scratch {
-    /// A fresh private directory under `spool`.
-    fn new(spool: &Path) -> Result<Self> {
-        let path = spool.join(format!("oneiron-slides-{}", EntityId::now().to_hex()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-        builder.create(&path)?;
-        Ok(Self { path })
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-/// The conversion's own LibreOffice user profile, inside its directory.
-fn profile_arg(dir: &Path) -> String {
-    format!("-env:UserInstallation=file://{}/profile", dir.display())
-}
-
-fn on_path(program: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(program))
-        .find(|path| path.is_file())
-}
-
 fn non_empty(path: &Path) -> Result<()> {
     if std::fs::metadata(path).map_or(0, |meta| meta.len()) == 0 {
         return Err(failed("the slide renderer wrote no output"));
@@ -599,67 +543,17 @@ fn failed(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
 
-/// What one child runs under: its render's deadline, and the flag its
-/// caller sets on leaving.
-struct Under<'a> {
-    deadline: Instant,
-    stop: &'a AtomicBool,
-}
-
-/// Runs `command` in its own process group with no input and no error
-/// output until it exits. Past `timeout` it fails, as it always has; past
-/// the render's deadline, or once its caller left, it answers that cut
-/// instead. However its run ends, an error or a panic among them, its group
-/// is stopped ([`Group`]).
-fn run(
-    mut command: Command,
-    timeout: Duration,
-    under: &Under<'_>,
-) -> Result<Option<RenderRefusal>> {
-    command.stdin(Stdio::null()).stderr(Stdio::null());
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    let own = Instant::now() + timeout;
-    let mut child = Group(command.spawn()?);
-    loop {
-        if let Some(status) = child.0.try_wait()? {
-            return if status.success() {
-                Ok(None)
-            } else {
-                Err(failed("the slide renderer failed"))
-            };
-        }
-        let now = Instant::now();
-        if under.stop.load(Ordering::Relaxed) || now >= under.deadline {
-            return Ok(Some(RenderRefusal::Deadline));
-        }
-        if now >= own {
-            return Err(failed("the slide renderer timed out"));
-        }
-        std::thread::sleep(POLL);
-    }
-}
-
-/// A running child whose process group is stopped however its run ends.
-struct Group(Child);
-
-impl Drop for Group {
-    fn drop(&mut self) {
-        stop(&mut self.0);
-    }
-}
-
-/// Kills whatever the run left in its process group, then reaps it.
-fn stop(child: &mut Child) {
-    #[cfg(unix)]
-    if let Some(group) = i32::try_from(child.id())
-        .ok()
-        .and_then(rustix::process::Pid::from_raw)
-    {
-        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+/// Runs `command` as the shared LibreOffice run does
+/// ([`crate::libreoffice::run`]): past `timeout` it fails, as it always has;
+/// past the render's deadline, or once its caller left, it answers that cut
+/// instead.
+fn run(command: Command, timeout: Duration, under: &Under<'_>) -> Result<Option<RenderRefusal>> {
+    Ok(
+        match crate::libreoffice::run(command, timeout, under, "the slide renderer")? {
+            Ran::Exited => None,
+            Ran::Cut => Some(RenderRefusal::Deadline),
+        },
+    )
 }
 
 /// The renderer's own state changes in one step under each lock, so a
