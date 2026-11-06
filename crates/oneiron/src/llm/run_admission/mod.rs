@@ -13,6 +13,7 @@
 //! that declares nothing is admitted to any bound offer, and only the run's
 //! own rules are enforced.
 mod admission;
+pub(crate) mod allocation;
 mod capture;
 mod declaration;
 mod gate;
@@ -31,6 +32,10 @@ mod work_context;
 
 pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
+};
+pub use allocation::{
+    AllocationCallKey, AllocationCommit, AllocationServingFence, AllocationStoreError,
+    AllocationTerminal, DurableAllocationHold, DurableAllocationRead, VaultAllocationLedger,
 };
 pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{
