@@ -67,9 +67,9 @@ pub mod residence;
 pub mod residence_operation_budgets;
 pub(crate) mod room_facts;
 pub(crate) use crate::room_codec::room_parts;
+pub(crate) mod origin_positions;
 pub(crate) mod room_turns;
 pub(crate) mod row_birth;
-pub(crate) mod origin_positions;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -78,6 +78,7 @@ mod sweep_fence;
 #[cfg(test)]
 mod tests;
 pub mod transport;
+pub(crate) mod turn_programs;
 pub mod types;
 pub mod window;
 pub(crate) mod window_rows;
@@ -100,7 +101,6 @@ pub use connection::{
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
-pub use origin_positions::{OwnDevicePositionImport, prepare_own_device_push_positions};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
@@ -111,6 +111,7 @@ pub use loro::awareness::{EphemeralEventTrigger, EphemeralStore, EphemeralStoreE
 pub use loro::{LoroValue, Subscription};
 pub use loro_support::export_updates_since;
 pub use manager::WindowManager;
+pub use origin_positions::{OwnDevicePositionImport, prepare_own_device_push_positions};
 pub use quarantine::{
     MAX_QUARANTINE_ROWS, MAX_QUARANTINE_ROWS_PER_PASS, QUARANTINE_MAX_AGE_SECS,
     QuarantineContainer, QuarantineRecord, ReassertDrainReport, RematDrainReport,
