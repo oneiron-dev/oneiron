@@ -85,7 +85,6 @@ struct StoredProposal {
     /// The owner's active grants the proposed bound strictly contained when
     /// it was filed: the accept that mints the wider grant revokes those
     /// still standing so, in the same writer (FIX 9740).
-    #[serde(default)]
     predecessors: Vec<String>,
 }
 
