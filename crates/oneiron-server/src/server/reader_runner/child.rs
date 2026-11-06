@@ -537,11 +537,6 @@ impl Child {
                 Ok(Err(error)) => error,
             };
             return match error {
-                // The run's last step committed; the trailing bubble it may
-                // not say is refused after that.
-                EngineExecutorError::HostRefused { code } if code == READER_CHILD_READ_ONLY => {
-                    ReaderRunEnd::Completed
-                }
                 // A host check holds new host-paid work as a spent line
                 // stops it (FIX 9924).
                 EngineExecutorError::Llm(LlmError::BudgetDenied(
