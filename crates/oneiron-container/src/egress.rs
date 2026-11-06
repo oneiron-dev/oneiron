@@ -17,7 +17,8 @@ pub struct HttpRequest {
 pub struct HttpResponse {
     pub url: String,
     pub status: u16,
-    pub headers: Vec<(String, String)>,
+    /// HTTP field values as received, without UTF-8 decoding.
+    pub headers: Vec<(String, Vec<u8>)>,
     #[serde(
         serialize_with = "serialize_response_body",
         deserialize_with = "deserialize_response_body"
@@ -148,8 +149,8 @@ impl CredentialEgressStatus {
 }
 
 /// A guest call the fence refused because only the guest's own loopback
-/// (127.0.0.0/8 and ::1) holds listeners, inside its own session. The guest
-/// is answered an errno; the host records this.
+/// (127.0.0.0/8, its IPv4-mapped form, and ::1) holds listeners, inside its
+/// own session. The guest is answered an errno; the host records this.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LoopbackRefusal {
     pub operation: LoopbackOperation,
@@ -187,10 +188,8 @@ pub enum LoopbackRefusalReason {
     /// The unspecified address (0.0.0.0, ::), or a listen with no bind
     /// before it, which would take it.
     Wildcard,
-    /// Neither 127.0.0.0/8 nor ::1.
+    /// Neither 127.0.0.0/8 (an IPv4-mapped form included) nor ::1.
     NotLoopback,
-    /// An IPv4-mapped IPv6 address (::ffff:a.b.c.d).
-    MappedAddress,
     /// A datagram socket: the fence keeps stream listeners only.
     Datagram,
     /// An accept on a socket that is not listening.
@@ -205,7 +204,6 @@ impl LoopbackRefusalReason {
         match self {
             Self::Wildcard => "wildcard",
             Self::NotLoopback => "not_loopback",
-            Self::MappedAddress => "mapped_address",
             Self::Datagram => "datagram",
             Self::NotListening => "not_listening",
             Self::NoListener => "no_listener",

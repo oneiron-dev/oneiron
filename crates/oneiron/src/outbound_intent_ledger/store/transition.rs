@@ -1,20 +1,24 @@
-//! One ledger row's transition in the caller's writer (FIX 7188): the body
-//! the ledger's own transition doors commit in a writer of their own, and a
-//! writer that composes it with other work (an owner's Stop) commits with
-//! that work. It opens no writer.
+//! One ledger row's transition and completion commit (FIX 7188).
+//! The transaction form opens no writer: a caller can compose it with an
+//! owner's Stop. The completion wrapper commits and syncs its own writer
+//! before returning the record and any newly fired budget events.
 
 use super::super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     RecordedOutboundOutcome,
 };
-use super::{LEDGER, get_ledger_record};
+use super::{LEDGER, force_sync, get_ledger_record, open_payload_in_txn};
 use crate::Vault;
+use crate::error::Error;
 
 /// What one transition did in the caller's writer.
 pub(super) enum Transitioned {
     /// The row moved to the next state with the outcome: the writer owes
     /// its commit.
-    Moved(IntentLedgerRecord),
+    Moved(
+        IntentLedgerRecord,
+        Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
+    ),
     /// The row already stood in that state with the same outcome: nothing
     /// was written.
     Replayed(IntentLedgerRecord),
@@ -71,6 +75,46 @@ pub(super) fn transition_record_in_txn(
         // unknown. Keep its conservative floor anchored to this transition.
         crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, wtxn, &id)?;
     }
-    super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
-    Ok(Transitioned::Moved(record))
+    let budget_events = super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
+    Ok(Transitioned::Moved(record, budget_events))
+}
+
+pub(crate) struct IntentCompletion {
+    pub(crate) record: IntentLedgerRecord,
+    pub(crate) budget_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
+}
+
+pub(super) fn transition_record_with_outcome_and(
+    vault: &Vault,
+    id: [u8; 32],
+    next: IntentState,
+    outcome: RecordedOutboundOutcome,
+    now_ms: u64,
+    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
+) -> IntentLedgerResult<IntentCompletion> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let (mut record, budget_events) =
+        match transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
+            Transitioned::Moved(record, budget_events) => (record, budget_events),
+            Transitioned::Replayed(mut record) => {
+                open_payload_in_txn(vault, &wtxn, &mut record)?;
+                drop(wtxn);
+                return Ok(IntentCompletion {
+                    record,
+                    budget_events: Vec::new(),
+                });
+            }
+        };
+    open_payload_in_txn(vault, &wtxn, &mut record)?;
+    also(&mut wtxn, &record);
+
+    wtxn.commit().map_err(Error::from)?;
+    let synced = force_sync(vault);
+    // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
+    vault.wake_owner_shed();
+    synced?;
+    Ok(IntentCompletion {
+        record,
+        budget_events,
+    })
 }
