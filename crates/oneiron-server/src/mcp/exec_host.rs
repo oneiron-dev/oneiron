@@ -14,7 +14,7 @@ use oneiron::code_run::{
 };
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, RunCompaction,
+    JsCodeModeRuntime, RunCompaction, SelfBriefPort,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
@@ -724,6 +724,8 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         reader_seat,
                         seat.as_mut(),
                         git_door_base,
+                        // FIX 17594 D2: no host lends a self-brief port yet.
+                        None,
                     );
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
                         let ended = outcome.as_ref().is_ok_and(|outcome| {
@@ -796,7 +798,9 @@ pub(crate) fn run_read_worlds(
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
 /// server evaluates nothing and opens no second vault-write path. A run with
 /// a seat may spawn reader children under it. A run its caller's credential
-/// admitted binds that slip's lineage as its own (FIX 4705).
+/// admitted binds that slip's lineage as its own (FIX 4705). A run its host
+/// lends a self-brief port (`brief`, FIX 17594) carries the brief it
+/// prepares on either backend.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -814,6 +818,7 @@ fn run_engine_native_code_mode(
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
@@ -853,6 +858,7 @@ fn run_engine_native_code_mode(
             compaction,
             &reactor,
             seat.as_ref(),
+            brief,
         ),
         None => enter_engine_native_run(
             vault,
@@ -867,6 +873,7 @@ fn run_engine_native_code_mode(
             None,
             // Keep this caller's existing unconstrained routing.
             Vec::new(),
+            brief,
         ),
     }
     .map_err(|error| match error.provider_outage() {
@@ -977,6 +984,10 @@ impl<'a> ScopeMeter<'a> {
 /// through the provider's planned backend on that same meter and payer,
 /// bound to its plan; with a provider that has none, through the backend it
 /// takes today.
+///
+/// A run its host lends a self-brief port (`brief`, FIX 17594) carries the
+/// brief it prepares on every backend this entry takes; with none, its
+/// requests carry no brief.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -989,6 +1000,7 @@ pub(crate) fn enter_engine_native_run(
     seat: Option<&ModelSeat>,
     planned: Option<&PlannedModel>,
     listed: Vec<AgentModel>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -1013,7 +1025,7 @@ pub(crate) fn enter_engine_native_run(
             None => provider.backend(),
         };
         return enter_on(
-            vault, provider, backend, bound, config, compaction, reactor, seat,
+            vault, provider, backend, bound, config, compaction, reactor, seat, brief,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -1061,6 +1073,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     } else {
         enter_on(
@@ -1072,6 +1085,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     };
     live.book_rest()
@@ -1314,6 +1328,7 @@ fn enter_on(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     seat: Option<&ModelSeat>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
@@ -1330,6 +1345,11 @@ fn enter_on(
     }
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
+    }
+    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
+    // lends one.
+    if let Some(port) = brief {
+        executor = executor.with_self_brief(port);
     }
     reactor
         .block_on(executor.run(&routed_config))
