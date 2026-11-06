@@ -354,11 +354,25 @@ pub trait VerbAskCredentialCheck: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct VerbAskDrainPermit {
     invocation: InvocationId,
+    /// The call is a paced call's turn (FIX 8753): its verb runs it rather
+    /// than holding it again.
+    paced: bool,
 }
 
 impl VerbAskDrainPermit {
     const fn new(invocation: InvocationId) -> Self {
-        Self { invocation }
+        Self {
+            invocation,
+            paced: false,
+        }
+    }
+
+    /// The leave for a paced call's turn.
+    pub(super) const fn paced(invocation: InvocationId) -> Self {
+        Self {
+            invocation,
+            paced: true,
+        }
     }
 
     #[must_use]
@@ -372,6 +386,9 @@ impl VerbAskDrainPermit {
     pub fn enter(&self) -> VerbAskDrainScope {
         VerbAskDrainScope {
             _scope: DrainScope::enter(self.invocation),
+            _turn: self
+                .paced
+                .then(|| super::paced::PacedTurnScope::enter(self.invocation)),
         }
     }
 }
@@ -380,6 +397,7 @@ impl VerbAskDrainPermit {
 #[must_use]
 pub struct VerbAskDrainScope {
     _scope: DrainScope,
+    _turn: Option<super::paced::PacedTurnScope>,
 }
 
 /// The witness the pre chain on this thread pins if its call asks, while held.
