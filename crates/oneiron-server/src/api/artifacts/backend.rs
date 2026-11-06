@@ -204,7 +204,8 @@ async fn serve(
         .insert("connection", HeaderValue::from_static("close"));
     parts.version = axum::http::Version::HTTP_11;
     parts.extensions.clear();
-    let mut response = runtime::forward(profile, staged, Request::from_parts(parts, body)).await?;
+    let mut response =
+        runtime::forward(profile, staged, Request::from_parts(parts, body), server).await?;
     strip_hop_headers(response.headers_mut());
     cookies.rewrite_response(response.headers_mut(), &target);
     // CSP ignores source paths after a redirect. App redirects therefore
@@ -302,9 +303,9 @@ fn stage(
             Ok(())
         },
     )?;
-    if admitted.is_none() {
+    let Some(identity) = admitted else {
         return Ok(None);
-    }
+    };
     let bytes = match fs::read(source.join(BACKEND_MANIFEST_PATH)) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -321,6 +322,7 @@ fn stage(
     }
     let source = fs::canonicalize(source)?;
     Ok(Some(runtime::StagedBackend {
+        identity,
         directory,
         source,
         permit,

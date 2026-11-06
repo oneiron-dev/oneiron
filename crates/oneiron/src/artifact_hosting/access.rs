@@ -54,6 +54,15 @@ fn matches_token(capability: ArtifactLinkCapability, token: Option<&str>) -> boo
     diff == 0
 }
 
+/// Physical identity of the code projected by one admitted hosting read.
+/// This metadata is not an engine-action grant or a read credential.
+#[derive(Clone, Debug)]
+pub struct ArtifactBackendSource {
+    pub pointer: ArtifactPointer,
+    pub code_artifact_ref: EntityId,
+    pub fork_hash: CodebaseForkHash,
+}
+
 /// One read-view-resolved export. Scope comes from the owner's digest-bound
 /// stored record, not a kind-only guess or a caller-supplied world id.
 struct ResolvedArtifactTarget {
@@ -99,7 +108,7 @@ impl Vault {
         token: Option<&str>,
         principal: Option<EntityId>,
         mut file: impl FnMut(ArtifactServedFile, u32) -> Result<()>,
-    ) -> Result<Option<ArtifactPointer>> {
+    ) -> Result<Option<ArtifactBackendSource>> {
         validate_artifact_id(artifact)?;
         let txn = self.store.env.read_txn()?;
         let Some(read) =
@@ -110,6 +119,7 @@ impl Vault {
         let Some(snapshot) = read.target.snapshot.as_ref() else {
             return Ok(None);
         };
+        let fork_hash = snapshot.fork_hash;
         for entry in &snapshot.files {
             validate_artifact_path(&entry.path)?;
             if let Some(projected) =
@@ -118,7 +128,11 @@ impl Vault {
                 file(projected, entry.mode)?;
             }
         }
-        Ok(Some(read.target.pointer))
+        Ok(Some(ArtifactBackendSource {
+            pointer: read.target.pointer,
+            code_artifact_ref: read.target.owner,
+            fork_hash,
+        }))
     }
 
     fn authorize_artifact_read_in_txn(

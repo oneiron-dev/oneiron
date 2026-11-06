@@ -17,9 +17,11 @@ The host uses the session's original `EgressRelay::fetch`. Its policy, receipts,
 and host resource floor still apply. Ordinary native socket traffic, fence
 proofs, control port 53, and stdin/stdout are unchanged. A caller supplies its
 own credentials and holder proofs when the destination requires them; PID 1
-and the host transport supply none. An artifact backend with `NoEngineEgress`
-still refuses Fetch. This transport alone does not authorize an artifact app
-or bind an app credential to its staged code.
+and the host transport supply none. An artifact backend supplies only its
+app-bound action relay, described in
+[artifact-backend-runtime.md](artifact-backend-runtime.md); ordinary network
+traffic stays unavailable. This generic transport alone does not authorize an
+artifact app or bind its credential to staged code.
 
 The reply is the existing length-prefixed JSON `RelayReply`. Nonzero `errno`
 is a transport refusal; `floor`, when present, names the original host floor.
@@ -37,7 +39,8 @@ PID 1 creates the socket before spawning the fenced command and starts its
 accept loop before reporting native readiness. Each connection owns its guest
 IO worker and channel. A parse, relay, or write error closes that connection.
 A worker that cannot start also closes its client. These are guest-only threads:
-`native::run` returns directly to the PID-1 entry point when the child ends,
-and the host session lease tears down the owned VM. There is no host daemon or
+the native stdout copier drains before the guest awaits host shutdown, and the
+host session lease tears down the owned VM. The listener follows that guest
+PID-1 lifetime, not just the app command's exit. There is no host daemon or
 persistent socket left by this listener. This source contract is not a VM boot
 or runtime validation result.

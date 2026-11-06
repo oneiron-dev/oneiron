@@ -69,6 +69,32 @@ pub(crate) fn is_backend_principal(principal: EntityId, body: &[u8]) -> bool {
 }
 
 impl Vault {
+    /// Matches the app's native identity to the exact code this session staged.
+    /// The caller must authenticate separately; this grants no action or read.
+    pub fn artifact_backend_principal_matches(
+        &self,
+        principal: EntityId,
+        source: &super::ArtifactBackendSource,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            body,
+        } = crate::vault::live_entity_row_in_txn(&self.store, &txn, &principal)?
+        else {
+            return Ok(false);
+        };
+        if !is_backend_principal(principal, &body) {
+            return Ok(false);
+        }
+        let Ok(body) = rmp_serde::from_slice::<BackendPrincipalBody>(&body) else {
+            return Ok(false);
+        };
+        Ok(body.artifact_backend.artifact == source.pointer.artifact
+            && body.artifact_backend.fork_hash == super::artifact_hex(&source.fork_hash)
+            && body.artifact_backend.code_artifact_ref == source.code_artifact_ref)
+    }
+
     /// Creates a fresh app actor and an owner-recorded pairing link with no
     /// engine-action verbs. It neither grants the actor a standing ceiling
     /// nor admits a connector. A backend can compute without either.
