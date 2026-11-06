@@ -5,15 +5,22 @@ its existing turn/checkpoint/stack dedupe key and the existing live/bulk class,
 lease, backoff and retry chain.
 
 The witness also carries its original optional identity-hint reader. The stored
-reader represents only a plain on-device `Memory` read: the actual actor and
-actor class, plus an explicit authority position. A credentialed position keeps
+reader represents a plain `Memory` read: the actual actor and actor class,
+an explicit authority position, and the original destination ceiling. A
+credentialed position keeps
 every effective fact of the original bound verified read proof. An
 uncredentialed position uses the native grant-bound reader. If the same witness
 write already held a native Owner reader for its assertions or held tags, or
 already opened a native Owner key to admit a quote, it records that Owner
 position instead. Capturing the position opens no new read.
-A host-action lane, room-turn lane or non-on-device destination carries an
-explicit unknown, not the internal hint aggregate.
+A host-action lane or room-turn lane carries an explicit unknown, not the
+internal hint aggregate.
+
+The destination keeps its original on/off-device flag and every carried machine
+and proof key, including unknown destinations and proof facts not yet used on
+device. The worker reapplies that ceiling through the ordinary native handle.
+Each saving snapshot revalidates the carried machine keys and the current world
+recipient settings. Stored destination facts confer no read or machine authority.
 
 An uncredentialed reader's fresh native Owner kind must match its captured
 position. A grant-bound position cannot become an Owner reader after a

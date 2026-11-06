@@ -4,19 +4,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::claim::ScopedRead;
-use crate::memory::{MemoryResult, OnDeviceIdentityHintReader};
+use crate::memory::{MemoryResult, QueuedIdentityHintReader};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum QueuedHintRead {
     Internal,
     Caller {
-        readers: Vec<OnDeviceIdentityHintReader>,
+        readers: Vec<QueuedIdentityHintReader>,
         unknown: bool,
     },
 }
 
 impl QueuedHintRead {
-    pub(super) fn caller(read: Option<OnDeviceIdentityHintReader>) -> Self {
+    pub(super) fn caller(read: Option<QueuedIdentityHintReader>) -> Self {
         Self::Caller {
             unknown: read.is_none(),
             readers: read.into_iter().collect(),

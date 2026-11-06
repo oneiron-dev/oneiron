@@ -55,6 +55,54 @@ pub struct ReadDestination {
     proved: Vec<PeerMachine>,
 }
 
+/// Owned destination facts for an internal deferred read. Native readers
+/// revalidate each carried machine key; this is a ceiling, not read authority.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoredReadDestination {
+    off_device: bool,
+    proved: Vec<StoredPeerMachine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum StoredPeerMachine {
+    Proven { machine: EntityId, key: [u8; 32] },
+    Unknown,
+}
+
+impl StoredReadDestination {
+    pub(crate) fn of(destination: &ReadDestination) -> Self {
+        Self {
+            off_device: destination.off_device,
+            proved: destination
+                .proved
+                .iter()
+                .map(|peer| match *peer {
+                    PeerMachine::Proven { machine, key } => {
+                        StoredPeerMachine::Proven { machine, key }
+                    }
+                    PeerMachine::Unknown => StoredPeerMachine::Unknown,
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn restore(&self) -> ReadDestination {
+        ReadDestination {
+            off_device: self.off_device,
+            proved: self
+                .proved
+                .iter()
+                .map(|peer| match *peer {
+                    StoredPeerMachine::Proven { machine, key } => {
+                        PeerMachine::Proven { machine, key }
+                    }
+                    StoredPeerMachine::Unknown => PeerMachine::Unknown,
+                })
+                .collect(),
+        }
+    }
+}
 impl ReadDestination {
     /// This device: nothing leaves it.
     #[must_use]
