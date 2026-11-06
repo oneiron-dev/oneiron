@@ -115,6 +115,7 @@ mod machine_profile;
 mod machine_standing;
 mod machine_write;
 mod managed_owner_check;
+mod membership_execution;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
@@ -197,7 +198,7 @@ pub use oneiron_authority::authority::{
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES,
+    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
     SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
     SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
     WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
@@ -372,7 +373,7 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{

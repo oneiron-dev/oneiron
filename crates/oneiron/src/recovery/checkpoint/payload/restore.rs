@@ -229,9 +229,7 @@ impl OpenedPayload {
     /// # Errors
     ///
     /// An actor part that does not read as the row it names.
-    pub(in crate::recovery::checkpoint) fn entity_rows(
-        &self,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut rows = Vec::new();
         let entities = self
             .bundles
