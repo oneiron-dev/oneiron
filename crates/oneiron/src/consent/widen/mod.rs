@@ -604,6 +604,7 @@ impl Vault {
         let key = reference.to_owned();
         self.with_write_txn_grouped(|txn| {
             let mut row = self.owned_widen_row_in_txn(&*txn, owner, credential, reference)?;
+            self.refuse_opener_answer_in_txn(&*txn, owner, credential, &row)?;
             let proposal = &row.proposal;
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
@@ -627,6 +628,37 @@ impl Vault {
             WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
             Ok(receipt)
         })
+    }
+
+    /// Refuses an accept answered from the lineage that opened `row`, or a
+    /// fork of it (DEC-0006, FIX 5064, 9741), as every proposal door does:
+    /// the proposer itself, the proof's carried credential chains, or the
+    /// holder credential the route passed. A proposal frozen with no
+    /// lineage shares none.
+    fn refuse_opener_answer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        row: &StoredProposal,
+    ) -> Result<()> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let holder_meets = match credential {
+            Some(credential) => {
+                let lineage = self.slip_lineage_in_txn(txn, credential)?;
+                self.frozen_lineages_meet_in_txn(txn, &lineage, &row.opener_lineage)?
+            }
+            None => false,
+        };
+        if row.proposal.proposer == actor.to_hex()
+            || holder_meets
+            || owner.answers_from_slip_lineage_in_txn(self, txn, &row.opener_lineage)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the lineage that opened a proposal cannot settle it",
+            )));
+        }
+        Ok(())
     }
 
     /// The open contact-disclosure offer `reference` names, checked in the
