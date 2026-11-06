@@ -104,8 +104,10 @@ pub(super) fn derive_proposal_scope(
     }
 }
 
-/// The handle a resolution settled here stamps for `proposal`, its core
-/// `record`: the one its validated seal binds, when a seal this vault counts
+/// The handle a resolution settled here stamps for `proposal`, its STORED core
+/// `record` (a manifest for a decision in operation parts, FIX 10188, since
+/// that is what its seal binds): the one its validated seal binds, when a seal
+/// this vault counts
 /// binds one; else this vault's own handle for the author its own carrier
 /// names; else unattributed. A peer's unsigned carrier never names one.
 ///
