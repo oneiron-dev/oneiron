@@ -382,8 +382,7 @@ pub(super) fn set_cell(
         .children(body)
         .filter(|(_, node)| node.is(DML, "p"))
         .collect();
-    let (Some(&(first, first_node)), Some(&(_, last_node))) =
-        (paragraphs.first(), paragraphs.last())
+    let (Some(&(_, first_node)), Some(&(_, last_node))) = (paragraphs.first(), paragraphs.last())
     else {
         return Err(NativeRefusal::Stale("cell has no paragraph"));
     };
@@ -407,11 +406,13 @@ pub(super) fn set_cell(
     // is tried first (FIX 12227): each field the change covers whole goes,
     // the new text written into an adjacent run, only when the cell then
     // reads exactly the requested text. Otherwise the cell is rebuilt from
-    // its first paragraph's and first run's properties, as it was before.
+    // its first paragraph's and first run's properties; only when the line
+    // count is unchanged do later lines reuse the same-index paragraph's
+    // properties, falling back to the first paragraph's template on error.
     let (out, cut_fields) = match crate::edit::cell_text_cut(&bytes, &tree, body, value) {
         Some((out, cut_fields)) => (out, cut_fields),
         None => (
-            rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
+            rebuilt(&bytes, &tree, body, &paragraphs, value)?,
             within(&tree, body)
                 .filter(|(_, node)| {
                     node.is(DML, "fld")
@@ -427,52 +428,60 @@ pub(super) fn set_cell(
 }
 
 /// Replace the cell's paragraphs using the first paragraph's properties and
-/// first run's properties, or the first field's when no run exists. Copied
-/// properties keep their namespace bindings; removed field types are reported.
+/// first run's properties, or the first field's when no run exists. When the
+/// line count is unchanged, later lines use the same-index paragraph's
+/// properties and its first run's (else first field's, else the global run's)
+/// properties, falling back to the first paragraph's template on error.
+/// Copied properties keep their namespace bindings; removed field types are
+/// reported.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
     body: usize,
-    (first, first_node): (usize, &Node),
-    last_node: &Node,
+    paragraphs: &[(usize, &Node)],
     value: &str,
 ) -> Result<Vec<u8>, NativeRefusal> {
+    let (first, first_node) = paragraphs[0];
+    let last_node = paragraphs[paragraphs.len() - 1].1;
     let piece = |node: Option<(usize, &Node)>| {
         node.map_or("", |(_, node)| {
             std::str::from_utf8(&bytes[node.span.clone()]).unwrap_or("")
         })
     };
-    let p_pr = piece(tree.child(first, DML, "pPr")?);
     let source_run = within(tree, body)
         .find(|(_, node)| node.is(DML, "r"))
         .or_else(|| within(tree, body).find(|(_, node)| node.is(DML, "fld")));
-    let r_pr = piece(
-        source_run
-            .map(|(run, _)| tree.child(run, DML, "rPr"))
-            .transpose()?
-            .flatten(),
-    );
-    let (r, t, run_bindings) = match source_run {
-        Some((at, node)) => (
-            node.child_name("r"),
-            node.child_name("t"),
-            format!(
-                "{}{}",
-                crate::edit::xml::inherited_bindings(bytes, tree, at),
-                crate::edit::xml::own_bindings(bytes, node),
+    let render = |paragraph: (usize, &Node),
+                  selected: Option<(usize, &Node)>,
+                  line: &str|
+     -> Result<String, NativeRefusal> {
+        let (para, para_node) = paragraph;
+        let p_pr = piece(tree.child(para, DML, "pPr")?);
+        let r_pr = piece(
+            selected
+                .map(|(run, _)| tree.child(run, DML, "rPr"))
+                .transpose()?
+                .flatten(),
+        );
+        let (r, t, run_bindings) = match selected {
+            Some((at, node)) => (
+                node.child_name("r"),
+                node.child_name("t"),
+                format!(
+                    "{}{}",
+                    crate::edit::xml::inherited_bindings(bytes, tree, at),
+                    crate::edit::xml::own_bindings(bytes, node),
+                ),
             ),
-        ),
-        None => (
-            first_node.child_name("r"),
-            first_node.child_name("t"),
-            String::new(),
-        ),
-    };
-    let end = piece(tree.child(first, DML, "endParaRPr")?);
-    let p = first_node.qualified.as_str();
-    let p_bindings = crate::edit::xml::own_bindings(bytes, first_node);
-    let mut out = bytes[..first_node.span.start].to_vec();
-    for line in value.split('\n') {
+            None => (
+                para_node.child_name("r"),
+                para_node.child_name("t"),
+                String::new(),
+            ),
+        };
+        let end = piece(tree.child(para, DML, "endParaRPr")?);
+        let p = para_node.qualified.as_str();
+        let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
         let run = if line.is_empty() {
             String::new()
         } else {
@@ -481,7 +490,25 @@ fn rebuilt(
                 escape_text(line)
             )
         };
-        out.extend_from_slice(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>").as_bytes());
+        Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
+    };
+    let same_count = paragraphs.len() == value.split('\n').count();
+    let mut out = bytes[..first_node.span.start].to_vec();
+    for (index, line) in value.split('\n').enumerate() {
+        let rendered = if same_count && index > 0 {
+            let actual = paragraphs[index];
+            let actual_run = within(tree, actual.0)
+                .find(|(_, node)| node.is(DML, "r"))
+                .or_else(|| within(tree, actual.0).find(|(_, node)| node.is(DML, "fld")))
+                .or(source_run);
+            match render(actual, actual_run, line) {
+                Ok(xml) => xml,
+                Err(_) => render((first, first_node), source_run, line)?,
+            }
+        } else {
+            render((first, first_node), source_run, line)?
+        };
+        out.extend_from_slice(rendered.as_bytes());
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
     Ok(out)
