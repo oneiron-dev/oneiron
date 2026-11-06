@@ -34,12 +34,14 @@ pub(crate) use self::mask::admit::{
     predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
-    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::rebind_mask_origin_in_txn;
-pub(crate) use self::mask::retained_repo::read::project_marked_retained_repo_blob;
+pub(crate) use self::mask::retained_repo::read::{
+    RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
+};
 pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,

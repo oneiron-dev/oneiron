@@ -68,6 +68,10 @@ pub(crate) struct AuthorityCacheKey {
 pub(crate) struct AuthorityView {
     fold: Arc<AuthorityFold>,
     generation: u64,
+    /// The pacts this install holds inactive because their folded scope
+    /// does not match the commitment under its live opening (FIX 11730,
+    /// [`super::pact_openings`]).
+    scope_commitment_mismatches: Arc<BTreeSet<[u8; 32]>>,
 }
 
 impl AuthorityView {
@@ -93,8 +97,33 @@ impl AuthorityView {
         super::carried_act::hold_back_agent_acts(&mut fold, &refused);
         Self {
             fold: Arc::new(fold),
-            generation: self.generation,
+            ..self
         }
+    }
+
+    /// This view with each pact held inactive whose folded scope does not
+    /// match its signed commitment under the live opening `store` holds for
+    /// it in `txn` (FIX 11730, [`super::pact_openings`]). With none, the
+    /// view as it was.
+    fn with_scope_commitments(self, store: &Store, txn: &heed::RoTxn<'_>) -> Self {
+        let mismatched = super::pact_openings::scope_commitment_mismatches(store, txn, &self.fold);
+        if mismatched.is_empty() {
+            return self;
+        }
+        let mut fold = (*self.fold).clone();
+        super::pact_openings::hold_mismatched_pacts(&mut fold, &mismatched);
+        Self {
+            fold: Arc::new(fold),
+            scope_commitment_mismatches: Arc::new(mismatched),
+            ..self
+        }
+    }
+
+    /// The pacts this install holds inactive for a scope commitment
+    /// mismatch (FIX 11730): what a federation status reports as
+    /// `scope_commitment_mismatch`.
+    pub(crate) fn scope_commitment_mismatches(&self) -> &BTreeSet<[u8; 32]> {
+        &self.scope_commitment_mismatches
     }
 }
 
@@ -450,7 +479,8 @@ fn fold_view_for_key(
             next_deadline_secs,
             continuation,
         } => Ok((
-            view.with_agent_grant_standing(store, txn, use_past_standing),
+            view.with_agent_grant_standing(store, txn, use_past_standing)
+                .with_scope_commitments(store, txn),
             next_deadline_secs,
             continuation,
         )),
@@ -662,6 +692,7 @@ fn fold_stored_tail_in_txn(
                 view: AuthorityView {
                     fold: Arc::new(fold),
                     generation: key.generation,
+                    scope_commitment_mismatches: Arc::default(),
                 },
                 next_deadline_secs,
                 continuation: AuthorityContinuation::past(
@@ -723,6 +754,7 @@ fn fold_stored_tail_in_txn(
         view: AuthorityView {
             fold: Arc::new(fold),
             generation: key.generation,
+            scope_commitment_mismatches: Arc::default(),
         },
         next_deadline_secs,
         continuation: base.map(|base| base.with_pinned(pinned)).and_then(|base| {
