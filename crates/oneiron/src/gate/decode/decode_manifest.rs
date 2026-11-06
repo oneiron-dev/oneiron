@@ -455,9 +455,6 @@ fn parse_sheet_answer_limits(
     let Value::Array(rows) = value else {
         return None;
     };
-    if rows.len() > 1024 {
-        return None;
-    }
     let mut out = Vec::with_capacity(rows.len());
     let mut seen = std::collections::BTreeSet::new();
     for row in rows {
