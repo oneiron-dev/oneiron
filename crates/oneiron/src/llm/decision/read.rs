@@ -351,6 +351,7 @@ impl DecisionReadProvider<'_> {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         };
         if questions.is_empty() {
             return Ok(slots
@@ -524,6 +525,7 @@ impl DecisionReadProvider<'_> {
                     paired,
                     person: None,
                     served: None,
+                    cost_per_thousand: None,
                 }
             })
             .collect();
