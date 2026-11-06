@@ -321,6 +321,9 @@ impl PartialServeConfig {
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
         }
+        if let Some(value) = self.artifact_backend {
+            resolved.artifact_backend = Some(value);
+        }
         if let Some(value) = self.merge_queue {
             resolved.merge_queue = Some(value);
         }

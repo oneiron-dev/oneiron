@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4581 declarations.
-Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1263 facade rows, 4584 declarations.
+Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -110,6 +110,20 @@ class CommitmentCreateReceipt(TypedDict):
     index: CommitmentIndexOutcome
 class CommitmentRefRequest(TypedDict):
     commitment_ref: str
+class CommitmentLedgerRequest(TypedDict):
+    contact_ref: str
+class CommitmentLedgerItem(TypedDict):
+    valid_from: int
+    valid_to: int
+    commitment: CommitmentView
+class CommitmentLedgerView(TypedDict):
+    contact_ref: str
+    identity_ref: str
+    counterparty: str
+    channel: str
+    address_or_handle: str
+    owed_by_them: list[CommitmentLedgerItem]
+    owed_to_them: list[CommitmentLedgerItem]
 CommitmentWakePhase = Literal["lead", "due"]
 class CommitmentWakeProposal(TypedDict):
     proposal_ref: str
@@ -3781,17 +3795,28 @@ class HolderExportRequest(TypedDict):
     secret: EntityId
     generation: int
     state: HolderExportState
+class WorldRecipientNotice(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    world_ref: NotRequired[str | None]
+    world_name: NotRequired[str | None]
+    reason: str
+    body: str
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
+    notices: NotRequired[list[WorldRecipientNotice]]
 class ExportTransfer(TypedDict):
     transfer_ref: str
     format: str
     bytes: int
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
+    notices: NotRequired[list[WorldRecipientNotice]]
 ExportAnswer = MemoryExport | ExportTransfer
 class ExportTransferReadRequest(TypedDict):
     transfer_ref: str
@@ -5514,15 +5539,6 @@ class PackSection(TypedDict):
     verbs: list[SectionVerbRef]
     authority_lane: AuthorityLaneRef
     budget_policy: BudgetPolicyRef
-class WorldRecipientNotice(TypedDict):
-    notice_type: str
-    channel: str
-    voice: str
-    audience: str
-    world_ref: NotRequired[str | None]
-    world_name: NotRequired[str | None]
-    reason: str
-    body: str
 class PackInstallReceipt(TypedDict):
     source_id: str
     pack_name: str

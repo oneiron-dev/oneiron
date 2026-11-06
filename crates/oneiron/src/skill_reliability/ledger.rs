@@ -10,19 +10,34 @@ use crate::receipt::ReceiptRecord;
 use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
-use super::amended::{amended_receipt_shares_in_txn, amended_shares_in_txn};
+use super::amended::amended_shares_in_txn;
 use super::codec::{
     KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
 use super::posterior::{SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior, count_weight};
 use super::read::read_skill;
 
+mod sources;
+mod outcome_requests;
+pub(super) use sources::weighted_read;
+pub use outcome_requests::{
+    record_resident_skill_contributing_win_with_position, record_skill_contributing_win_with_position,
+};
+pub(crate) use outcome_requests::record_skill_settled_loss_with_position;
+
+use super::outcome_position::OutcomePlacement;
+use super::outcome_row::LedgerOutcomeRow;
+
+pub(crate) use sources::{
+    attributed_outcome_results_sourced, attributed_outcomes_weighted_sourced,
+};
+
 /// Durable per-(skill, receipt) attributed-outcome ledger. Key: id16(skill) + string(receipt).
 ///
 /// The receipt id in the KEY is what makes the projector idempotent: an outcome
 /// already recorded re-writes its own row instead of incrementing a counter, so
 /// re-running a pass over the same judgments cannot double-count.
-const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
+pub(super) const OUTCOME: SideTable<(EntityId, String), LedgerOutcomeRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
 
 /// [`OUTCOME`]'s row: the byte layout [`record_outcome_in_txn`] has always spelled. `at` is
@@ -62,7 +77,7 @@ impl RawValue for OutcomeRow {
 
 /// The same outcome row for a named executor's arm: [`OUTCOME`]'s value, keyed by the arm and
 /// the receipt id, so one model's evidence never folds into another's or the legacy arm.
-const PAIRED_OUTCOME: SideTable<PairedOutcomeKey, OutcomeRow, Raw> =
+pub(super) const PAIRED_OUTCOME: SideTable<PairedOutcomeKey, LedgerOutcomeRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_PAIRED_OUTCOME);
 
 /// A named executor's arm of one skill: the skill id, then the model id framed by its big-endian
@@ -174,7 +189,11 @@ impl OutcomeRef {
         }
     }
 
-    fn get(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<OutcomeRow>> {
+    pub(super) fn get(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<LedgerOutcomeRow>> {
         match self {
             Self::Unknown(key) => OUTCOME.get(&vault.store, txn, key),
             Self::Paired(key) => PAIRED_OUTCOME.get(&vault.store, txn, key),
@@ -188,7 +207,12 @@ impl OutcomeRef {
         }
     }
 
-    fn put(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &OutcomeRow) -> Result<()> {
+    pub(super) fn put(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        row: &LedgerOutcomeRow,
+    ) -> Result<()> {
         match self {
             Self::Unknown(key) => OUTCOME.put(&vault.store, txn, key, row),
             Self::Paired(key) => PAIRED_OUTCOME.put(&vault.store, txn, key, row),
@@ -245,19 +269,20 @@ pub(super) fn outcome_skill_prefixes(skill: &EntityId) -> [Vec<u8>; 2] {
 }
 
 /// Outcome rows whose judge was displaced: the row stays, its weight leaves every fold.
-const DISPLACED: SideTable<OutcomeRef, DisplacedMark, Raw> =
+pub(super) const DISPLACED: SideTable<OutcomeRef, DisplacedMark, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_DISPLACED_JUDGE);
 
 /// [`DISPLACED`]'s row: the displaced and replacement judge revisions, as a MessagePack map.
 /// Only its presence is read today.
-struct DisplacedMark {
-    displaced: String,
-    replacement: String,
+pub(super) struct DisplacedMark {
+    pub(super) displaced: String,
+    pub(super) replacement: String,
+    pub(super) placement: OutcomePlacement,
 }
 
 impl RawValue for DisplacedMark {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        let mark = Value::Map(vec![
+        let mut mark = vec![
             (
                 Value::from("displaced"),
                 Value::from(self.displaced.as_str()),
@@ -266,8 +291,9 @@ impl RawValue for DisplacedMark {
                 Value::from("replacement"),
                 Value::from(self.replacement.as_str()),
             ),
-        ]);
-        Ok(encode_value(&mark)?)
+        ];
+        self.placement.append(&mut mark)?;
+        Ok(encode_value(&Value::Map(mark))?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
@@ -281,6 +307,7 @@ impl RawValue for DisplacedMark {
         Ok(Self {
             displaced: field("displaced")?,
             replacement: field("replacement")?,
+            placement: OutcomePlacement::decode(&value)?,
         })
     }
 }
@@ -294,14 +321,16 @@ pub(crate) fn mark_displaced_outcome_in_txn(
     old: &str,
     replacement: &str,
 ) -> Result<bool> {
-    let outcome = OutcomeRef::new(skill, executor, receipt);
-    let mark = DisplacedMark {
-        displaced: old.to_owned(),
-        replacement: replacement.to_owned(),
-    };
-    let existed = outcome.contains(vault, txn)?;
-    DISPLACED.put(&vault.store, txn, &outcome, &mark)?;
-    Ok(existed)
+    super::outcome_write::mark_displaced_outcome_positioned_in_txn(
+        vault,
+        txn,
+        skill,
+        executor,
+        receipt,
+        old,
+        replacement,
+        None,
+    )
 }
 
 fn is_displaced(vault: &Vault, txn: &heed::RoTxn<'_>, outcome: &OutcomeRef) -> Result<bool> {
@@ -341,34 +370,7 @@ pub fn record_skill_contributing_win(
     receipt_ref: &str,
     at: u64,
 ) -> Result<()> {
-    let record = read_skill(vault, skill)?;
-    if crate::skill::resident_of(&record)?.is_some() {
-        return Err(invalid("resident win requires its attributed actor"));
-    }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
-        return Err(invalid("contributing win cites an unstamped receipt"));
-    };
-    if receipt.outcome != ATTEMPT_OUTCOME_COMPLETED {
-        return Err(invalid(
-            "a contributing win requires a completed attempt receipt",
-        ));
-    }
-    if !receipt_manifest_names_skill(&receipt, &record) {
-        return Err(invalid(
-            "contributing win names a skill absent from the receipt manifest",
-        ));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        record_outcome_in_txn(
-            vault,
-            wtxn,
-            skill,
-            receipt_executor(&receipt),
-            receipt_ref,
-            true,
-            at,
-        )
-    })
+    record_skill_contributing_win_with_position(vault, skill, receipt_ref, at, None)
 }
 
 /// Charges one LOSS against a skill from an outcome its host settled, not a
@@ -384,29 +386,7 @@ pub(crate) fn record_skill_settled_loss(
     receipt_ref: &str,
     at: u64,
 ) -> Result<()> {
-    let record = read_skill(vault, skill)?;
-    if crate::skill::resident_of(&record)?.is_some() {
-        return Err(invalid("resident loss requires its attributed actor"));
-    }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
-        return Err(invalid("settled loss cites an unstamped receipt"));
-    };
-    if !receipt_manifest_names_skill(&receipt, &record) {
-        return Err(invalid(
-            "settled loss names a skill absent from the receipt manifest",
-        ));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        record_outcome_in_txn(
-            vault,
-            wtxn,
-            skill,
-            receipt_executor(&receipt),
-            receipt_ref,
-            false,
-            at,
-        )
-    })
+    record_skill_settled_loss_with_position(vault, skill, receipt_ref, at, None)
 }
 
 /// Credits a resident fork only from its own attributed outcome. The
@@ -418,43 +398,14 @@ pub fn record_resident_skill_contributing_win(
     receipt_ref: &str,
     at: u64,
 ) -> Result<()> {
-    let record = read_skill(vault, skill)?;
-    if crate::skill::resident_of(&record)? != Some(*resident)
-        || crate::skill::resident::receipt_resident(vault, receipt_ref)? != Some(*resident)
-        || !crate::skill::resident::receipt_loaded_skill(vault, receipt_ref, skill)?
-    {
-        return Err(invalid(
-            "resident win names a foreign or unowned skill or attempt",
-        ));
-    }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
-        return Err(invalid("contributing win cites an unstamped receipt"));
-    };
-    if receipt.outcome != ATTEMPT_OUTCOME_COMPLETED {
-        return Err(invalid(
-            "a contributing win requires a completed attempt receipt",
-        ));
-    }
-    let Some(manifest) = receipt.pack_manifest_skills() else {
-        return Err(invalid("resident win needs a versioned manifest"));
-    };
-    if !manifest.iter().any(|entry| {
-        ManifestEntry::parse_wire_form(entry)
-            .is_some_and(|(name, version)| name == record.skill_id && version == record.version)
-    }) {
-        return Err(invalid("resident win needs its exact revision"));
-    }
-    vault.with_write_txn_grouped(|txn| {
-        record_outcome_in_txn(
-            vault,
-            txn,
-            skill,
-            receipt_executor(&receipt),
-            receipt_ref,
-            true,
-            at,
-        )
-    })
+    record_resident_skill_contributing_win_with_position(
+        vault,
+        resident,
+        skill,
+        receipt_ref,
+        at,
+        None,
+    )
 }
 
 /// The manifest chokepoint BOTH outcome doors run: did the pack that stamped
@@ -489,22 +440,16 @@ pub(super) fn record_outcome_in_txn(
     win: bool,
     at: u64,
 ) -> Result<()> {
-    if receipt_ref.is_empty() {
-        return Err(invalid("a reliability outcome must cite a receipt"));
-    }
-    let model = executor.ok_or(invalid("a skill outcome requires its executor revision"))?;
-    super::read::validate_executor(model)?;
-    let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, wtxn, receipt_ref)?
-        .ok_or(invalid("a skill outcome requires a terminal pack receipt"))?;
-    super::projector::receipt_query(&receipt)?;
-    let key = OutcomeRef::new(skill, executor, receipt_ref);
-    if win
-        && let Some(existing) = key.get(vault, wtxn)?
-        && !existing.win
-    {
-        return Ok(());
-    }
-    key.put(vault, wtxn, &OutcomeRow { win, at })
+    super::outcome_write::record_outcome_positioned_in_txn(
+        vault,
+        wtxn,
+        skill,
+        executor,
+        receipt_ref,
+        win,
+        at,
+        None,
+    )
 }
 
 /// Attributed-outcome counts for one skill, plus the citation trace.
@@ -633,47 +578,7 @@ pub(crate) fn attributed_outcomes_weighted(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, AttributedOutcome)>> {
-    // An amended attempt is one record, a loss of its share, whatever the
-    // attempt lane recorded for it.
-    let amended = amended_receipt_shares_in_txn(vault, rtxn, skill)?;
-    let mut outcomes = Vec::new();
-    for (key, row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
-        let outcome = OutcomeRef::Unknown(key);
-        if amended.contains_key(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
-            continue;
-        }
-        outcomes.push((outcome.into_receipt(), AttributedOutcome::whole(row.win)));
-    }
-    // Optimization's split is over receipts, across all executors. Pair
-    // measurements remain separate; this read only supplies the evidence basis.
-    for (key, row) in PAIRED_OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
-        if key.receipt.is_empty() {
-            return Err(Error::CorruptedIndex("skill reliability pair key"));
-        }
-        let outcome = OutcomeRef::Paired(key);
-        if amended.contains_key(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
-            continue;
-        }
-        outcomes.push((outcome.into_receipt(), AttributedOutcome::whole(row.win)));
-    }
-    for (receipt, share) in amended {
-        let outcome = AttributedOutcome {
-            win: false,
-            loss: share,
-        };
-        outcomes.push((receipt, outcome));
-    }
-    outcomes.sort_by(|a, b| a.0.cmp(&b.0));
-    // One receipt is one outcome for the split, even when several executors
-    // invoked a callable under it; a loss outranks a win, as in the ledger.
-    outcomes.dedup_by(|next, kept| {
-        next.0 == kept.0 && {
-            kept.1.win &= next.1.win;
-            kept.1.loss = kept.1.loss.max(next.1.loss);
-            true
-        }
-    });
-    Ok(outcomes)
+    Ok(sources::attributed_outcomes_weighted_sourced(vault, rtxn, skill)?.0)
 }
 
 pub(super) fn tally_outcomes(
@@ -682,7 +587,7 @@ pub(super) fn tally_outcomes(
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<OutcomeTally> {
-    let rows: Vec<(OutcomeRef, OutcomeRow)> = match executor {
+    let rows: Vec<(OutcomeRef, LedgerOutcomeRow)> = match executor {
         None => OUTCOME
             .scan_from(&vault.store, rtxn, skill.as_bytes())?
             .into_iter()

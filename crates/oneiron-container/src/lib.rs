@@ -33,7 +33,7 @@ pub use launcher::launch as launch_fenced;
 #[cfg(target_os = "linux")]
 pub use linux::{landlock_abi, landlock_restrict, landlock_ruleset};
 #[cfg(target_os = "linux")]
-pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
+pub use supervisor::{LoopbackConnection, NativeFenceGuard, serve_native as serve_native_fence};
 
 use crate::cli_env::ApplyCliEnv as _;
 use std::collections::VecDeque;
@@ -317,7 +317,13 @@ impl ContainerRuntime {
             }
             let generation = uuid::Uuid::now_v7().simple().to_string();
             let name = format!("oneiron-guest-{generation}");
-            let supervisor = supervisor::Supervisor::bind(&config, generation.clone())?;
+            let read_only_paths: Vec<PathBuf> = spec
+                .read_only_mounts
+                .iter()
+                .map(|(_, destination)| destination.clone())
+                .collect();
+            let supervisor =
+                supervisor::Supervisor::bind(&config, generation.clone(), &read_only_paths)?;
             let mut fenced = spec.clone();
             fenced.seccomp = GuestSeccomp::EngineFence;
             let mut args = run_args(&name, &fenced)?;
@@ -336,8 +342,12 @@ impl ContainerRuntime {
                 "/run/oneiron-fence/bridge.sock".into(),
                 generation.clone().into(),
                 config.reconnect_window.as_millis().to_string().into(),
-                "--".into(),
             ]);
+            for path in &read_only_paths {
+                args.push("--read-only".into());
+                args.push(path.as_os_str().into());
+            }
+            args.push("--".into());
             args.extend_from_slice(command);
             let mut digest = blake3::Hasher::new();
             for arg in &args {

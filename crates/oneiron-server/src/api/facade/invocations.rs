@@ -36,8 +36,13 @@ pub(super) async fn facade_invocation_claim(
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
-    let (bytes, redacted) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+    let (bytes, redacted) = super::secret_body::read_middleware_body(
+        body,
+        &verb,
+        &mut parts.extensions,
+        crate::api::request_floor::request_floor(&server),
+    )
+    .await;
     let digest = match parts
         .extensions
         .get::<super::secret_body::FacadeOriginalDigest>()
@@ -97,7 +102,18 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
-            facade_replay(server.vault(), &auth, verb, outcome)
+            // The owner's own whole-vault export is released again as its
+            // owner's, once the waiter's fresh proof admits him as that
+            // owner now (owner ruling 1-EXPORT = B).
+            let owner_whole_vault_export =
+                super::export_transfer::owner_whole_vault_export_admitted(&server, &auth, verb);
+            facade_replay(
+                server.vault(),
+                &auth,
+                verb,
+                outcome,
+                owner_whole_vault_export,
+            )
         }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
@@ -467,7 +483,7 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    let (status, body) = replayed_reply(vault, auth, verb, outcome, false);
     (status, Json(body)).into_response()
 }
 
@@ -475,14 +491,16 @@ pub(crate) fn door_replay_for(
 /// facade's own ([`FacadeApiError::replayed`], FIX 2005), every word and
 /// field the first one carried under a request id of its own, so this
 /// call's receipt records its code, while it still names the first call's
-/// receipt, the original.
+/// receipt, the original. `owner_whole_vault_export` as
+/// [`replayed_value`] takes it.
 fn facade_replay(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    let (status, body) = replayed_reply(vault, auth, verb, outcome, owner_whole_vault_export);
     match FacadeApiError::replayed(status, &body) {
         Some(refusal) => refusal.into_response(),
         None => (status, Json(body)).into_response(),
@@ -495,10 +513,11 @@ fn replayed_reply(
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> (StatusCode, serde_json::Value) {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = match outcome.release {
-        Some(release) => replayed_value(vault, auth, verb, release),
+        Some(release) => replayed_value(vault, auth, verb, release, owner_whole_vault_export),
         None => rereleased_refusal(vault, auth, outcome.body),
     };
     (status, body)

@@ -25,8 +25,8 @@
 //! and an admitting verdict puts it in force.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::coach::COACH_TYPE_TREE_UPKEEP_FACET;
-use super::type_tree_gate::{drive, record_team_shape_outcomes, team_leader};
+use super::coach::{COACH_TYPE_TREE_UPKEEP_FACET, TypeTreeOutcomeReadRequests};
+use super::type_tree_gate::{drive, record_team_shape_outcomes_with_requests, team_leader};
 use super::type_tree_prior::donor_prior_winner;
 use crate::agent_dispatch::SourcedTypeTree;
 use crate::agent_dispatch::load_vault_type_tree_sourced;
@@ -583,6 +583,7 @@ impl Vault {
         now: u64,
     ) -> Result<TypeTreeUpkeepReport> {
         self.require_coach_attempt(attempt, COACH_TYPE_TREE_UPKEEP_FACET)?;
+        let requests = TypeTreeOutcomeReadRequests::from_input(&attempt.status.payload.input);
         let (receipts, receipt_rows): (Vec<TeamReceipt>, Vec<Option<Vec<EntityId>>>) =
             team_receipts_sourced(self, None)?.into_iter().unzip();
         let projects: BTreeSet<EntityId> = receipts
@@ -593,7 +594,13 @@ impl Vault {
         let (reserve, reserved, reserve_rows): (_, _, Option<Vec<EntityId>>) = match stored.head {
             Some(head) => {
                 let record = self.get_skill_record(&head)?.ok_or(Error::EntityNotFound)?;
-                let write = record_team_shape_outcomes(self, &head, &record, &receipts)?;
+                let write = record_team_shape_outcomes_with_requests(
+                    self,
+                    &head,
+                    &record,
+                    &receipts,
+                    requests.as_ref(),
+                )?;
                 // The leader receipts the gate reads as the head's reserve,
                 // from a reader that names no rows: unknown.
                 let reserved: BTreeSet<String> =

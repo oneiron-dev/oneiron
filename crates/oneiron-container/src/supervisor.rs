@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 // The supervisor's copy of a stream socket's guest end (FIX 6788).
 mod control;
+mod ingress;
+pub use ingress::LoopbackConnection;
 // A socket's host entry ends with the guest's last hold on it (FIX 5978).
 mod lifetime;
 // Guest-loopback listeners, inside the session only (FIX 6680).
@@ -29,6 +31,7 @@ pub(crate) struct Supervisor {
     directory: tempfile::TempDir,
     generation: String,
     launcher_digest: String,
+    ruleset_hash: String,
     config: FenceConfig,
 }
 struct Socket {
@@ -67,6 +70,7 @@ struct State {
 
 pub(crate) struct Guard {
     alive: Arc<AtomicBool>,
+    state: std::sync::Weak<State>,
     directory: Option<tempfile::TempDir>,
 }
 impl Guard {
@@ -81,7 +85,11 @@ impl Drop for Guard {
     }
 }
 impl Supervisor {
-    pub(crate) fn bind(config: &FenceConfig, generation: String) -> Result<Self> {
+    pub(crate) fn bind(
+        config: &FenceConfig,
+        generation: String,
+        read_only_paths: &[PathBuf],
+    ) -> Result<Self> {
         let directory = tempfile::Builder::new()
             .prefix("oneiron-fence-")
             .tempdir_in("/tmp")
@@ -104,6 +112,7 @@ impl Supervisor {
             directory,
             generation,
             launcher_digest: digest.finalize().to_hex().to_string(),
+            ruleset_hash: linux::ruleset_hash(read_only_paths),
             config: config.clone(),
         })
     }
@@ -173,6 +182,7 @@ impl Supervisor {
         let directory = self.directory;
         let guard = Guard {
             alive,
+            state: Arc::downgrade(&state),
             directory: Some(directory),
         };
         let config = self.config;
@@ -226,7 +236,7 @@ impl Supervisor {
     fn proved(&self, hello: &wire::Hello) -> bool {
         hello.generation == self.generation
             && hello.landlock_abi >= 3
-            && hello.ruleset_hash == linux::ruleset_hash()
+            && hello.ruleset_hash == self.ruleset_hash
             && hello.seccomp_hash == linux::filter_hash(hello.parent_pid, hello.bootstrap_fd)
             && hello.no_new_privs
             && !hello.capabilities.is_empty()
@@ -677,6 +687,7 @@ pub fn serve_native(
     listener: UnixListener,
     pid: i32,
     generation: &str,
+    read_only_paths: &[PathBuf],
     relay: Arc<dyn EgressRelay>,
 ) -> Result<NativeFenceGuard> {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -699,7 +710,7 @@ pub fn serve_native(
         || hello.parent_pid != pid as u32
         || hello.generation != generation
         || hello.landlock_abi < 3
-        || hello.ruleset_hash != linux::ruleset_hash()
+        || hello.ruleset_hash != linux::ruleset_hash(read_only_paths)
         || hello.seccomp_hash != linux::filter_hash(hello.parent_pid, hello.bootstrap_fd)
         || hello.capabilities.bytes().any(|c| c != b'0')
     {
@@ -718,13 +729,18 @@ pub fn serve_native(
         inventory: Mutex::default(),
         loopback: Mutex::default(),
     });
+    let guard = NativeFenceGuard {
+        alive,
+        state: Arc::downgrade(&state),
+    };
     std::thread::spawn(move || {
         let _ = serve(stream, Arc::new(notify), state);
     });
-    Ok(NativeFenceGuard { alive })
+    Ok(guard)
 }
 pub struct NativeFenceGuard {
     alive: Arc<AtomicBool>,
+    state: std::sync::Weak<State>,
 }
 impl Drop for NativeFenceGuard {
     fn drop(&mut self) {

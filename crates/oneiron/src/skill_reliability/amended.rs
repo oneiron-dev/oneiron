@@ -39,13 +39,14 @@ use super::ledger::{
     OutcomeRef, outcome_arm_prefix, outcome_skill_prefixes, receipt_executor,
     receipt_manifest_names_skill,
 };
+use super::outcome_position::{OutcomePlacement, OutcomeReadPosition};
 use super::posterior::SKILL_RELIABILITY_SCHEMA_VERSION;
 use super::projector::project_in_txn;
 use super::provenance::skill_reliability_prior_in_txn;
 
 /// The amendment verdict that replaces one attempt's outcome row. Key: the outcome row's full
 /// stored key, table prefix included — the displacement mark's key shape.
-const AMENDED: SideTable<OutcomeRef, AmendedRow, Raw> =
+pub(super) const AMENDED: SideTable<OutcomeRef, AmendedRow, Raw> =
     SideTable::new(&side_table::SKILL_RELIABILITY_AMENDED);
 
 const KEY_AMENDMENT: &str = "amendment";
@@ -69,15 +70,16 @@ pub(crate) struct AmendedOutcome {
 
 /// [`AMENDED`]'s row: the amendment receipt, its defect share, and its event time.
 #[derive(Debug, Clone, PartialEq)]
-struct AmendedRow {
-    amendment: String,
-    share: f32,
-    at: u64,
+pub(super) struct AmendedRow {
+    pub(super) amendment: String,
+    pub(super) share: f32,
+    pub(super) at: u64,
+    pub(super) placement: OutcomePlacement,
 }
 
 impl RawValue for AmendedRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        let row = Value::Map(vec![
+        let mut row = vec![
             (
                 Value::from(KEY_SCHEMA_VERSION),
                 Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
@@ -88,8 +90,9 @@ impl RawValue for AmendedRow {
             ),
             (Value::from(KEY_SHARE), Value::F32(self.share)),
             (Value::from(KEY_AT), Value::from(self.at)),
-        ]);
-        Ok(encode_value(&row)?)
+        ];
+        self.placement.append(&mut row)?;
+        Ok(encode_value(&Value::Map(row))?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
@@ -111,6 +114,7 @@ impl RawValue for AmendedRow {
             amendment: amendment.to_owned(),
             share,
             at,
+            placement: OutcomePlacement::decode(&value)?,
         })
     }
 }
@@ -171,9 +175,37 @@ pub(super) fn amended_receipt_shares_in_txn(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<BTreeMap<String, f32>> {
+    Ok(amended_receipt_shares_sourced_in_txn(vault, rtxn, skill)?.0)
+}
+
+/// The same amendment scan, including withdrawn rows consulted before filtering.
+/// Stored amendments have no EntityId body carrier; only absence is known empty.
+pub(super) fn amended_receipt_shares_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(BTreeMap<String, f32>, Option<Vec<EntityId>>)> {
+    amended_receipt_shares_observed_in_txn(vault, rtxn, skill, None)
+}
+
+pub(super) fn amended_receipt_shares_observed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    mut observed: Option<&mut super::outcome_read::CanonicalOutcomeReads>,
+) -> Result<(BTreeMap<String, f32>, Option<Vec<EntityId>>)> {
     let mut receipts = BTreeMap::new();
+    let mut sources = Some(Vec::new());
     for prefix in outcome_skill_prefixes(skill) {
-        for (outcome, row) in AMENDED.scan_from(&vault.store, rtxn, &prefix)? {
+        for (outcome, row) in super::outcome_read::scan_rows(
+            vault,
+            rtxn,
+            &AMENDED,
+            &prefix,
+            crate::store::attempt_sources::OutcomeReadKind::Amended,
+            observed.as_deref_mut(),
+        )? {
+            sources = None;
             if row.share > 0.0 {
                 let held = receipts
                     .entry(outcome.receipt().to_owned())
@@ -182,7 +214,7 @@ pub(super) fn amended_receipt_shares_in_txn(
             }
         }
     }
-    Ok(receipts)
+    Ok((receipts, sources))
 }
 
 /// One arm of one skill: the unit a reprojection runs over.
@@ -219,6 +251,16 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdicts: &[AmendedOutcome],
 ) -> Result<Vec<EntityId>> {
+    reconcile_amended_outcomes_positioned_in_txn(vault, wtxn, verdicts, None)
+}
+
+/// Placement comes from this original producer request and applies only at birth.
+pub(crate) fn reconcile_amended_outcomes_positioned_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    verdicts: &[AmendedOutcome],
+    output_positions: Option<&BTreeMap<(EntityId, Option<String>, String), OutcomeReadPosition>>,
+) -> Result<Vec<EntityId>> {
     let desired = grounded_rows_in_txn(vault, wtxn, &later_verdicts(verdicts))?;
     let mut moved: Vec<(Arm, u64)> = Vec::new();
     let mut note = |arm: Arm, at: u64| match moved.iter_mut().find(|(held, _)| *held == arm) {
@@ -228,10 +270,13 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
     let mut stored = BTreeSet::new();
     for (outcome, row) in AMENDED.scan(&vault.store, wtxn)? {
         let key = key_of(&outcome);
-        let next = match desired.get(&key) {
+        let mut next = match desired.get(&key) {
             Some((_, _, wanted)) => wanted.clone(),
             None => row.withdrawn(),
         };
+        next.placement = row.placement.retained(
+            next.amendment == row.amendment && next.share == row.share && next.at == row.at,
+        );
         if next != row {
             AMENDED.put(&vault.store, wtxn, &outcome, &next)?;
             let (skill, executor) = outcome.arm();
@@ -241,7 +286,12 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
     }
     for (key, (arm, outcome, row)) in &desired {
         if !stored.contains(key) {
-            AMENDED.put(&vault.store, wtxn, outcome, row)?;
+            let mut row = row.clone();
+            let position = output_positions.and_then(|positions| {
+                positions.get(&(arm.0, arm.1.clone(), outcome.receipt().to_owned()))
+            });
+            row.placement = OutcomePlacement::birth(vault, position);
+            AMENDED.put(&vault.store, wtxn, outcome, &row)?;
             note(arm.clone(), row.at);
         }
     }
@@ -307,6 +357,7 @@ fn grounded_rows_in_txn(
             amendment: verdict.amendment_receipt.clone(),
             share: verdict.defect_share,
             at: verdict.at,
+            placement: OutcomePlacement::unknown(),
         };
         for executor in executors {
             let outcome = OutcomeRef::new(&verdict.skill, executor.as_deref(), attempt);

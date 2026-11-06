@@ -330,6 +330,9 @@ impl Vault {
                         archive: archive.bytes,
                         digest: summary.digest.clone(),
                         holder_requests: Vec::new(),
+                        // A removal's records archive follows the world
+                        // settings, so it names no world it carried past them.
+                        notices: Vec::new(),
                     },
                 };
                 let row_key = removal_export_key(&copy.member, &copy.receipt_id);

@@ -13,6 +13,7 @@ pub enum RelayRequest {
     Connect { target: SocketAddr },
     Datagram { target: SocketAddr, bytes: Vec<u8> },
     AuthorizeDatagram { target: SocketAddr },
+    Fetch { request: crate::HttpRequest },
     Refusal(crate::LoopbackRefusal),
 }
 #[derive(Serialize, Deserialize)]

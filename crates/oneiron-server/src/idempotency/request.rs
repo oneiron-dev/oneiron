@@ -10,10 +10,13 @@ use super::{
     intent, replay_admits, require_owner_auth, to_bytes,
 };
 
-/// A keyed request's body is read up to axum's default extractor limit, the
-/// keyed routes' own, so the layer cuts short no body its route would accept
-/// (FIX 6056, rule 5). A keyed outcome is kept whole, whatever its size.
-const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+/// A keyed request's body is read up to the API's request floor
+/// (`limits.request_body_bytes`), the bound the keyed routes read under, so
+/// the layer cuts short no body its route would accept (FIX 6056, rule 5;
+/// ABC transport row T5). A keyed outcome is kept whole, whatever its size.
+fn route_body_limit(server: &SyncServer) -> usize {
+    usize::try_from(server.config.limits.request_body_bytes).unwrap_or(usize::MAX)
+}
 
 pub(crate) async fn idempotency_middleware(
     State(state): State<IdempotencyLayerState>,
@@ -103,7 +106,8 @@ async fn idempotent(
     let (parts, body) = request.into_parts();
     // FIX 9528: a body that does not fit or cannot be read is refused in the
     // route's own typed envelope, naming why.
-    let read = super::body_read::keyed_body(body, &parts.headers, ROUTE_BODY_LIMIT_BYTES).await;
+    let limit = route_body_limit(&state.server);
+    let read = super::body_read::keyed_body(body, &parts.headers, limit).await;
     let body = match read {
         Ok(body) => body,
         Err(error) => return api_error_response(error, is_core_auth_route),
@@ -284,9 +288,8 @@ async fn idempotent(
 /// The idempotency layer for a route that mutates in one request form only.
 /// A keyed request's body tells the form: the mutating form takes the layer,
 /// with `release` judging each replay; any other form runs as if the layer
-/// were absent, never cached and never replayed. The body is read up to
-/// axum's default extractor limit, so no body the route would accept is cut
-/// short.
+/// were absent, never cached and never replayed. The body is read up to the
+/// API's request floor, so no body the route would accept is cut short.
 pub(crate) async fn idempotency_for_mutating_form(
     state: IdempotencyLayerState,
     request: Request,
@@ -300,7 +303,8 @@ pub(crate) async fn idempotency_for_mutating_form(
     let is_core_route = is_core_auth_route(request_path(&request));
     let (parts, body) = request.into_parts();
     // FIX 9528: refused in the route's own typed envelope, naming why.
-    let read = super::body_read::keyed_body(body, &parts.headers, ROUTE_BODY_LIMIT_BYTES).await;
+    let limit = route_body_limit(&state.server);
+    let read = super::body_read::keyed_body(body, &parts.headers, limit).await;
     let body = match read {
         Ok(body) => body,
         Err(error) => return api_error_response(error, is_core_route),

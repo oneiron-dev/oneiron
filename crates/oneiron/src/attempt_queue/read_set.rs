@@ -14,6 +14,7 @@ use crate::Vault;
 use crate::attempt_queue::source_rows::union_source_rows;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::attempt_sources::AttemptSources;
 
 pub use crate::store::attempt_read_producer::ReadSetProducer;
 pub use crate::store::attempt_record::AttemptReadSet;
@@ -23,6 +24,7 @@ impl AttemptReadSet {
     fn new() -> Self {
         Self {
             rows: Some(Vec::new()),
+            native: BTreeSet::new(),
             expected: BTreeSet::new(),
             reported: BTreeSet::new(),
         }
@@ -33,14 +35,30 @@ impl AttemptRecord {
     /// The complete set of rows this attempt's producers recorded its inputs
     /// read from. `None`, unknown, unless its owner declared producers and
     /// every one reported (FIX 7073); `None` too once any reported an unknown
-    /// set or an undeclared one reported.
+    /// set or an undeclared one reported. A native component cannot be
+    /// represented by this entity-only projection and also returns `None`.
     #[must_use]
     pub(crate) fn source_rows(&self) -> Option<&[EntityId]> {
         let set = self.read_set.as_ref()?;
         if set.expected.is_empty() || !set.expected.is_subset(&set.reported) {
             return None;
         }
+        if !set.native.is_empty() {
+            return None;
+        }
         set.rows.as_deref()
+    }
+
+    /// The same completeness rule, retaining native family witnesses.
+    pub(crate) fn sources(&self) -> Option<AttemptSources> {
+        let set = self.read_set.as_ref()?;
+        if set.expected.is_empty() || !set.expected.is_subset(&set.reported) {
+            return None;
+        }
+        Some(AttemptSources {
+            entities: set.rows.clone()?,
+            native: set.native.clone(),
+        })
     }
 }
 
@@ -70,11 +88,16 @@ impl AttemptQueue<'_> {
         txn: &mut heed::RwTxn<'_>,
         id: AttemptId,
         producer: ReadSetProducer,
-        rows: Option<Vec<EntityId>>,
+        sources: Option<AttemptSources>,
     ) -> Result<bool> {
         self.change_read_set_in_txn(txn, id, |set| {
             let declared = set.expected.contains(producer.as_str());
-            set.rows = union_source_rows([set.rows.take(), rows.filter(|_| declared)]);
+            let sources = sources.filter(|_| declared);
+            let rows = sources.map(|sources| {
+                set.native.extend(sources.native);
+                sources.entities
+            });
+            set.rows = union_source_rows([set.rows.take(), rows]);
             set.reported.insert(producer.as_str().to_owned());
         })
     }
@@ -177,8 +200,19 @@ impl Vault {
         producer: ReadSetProducer,
         rows: Option<Vec<EntityId>>,
     ) -> Result<bool> {
+        self.record_attempt_read_sources(attempt, producer, rows.map(AttemptSources::entities))
+    }
+
+    /// Records a complete typed report from the original producer. `None`
+    /// poisons completeness exactly as the entity-only entrypoint does.
+    pub fn record_attempt_read_sources(
+        &self,
+        attempt: AttemptId,
+        producer: ReadSetProducer,
+        sources: Option<AttemptSources>,
+    ) -> Result<bool> {
         self.with_write_txn_grouped(|txn| {
-            AttemptQueue::new(self).record_attempt_sources_in_txn(txn, attempt, producer, rows)
+            AttemptQueue::new(self).record_attempt_sources_in_txn(txn, attempt, producer, sources)
         })
     }
 
@@ -198,7 +232,23 @@ impl Vault {
         producer: ReadSetProducer,
         rows: Option<Vec<EntityId>>,
     ) -> bool {
-        match self.record_attempt_sources_in_savepoint(txn, attempt, producer, rows) {
+        self.record_attempt_read_sources_best_effort_in_txn(
+            txn,
+            attempt,
+            producer,
+            rows.map(AttemptSources::entities),
+        )
+    }
+
+    /// The typed report through the same best-effort savepoint and unknown fallback.
+    pub fn record_attempt_read_sources_best_effort_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        producer: ReadSetProducer,
+        sources: Option<AttemptSources>,
+    ) -> bool {
+        match self.record_attempt_sources_in_savepoint(txn, attempt, producer, sources) {
             Ok(recorded) => recorded,
             Err(error) => {
                 let marked_unknown = self
@@ -223,14 +273,14 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         producer: ReadSetProducer,
-        rows: Option<Vec<EntityId>>,
+        sources: Option<AttemptSources>,
     ) -> Result<bool> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
         let recorded = AttemptQueue::new(self).record_attempt_sources_in_txn(
             &mut savepoint,
             attempt,
             producer,
-            rows,
+            sources,
         )?;
         savepoint.commit()?;
         Ok(recorded)

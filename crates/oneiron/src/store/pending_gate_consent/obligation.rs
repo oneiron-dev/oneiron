@@ -46,7 +46,18 @@ pub(crate) fn owner_answer_obligation_in(
     txn: &RoTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<Option<OwnerAnswerObligationRecord>> {
-    let Some(record) = OBLIGATION.get(dbs, txn, claim_id)? else {
+    owner_answer_obligation_observed_in(dbs, txn, claim_id, &mut None)
+}
+
+pub(crate) fn owner_answer_obligation_observed_in(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+    observer: &mut Option<&mut crate::ports::StaleReadObserver<'_>>,
+) -> Result<Option<OwnerAnswerObligationRecord>> {
+    let Some(record) =
+        crate::ports::stale_reads::side_row(OBLIGATION, dbs, txn, claim_id, observer)?
+    else {
         return Ok(None);
     };
     if record.claim_id != *claim_id.as_bytes() {

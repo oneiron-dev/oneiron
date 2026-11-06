@@ -62,6 +62,7 @@ pub(crate) mod ai;
 mod anonymous_chat;
 // FIX 8238: an answer's resources kept until the answer is encoded.
 pub(crate) mod answer_hold;
+mod artifact_backend_pairing;
 mod artifacts;
 // OF-469: a kept authority checkpoint and its attestations, for adoption.
 mod authority_checkpoint;
@@ -194,6 +195,8 @@ pub(crate) use context_board::{action_board, freeze_chat_context, record_action_
 #[allow(dead_code)]
 mod reactive;
 mod report;
+// ABC transport rows T1, T3, T4: the API's request floor.
+mod request_floor;
 mod routes;
 mod run_tree;
 mod saved_query;
@@ -300,6 +303,7 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
 /// listener.
 pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     artifact_routes()
+        .merge(self::artifacts::backend_routes())
         .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
         .layer(middleware::from_fn_with_state(
             server.clone(),

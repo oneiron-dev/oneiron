@@ -28,6 +28,7 @@ pub(super) fn record_deferred_approval_in_txn(
         goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
         cycle: cycle.as_str().to_owned(),
         at,
+        read_position: None,
         ..pending
     };
     record_verdict_in_txn(vault, txn, &deferred)?;

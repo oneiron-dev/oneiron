@@ -52,7 +52,7 @@ pub(crate) fn project_health_review_outcome_in_txn(
         card: card.to_owned(),
     };
     match held.label {
-        Some(win) => record_rule_outcome_in_txn(vault, txn, &skill, &source, win, held.at),
+        Some(win) => record_rule_outcome_in_txn(vault, txn, &skill, &source, win, held.at, None),
         None => withdraw_rule_outcome_in_txn(vault, txn, &skill, &source).map(|_| ()),
     }
 }

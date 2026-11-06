@@ -36,19 +36,80 @@ use crate::dto::{
 };
 use crate::error::OneironError;
 
+mod ag_ui;
+pub(crate) use ag_ui::lift_ag_ui_file_read;
+mod ai_answers;
+pub(crate) use ai_answers::{lift_ai_answer, lift_ai_video_job};
+
+mod llm_responses;
+pub(crate) use llm_responses::{
+    lift_model_role_invocation, lift_model_step_receipt, lift_model_stream_events,
+    lift_model_stream_terminal, lift_settled_program_step, lift_settled_step,
+};
+mod model_usage;
+pub(crate) use model_usage::{lift_ask_image, lift_model_binding_proposal, lift_model_trial};
 mod ai_options;
+mod browser_answers;
 mod browser_batch;
 mod checkpoints;
+mod claim_results;
+pub(crate) use claim_results::{
+    lift_claim_settlement, lift_scoped_claim, lift_signal_extraction_result,
+};
 mod claims;
+mod cleanup_reviews;
+pub(crate) use cleanup_reviews::lift_cleanup_review;
 mod core_write;
+mod connector_manifests;
+pub(crate) use connector_manifests::{
+    lift_connector_pack_delta, lift_connector_pack_view, lift_proxy_connector_registration,
+};
+mod decision_asks;
+pub(crate) use decision_asks::{lift_decision_ask, lift_decision_asks};
+mod drafters;
+pub(crate) use drafters::{lift_drafter_policy, lift_drafter_status};
 mod diagnostics;
+mod feedback;
+mod foreign_code;
+pub(crate) use foreign_code::lift_foreign_code_result;
+mod generated_lenses;
+mod identity_act_now;
+mod identity_lookups;
+pub(crate) use identity_lookups::lift_identity_lookup;
+mod hyde_hosts;
+pub(crate) use hyde_hosts::lift_hyde_host_work;
 mod key_value;
 mod lens_actions;
 mod lens_frames;
+mod lens_selections;
+mod merge_queue;
+pub(crate) use merge_queue::lift_merge_queue_observation;
+mod model_catalogs;
+pub(crate) use model_catalogs::{lift_model_catalog_diff, lift_model_catalog_revision};
+mod notifications;
 mod policy_settings;
 mod proposal_results;
 mod proposals;
+mod results;
+mod retrieval_evidence;
+pub(crate) use retrieval_evidence::{
+    lift_retrieval_diagnostic_export, lift_retrieval_run_evidence_opt, lift_retrieval_run_evidences,
+};
+mod saved_queries;
+pub(crate) use saved_queries::{
+    lift_saved_query_evaluation, lift_saved_query_read, lift_saved_query_record,
+};
+mod secret_uses;
+pub(crate) use secret_uses::lift_secret_use_answer;
+mod shape_groups;
+mod shape_plans;
+pub(crate) use shape_groups::lift_shape_groups;
 mod skill_callables;
+mod skill_library;
+pub(crate) use skill_library::{
+    lift_bootstrap_skills, lift_skill_library_page, lift_skill_library_restore, lift_skill_library_view,
+};
+mod weave_reports;
 mod wire_json;
 
 /// Lowers a foreign value into the engine type `T`.
@@ -1441,6 +1502,16 @@ impl Lift<engine::MemoryExportReceipt> for ExportReceipt {
             format: receipt.format,
             bytes: receipt.bytes,
             digest: receipt.digest,
+            holder_requests: receipt
+                .holder_requests
+                .iter()
+                .map(|request| lift_record("vault.export", request))
+                .collect::<Result<_, _>>()?,
+            notices: receipt
+                .notices
+                .iter()
+                .map(|notice| lift_record("vault.export", notice))
+                .collect::<Result<_, _>>()?,
         })
     }
 }

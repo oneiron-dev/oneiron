@@ -31,6 +31,22 @@
       "openapi": true
     },
     {
+      "name": "vault.commitments.ledger",
+      "description": "Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views.",
+      "input": "crate::memory::commitment_doors::CommitmentLedgerRequest",
+      "output": "crate::memory::commitment_doors::CommitmentLedgerView",
+      "call": "memory.commitments_ledger_as(&memory.embedded_owner(\"vault.commitments.ledger\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.commitments.instances",
       "description": "Lists the materialized occurrences of a commitment series, including closed obligations.",
       "input": "crate::memory::commitment_doors::CommitmentRefRequest",
@@ -2581,9 +2597,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n",
-          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */",
-          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
+          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n    /// It carries every world wherever it goes; `notices` names each world\n    /// the owner's recipient choice would keep from there, and why.\n",
+          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
+          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
         }
       }
     },

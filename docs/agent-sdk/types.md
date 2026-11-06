@@ -17,6 +17,8 @@
  * call boundary.
  */
 
+import type { HolderExportRequest, WorldRecipientNotice } from "./facade-types.js"
+
 /** Options for an embedded {@link Oneiron.open}. */
 export type OpenOptions = {
   /** Embedding vector dimensions; omitted takes the engine default. */
@@ -470,10 +472,10 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
-export type MemoryExport = { format: string; archive: string; digest: string }
-/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3. The archive is the caller's file. */
-export type ExportReceipt = { format: string; bytes: number; digest: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. `notices` names each world the owner's own export carries that his recipient choice would keep from where it goes (owner ruling 1-EXPORT = B). */
+export type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[]; notices?: WorldRecipientNotice[] }
+/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3, and its notices as `MemoryExport` names them. The archive is the caller's file. */
+export type ExportReceipt = { format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[]; notices?: WorldRecipientNotice[] }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {
@@ -980,6 +982,11 @@ class ExportReceipt(TypedDict):
     bytes: int
     # BLAKE3 of the archive, lowercase hex.
     digest: str
+    # Holder work recorded by this export; absent when there is none.
+    holder_requests: NotRequired[list[Facade.HolderExportRequest]]
+    # Each world the owner's own export carries that his recipient choice
+    # would keep from where it goes, and why (owner ruling 1-EXPORT = B).
+    notices: NotRequired[list[Facade.WorldRecipientNotice]]
 
 class NativeLimitQuestion(TypedDict):
     # The [limits] row key that asked.
@@ -1388,6 +1395,8 @@ class Oneiron:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
         def get(self, spec: Facade.CommitmentRefRequest) -> Facade.CommitmentView:
             """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
+        def ledger(self, spec: Facade.CommitmentLedgerRequest) -> Facade.CommitmentLedgerView:
+            """Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."""
         def instances(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentView]:
             """Lists the materialized occurrences of a commitment series, including closed obligations."""
         def proposals(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentWakeProposal]:
