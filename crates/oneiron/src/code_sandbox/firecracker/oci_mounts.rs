@@ -38,7 +38,11 @@ pub(super) fn prepare(spec: &GuestSpec) -> Result<MountArchive> {
     manifest_header.set_mode(0o600);
     manifest_header.set_size(manifest.len() as u64);
     manifest_header.set_cksum();
-    builder.append_data(&mut manifest_header, "destinations.json", manifest.as_slice())?;
+    builder.append_data(
+        &mut manifest_header,
+        "destinations.json",
+        manifest.as_slice(),
+    )?;
     for (index, (host, _)) in spec.read_only_mounts.iter().enumerate() {
         // The root is the directory explicitly selected by the caller. All
         // descendant lookup is anchored to this descriptor, never a host link.
@@ -121,7 +125,7 @@ fn header(metadata: &Metadata, kind: tar::EntryType) -> tar::Header {
     header.set_mode(metadata.mode() & 0o777);
     header.set_uid(u64::from(metadata.uid()));
     header.set_gid(u64::from(metadata.gid()));
-    header.set_mtime(0);
+    header.set_mtime(metadata.mtime() as u64);
     header.set_size(0);
     header.set_cksum();
     header

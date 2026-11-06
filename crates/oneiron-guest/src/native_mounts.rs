@@ -68,6 +68,10 @@ pub(crate) fn prepare(channel: &mut impl Read, bytes: u64, digest: [u8; 32]) -> 
         return Ok(());
     }
     prepare_root(stage)?;
+    // Parent targets precede children, even if the caller listed a child first.
+    // Nothing untrusted runs while these private copies are still writable.
+    mounts.sort_by_key(|(_, destination)| destination.components().count());
+    let mut installed = Vec::new();
     for (source, destination) in mounts {
         // The root is now the guest image's overlay. Absolute symlinks and
         // missing destination directories resolve only inside that root.
@@ -75,6 +79,10 @@ pub(crate) fn prepare(channel: &mut impl Read, bytes: u64, digest: [u8; 32]) -> 
         let destination = fs::canonicalize(destination)?;
         let source = PathBuf::from(format!("/proc/self/fd/{}", source.as_raw_fd()));
         mount(Some(&source), &destination, None, libc::MS_BIND, None)?;
+        installed.push(destination);
+    }
+    // Finish nested mountpoint creation before making parents read-only.
+    for destination in installed {
         mount(
             None,
             &destination,
