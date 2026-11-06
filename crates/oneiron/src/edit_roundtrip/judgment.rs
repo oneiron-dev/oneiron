@@ -568,45 +568,58 @@ impl EditSession for NativeCellSession {
                 failed()
             }
         })?;
-        let changes = plan
-            .ops
-            .iter()
-            .map(|op| {
-                let EditOp::SetCell {
-                    sheet, cell, after, ..
-                } = op
-                else {
-                    return Err(failed());
-                };
-                let value = match after {
-                    CellValue::Blank => XlsxValue::Blank,
-                    CellValue::Number(number) => XlsxValue::Number(*number),
-                    CellValue::Text(text) => XlsxValue::Text(text.clone()),
-                    CellValue::Bool(value) => XlsxValue::Bool(*value),
-                    CellValue::Error(error) => XlsxValue::Error(error.clone()),
-                    CellValue::Formula { .. } => return Err(failed()),
-                };
-                let style = book
-                    .sheets
-                    .iter()
-                    .find(|named| named.name == *sheet)
-                    .and_then(|named| {
-                        named
-                            .cells
-                            .iter()
-                            .find(|stored| stored.col == cell.col && stored.row == cell.row)
-                    })
-                    .and_then(|stored| stored.style);
-                Ok(XlsxChange::Cell {
-                    sheet: sheet.clone(),
-                    col: cell.col,
-                    row: cell.row,
-                    value,
-                    formula: None,
-                    style,
+        let mut changes_backing = self.resources.hold();
+        changes_backing
+            .take_len::<XlsxChange>(plan.ops.len())
+            .map_err(crate::office_body::machine_memory_refused)?;
+        let mut changes = Vec::new();
+        changes.try_reserve_exact(plan.ops.len()).map_err(|error| {
+            Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+        })?;
+        if changes.capacity() > plan.ops.len() {
+            changes_backing
+                .take_len::<XlsxChange>(changes.capacity() - plan.ops.len())
+                .map_err(crate::office_body::machine_memory_refused)?;
+        }
+        for op in &plan.ops {
+            let EditOp::SetCell {
+                sheet, cell, after, ..
+            } = op
+            else {
+                return Err(failed());
+            };
+            let value = match after {
+                CellValue::Blank => XlsxValue::Blank,
+                CellValue::Number(number) => XlsxValue::Number(*number),
+                CellValue::Text(text) => {
+                    XlsxValue::Text(clone_plan_text(text, Some(&mut changes_backing))?)
+                }
+                CellValue::Bool(value) => XlsxValue::Bool(*value),
+                CellValue::Error(error) => {
+                    XlsxValue::Error(clone_plan_text(error, Some(&mut changes_backing))?)
+                }
+                CellValue::Formula { .. } => return Err(failed()),
+            };
+            let style = book
+                .sheets
+                .iter()
+                .find(|named| named.name == *sheet)
+                .and_then(|named| {
+                    named
+                        .cells
+                        .iter()
+                        .find(|stored| stored.col == cell.col && stored.row == cell.row)
                 })
-            })
-            .collect::<Result<Vec<_>>>()?;
+                .and_then(|stored| stored.style);
+            changes.push(XlsxChange::Cell {
+                sheet: clone_plan_text(sheet, Some(&mut changes_backing))?,
+                col: cell.col,
+                row: cell.row,
+                value,
+                formula: None,
+                style,
+            });
+        }
         let bytes = project_xlsx(&doc.bytes, &changes, self.limits, &self.resources, None)
             .map_err(|error| {
                 // A resource refusal is the engine's error (FIX 10587), never a failed write.

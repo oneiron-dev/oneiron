@@ -43,8 +43,12 @@ Their byte lengths are reserved before allocating, and allocator-reported
 capacity is settled before copying the text into those fixed-capacity strings.
 The hold remains alive until the plan and its payloads are freed. The ordinary
 operation builder keeps its existing unadmitted clone path; it creates no new
-resource port. Validation scratch, native application and manifest copies, and
-transient allocator surplus remain outside this admission.
+resource port. Each native batch also reserves its local workbook-change vector
+before allocation and admits its actual capacity before filling it. The copied
+sheet names and text or error values use that same batch-local hold, which stays
+alive until those changes are freed after workbook projection. Validation
+scratch, native workbook parsing and projection output, applied-operation
+manifest copies, and transient allocator surplus remain outside this admission.
 
 The facade rechecks the original read rows through the current credential
 before continuing or restaging and before returning or retaining results.
