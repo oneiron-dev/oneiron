@@ -663,6 +663,9 @@ class Oneiron:
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
+        def step_up(self) -> "Oneiron._VaultStepUpVerbs":
+            return Oneiron._VaultStepUpVerbs(self._client)
+        @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
         @property
@@ -1928,6 +1931,18 @@ class Oneiron:
         def put(self, spec):
             """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest_feedback_put(json.dumps(spec))))
+    class _VaultStepUpVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs":
+            return Oneiron._VaultStepUpPasskeysVerbs(self._client)
+    class _VaultStepUpPasskeysVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def reset(self, spec):
+            """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
+            return json.loads(_translate(lambda: self._client.vault_step_up_passkeys_reset(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

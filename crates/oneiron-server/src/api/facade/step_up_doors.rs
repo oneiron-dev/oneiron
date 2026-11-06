@@ -17,6 +17,8 @@
 //!
 //! Each runs on the caller's own verified slip, at read scope: a step-up is
 //! the person's own sign-in strength, not a write into the vault's records.
+//! The owner's reset of a person's passkeys is the verb row
+//! `vault.step_up.passkeys.reset` (FIX 17553), under the owner proof.
 
 use std::sync::Arc;
 
@@ -26,13 +28,16 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::EntityId;
 use oneiron::authority::{
     EnrolledPasskey, PasskeyAssertion, PasskeyRegistration, StepUpCeremony, StepUpChallenge,
-    StepUpDone, VerifiedSlip,
+    StepUpDone, StepUpPasskeysReset, StepUpPasskeysResetRequest, VerifiedSlip,
 };
 use oneiron::memory::MEMORY_CODE_INTERNAL;
 use serde::{Deserialize, Serialize};
 
+use super::host_doors::support::Listed;
+use super::legal_hold_doors::as_owner_naming;
 use super::{FacadeApiError, facade_input, facade_json};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
@@ -190,4 +195,31 @@ fn internal() -> FacadeApiError {
         "the step-up worker did not finish",
         ["Retry the request."],
     )
+}
+
+/// `vault.step_up.passkeys.reset` (FIX 17553): the vault owner removes every
+/// passkey a person enrolled, and their step-ups, so a person who lost each
+/// one can enroll again. Under the owner proof, revalidated in the writer;
+/// it names the person.
+pub(crate) async fn vault_step_up_passkeys_reset(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: StepUpPasskeysResetRequest,
+) -> Listed<StepUpPasskeysReset> {
+    const VERB: &str = "vault.step_up.passkeys.reset";
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            oneiron::task_verb::sdk::reset_step_up_passkeys_as(server.vault(), owner, input)
+        },
+        |answer| {
+            EntityId::from_hex(&answer.person)
+                .ok()
+                .into_iter()
+                .collect()
+        },
+    )
+    .await
 }

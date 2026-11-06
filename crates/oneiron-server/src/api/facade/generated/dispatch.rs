@@ -6195,6 +6195,40 @@ async fn vault_weave_admin_item_wrong(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_step_up_passkeys_reset(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.step_up.passkeys.reset")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.step_up.passkeys.reset", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.step_up.passkeys.reset", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_step_up_passkeys_reset(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_weave_enqueue(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40061,6 +40095,9 @@ async fn call_verb_row(
         }
         "vault.weave.admin.item.wrong" => {
             Box::pin(vault_weave_admin_item_wrong(server, call, input)).await
+        }
+        "vault.step_up.passkeys.reset" => {
+            Box::pin(vault_step_up_passkeys_reset(server, call, input)).await
         }
         "vault.weave.enqueue" => Box::pin(vault_weave_enqueue(server, call, input)).await,
         "vault.weave.schedules.list" => {

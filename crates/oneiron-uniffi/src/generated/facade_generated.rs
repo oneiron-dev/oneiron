@@ -1036,6 +1036,11 @@ export_facade! {
     let output = client.vault_weave_admin_item_wrong(&input)?;
     crate::codec::lift_record("vault.weave.admin.item.wrong", &output)
 };
+"vault.step_up.passkeys.reset" => fn vault_step_up_passkeys_reset(&self, input: StepUpPasskeysResetRequest) -> StepUpPasskeysReset = |client| {
+    let input: oneiron::authority::StepUpPasskeysResetRequest = crate::codec::lower_record("vault.step_up.passkeys.reset", input)?;
+    let output = client.vault_step_up_passkeys_reset(&input)?;
+    crate::codec::lift_record("vault.step_up.passkeys.reset", &output)
+};
 "vault.weave.enqueue" => fn vault_weave_enqueue(&self, input: WeaveEnqueueRequest) -> DreamerAttemptRef = |client| {
     let input: oneiron::task_verb::sdk::WeaveEnqueueRequest = crate::codec::lower_record("vault.weave.enqueue", input)?;
     let output = client.vault_weave_enqueue(&input)?;

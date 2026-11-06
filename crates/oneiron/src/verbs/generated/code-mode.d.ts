@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1304 code-mode rows (1264 host rows, 40 run rows), 4586 declarations.
-// Replies: 1115 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1305 code-mode rows (1265 host rows, 40 run rows), 4588 declarations.
+// Replies: 1116 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -988,6 +988,8 @@ declare namespace Sdk {
   type WeaveAdminDigestRequest = { membership_grant: string; request?: WeaveDigestRequest };
   type WeaveAdminLinkWrongRequest = { membership_grant: string; request: WeaveWrongLinkRequest };
   type WeaveAdminItemWrongRequest = { membership_grant: string; request: WeaveWrongItemRequest };
+  type StepUpPasskeysResetRequest = { person: string };
+  type StepUpPasskeysReset = { person: string; removed: number };
   type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type WeaveReaderKind = "person" | "owner" | "agent" | "admin";
@@ -7651,6 +7653,12 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.StandingBlocksRequest): Promise<Sdk.StandingBlockView[] | StoredResult>;
     /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
     reconfigure(input: Sdk.StandingBlockConfigureRequest): Promise<Sdk.StandingBlockView | StoredResult>;
+  };
+  step_up: {
+    passkeys: {
+      /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
+      reset(input: Sdk.StepUpPasskeysResetRequest): Promise<Sdk.StepUpPasskeysReset | StoredResult>;
+    };
   };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */

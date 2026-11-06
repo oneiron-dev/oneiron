@@ -16,8 +16,10 @@
 //! enrolled; it adds no clock of its own (CALLS `FIX 11694 step-up life`).
 //! A person's first passkey is enrolled on their live slip alone; adding or
 //! removing one after that needs a current step-up with an enrolled one
-//! (CALLS `FIX 11694 first passkey`). An erase of the person drops every
-//! row here with them.
+//! (CALLS `FIX 11694 first passkey`). The vault owner may reset a person's
+//! passkeys, so a person who lost every one can enroll again
+//! ([`Vault::reset_step_up_passkeys_as_owner`]). An erase of the person
+//! drops every row here with them.
 
 mod admin_inputs;
 mod webauthn;
@@ -166,6 +168,24 @@ pub struct StepUpDone {
     pub credential_id: String,
     /// When, on the authority clock (seconds).
     pub stepped_up_at: u64,
+}
+
+/// `vault.step_up.passkeys.reset`'s input: the person whose passkeys the
+/// owner resets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StepUpPasskeysResetRequest {
+    /// The person (32 hex).
+    pub person: String,
+}
+
+/// The receipt of an owner's reset of one person's passkeys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StepUpPasskeysReset {
+    /// The person (32 hex).
+    pub person: String,
+    /// How many enrolled passkeys were removed.
+    pub removed: usize,
 }
 
 /// A stored passkey. Key: (person, SHA-256 of the credential id).
@@ -546,6 +566,36 @@ impl Vault {
         let removed = PASSKEYS.delete(&self.store, &mut txn, &key)?;
         txn.commit()?;
         Ok(removed)
+    }
+
+    /// The vault owner removes every passkey `person` enrolled, and every
+    /// step-up they made with one (FIX 17553): the way back for a person
+    /// who lost each passkey, since adding one needs a current step-up. The
+    /// person then enrolls a first passkey again on their own live slip.
+    /// The owner proof is revalidated in the writer that removes them.
+    ///
+    /// # Errors
+    /// The owner proof's refusal when it no longer holds; a storage fault as
+    /// itself.
+    pub fn reset_step_up_passkeys_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        person: EntityId,
+    ) -> Result<StepUpPasskeysReset> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let removed = PASSKEYS
+            .scan_from(&self.store, &txn, person.as_bytes())?
+            .into_iter()
+            .filter(|((holder, _), _)| *holder == person)
+            .count();
+        erase_step_up_passkeys_actor_in_txn(self, &mut txn, &person)?;
+        erase_step_up_records_actor_in_txn(self, &mut txn, &person)?;
+        txn.commit()?;
+        Ok(StepUpPasskeysReset {
+            person: person.to_hex(),
+            removed,
+        })
     }
 
     /// The weave Admin's step-up witness for `request` (OF-499 A3): the

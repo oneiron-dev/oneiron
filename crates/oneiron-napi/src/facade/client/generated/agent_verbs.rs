@@ -1815,6 +1815,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_step_up_passkeys_reset(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.step_up.passkeys.reset", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_enqueue(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.weave.enqueue", js_json(input))

@@ -1055,6 +1055,12 @@ export class Oneiron {
         put: (input: Facade.WeaveDigestFeedback): Facade.WeaveDigestFeedback => this.#call(() => this.#client.vaultWeaveDigestFeedbackPut(input) as Facade.WeaveDigestFeedback),
       },
     },
+    step_up: {
+      passkeys: {
+        /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
+        reset: (input: Facade.StepUpPasskeysResetRequest): Facade.StepUpPasskeysReset => this.#call(() => this.#client.vaultStepUpPasskeysReset(input) as Facade.StepUpPasskeysReset),
+      },
+    },
     inbox: {
       concerns: {
         /** Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows. */

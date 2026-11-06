@@ -211,6 +211,7 @@ pub enum AgentVerb {
     VaultWeaveAdminDigest,
     VaultWeaveAdminLinkWrong,
     VaultWeaveAdminItemWrong,
+    VaultStepUpPasskeysReset,
     VaultWeaveEnqueue,
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
@@ -1489,6 +1490,7 @@ impl AgentVerb {
         Self::VaultWeaveAdminDigest,
         Self::VaultWeaveAdminLinkWrong,
         Self::VaultWeaveAdminItemWrong,
+        Self::VaultStepUpPasskeysReset,
         Self::VaultWeaveEnqueue,
         Self::VaultWeaveSchedulesList,
         Self::VaultWeaveSchedulesPut,
@@ -2770,6 +2772,7 @@ impl AgentVerb {
             Self::VaultWeaveAdminDigest => "vault.weave.admin.digest",
             Self::VaultWeaveAdminLinkWrong => "vault.weave.admin.link.wrong",
             Self::VaultWeaveAdminItemWrong => "vault.weave.admin.item.wrong",
+            Self::VaultStepUpPasskeysReset => "vault.step_up.passkeys.reset",
             Self::VaultWeaveEnqueue => "vault.weave.enqueue",
             Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
             Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
@@ -4084,6 +4087,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminDigest
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -5391,6 +5395,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminDigest
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -6847,6 +6852,7 @@ impl AgentVerb {
                 | Self::VaultWeaveAdminDigest
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -7948,6 +7954,7 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultWeaveAdminLinkWrong
                 | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
@@ -8847,6 +8854,7 @@ impl AgentVerb {
             Self::VaultWeaveAdminDigest => &["spec"],
             Self::VaultWeaveAdminLinkWrong => &["spec"],
             Self::VaultWeaveAdminItemWrong => &["spec"],
+            Self::VaultStepUpPasskeysReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -10126,6 +10134,7 @@ impl AgentVerb {
             Self::VaultWeaveAdminDigest => &["spec"],
             Self::VaultWeaveAdminLinkWrong => &["spec"],
             Self::VaultWeaveAdminItemWrong => &["spec"],
+            Self::VaultStepUpPasskeysReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -11813,6 +11822,9 @@ impl AgentVerb {
             }
             Self::VaultWeaveAdminItemWrong => {
                 "A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."
+            }
+            Self::VaultStepUpPasskeysReset => {
+                "The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."
             }
             Self::VaultWeaveEnqueue => {
                 "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."
