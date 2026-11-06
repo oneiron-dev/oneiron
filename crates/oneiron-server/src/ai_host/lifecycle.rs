@@ -38,6 +38,7 @@ impl AiHost {
             server.host_root_provisioned(),
             server.run_receipts(),
             Some(server.host_account()),
+            server.native_runs(),
             Some(Attached { device, control }),
             server.broker_context(),
             Some(server.model_budgets.clone()),
@@ -167,7 +168,7 @@ impl AiHost {
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
         Self::start_with(
-            vault, models, host_root, receipts, account, None, None, None,
+            vault, models, host_root, receipts, account, None, None, None, None,
         )
         .await
     }
@@ -188,6 +189,7 @@ impl AiHost {
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
+        native: Option<crate::models::NativeRunAllocation>,
         attached: Option<Attached>,
         broker: Option<&BrokerContext>,
         budgets: Option<crate::models::ModelHostBudgets>,
@@ -204,6 +206,7 @@ impl AiHost {
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }
+        runtime = runtime.with_native_allocation(native);
         runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
         // Its reads outside a ladder serve this vault too: the decision reader's

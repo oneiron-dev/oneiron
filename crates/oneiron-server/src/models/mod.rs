@@ -70,6 +70,8 @@ mod offer;
 mod openai;
 pub(crate) mod outbound_wait;
 mod output_cap;
+mod native_allocation;
+pub(crate) use native_allocation::NativeRunAllocation;
 mod raw;
 // FIX 462: realtime voice sessions on a voice-loop run.
 mod realtime_voice;
@@ -250,6 +252,7 @@ pub struct ModelRuntime {
     status: ModelsStatus,
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
+    native_allocation: Option<NativeRunAllocation>,
     /// The house model's decision read (`[models.decision_read]`).
     decision_read: Option<DecisionReadDoor>,
     /// The roles whose work never leaves the device.

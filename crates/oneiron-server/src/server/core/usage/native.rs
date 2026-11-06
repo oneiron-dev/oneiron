@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use oneiron::llm::run_admission::{
-    AllocationStoreError, BudgetLine, LeaseUnit, Payer, PersistentAllocation, RunAdmission,
-    RunDeclaration, RunEvent, RunReceipt, RunReceiptSink, VaultAllocationLedger,
+    AllocationStoreError, Payer, PersistentAllocation, RunAdmission, RunEvent, RunReceipt,
+    RunReceiptSink, VaultAllocationLedger,
 };
 use oneiron::{BudgetGuard, EntityId, Vault};
 
@@ -19,6 +19,10 @@ pub(in crate::server::core) struct NativeUsage {
 }
 
 impl NativeUsage {
+    pub(in crate::server::core) fn runs(&self) -> crate::models::NativeRunAllocation {
+        crate::models::NativeRunAllocation::new(Arc::clone(&self.backend), self.receipts.clone())
+    }
+
     pub(in crate::server::core) fn new(
         vault: Arc<Vault>,
         usage: Arc<VaultUsage>,
@@ -50,20 +54,7 @@ impl NativeUsage {
         run: String,
         meter: BudgetGuard,
     ) -> RunAdmission {
-        let line = BudgetLine {
-            limit_units: meter.read().limit_units,
-            reserve_units: meter.reserve_units(),
-            unit: LeaseUnit::tokens(),
-        };
-        RunAdmission::with_persistent_allocation(
-            run,
-            RunDeclaration::undeclared(line),
-            meter,
-            Arc::clone(&self.backend),
-            self.receipts.clone(),
-            None,
-            None,
-        )
+        self.runs().funded_run(run, meter, None, None)
     }
 }
 

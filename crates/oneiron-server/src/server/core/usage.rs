@@ -26,6 +26,9 @@ impl SyncServer {
             usage,
             Arc::clone(&server.run_receipts),
         )?);
+        if let Some(raw) = server.llm.take() {
+            server.llm = Some(raw.with_native_allocation(server.native_runs()));
+        }
         Ok(server)
     }
 
@@ -38,6 +41,10 @@ impl SyncServer {
         self.native_usage
             .as_ref()
             .map(|native| Arc::clone(&native.ledger))
+    }
+
+    pub(crate) fn native_runs(&self) -> Option<crate::models::NativeRunAllocation> {
+        self.native_usage.as_ref().map(|native| native.runs())
     }
 
     /// An undeclared run using the explicitly selected native backend, or
