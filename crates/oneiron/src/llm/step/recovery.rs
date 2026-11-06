@@ -1,7 +1,8 @@
 //! A durable step's recovery from its saved work, moved out of `execute`
-//! unchanged for FIX 4816: the memo or saved payload captured in one
-//! snapshot, then finished on the shared terminal writer. `execute`
-//! re-exports the two functions it held.
+//! for FIX 4816: the memo or saved payload captured in one snapshot, then
+//! finished on the shared terminal writer. `execute` re-exports the two
+//! functions it held. The memo index also finds a compaction step by its
+//! job (FIX 4816); only the runner's own record replays here.
 
 use super::super::{BudgetGuard, LlmRequest, LlmResponse};
 use super::execute::{erased_step, failure_policy, step_legibility};
@@ -9,6 +10,7 @@ use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
     step_claim_matches_request, step_index_lookup_in_txn,
 };
+use super::step_index::step_claim_is_runner_execution;
 use super::step_state::{step_state_delete, step_state_read_in_txn};
 use super::types::{DurableStepContext, DurableStepResult, StepOutcome, StepProgression};
 use crate::dreamer_wake::StepTerminal;
@@ -38,12 +40,16 @@ pub(super) fn recovery_in_txn(
     }
     // ONE-1344: the memo still has to match this frozen request's
     // model/purpose/params identity. A foreign response is a miss.
+    // FIX 4816: so is a step the runner did not execute, such as an
+    // indexed compaction step under the same job and hash.
     if let Some(claim_id) = step_index_lookup_in_txn(vault, txn, attempt_id, step_hash)? {
         let body = vault
             .get_claim_in_txn(txn, &claim_id)?
             .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
         let decoded = decode_step_claim_value(&body.value)?;
-        if step_claim_matches_request(&decoded, request)? {
+        if step_claim_is_runner_execution(&decoded, &body)
+            && step_claim_matches_request(&decoded, request)?
+        {
             let response = load_step_response_in_txn(vault, txn, &decoded)?;
             return Ok(Some(StepRecovery::Memo(response)));
         }
