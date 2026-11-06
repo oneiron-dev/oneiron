@@ -20,7 +20,7 @@
 //! - `GET /v1/operator/backups` lists the vault's backups; `POST
 //!   /v1/operator/backups` takes one now, under the host's backup lock and
 //!   its retention (`OwnerHost::take`), with no owner for its snapshot to
-//!   recheck.
+//!   recheck, and none of a shared vault its Owners deleted.
 //! - `POST /v1/operator/backups/rehearse` rehearses one backup's restore in a
 //!   scratch copy beside the serving vault (`OwnerHost::rehearse`), as
 //!   `oneiron restore --rehearse` does, and changes nothing.
@@ -179,6 +179,20 @@ async fn take_backup(
     State(server): State<Arc<SyncServer>>,
 ) -> OperatorReply<backup::BackupOutcome> {
     operator_admin(&parts, &server, "backups.take")?;
+    // A vault its Owners deleted keeps only the backups it had, until their
+    // retention ends (`served_after_deletion` still serves this door for
+    // status, listing and rehearsal): no new one is taken of it.
+    if !matches!(server.vault().shared_vault_deletion(), Ok(None)) {
+        return Err(ApiError::new(
+            "this shared vault was deleted",
+            crate::error::ApiErrorDetails::NotFound {
+                resource: "vault".to_owned(),
+                id: None,
+            },
+            ["Its Owners deleted it: its existing backups are kept until their retention ends, and no new one is taken.".to_owned()],
+        )
+        .into());
+    }
     let host = owner_routes::host(&server)?;
     Ok(Json(
         owner_routes::blocking(move || host.take(server.vault(), None)).await?,
