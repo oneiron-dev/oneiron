@@ -14,6 +14,7 @@ pub enum ExportLayout {
     ActivityTakeout,
     CharacterLog,
     MemoryDirectory,
+    HookTranscript,
     Markdown,
     Knowledge,
     AgentArchive,
@@ -48,7 +49,7 @@ impl IngestSource for ExportSource {
             ExportLayout::CharacterLog => {
                 self.parse_character_log_layout(&mut out, recorded_at, input)?
             }
-            ExportLayout::MemoryDirectory => {
+            ExportLayout::MemoryDirectory | ExportLayout::HookTranscript => {
                 self.parse_memory_directory_layout(&mut out, recorded_at, input)?
             }
             layout => {
@@ -155,7 +156,9 @@ impl ExportSource {
                 .and_then(Value::as_str)
                 .ok_or_else(|| self.bad("files.content"))?;
             // The host supplies a file snapshot; the parser never traverses a filesystem.
-            if path.ends_with(".jsonl") {
+            if path.ends_with(".jsonl") && matches!(self.layout, ExportLayout::HookTranscript) {
+                self.parse_hook_transcript(out, recorded_at, path, text)?;
+            } else if path.ends_with(".jsonl") {
                 for line in text.lines().filter(|line| !line.trim().is_empty()) {
                     let value = self.json(line)?;
                     let message = value
@@ -173,6 +176,58 @@ impl ExportSource {
                     path,
                     recorded_at,
                 )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_hook_transcript(
+        &self,
+        out: &mut ParsedImport,
+        recorded_at: u64,
+        path: &str,
+        text: &str,
+    ) -> IngestResult<()> {
+        use super::history::{HistoryFile, HistoryRole, HistorySource};
+
+        let normalized_path = path.replace('\\', "/");
+        let path = std::path::Path::new(&normalized_path);
+        let stem = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        // Copilot CLI names every log events.jsonl; the session folder supplies its identity.
+        let stem = if stem == "events" {
+            path.parent()
+                .and_then(std::path::Path::file_name)
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(stem)
+        } else {
+            stem
+        };
+        let file = HistoryFile {
+            stem: stem.into(),
+            parent: None,
+        };
+        for conversation in HistorySource::HookTranscript.decode(text, &file)? {
+            for message in conversation.messages {
+                out.messages.push(ParsedMessage {
+                    message_id: message.native_id,
+                    conversation_id: conversation.native_id.clone(),
+                    platform_source: self.source_id.into(),
+                    role: match message.role {
+                        HistoryRole::User => "user",
+                        HistoryRole::Assistant => "assistant",
+                    }
+                    .into(),
+                    content: message.text,
+                    speaker_id: message.said_by.map(str::to_owned),
+                    occurred_at: message.at_ms.map(|ms| ms / 1000),
+                    recorded_at,
+                    character_card: None,
+                    is_group_chat: false,
+                });
             }
         }
         Ok(())

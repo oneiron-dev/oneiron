@@ -5,15 +5,17 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{EntityId, Vault};
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshFuture, MeshService, MeshStream};
 use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal};
 use tokio::runtime::Handle;
 use tokio::task::JoinSet;
 
+use super::staging::Staging;
 use super::{
     Carried, FailureKind, ORGAN_ALPN, Offer, PeerAnswer, PeerAsk, PeerCall, PeerFailure,
-    PeerOutcome, PeerOutput, PeerResult, Reply, Request, Staging, decode, encode,
+    PeerOutcome, PeerOutput, PeerResult, Reply, Request, decode, encode,
 };
 use crate::error::HostError;
 use crate::fetch::GuardedFetch;
@@ -21,9 +23,16 @@ use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
-use crate::resource_memory::MemoryGrow;
+use crate::resource_memory::{FloorLease, MemoryGrow};
 use crate::shutdown::MeshCancel;
 use crate::spec::{LentInput, OrganCall, OrganInput};
+
+/// How long a staged call envelope waits for this machine's memory floor
+/// before its own deadline is known (blind-review P1): that deadline rides
+/// inside the envelope, still encoded, so admission cannot wait on it. Once
+/// decoded, each staged input leases under the call's own deadline instead.
+/// A wait that finds no room refuses the call, as an input's does.
+const STAGED_CALL_PROVISIONAL_WAIT: Duration = Duration::from_secs(5);
 
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
 /// node's host. The transport has already admitted the peer (its MACHINE
@@ -39,6 +48,13 @@ pub struct OrganService {
     host: Arc<OrganHost>,
     vault: Arc<Vault>,
     cancel: MeshCancel,
+}
+
+/// Keeps the decoded body and report charged until their last encoding use.
+struct CallReply {
+    result: PeerResult,
+    // Fields drop in declaration order: the result's values before their lease.
+    _frame: Option<crate::budget::Lease>,
 }
 
 impl std::fmt::Debug for OrganService {
@@ -78,7 +94,7 @@ impl OrganService {
             return;
         }
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
-        let staging = Arc::new(Staging::default());
+        let staging = Arc::new(self.staging());
         let mut streams = JoinSet::new();
         loop {
             let stream = tokio::select! {
@@ -103,6 +119,27 @@ impl OrganService {
         // its reply says so.
         while streams.join_next().await.is_some() {}
         conn.close();
+    }
+
+    /// A connection's staging (FIX 6193): it spills to the host's measured
+    /// spool disk, each write admitted on its floor, when its vault was lent
+    /// one, else to the system's temporary directory.
+    fn staging(&self) -> Staging {
+        let spool = self
+            .vault
+            .proposal_spool()
+            .and_then(|spool| Some((spool.spool_dir().ok()?, spool)));
+        match spool {
+            Some((dir, floor)) => Staging::new(dir, Some(floor)),
+            None => Staging::new(std::env::temp_dir(), None),
+        }
+    }
+
+    /// Asks the staged row what the connection holds spilled now: nothing is
+    /// refused for it (FIX 6193).
+    fn measure_staged(&self, staging: &Staging) {
+        self.vault
+            .measure_limit(EngineLimit::OrganMeshStagedBytes, staging.staged());
     }
 
     async fn serve_stream(
@@ -131,10 +168,20 @@ impl OrganService {
                 total,
                 offset,
                 bytes,
-            } => match staging.put(hash, total, offset, &bytes) {
-                Ok(()) => Reply::Put,
-                Err(why) => Reply::Refused(why),
-            },
+            } => {
+                // One object's size, at its first piece: it is staged whole.
+                if offset == 0 {
+                    self.vault
+                        .measure_limit(EngineLimit::OrganMeshObjectBytes, total);
+                }
+                match staging.put(hash, total, offset, &bytes) {
+                    Ok(()) => {
+                        self.measure_staged(&staging);
+                        Reply::Put
+                    }
+                    Err(why) => Reply::Refused(why),
+                }
+            }
             Request::Get { hash, offset } => match staging.piece(hash, offset) {
                 Ok(piece) => Reply::Piece(piece),
                 Err(why) => Reply::Refused(why),
@@ -142,15 +189,24 @@ impl OrganService {
             Request::Call { call } => {
                 let result = match self.call(conn, &staging, &call).await {
                     Ok(result) => result,
-                    Err(detail) => PeerResult::Failed(PeerFailure {
-                        kind: FailureKind::Failed,
-                        detail,
-                        organ: None,
-                        asks: Vec::new(),
-                    }),
+                    Err(detail) => CallReply {
+                        result: PeerResult::Failed(PeerFailure {
+                            kind: FailureKind::Failed,
+                            detail,
+                            organ: None,
+                            asks: Vec::new(),
+                        }),
+                        _frame: None,
+                    },
                 };
-                match encode(&result) {
-                    Ok(bytes) => Reply::Call(staging.offer(bytes)),
+                match encode(&result.result) {
+                    Ok(bytes) => match staging.offer(&bytes) {
+                        Ok(carried) => {
+                            self.measure_staged(&staging);
+                            Reply::Call(carried)
+                        }
+                        Err(why) => Reply::Refused(why),
+                    },
                     Err(err) => Reply::Refused(err.to_string()),
                 }
             }
@@ -163,27 +219,66 @@ impl OrganService {
         conn: Arc<dyn MeshConnection>,
         staging: &Arc<Staging>,
         carried: &Carried,
-    ) -> Result<PeerResult, String> {
-        let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
-        let mut inputs = Vec::with_capacity(peer.inputs.len());
-        for input in &peer.inputs {
-            let read = match &input.read {
-                Some((artifact, version)) => Some(OrganInput {
-                    artifact: EntityId::from_hex(artifact)
-                        .map_err(|_| "an input names no artifact".to_owned())?,
-                    version: *version,
-                }),
-                None => None,
-            };
-            let bytes = staging.take(&input.bytes)?;
-            inputs.push((
-                read,
-                LentInput {
-                    media_type: input.media_type.clone(),
-                    bytes,
-                },
-            ));
+    ) -> Result<CallReply, String> {
+        // The call envelope itself is staged input: it leases this
+        // machine's floor before it is read back, under a provisional
+        // deadline — its own deadline rides inside it, still encoded —
+        // and the lease holds until the call ends, as each input's does
+        // (blind-review P1). Inline bytes lease nothing, as ever.
+        let provisional = Instant::now() + STAGED_CALL_PROVISIONAL_WAIT;
+        let mut held = Vec::new();
+        if let Some(lease) = self.hold_taken_async(carried, provisional).await? {
+            held.push(lease);
         }
+        let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
+        let deadline =
+            Instant::now() + Duration::from_millis(peer.deadline_ms.min(u64::from(u32::MAX)));
+        let service = self.clone();
+        let input_staging = Arc::clone(staging);
+        let peer_inputs = peer.inputs;
+        let (inputs, input_lease) = tokio::task::spawn_blocking(move || {
+            // Inputs drop before their lease if a later read or growth fails.
+            let mut input_lease: Option<Box<dyn FloorLease>> = None;
+            let mut inputs = Vec::with_capacity(peer_inputs.len());
+            for input in &peer_inputs {
+                let read = match &input.read {
+                    Some((artifact, version)) => Some(OrganInput {
+                        artifact: EntityId::from_hex(artifact)
+                            .map_err(|_| "an input names no artifact".to_owned())?,
+                        version: *version,
+                    }),
+                    None => None,
+                };
+                if let (Carried::Staged { len, .. }, Some(floor)) =
+                    (&input.bytes, service.host.floor())
+                {
+                    let stopped = || service.cancel.is_cancelled();
+                    match input_lease.as_mut() {
+                        Some(lease) => lease.grow(*len, deadline, &stopped),
+                        None => floor.0.lease(*len, deadline, &stopped).map(|lease| {
+                            input_lease = Some(lease);
+                        }),
+                    }
+                    .map_err(|refused| format!("this node's memory floor: {refused:?}"))?;
+                }
+                let bytes = input_staging.take(&input.bytes)?;
+                if let (Carried::Staged { len, .. }, Some(lease)) =
+                    (&input.bytes, input_lease.as_mut())
+                {
+                    lease.materialized(*len, bytes.capacity() as u64);
+                }
+                inputs.push((
+                    read,
+                    LentInput {
+                        media_type: input.media_type.clone(),
+                        bytes,
+                    },
+                ));
+            }
+            Ok::<_, String>((inputs, input_lease))
+        })
+        .await
+        .map_err(|err| format!("this node's input thread: {err}"))??;
         let call = OrganCall {
             organ: peer.organ,
             verb: peer.verb,
@@ -202,10 +297,13 @@ impl OrganService {
             staging: Arc::clone(staging),
             runtime: Handle::current(),
             cancel: self.cancel.clone(),
+            service: self.clone(),
+            held: std::sync::Mutex::new(Vec::new()),
         };
         let cancel = self.cancel.clone();
         let answers = peer.answers;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
+            let _input_lease = input_lease;
             let fetch = GuardedFetch;
             let memory = MemoryGrow;
             let mut handlers = AskHandlers::none();
@@ -228,10 +326,49 @@ impl OrganService {
         })
         .await
         .map_err(|err| format!("the call's thread: {err}"))?;
+        drop(held);
         Ok(match outcome {
-            Ok(outcome) => PeerResult::Done(offered(outcome, staging)),
-            Err(err) => PeerResult::Failed(failure(err, asked)),
+            Ok(outcome) => offered(outcome, staging)?,
+            Err(err) => CallReply {
+                result: PeerResult::Failed(failure(err, asked)),
+                _frame: None,
+            },
         })
+    }
+
+    /// Waits for staged input on a blocking worker, leaving the runtime
+    /// free to deliver the cancel that ends the floor wait.
+    async fn hold_taken_async(
+        &self,
+        carried: &Carried,
+        deadline: Instant,
+    ) -> Result<Option<Box<dyn FloorLease>>, String> {
+        let Carried::Staged { .. } = carried else {
+            return Ok(None);
+        };
+        let service = self.clone();
+        let carried = carried.clone();
+        tokio::task::spawn_blocking(move || service.hold_taken(&carried, deadline))
+            .await
+            .map_err(|err| format!("this node's memory floor thread: {err}"))?
+    }
+
+    /// A lease of this machine's memory for staged bytes about to be read
+    /// back, within the call's deadline; none for bytes that rode inline, or
+    /// on a host with no floor.
+    fn hold_taken(
+        &self,
+        carried: &Carried,
+        deadline: Instant,
+    ) -> Result<Option<Box<dyn FloorLease>>, String> {
+        let (Carried::Staged { len, .. }, Some(floor)) = (carried, self.host.floor()) else {
+            return Ok(None);
+        };
+        floor
+            .0
+            .lease(*len, deadline, &|| self.cancel.is_cancelled())
+            .map(Some)
+            .map_err(|refused| format!("this node's memory floor: {refused:?}"))
     }
 }
 
@@ -245,23 +382,28 @@ impl MeshService for OrganService {
 }
 
 /// The outcome as it crosses back: each output's bytes offered by hash.
-fn offered(outcome: OrganOutcome, staging: &Staging) -> PeerOutcome {
+fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String> {
     let outputs = outcome
         .outputs
         .iter()
-        .map(|output| PeerOutput {
-            name: output.name.clone(),
-            media_type: output.media_type.clone(),
-            content_hash: output.content_hash,
-            bytes: staging.offer(output.to_vec()),
+        .map(|output| {
+            Ok(PeerOutput {
+                name: output.name.clone(),
+                media_type: output.media_type.clone(),
+                content_hash: output.content_hash,
+                bytes: staging.offer(output)?,
+            })
         })
-        .collect();
-    PeerOutcome {
-        body: outcome.body,
-        report: outcome.report,
-        receipt: outcome.receipt,
-        outputs,
-    }
+        .collect::<Result<_, String>>()?;
+    Ok(CallReply {
+        result: PeerResult::Done(PeerOutcome {
+            body: outcome.body,
+            report: outcome.report,
+            receipt: outcome.receipt,
+            outputs,
+        }),
+        _frame: outcome._frame,
+    })
 }
 
 /// What the asking node needs of a failure: whether another node may serve
@@ -305,6 +447,10 @@ struct Forward {
     runtime: Handle,
     /// The stop's cancel ends a wait for the asking node.
     cancel: MeshCancel,
+    /// The serving host admits staged answer bytes before they are read.
+    service: OrganService,
+    /// Answer leases live until the call that made the asks ends.
+    held: std::sync::Mutex<Vec<Box<dyn FloorLease>>>,
 }
 
 impl Forward {
@@ -345,7 +491,19 @@ impl AskHandler for Forward {
         }
         let answered = answer.answered?;
         let data = match &answered.data {
-            Some(carried) => Some(self.staging.take(carried).map_err(failed)?),
+            Some(carried) => {
+                if let Some(lease) = self
+                    .service
+                    .hold_taken(carried, ask.deadline)
+                    .map_err(failed)?
+                {
+                    self.held
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(lease);
+                }
+                Some(self.staging.take(carried).map_err(failed)?)
+            }
             None => None,
         };
         Ok(Answered {

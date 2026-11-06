@@ -33,15 +33,18 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::super::{SecretScanMode, scan_write_tree, secret_scan_mode_in_txn};
+use super::super::{
+    REASON_DETECTED, SecretScanMode, scan_write_tree, secret_scan_error, secret_scan_mode_in_txn,
+};
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeptValues, KnownValues};
+use crate::secret_custody::KeptValues;
 use crate::side_table::{CodecName, RefPath, RefStep, SideTableDbs, SideTableDecl};
+use crate::store::known_value_index::KnownValues;
 
 /// One part of a row the wall reads.
 #[derive(Debug, Clone)]
@@ -462,7 +465,7 @@ fn admitted(
         part.scan(&kept, record)?;
     }
     if !accepts(&planned[..]) {
-        return refusal.map_or(Ok(None), Err);
+        return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
     }
     drop(planned);
     let Some(custody) = dbs.side_custody() else {

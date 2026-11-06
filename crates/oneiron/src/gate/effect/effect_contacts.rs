@@ -112,7 +112,9 @@ pub(crate) fn hydrate_external_effect_contact(
 
     // Every PERSON that carries the counterparty's key, read once for both
     // comm legs: the node-local party shortcut would fail open.
-    let persons = crate::campaign::claims::do_not_contact_subjects_in_txn(store, txn, party_ref)?;
+    let persons = store
+        .record_hooks
+        .do_not_contact_subjects_in_txn(store, txn, party_ref)?;
     fold_matching_comm_do_not_contact_heads(store, txn, &persons, &channel_class, &mut hydrated)?;
     fold_comm_stop(
         store,
@@ -156,13 +158,15 @@ pub(crate) fn counterparty_send_override_in_txn(
     channel_class: &str,
     send_ref: Option<&str>,
 ) -> Result<Option<SendOverrideMatch>> {
-    let Some(party) = comm_result(crate::comm::resolve_party_ref_from_store_in_txn(
-        store, txn, party_ref,
-    ))?
+    let Some(party) = comm_result(
+        store
+            .record_hooks
+            .resolve_party_ref_from_store_in_txn(store, txn, party_ref),
+    )?
     else {
         return Ok(None);
     };
-    comm_result(crate::comm::send_override_for_send_in_txn(
+    comm_result(store.record_hooks.send_override_for_send_in_txn(
         store,
         txn,
         &party,
@@ -195,7 +199,7 @@ fn fold_matching_comm_do_not_contact_heads(
     channel_class: &str,
     hydrated: &mut ExternalEffectGateInput,
 ) -> Result<()> {
-    if !crate::campaign::claims::subjects_do_not_contact_in_txn(
+    if !store.record_hooks.subjects_do_not_contact_in_txn(
         store,
         txn,
         persons,
@@ -232,7 +236,7 @@ fn fold_comm_stop(
     if hydrated.counterparty_opted_out && hydrated.counterparty_opt_out_receipt_reason.is_some() {
         return Ok(());
     }
-    let Some(reason) = comm_result(crate::comm::send_stop_reason_in_txn(
+    let Some(reason) = comm_result(store.record_hooks.send_stop_reason_in_txn(
         store,
         txn,
         persons,

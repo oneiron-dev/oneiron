@@ -327,21 +327,25 @@ pub(crate) fn evaluate_external_effect_policy(
     // own typed facts from the claim substrate on THIS txn and answers with a
     // pure verdict; the mapping to a decision stays here, where decisions are
     // constructed. It runs BEFORE the connector-key and budget stages — both
-    // guarded on would-be-Allow — so a legal-row refusal never consumes budget,
-    // exactly like the counterparty-opt-out wall. It converts a would-be Allow
-    // AND a Pending: an owner approval must not be able to unlock a dispatch
-    // the governing row forbids. It is enforcement, not a new approval step;
-    // effects outside a campaign never reach the evaluator at all.
+    // guarded on would-be-Allow — so a legal-row hold never consumes budget,
+    // exactly like the counterparty-opt-out wall. A Block holds a would-be
+    // Allow AND a Pending for an owner answer rather than replacing either
+    // with Deny. An existing approval or its retained press retry restores
+    // the PRE-CA-06 decision; every later gate still applies. Effects outside
+    // a campaign never reach the evaluator at all.
     if decision.outcome() != GateOutcome::Deny
         && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
-            crate::campaign::compliance::campaign_compliance_gate(
+            store.gate_hooks.campaign_compliance_gate(
                 store,
                 &*wtxn,
                 &hydrated_effect,
                 created_at,
             )?
+        && approve_once.is_none()
+        && !press_retry_authorized
+        && !mail_retry_authorized
     {
-        decision = GateDecision::deny(GateReasonCode::DenyCampaignCompliance)
+        decision = GateDecision::pending(vec![GateReasonCode::PendingCampaignCompliance])
             .with_receipt_reasons([reason.receipt_reason()])
             .with_receipt_reasons(external_effect_receipt_reasons(
                 input
@@ -512,11 +516,7 @@ pub(crate) fn evaluate_external_effect_policy(
         // approved once. FIX 990 (L02 splice): a Pending retry's own kept
         // scoped-MCP press, validated above against this call's pinned
         // target, is that approval too; a mail proof or a spent marker is not.
-        let scoped_retry_proof = press_retry_authorized
-            && matches!(
-                hydrated_effect.provenance.approval_target,
-                Some(ApprovalTarget::ScopedMcp(_))
-            );
+        let slate_retry_proof = press_retry_authorized;
         if charter_wall.is_none() {
             match connector_key::connector_tool_setting_in_txn(
                 store,
@@ -532,7 +532,19 @@ pub(crate) fn evaluate_external_effect_policy(
                     );
                 }
                 connector_key::SlateDisposition::AlwaysAsk
-                    if approve_once.is_none() && !scoped_retry_proof =>
+                    if approve_once.is_none()
+                        && !slate_retry_proof
+                        && !match hydrated_effect.scoped_mcp_call.as_ref() {
+                            Some(call) => connector_key::connector_tool_remembered_in_txn(
+                                store,
+                                &*wtxn,
+                                &_key_id,
+                                &key,
+                                call,
+                                prepared.and_then(|prepared| prepared.remember_context()),
+                            )?,
+                            None => false,
+                        } =>
                 {
                     charter_wall = Some(
                         GateDecision::pending(vec![
@@ -573,6 +585,30 @@ pub(crate) fn evaluate_external_effect_policy(
         }
     }
 
+    let ask_consent = if decision.outcome() == GateOutcome::Pending
+        && approval_context == ApprovalContext::FirstAdmission
+        && matches!(
+            hydrated_effect.provenance.approval_target,
+            Some(ApprovalTarget::ScopedMcp(_))
+        ) {
+        composed.as_ref().and_then(|effect| {
+            effect.action_requirement().and_then(
+                |bound| match crate::llm::decision::AskConsent::of(effect, bound) {
+                    Ok(consent) => Some(consent),
+                    Err(error) => {
+                        tracing::warn!(
+                            reason = "connector_call_consent_attachment_unavailable",
+                            error = %error,
+                            "the held call keeps its generic owner question"
+                        );
+                        None
+                    }
+                },
+            )
+        })
+    } else {
+        None
+    };
     Ok(ExternalEffectGovernance {
         decision_id,
         decision,
@@ -582,6 +618,7 @@ pub(crate) fn evaluate_external_effect_policy(
         grant_ref,
         approve_once,
         approval_context,
+        ask_consent,
         matched_grant,
         envelope_reservation,
         envelope_wait,

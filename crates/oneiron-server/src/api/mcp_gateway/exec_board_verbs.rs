@@ -3,7 +3,7 @@
 use super::{
     McpBoardOmissions, McpBoardState, McpCallContext, McpCarrierPolicy, McpGatewayError,
     mcp_actor_result, mcp_board_frame_error, mcp_board_verb_error, mcp_current_board,
-    mcp_endpoint_result, mcp_page_cursor_error, type_feedback_release,
+    mcp_endpoint_result, mcp_engine_error, mcp_page_cursor_error, type_feedback_release,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpResolvedActor;
@@ -41,6 +41,7 @@ pub(crate) async fn execute_mcp_execute_code(
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
             actor,
+            off_record_session: actor.off_record_session.clone(),
             run_ref: &args.run_ref,
             task: &args.task,
             run_id,
@@ -98,6 +99,9 @@ pub(crate) async fn execute_mcp_execute_code(
         server.desktop_seats.end_run(run_id);
         server.browser_seats.end_run(run_id);
         server.lens_frames.close_run(&run_id.to_hex());
+        if let Err(error) = server.vault.seal_code_run_scratchpads(run_id) {
+            tracing::warn!(%error, run_id = %run_id.to_hex(), "code-run scratchpad seal failed");
+        }
     }
     // Non-continuable: the step log is a run's own, not a re-enumerable
     // producer set, so a non-terminal page here states
@@ -178,89 +182,6 @@ pub(crate) async fn execute_mcp_execute_code(
     #[cfg(test)]
     super::device_release::release_hook::run(server);
     type_feedback_release::release_run_answer(server, actor, named, held, result)
-}
-
-/// One read of a result of the durable run `run_ref` names under this
-/// credential: its card, or a slice, search, query or chunks page of it. No
-/// model is called and no run is entered. The run id is the credential's own
-/// derivation, never an id or digest a caller sends, and only that run's
-/// results resolve. The read is checked against the rows the run's answers
-/// were served from and the result's taint, as inside the run, and the
-/// answer is released as `execute_code`'s is, under its live credential.
-pub(crate) async fn execute_mcp_read_result(
-    server: &Arc<SyncServer>,
-    args: crate::mcp::McpReadResultToolArgs,
-    actor: &McpCallContext,
-) -> Result<Value, McpGatewayError> {
-    let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
-    let facet = args.facet.and_then(crate::mcp::McpResultFacet::facet);
-    let destination = actor.destination();
-    let vault = Arc::clone(&server.vault);
-    let reference = args.reference.clone();
-    let input = Value::Object(args.input.clone().unwrap_or_default());
-    // A search or a table query scans up to its bound from disk, so it runs
-    // off the gateway's reactor.
-    let (reply, served) = tokio::task::spawn_blocking(move || {
-        let mut served = None;
-        let reply = vault.read_code_run_result(run_id, &reference, facet, input, |rows| {
-            served = Some(rows.map(<[oneiron::EntityId]>::to_vec));
-            if !destination.is_off_device() {
-                return Ok(false);
-            }
-            rows.map_or(Ok(true), |rows| {
-                crate::device_local::withholds_retained(&vault, &destination, rows, &[])
-            })
-        });
-        reply.map(|reply| (reply, served))
-    })
-    .await
-    .map_err(|_| {
-        McpGatewayError::new(
-            -32603,
-            "engine_error",
-            "read_result worker ended without a result",
-        )
-    })?
-    .map_err(|error| super::mcp_engine_error("read_result failed", error))?;
-    let health = if reply.get("denied").is_some() {
-        McpRetrievalHealth::Degraded
-    } else if reply["output"]["done"] == json!(false) {
-        McpRetrievalHealth::Partial
-    } else {
-        McpRetrievalHealth::Healthy
-    };
-    let help = vec![
-        "pass a reply's next back as input.cursor (search, query, chunks) or as the selection (slice) to read on".to_owned(),
-        "a chunk's ref is a range ref read_result takes as ref".to_owned(),
-    ];
-    let structured = json!({
-        "tool": crate::mcp::MCP_READ_RESULT_TOOL,
-        "schema_version": crate::mcp::MCP_CODE_RUN_SCHEMA_VERSION,
-        "run_ref": args.run_ref,
-        "run_id": run_id.to_hex(),
-        "ref": args.reference,
-        "facet": facet.map_or("describe", oneiron::code_run::ResultFacet::as_str),
-        "result": reply,
-        "actor": mcp_actor_result(actor),
-        "meta": actor.metadata(
-            health,
-            McpPageBudget::resolve(None, crate::mcp::McpPageSource::complete(1)),
-            help,
-            None,
-        ),
-    });
-    let result = mcp_endpoint_result(
-        server,
-        actor,
-        "read_result answered",
-        structured,
-        McpCarrierPolicy::Drain,
-    )
-    .await;
-    super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
-    // An unknown ref resolved nothing, so no rows were read.
-    let rows = served.unwrap_or_else(|| Some(Vec::new()));
-    super::device_release::mcp_release_run_result(server, actor, rows.as_deref(), result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
@@ -467,6 +388,7 @@ fn mcp_board_world(actor: &McpResolvedActor) -> oneiron::EntityId {
 fn mcp_live_board(
     actor: &McpResolvedActor,
     board: &McpBoardState,
+    cap_tok: usize,
 ) -> Result<McpLiveBoard, McpGatewayError> {
     let header = oneiron::context_board::BoardBlockHeader {
         epoch: board.epoch,
@@ -474,9 +396,9 @@ fn mcp_live_board(
     };
     let render = oneiron::board_verb::render_current_keyframe(
         &header,
-        &board.sections,
+        &board.laid_out,
         oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+            harness_default_tok: cap_tok,
             caller_limit_tok: None,
             explicit_override_tok: None,
         },
@@ -522,23 +444,16 @@ pub(super) fn mcp_verb_family_error(args: &crate::mcp::McpVerbToolArgs) -> McpGa
     )
 }
 
-fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) -> Value {
-    match output {
-        oneiron::board_verb::BoardVerbOutput::Expanded { key, lines } => json!({
-            "kind": "expanded",
-            "key": key,
-            "lines": lines,
-        }),
-        oneiron::board_verb::BoardVerbOutput::Frame(frame) => json!({
-            "kind": "frame",
-            "frame": frame,
-        }),
-        oneiron::board_verb::BoardVerbOutput::Subscription(receipt) => json!({
-            "kind": "subscription",
-            "connection": receipt.connection,
-            "active": receipt.active,
-        }),
-    }
+fn mcp_board_verb_output_value(
+    output: &oneiron::board_verb::BoardVerbOutput,
+) -> Result<Value, McpGatewayError> {
+    serde_json::to_value(output).map_err(|_| {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "typed agent result cannot be encoded",
+        )
+    })
 }
 
 /// A keyed `describe` and `self.focus.*`: dispatched by the engine's own verb
@@ -567,7 +482,9 @@ pub(super) async fn execute_mcp_board_verb(
     let board = mcp_current_board(server, actor).await?;
     served.extend_from_slice(&board.rows);
     let omissions = board.omissions();
-    let source = mcp_live_board(actor, &board)?;
+    let cap_tok =
+        crate::api::context_board::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK);
+    let source = mcp_live_board(actor, &board, cap_tok)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
     let output = {
         let mut registry = server.mcp_registry.lock().await;
@@ -577,7 +494,7 @@ pub(super) async fn execute_mcp_board_verb(
             source: &source,
             streams: registry.streams_mut(),
             budget: oneiron::context_board::BoardBudgetRequest {
-                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+                harness_default_tok: cap_tok,
                 caller_limit_tok: None,
                 explicit_override_tok: None,
             },
@@ -588,6 +505,9 @@ pub(super) async fn execute_mcp_board_verb(
 
     let output = match output {
         oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            // A keyframe of the laid-out board goes back: the actor's layout
+            // batch it shows becomes live (BOARD-LAYOUT).
+            activate_board_layout(server, &board)?;
             let frame = board
                 .changes
                 .ride(Some(frame))
@@ -617,7 +537,7 @@ pub(super) async fn execute_mcp_board_verb(
     // The present board producer serves TASKS, presence and loaded metadata.
     // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
     // typed entity mapping, so its renderer strings are never parsed for ids.
-    let value = mcp_board_verb_output_value(&output);
+    let value = mcp_board_verb_output_value(&output)?;
     let page_source = mcp_board_verb_page_source(&output, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the
     // central chokepoint supersedes and drains the queue behind it, so it is
@@ -768,7 +688,7 @@ pub(crate) async fn execute_run_board_verb_in_session(
     let world = actor.entity_ref();
     let source = McpLiveBoard {
         world,
-        view: live_board_view(&board).map_err(run_board_error)?,
+        view: live_board_view(server, &board).map_err(run_board_error)?,
     };
     let scope = oneiron::board_verb::BoardWorldScope::single(world);
     let output = {
@@ -778,17 +698,16 @@ pub(crate) async fn execute_run_board_verb_in_session(
             scope: &scope,
             source: &source,
             streams: registry.streams_mut(),
-            budget: oneiron::context_board::BoardBudgetRequest {
-                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
-                caller_limit_tok: None,
-                explicit_override_tok: None,
-            },
+            budget: run_board_budget_request(server),
         };
         oneiron::board_verb::dispatch_board_verb(&mut context, call)
     }
     .map_err(|error| run_board_error(mcp_board_verb_error(error)))?;
     let output = match output {
         oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            // The run's next turn sees this keyframe of its laid-out board,
+            // so the layout batch it shows becomes live (BOARD-LAYOUT).
+            activate_board_layout(server, &board).map_err(run_board_error)?;
             let frame = board
                 .changes
                 .ride(Some(frame))
@@ -819,7 +738,10 @@ pub(crate) async fn execute_run_board_verb_in_session(
         }
         oneiron::board_verb::BoardVerbOutput::Subscription(_) => None,
     };
-    Ok((mcp_board_verb_output_value(&output), board.rows))
+    Ok((
+        mcp_board_verb_output_value(&output).map_err(run_board_error)?,
+        board.rows,
+    ))
 }
 
 /// A pumped run's board answer has returned to the run: the receipt its hook
@@ -855,8 +777,42 @@ pub(crate) async fn drop_run_board(
         .remove(&(actor.entity_ref(), connection.0.clone()));
 }
 
+/// A keyframe of the board just went back with its actor's layout batch:
+/// the actor's next turn sees it, so the batch becomes live (BOARD-LAYOUT).
+/// A describe, a subscription or a refused verb shows no keyframe and
+/// leaves the batch pending.
+fn activate_board_layout(
+    server: &SyncServer,
+    board: &McpBoardState,
+) -> Result<(), McpGatewayError> {
+    if let Some(candidate) = &board.layout_candidate {
+        server
+            .vault
+            .activate_board_layout_now(candidate)
+            .map_err(|error| mcp_engine_error("board layout activation failed", error))?;
+    }
+    Ok(())
+}
+
+/// The native run board's harness cap, shared by section projection and its
+/// final keyframe: the owner's board cap, else the MCP harness default. Run
+/// boards have no caller limit or explicit override.
+pub(super) fn run_board_budget_request(
+    server: &SyncServer,
+) -> oneiron::context_board::BoardBudgetRequest {
+    oneiron::context_board::BoardBudgetRequest {
+        harness_default_tok: crate::api::context_board::board_cap_tok(
+            &server.vault,
+            crate::mcp::MCP_BOARD_BUDGET_TOK,
+        ),
+        caller_limit_tok: None,
+        explicit_override_tok: None,
+    }
+}
+
 /// [`mcp_live_board`]'s view of one rendered board.
 fn live_board_view(
+    server: &SyncServer,
     board: &McpBoardState,
 ) -> Result<oneiron::board_verb::LiveBoardView, McpGatewayError> {
     let header = oneiron::context_board::BoardBlockHeader {
@@ -865,12 +821,8 @@ fn live_board_view(
     };
     let render = oneiron::board_verb::render_current_keyframe(
         &header,
-        &board.sections,
-        oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
-            caller_limit_tok: None,
-            explicit_override_tok: None,
-        },
+        &board.laid_out,
+        run_board_budget_request(server),
     )
     .map_err(mcp_board_frame_error)?;
     let mut rows = std::collections::BTreeMap::new();

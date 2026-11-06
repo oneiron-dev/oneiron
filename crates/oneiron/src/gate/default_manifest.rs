@@ -44,7 +44,6 @@ use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPoli
 use super::resolution::DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS;
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
-const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 /// Seeded policy data, not a project-constructor or dispatch constant. Both
 /// are fallbacks: a holder-authored vault row replaces them (C1).
 pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u64 = 10;
@@ -53,7 +52,7 @@ pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u64 = 16;
 pub(crate) const fn seeded_project_depth_default() -> u64 {
     SEEDED_PROJECT_DEPTH_DEFAULT
 }
-pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
+pub(crate) use crate::store::policy_record::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
 
 /// Shipped policy data; organ users resolve this row or supply their own
 /// positive budgets. No fallback numbers live in the XML/ZIP implementation.
@@ -71,10 +70,7 @@ pub(in crate::gate) fn default_docedit_resource_row() -> Value {
     ])
 }
 
-pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
-    EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
-        .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
-}
+pub(crate) use crate::store::policy_record::default_policy_manifest_id;
 
 /// The shipped notification rules are manifest data, also used to complete
 /// owner-authenticated manifests that omit this optional rule table.
@@ -117,7 +113,7 @@ pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<V
         default_owner_policy_change_notifications(),
     ));
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(fields))
+    super::value_encoding::write_value(&mut encoded, &Value::Map(fields))
         .map_err(|_| Error::InvariantViolation("policy manifest notification encode"))?;
     Ok(encoded)
 }
@@ -403,6 +399,16 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 // and ref CAS, so an owner review is not its barrier.
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("repo.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("self.code.")),
                     (
                         Value::from(RULE_AXES_KEY),
                         Value::Map(vec![

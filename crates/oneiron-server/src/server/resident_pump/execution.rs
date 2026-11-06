@@ -7,16 +7,17 @@ use super::{
     AttemptQueue, AttemptRecord, BoundRun, Claimed, DecisionHost, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorStatus, EngineRunError, EntityId, HostPlannerBinding,
     HostPlannerDecisions, HostSelfDispatcher, LeaderStarterSkills, McpCodeModeProvider, ModelId,
-    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills,
-    ProjectConversationSkills, ReadSetProducer, ReaderSeats, RunCompaction, RunHostDoor,
-    SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask, SpawnHostSeat, SpendScopeId, SyncServer,
-    TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES,
-    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor, browser_workflow, child_pin, craft,
-    ensure_listed, enter_engine_native_run, finalize_step_captures, fork_executor_run,
-    note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
-    run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
+    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills, ReadSetProducer,
+    ReaderSeats, RunCompaction, RunHostDoor, SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask,
+    SpawnHostSeat, SpendScopeId, SyncServer, TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE,
+    Vault, WINDOW_FULL_TRIES, WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor,
+    browser_workflow, child_pin, craft, ensure_listed, enter_engine_native_run,
+    finalize_step_captures, fork_executor_run, note_stale_listed_models, note_unbound_listed_run,
+    pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
+    task_run_seat, text, unix_now,
 };
 use crate::mcp::LiveLeaseRunner;
+use oneiron::llm::seat::SeatLearningContext;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -74,6 +75,11 @@ pub(super) fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // FIX 15011: a run its dispatch started from an event opens with the
+    // wake opener; a continued run goes on from its source's fork.
+    if !continues {
+        config.wake = claimed.wake;
+    }
     // CUA E4 (FIX 7603): a try whose TASK binds a library program runs it
     // strict on this door before its seat is born. One that met its TASK's
     // goal settles the try with no model call; one that handed off names its
@@ -109,6 +115,15 @@ pub(super) fn run_bound(
     // stamp its pack loads write. DOOR-111 S5: the seat is born stamped
     // with the dispatch's type, so its route reads with its own stamp.
     let type_ref = &status.input.type_ref;
+    let learning = status
+        .input
+        .project_ref
+        .zip(status.input.target.agent_definition_ref().ok())
+        .map(|(project, agent)| SeatLearningContext {
+            project,
+            agent,
+            type_ref: type_ref.clone(),
+        });
     let model_seat = if continues {
         continued_seat(
             vault,
@@ -117,6 +132,7 @@ pub(super) fn run_bound(
             type_ref,
             definition.models.clone(),
             worlds.clone(),
+            learning,
         )?
     } else {
         // The birth's worlds are the dispatch row's branch world (FIX 11918,
@@ -131,6 +147,7 @@ pub(super) fn run_bound(
             status.input.plan.as_ref(),
             definition.models.clone(),
             worlds,
+            learning,
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -191,7 +208,7 @@ pub(super) fn run_bound(
     // FIX 1876: a run no seat bore and no plan bound is stamped with the
     // model its settled config runs on, before any pack loads.
     if model_seat.is_none() && planned.is_none() {
-        super::attribution::stamp_seatless_executor(vault, &status.attempt, &config);
+        super::attribution::stamp_seatless_executor(vault, &status.attempt, &config, &template);
     }
     super::attribution::bind_before_entry(vault, &status.attempt);
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
@@ -208,12 +225,10 @@ pub(super) fn run_bound(
     // it marked for a contribution check (FIX 3028). A continued run loads
     // it too, and its task already holds the body: it is tagged where its
     // source's append put it.
-    let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     let mut exposures: Vec<TaskExposure> = leader.into_iter().collect();
     if let Some(skill) = AgentDispatcher::new(vault)
-        .prepare_project_conversation_run(
+        .prepare_default_project_conversation_run(
             &status.attempt,
-            &skills,
             config.model.as_str(),
             unix_now(),
         )
@@ -314,6 +329,9 @@ pub(super) fn run_bound(
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
+        if door.take_media_trap() {
+            return Ok(BoundRun::Trapped);
+        }
         let outcome = outcome?;
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
@@ -435,11 +453,18 @@ fn continued_seat(
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     // The birth's worlds are the dispatch row's branch world, threaded by the
     // caller (FIX 11918, Engine 00:54); empty inherits. No federation slip here.
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        SeatTask {
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| SeatTask {
             kind: SeatKind::Attempt,
             warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
             task: config.task.clone(),
@@ -455,8 +480,9 @@ fn continued_seat(
             listed,
             worlds: Vec::new(),
             served: None,
-        }
-    })
+            learning: None,
+        },
+    )
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured
@@ -522,12 +548,15 @@ fn enter_run(
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
+        .with_bound_run(config.run_id)
         .with_reader_spawn(seat.clone())
         .with_replay_exposures(exposures.to_vec())
         // FIX 6867, FIX 8268: the run's repo proposals take the vault's own review policy.
         .with_repo_review_policy(Arc::new(
             oneiron::memory::repo_doors::OwnerProposalReviewPolicy::new(Arc::clone(vault)),
-        ));
+        ))
+        // FIX 7181: the operator's own Git door base wins over the run's.
+        .with_git_door_base(door.git_door_base());
     let meter = spend
         .map(|scope| ScopeMeter::open(vault, scope))
         .transpose()?;
@@ -581,8 +610,23 @@ fn enter_run(
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
+    door.bind_media_step(crate::server::RunMediaStep::new(
+        vault,
+        &status.attempt,
+        actor,
+        config.run_id,
+    ));
     let entered = enter_engine_native_run(
-        vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
+        vault,
+        provider,
+        &bound,
+        config,
+        compaction,
+        reactor,
+        meter,
+        model_seat,
+        planned,
+        status.input.definition.models.clone(),
     );
     door.bind_meter(None);
     door.bind_lease(None);
@@ -635,11 +679,11 @@ pub(crate) fn seated_planner<'a>(
         return Ok(None);
     }
     Ok(Some(HostPlannerBinding {
-        skills: PlannerSkills::seeded().map_err(text)?,
+        skills: PlannerSkills::seeded(vault).map_err(text)?,
         seats,
         executor: executor.to_owned(),
         decisions: Some(decisions),
-        leader: LeaderStarterSkills::seeded().map_err(text)?,
+        leader: LeaderStarterSkills::seeded(vault).map_err(text)?,
         top: settings.top,
         // Callers attach the run's own runner after this binding is built:
         // a leased entry in `enter_run`, and a live-run action through

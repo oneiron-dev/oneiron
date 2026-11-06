@@ -32,11 +32,12 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
 use super::rows::HeldEdit;
-use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
+use super::{GENERATION_CONTEXT, SyncSecretProjection};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext};
+use crate::origin::secret_projection::copy_id::copy_id;
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
@@ -103,13 +104,13 @@ impl TextCopy {
             copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
             places: None,
             blob,
-            stamp: super::UNREAD_STAMP,
+            stamp: SyncSecretProjection::unread_stamp(),
         }
     }
 
     /// Whether this is [`Self::sealed`]: no edit of it can be translated.
     fn unread(&self) -> bool {
-        self.stamp == super::UNREAD_STAMP
+        SyncSecretProjection::stamp_is_unread(&self.stamp)
     }
 }
 
@@ -275,8 +276,8 @@ fn project_text_in_txn(
 /// # Errors
 /// A store failure reading the document head (L01 05:53).
 fn author(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<u64> {
-    let incarnation =
-        crate::entity_doc::source_incarnation_in_txn(&vault.store, txn, source)?.unwrap_or_default();
+    let incarnation = crate::entity_doc::source_incarnation_in_txn(&vault.store, txn, source)?
+        .unwrap_or_default();
     let mut material = Vec::with_capacity(2 + 16 + incarnation.len());
     material.extend_from_slice(&SyncSecretProjection::SCHEMA.to_be_bytes());
     material.extend_from_slice(source.as_bytes());
@@ -369,6 +370,36 @@ pub(crate) fn document_copy_in_txn(
     }))
 }
 
+/// Owner settlement of a retained copy lineage (FIX12419, document-only).
+pub(crate) mod settlement;
+
+/// The shipped visible diff of `submitted`, a peer's text of `copy`, onto
+/// `text`: pure, no store read. Both the import writer and the
+/// owner-settlement review call it, same semantics.
+fn copy_diff_result(
+    text: &str,
+    copy: &TextCopy,
+    submitted: &str,
+) -> Result<RepoProjectionDiffResult> {
+    if submitted == copy.copy {
+        Ok(RepoProjectionDiffResult::Unchanged)
+    } else if copy.copy.is_empty() && text.is_empty() {
+        // An empty text holds nothing to mask: the peer's text is the text.
+        Ok(RepoProjectionDiffResult::Applied(
+            submitted.as_bytes().to_vec(),
+        ))
+    } else {
+        let projected = match &copy.places {
+            Some(places) => RepoProjectedFileCopy::Masked {
+                copy: copy.copy.as_bytes(),
+                places,
+            },
+            None => RepoProjectedFileCopy::Opaque,
+        };
+        apply_repo_projection_diff(text.as_bytes(), projected, submitted.as_bytes())
+    }
+}
+
 /// A peer's update `bytes` of the copy lineage of `source`'s document,
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
@@ -416,21 +447,7 @@ where
         bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
-        let result = if submitted == copy.copy {
-            RepoProjectionDiffResult::Unchanged
-        } else if copy.copy.is_empty() && text.is_empty() {
-            // An empty text holds nothing to mask: the peer's text is the text.
-            RepoProjectionDiffResult::Applied(submitted.as_bytes().to_vec())
-        } else {
-            let projected = match &copy.places {
-                Some(places) => RepoProjectedFileCopy::Masked {
-                    copy: copy.copy.as_bytes(),
-                    places,
-                },
-                None => RepoProjectedFileCopy::Opaque,
-            };
-            apply_repo_projection_diff(text.as_bytes(), projected, submitted.as_bytes())?
-        };
+        let result = copy_diff_result(&text, &copy, &submitted)?;
         let landed = match result {
             RepoProjectionDiffResult::Unchanged => None,
             RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
@@ -710,10 +727,11 @@ pub(crate) fn with_copy_generation_in_txn(
     frontier: [u8; 32],
 ) -> Result<[u8; 32]> {
     let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
-    if projection.is_empty() {
+    let generation =
+        (!projection.is_empty()).then(|| projection.generation(projection.source_ids().copied()));
+    let Some(generation) = generation else {
         return Ok(frontier);
-    }
-    let generation = projection.generation(projection.sources.keys().copied());
+    };
     let mut hasher = blake3::Hasher::new_derive_key(GENERATION_CONTEXT);
     hasher.update(&frontier);
     hasher.update(&generation);

@@ -542,7 +542,9 @@ pub(super) fn budget_row_read(
         used,
         remaining: budget.limit.saturating_sub(used),
         percent_used: percent,
-        on_exhaust: budget.on_exhaust,
+        // What exhausting the row does, so a count row never reads as
+        // suspending (FIX 8753).
+        on_exhaust: budget.exhaust_policy(),
         window_start: usage.window_start,
         // The read reports the TRUE ladder state — every threshold the live
         // usage has crossed — not the event-emission memory. Usage can

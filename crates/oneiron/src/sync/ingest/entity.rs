@@ -13,7 +13,7 @@ use crate::registry::{
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
 use crate::sync::ingest::promotion::{owe_landed_turn_in_txn, promoted_landing_in_txn};
 use crate::sync::loro_support::TombstoneIndex;
-use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn};
+use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn, carried_section_fit_in_txn};
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -23,6 +23,7 @@ use crate::vault::Vault;
 
 mod asset_ref;
 mod beside;
+mod window_admission;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
@@ -91,8 +92,9 @@ impl<'a> IngestCtx<'a> {
     }
 
     /// The window document the entries come from, whose birth map carries
-    /// each row's Rule A envelope.
-    fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
+    /// each row's Rule A envelope and whose writer map each MESSAGE row's
+    /// writer proof.
+    pub(super) fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
         match self.residence? {
             Residence::Quarantine(doc) | Residence::Forward { doc, .. } => Some(doc),
         }
@@ -156,6 +158,9 @@ pub(in crate::sync) enum RefusalRetry {
 impl RefusalRetry {
     fn of(err: &Error) -> Self {
         if crate::subject_model::subject_model_dependency_pending(err)
+            // An own machine's companion row that waits for its author
+            // (FIX 21271).
+            || crate::gate::companion_author_pending(err)
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
@@ -320,7 +325,10 @@ pub(in crate::sync) fn ingest_entity_in_txn(
     if key != id.to_hex() {
         return Ok(refuse(Some(id), Error::InvalidKey));
     }
-    if let Some(step) = check_residence(ctx, wtxn, id, blob)? {
+    if let Some(step) = window_admission::check_residence(ctx, wtxn, id, blob)? {
+        return Ok(step);
+    }
+    if let Some(step) = window_admission::check_discarded(ctx, wtxn, id, &header, blob)? {
         return Ok(step);
     }
     match admit(ctx, wtxn, id, &header, blob) {
@@ -332,61 +340,6 @@ pub(in crate::sync) fn ingest_entity_in_txn(
             }))
         }
         admitted => admitted,
-    }
-}
-
-/// A body whose world or month is not its window's is not admitted by that window, except a
-/// retained world shell the window still holds.
-fn check_residence(
-    ctx: &IngestCtx<'_>,
-    wtxn: &heed::RwTxn<'_>,
-    id: EntityId,
-    blob: &[u8],
-) -> Result<Option<EntityStep>> {
-    let Some(residence) = ctx.residence else {
-        return Ok(None);
-    };
-    let Some(window) = crate::sync::types::WindowKey::try_new(ctx.window_key) else {
-        return Ok(None);
-    };
-    if crate::sync::types::entity_belongs_to_window(blob, &window) {
-        return Ok(None);
-    }
-    let outside = || Error::InvalidConfig("entity outside window residence".into());
-    match residence {
-        Residence::Quarantine(doc) => {
-            if window.world().is_some()
-                && crate::sync::types::retained_world_shell_belongs_to_window(
-                    ctx.vault,
-                    wtxn,
-                    doc,
-                    ctx.tombstones,
-                    &id,
-                    blob,
-                    &window,
-                    false,
-                )?
-            {
-                return Ok(None);
-            }
-            Ok(Some(refuse(Some(id), outside())))
-        }
-        Residence::Forward { doc, trusted } => {
-            if crate::sync::types::retained_world_shell_belongs_to_window(
-                ctx.vault,
-                wtxn,
-                doc,
-                ctx.tombstones,
-                &id,
-                blob,
-                &window,
-                trusted,
-            )? {
-                // The dedicated shell restorer runs after this pass.
-                return Ok(Some(EntityStep::Skip));
-            }
-            Err(outside())
-        }
     }
 }
 
@@ -627,6 +580,12 @@ fn admit(
     // FIX 3877: an origin claim lands in this vault's erased form, and a copy its held erased
     // form stands for is skipped.
     let data = match carried_claim_in_txn(vault, wtxn, &id, blob, data)? {
+        CarriedClaim::Put(data) => data,
+        CarriedClaim::Held => return Ok(EntityStep::Skip),
+        CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
+    };
+    // FIX 12713: a carried section-fit receipt names no erased actor here.
+    let data = match carried_section_fit_in_txn(vault, wtxn, &id, blob, data)? {
         CarriedClaim::Put(data) => data,
         CarriedClaim::Held => return Ok(EntityStep::Skip),
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),

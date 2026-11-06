@@ -112,23 +112,46 @@ pub fn admit_repo_sync_frame<'a>(
     context: Option<&LoroDoc>,
 ) -> Result<RepoSyncAdmission<'a>> {
     let projection = SyncSecretProjection::read(vault)?;
+    let (admitted, held) = match projection.admit_window_blob(&vault.store, payload, context)? {
+        WindowAdmission::Admit(bytes, landings, held) => (
+            RepoSyncAdmission::Admit(bytes, RepoSyncLandings(landings)),
+            held,
+        ),
+        WindowAdmission::Held(held) => (RepoSyncAdmission::Held, held),
+    };
+    for edit in &held {
+        tracing::warn!(
+            window,
+            source = %edit.source.to_hex(),
+            cause = ?edit.cause,
+            "sync: a copy edit is held on its ruled cause; its held record is kept"
+        );
+    }
+    if !held.is_empty() {
+        super::held::record_held_edits(vault, window, &held)?;
+    }
+    Ok(admitted)
+}
+
+/// [`admit_repo_sync_frame`] with nothing written: `payload` as `window`
+/// would take it now, its copies translated onto the sources this device
+/// holds, for the isolated check a device runs before the payload's pads
+/// install (FIX 10474). No held record is written and no landing is marked;
+/// `None` for a payload that holds on a ruled cause. A copy row whose pad
+/// is not here yet is read as it came, as without its pad.
+///
+/// # Errors
+/// As [`admit_repo_sync_frame`].
+pub fn repo_sync_frame_as_admitted<'a>(
+    vault: &Vault,
+    payload: &'a [u8],
+    context: Option<&LoroDoc>,
+) -> Result<Option<Cow<'a, [u8]>>> {
+    let projection = SyncSecretProjection::read(vault)?;
     Ok(
         match projection.admit_window_blob(&vault.store, payload, context)? {
-            WindowAdmission::Admit(bytes, landings) => {
-                RepoSyncAdmission::Admit(bytes, RepoSyncLandings(landings))
-            }
-            WindowAdmission::Held(held) => {
-                for edit in &held {
-                    tracing::warn!(
-                        window,
-                        source = %edit.source.to_hex(),
-                        cause = ?edit.cause,
-                        "sync: a copy edit is held on its ruled cause; its held record is kept"
-                    );
-                }
-                super::held::record_held_edits(vault, window, &held)?;
-                RepoSyncAdmission::Held
-            }
+            WindowAdmission::Admit(bytes, _, _) => Some(bytes),
+            WindowAdmission::Held(_) => None,
         },
     )
 }

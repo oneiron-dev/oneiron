@@ -103,6 +103,7 @@ fn claude_usage(stdout: &ByoaStream) -> Option<LlmUsage> {
             reasoning: 0,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     })
 }
 
@@ -126,6 +127,7 @@ fn codex_usage(stdout: &ByoaStream) -> Option<LlmUsage> {
             reasoning,
         },
         raw_provider: usage.clone(),
+        call_metadata: None,
     })
 }
 
@@ -174,6 +176,7 @@ fn opencode_usage(stdout: &ByoaStream) -> Option<LlmUsage> {
         input,
         output,
         raw_provider: json!({ "step_finish": steps }),
+        call_metadata: None,
     })
 }
 

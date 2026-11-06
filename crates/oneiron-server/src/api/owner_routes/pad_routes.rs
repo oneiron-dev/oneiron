@@ -12,7 +12,8 @@ use oneiron::EdgeActorClass;
 use oneiron::memory::DiaryReadOutcome;
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::diary_routes::diary_read_outcome_schema;
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -25,6 +26,10 @@ pub(super) fn owner_table() -> OwnerTable {
             path: "/pads/read",
             summary: "The owner reads an agent's sealed pads.",
             row: None,
+            shape: Some(RestShape::json(
+                read_pads_body_schema,
+                diary_read_outcome_schema,
+            )),
         },
         post(read),
     )]

@@ -51,12 +51,6 @@ use super::http::{BytesReply, MediaSend, ProviderHttp, StreamedReply, UploadAdmi
 use super::media::{AdmittedReference, VoiceReferenceUploadGuard};
 use super::rerank::transport;
 
-/// The field a worker's `/ready` sets, beside its warm target and never in
-/// it, when its render wire takes the reference transcript as a frame of
-/// its own after the header (FIX 3758). A worker that sets none takes the
-/// transcript in the header only.
-const TRANSCRIPT_FRAME_FIELD: &str = "transcript_frame";
-
 /// Where a render's reference transcript rides.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TranscriptPlacement {
@@ -344,16 +338,12 @@ impl VoxCpm2Speech {
         if !(200..300).contains(&reply.status) {
             return Err(refused(&reply));
         }
-        let mut ready: JsonValue =
+        let ready: JsonValue =
             serde_json::from_slice(&reply.body).map_err(|_| FatalLlmError::EmptyResponse)?;
         // Said beside the target, so the target a render echoes stays the
         // worker's own.
-        let takes_frame = ready
-            .as_object_mut()
-            .and_then(|fields| fields.remove(TRANSCRIPT_FRAME_FIELD))
-            == Some(JsonValue::Bool(true));
-        let warm: WarmTarget =
-            serde_json::from_value(ready).map_err(|_| FatalLlmError::EmptyResponse)?;
+        let (warm, takes_frame) =
+            WarmTarget::from_ready(ready).map_err(|_| FatalLlmError::EmptyResponse)?;
         warm.validate().map_err(|_| FatalLlmError::EmptyResponse)?;
         Ok((warm, takes_frame))
     }

@@ -8,9 +8,9 @@ use crate::edge::{EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::scan_check::ScanCount;
 use crate::store::EngineScan;
 use crate::store::Store;
+use crate::store::scan_count::ScanCount;
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
 
@@ -627,7 +627,7 @@ pub(super) fn recompute_touched_habit_streaks_in_txn(
 ) -> Result<()> {
     for habit_id in candidates {
         if stored_task_role(store, &*wtxn, habit_id)? == Some(TaskRole::Habit) {
-            crate::habit::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
+            crate::store::habit_streak::recompute_habit_streak_in_txn(store, wtxn, habit_id)?;
         }
     }
     Ok(())

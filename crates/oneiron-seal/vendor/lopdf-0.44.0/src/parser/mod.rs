@@ -429,11 +429,11 @@ pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
 }
 
 /// Decode CrossReferenceTable
-fn xref(
-    input: ParserInput,
-    admission: Option<&dyn DecodeAdmission>,
-    refused: &Cell<Option<DecodeAdmissionError>>,
-) -> NomResult<Xref> {
+fn xref<'a>(
+    input: ParserInput<'a>,
+    admission: Option<&'a dyn DecodeAdmission>,
+    refused: &'a Cell<Option<DecodeAdmissionError>>,
+) -> NomResult<'a, Xref> {
     let stopped = Cell::new(false);
 
     let xref_eol = map(alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))), |_| ());
@@ -474,7 +474,11 @@ fn xref(
                     if stopped.get() {
                         break;
                     }
-                    if is_normal && let Ok(generation) = generation.try_into() {
+                    // Past-u32 ids are skipped, never wrapped (FIX 8451, ported from Q).
+                    if is_normal
+                        && let Ok(generation) = generation.try_into()
+                        && let Some(id) = start.checked_add(index).and_then(|id| u32::try_from(id).ok())
+                    {
                         if let Some(admission) = admission
                             && let Err(err) = crate::admitted::xref::admit_entry(admission, xref.entries.is_empty())
                         {
@@ -482,7 +486,7 @@ fn xref(
                             stopped.set(true);
                             break;
                         }
-                        xref.insert((start + index) as u32, XrefEntry::Normal { offset, generation });
+                        xref.insert(id, XrefEntry::Normal { offset, generation });
                     }
                 }
                 xref
@@ -525,10 +529,10 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
         xref_trailer,
         (|input| {
             _indirect_object(input, 0, None, reader, &mut HashSet::new())
-                .map(|(_, obj)| {
-                    let res = match obj {
+                .map(|(_, mut obj)| {
+                    let res = match &mut obj {
                         Object::Stream(stream) => decode_xref_stream_admitted(
-                            stream,
+                            std::mem::replace(stream, Stream::new(Dictionary::new(), Vec::new())),
                             reader.max_decompressed_size,
                             reader.decode_admission.as_deref(),
                         ),

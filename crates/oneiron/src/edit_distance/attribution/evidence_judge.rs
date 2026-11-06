@@ -3,16 +3,18 @@
 use super::origin::evidence_origin;
 use super::stored::{
     EVIDENCE, EVIDENCE_ROW_LABEL, JUDGMENT, JUDGMENT_ROW_LABEL, PREFERENCE, ROW_VERSION,
-    StoredAttempt, StoredEvidence, StoredHunk, StoredJudgment, StoredPreference, StoredShare,
-    hex_entity, invalid, normalized_scope,
+    StoredAttempt, StoredEvidence, StoredHunk, StoredHunkRange, StoredJudgment, StoredPreference,
+    StoredShare, hex_entity, invalid, normalized_scope,
 };
 use super::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    HunkLabel, PreferenceProposal, charges_edit_cost, class_subject, classify_amendment_traced,
+    HunkLabel, HunkRange, PreferenceProposal, charges_edit_cost, class_subject,
+    classify_amendment_traced,
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
-use crate::edit_distance::delta::amendment_delta;
+use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, amendment_delta};
+use crate::edit_distance::{RetainedProposal, TextRead, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
@@ -306,15 +308,88 @@ pub fn judge_amendment_verdicts(
     persist_amendment_split(vault, receipt_id, &evidence, &delta, split, hunks, None)
 }
 
+/// The retained window `delta` measured, when it measured a recorded one
+/// (FIX 11344): hunk ranges locate in it. `None` for every other lane, for a
+/// Δ whose refs name no one artifact, and when the row does not read — those
+/// hunks carry no ranges.
+fn recorded_window(vault: &Vault, delta: &AmendmentDelta) -> Option<RetainedProposal> {
+    if delta.source != DeltaSource::RecordedOps {
+        return None;
+    }
+    let artifact = delta.proposed_ref.proposal_artifact()?;
+    if delta.final_ref.proposal_artifact() != Some(artifact) {
+        return None;
+    }
+    match retained_proposal(vault, artifact) {
+        Ok(found) => found,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's recorded window does not read; its hunks carry no ranges"
+            );
+            None
+        }
+    }
+}
+
+/// The retained endpoint texts `delta` measured, when it measured a
+/// reconstructed re-diff (FIX 12715): the final end's artifact (the
+/// settlement's own row) beside both ends' texts, read through the delta's
+/// own refs — the refs' stated purpose. `None` for every other lane, for a
+/// Δ whose refs name no retained row, and when a row or text does not
+/// read — those hunks carry no ranges, as before.
+fn reconstructed_ends(vault: &Vault, delta: &AmendmentDelta) -> Option<(EntityId, String, String)> {
+    if delta.source != DeltaSource::Reconstructed {
+        return None;
+    }
+    let proposed_artifact = delta.proposed_ref.proposal_artifact()?;
+    let final_artifact = delta.final_ref.proposal_artifact()?;
+    let proposed_row = match retained_proposal(vault, proposed_artifact) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's reconstructed proposed end does not read; its hunks carry no ranges"
+            );
+            return None;
+        }
+    };
+    let TextRead::Text(proposed_text) = proposed_row.end_text(&delta.proposed_ref) else {
+        return None;
+    };
+    if proposed_artifact == final_artifact {
+        let TextRead::Text(final_text) = proposed_row.end_text(&delta.final_ref) else {
+            return None;
+        };
+        return Some((final_artifact.entity_id(), proposed_text, final_text));
+    }
+    let final_row = match retained_proposal(vault, final_artifact) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's reconstructed final end does not read; its hunks carry no ranges"
+            );
+            return None;
+        }
+    };
+    let TextRead::Text(final_text) = final_row.end_text(&delta.final_ref) else {
+        return None;
+    };
+    Some((final_artifact.entity_id(), proposed_text, final_text))
+}
+
 /// Persists one judged split for `receipt_id`: the judgment row, its
 /// preference note, unclear row and discovery proposal land in one write
 /// transaction. Shared by the judge tiers and the verdict door above.
 ///
-/// Each of `hunks` keeps its own label beside its substitution's identity, so
-/// the miner can take a clear hunk and leave an unclear one held (FIX 9808).
-/// The evidence's executor stamp, task type and project, and the revision
-/// and answering model of `judge`, the trace that answered, freeze on the
-/// judgment (FIX 9812, 6038).
+/// Each of `hunks` keeps its own label beside the retained ranges of its
+/// substitutions, so the miner can take a clear hunk and leave an unclear one
+/// held (FIX 9808, 11344). The evidence's executor stamp, task type and
+/// project, and the revision and answering model of `judge`, the trace that
+/// answered, freeze on the judgment (FIX 9812, 6038).
 fn persist_amendment_split(
     vault: &Vault,
     receipt_id: &str,
@@ -352,17 +427,41 @@ fn persist_amendment_split(
         d_norm: delta.d_norm,
         engine_ver: delta.engine_ver.clone(),
         at: evidence.at,
-        hunks: hunks
-            .iter()
-            .zip(&split.hunks)
-            .map(|(hunk, class)| HunkLabel {
-                class: *class,
-                substitution_refs: crate::edit_distance::miner::hunk_substitution_refs(
-                    hunk.before,
-                    hunk.after,
-                ),
-            })
-            .collect(),
+        hunks: {
+            // Located once per judgment: every hunk's ranges name changes of
+            // this window (FIX 11344), or the reconstructed endpoints' line
+            // positions (FIX 12715).
+            let recorded = recorded_window(vault, delta);
+            let reconstructed = if recorded.is_none() {
+                reconstructed_ends(vault, delta)
+            } else {
+                None
+            };
+            hunks
+                .iter()
+                .zip(&split.hunks)
+                .map(|(hunk, class)| HunkLabel {
+                    class: *class,
+                    ranges: if let Some(artifact) = recorded.as_ref() {
+                        crate::edit_distance::miner::hunk_substitution_ranges(
+                            artifact,
+                            hunk.before,
+                            hunk.after,
+                        )
+                    } else if let Some((artifact, before, after)) = reconstructed.as_ref() {
+                        crate::edit_distance::miner::reconstructed_hunk_ranges(
+                            *artifact,
+                            before,
+                            after,
+                            hunk.before,
+                            hunk.after,
+                        )
+                    } else {
+                        Vec::new()
+                    },
+                })
+                .collect()
+        },
         executor: evidence.executor.clone(),
         type_ref: evidence.type_ref.clone(),
         project: evidence.project,
@@ -468,7 +567,16 @@ pub(super) fn judgment_row(judgment: &AmendmentJudgment) -> StoredJudgment {
             .iter()
             .map(|hunk| StoredHunk {
                 class: hunk.class.as_str().to_owned(),
-                substitutions: hunk.substitution_refs.clone(),
+                ranges: hunk
+                    .ranges
+                    .iter()
+                    .map(|range| StoredHunkRange {
+                        artifact: range.artifact.to_hex(),
+                        peer_id: range.peer_id,
+                        counter: range.counter,
+                        len: range.len,
+                    })
+                    .collect(),
             })
             .collect(),
         executor: judgment.executor.clone(),
@@ -628,7 +736,18 @@ fn judgment_from_row(
             Ok(HunkLabel {
                 class: AmendmentClass::parse(&hunk.class)
                     .ok_or(Error::CorruptedIndex(JUDGMENT_ROW_LABEL))?,
-                substitution_refs: hunk.substitutions.clone(),
+                ranges: hunk
+                    .ranges
+                    .iter()
+                    .map(|range| -> Result<HunkRange> {
+                        Ok(HunkRange {
+                            artifact: hex_entity(&range.artifact, JUDGMENT_ROW_LABEL)?,
+                            peer_id: range.peer_id,
+                            counter: range.counter,
+                            len: range.len,
+                        })
+                    })
+                    .collect::<Result<_>>()?,
             })
         })
         .collect::<Result<_>>()?;

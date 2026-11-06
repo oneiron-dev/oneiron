@@ -71,9 +71,9 @@ impl Vault {
         // an erase destroys them (the hard arm's purge). Its delete time
         // bounds how long a pin change still rewraps them.
         let (existed, had_vector, _ledger_changed) =
-            self.soft_erase_active_store_in_txn(&mut wtxn, id, false)?;
+            self.soft_erase_active_store_in_txn(&mut wtxn, id, false, None)?;
         if existed && reason == DeleteReason::UserDelete {
-            crate::world_keys::note_world_deleted_in_txn(
+            crate::store::world_pad_rows::note_world_deleted_in_txn(
                 &self.store,
                 &mut wtxn,
                 *id,
@@ -281,8 +281,12 @@ impl Vault {
             let scrub_is_the_linearization_point = !authority_settled;
             let mut changed = vec![*id];
             changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
-            let (existed, had_vector, _ledger_changed) =
-                self.soft_erase_active_store_in_txn(&mut wtxn, id, true)?;
+            let (existed, had_vector, _ledger_changed) = self.soft_erase_active_store_in_txn(
+                &mut wtxn,
+                id,
+                true,
+                gate.as_ref().and_then(GatedDeletion::owner_act),
+            )?;
             if had_vector {
                 crate::store::vector_index::increment_vector_version(&self.store, &mut wtxn)?;
             }

@@ -25,6 +25,19 @@ const CLIENT_FRAMES_PER_TICK: usize = 4 * ASSET_BODY_FRAMES_PER_POLL;
 impl SyncClient {
     /// The lane this client moves bodies on: its home's own lane, or the
     /// receiving side of the federation peer it is bound to (FIX 12118).
+    /// The machine this client's connection proved as its home, rechecked
+    /// now: the one a body this socket lands came from (FIX 14534). `None`
+    /// on a federation lane and before a connection proves one.
+    fn asset_body_home(&self) -> Option<EntityId> {
+        if self.config.federation_peer.is_some() {
+            return None;
+        }
+        match self.vault.peer_machine_stands(self.home_peer) {
+            crate::authority::PeerMachine::Proven { machine, .. } => Some(machine),
+            _ => None,
+        }
+    }
+
     fn asset_body_lane(&self) -> AssetBodyLane {
         if self.config.federation_peer.is_some() {
             AssetBodyLane::FederationReceive {
@@ -50,20 +63,29 @@ impl SyncClient {
         payload: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         let lane = self.asset_body_lane();
+        let home = self.asset_body_home();
         let bodies = self
             .asset_bodies
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        let (out, births) = with_manager_peer(&self.manager, lane, |peer| {
+        let (out, births) = with_manager_peer(&self.manager, lane, home, |peer| {
             let mut out = bodies.handle_frame(peer, tag, payload)?;
-            out.extend(bodies.poll(
-                peer,
-                Instant::now(),
-                ASSET_BODY_FRAMES_PER_POLL,
-                MAX_DECODED_PAYLOAD_BYTES,
-            )?);
-            Ok::<_, TransportError>((out, bodies.take_federated_births()))
+            let births = bodies.take_federated_births();
+            let polled = bodies
+                .poll(
+                    peer,
+                    Instant::now(),
+                    ASSET_BODY_FRAMES_PER_POLL,
+                    MAX_DECODED_PAYLOAD_BYTES,
+                )
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "asset body poll failed");
+                    Vec::new()
+                });
+            out.extend(polled);
+            Ok::<_, TransportError>((out, births))
         })?;
+        bodies.retry_positions(&self.manager);
         if !births.is_empty() {
             self.release_body_births(births);
         }
@@ -84,22 +106,26 @@ impl SyncClient {
         rows: &[EntityId],
     ) -> Result<(), TransportError> {
         let lane = self.asset_body_lane();
+        let home = self.asset_body_home();
         let bodies = self
             .asset_bodies
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        with_manager_peer(&self.manager, lane, |peer| bodies.note_rows(peer, window, doc, rows))
+        with_manager_peer(&self.manager, lane, home, |peer| {
+            bodies.note_rows(peer, window, doc, rows)
+        })
     }
 
     /// The body frames this client owes its home now. A scan that fails is
     /// reported and leaves the lane up.
     fn poll_asset_bodies(&mut self) -> Vec<Vec<u8>> {
         let lane = self.asset_body_lane();
+        let home = self.asset_body_home();
         let bodies = self
             .asset_bodies
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        let polled = with_manager_peer(&self.manager, lane, |peer| {
+        let polled = with_manager_peer(&self.manager, lane, home, |peer| {
             bodies.poll(
                 peer,
                 Instant::now(),
@@ -107,6 +133,7 @@ impl SyncClient {
                 MAX_DECODED_PAYLOAD_BYTES,
             )
         });
+        bodies.retry_positions(&self.manager);
         polled.unwrap_or_else(|error| {
             tracing::warn!(%error, "asset body poll failed");
             Vec::new()

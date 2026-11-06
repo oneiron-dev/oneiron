@@ -275,6 +275,12 @@ impl Vault {
             let (minted, commit) =
                 edit_typed_body_in_txn(self, wtxn, artifact, base, writer, edit)?;
             validate(kind, &self.loro_body(wtxn, artifact, kind, None)?.1)?;
+            crate::housekeeping::note_wake_in_txn(
+                &self.store,
+                wtxn,
+                crate::housekeeping::HousekeepingSweep::AnnotationBodyAnchors,
+                self.now_recorded_at(),
+            )?;
             Ok(OfficeBodyEdit {
                 frontier: commit.frontier,
                 minted,
@@ -568,6 +574,7 @@ impl Vault {
                 artifact: *artifact,
                 version: version.version,
                 frontier: head.frontier.clone(),
+                rebind_frontier: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),

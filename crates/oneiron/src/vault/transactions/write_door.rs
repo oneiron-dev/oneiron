@@ -4,12 +4,22 @@
 use crate::Vault;
 use crate::error::Error;
 use crate::store::{BackupWriteClass, Callback, Rows};
-#[cfg(feature = "sync")]
-use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
 
 /// How many owed claim VADs one write door pass pays after its commit
 /// (FIX 11923, L01 12:1x).
 const WRITE_DOOR_OWED_VAD_DRAIN: u64 = 16;
+
+/// The engine's federation import recheck for a write in a build with sync.
+#[cfg(feature = "sync")]
+fn check_federation_imports_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<()> {
+    vault
+        .store
+        .sync_hooks
+        .check_federation_imports_in_txn(vault, txn)
+}
 
 /// A build without sync runs no federation import, so a write has no
 /// import authority to recheck (FIX 4248).
@@ -35,6 +45,51 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        self.write_txn_door_classed_after_commit(callback, class, f, Ok)
+    }
+
+    /// Publishes a write's session segment on its calling thread as soon as
+    /// the base commit is durable, before postcommit work can take a writer.
+    /// A failed base write drops its result without calling `after_commit`.
+    pub(crate) fn with_write_txn_grouped_after_commit<T, U>(
+        &self,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<T>,
+        after_commit: impl FnOnce(T) -> crate::error::Result<U>,
+    ) -> crate::error::Result<U> {
+        self.write_txn_door_after_commit(Callback::Audited, write, after_commit)
+    }
+
+    /// The same publication point for an engine write with a typed error
+    /// and its original grouped or opaque callback discipline.
+    pub(crate) fn write_txn_door_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        write: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door_classed_after_commit(
+            callback,
+            BackupWriteClass::Content,
+            write,
+            after_commit,
+        )
+    }
+
+    fn write_txn_door_classed_after_commit<F, T, U, E>(
+        &self,
+        callback: Callback,
+        class: BackupWriteClass,
+        f: F,
+        after_commit: impl FnOnce(T) -> std::result::Result<U, E>,
+    ) -> std::result::Result<U, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         // Scan checks raised since the last write are kept first, in a write
         // of their own (no scan opens one). It takes the writer where this
         // write is about to, holding nothing more: no answer exists yet to
@@ -51,7 +106,16 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
-            (task_ids, rows, room_joins, pad_windows, settled_tasks, notifications_changed),
+            consent_answered,
+            (
+                task_ids,
+                rows,
+                room_joins,
+                pad_windows,
+                settled_tasks,
+                notifications_changed,
+                note_document_ids,
+            ),
             retirement_staged,
         ) = self.store.group_write_classed(callback, class, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -61,9 +125,9 @@ impl Vault {
             // A credential erase this write stages finishes after it (KS-6 part 2).
             let credentials_before = crate::store::credential_erases_staged();
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-            let (result, postcommit) = {
+            let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+            let result = {
                 let _active_write_txn = crate::store::active_write_txn_guard();
-                let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
                 // A key this write's mask found raises its notice here.
                 match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)
@@ -73,7 +137,7 @@ impl Vault {
                             .map_err(E::from)?;
                         Ok(result)
                     }) {
-                    Ok(result) => (result, vad_scope.finish()),
+                    Ok(result) => result,
                     Err(err) => return Rows::Discard(Err(err)),
                 }
             };
@@ -84,6 +148,7 @@ impl Vault {
             {
                 return Rows::Discard(Err(E::from(err)));
             }
+            let postcommit = vad_scope.finish();
             // FIX 7957: each row this write changed leaves its window a
             // durable marker, so a crash before the live mirror loses no edit.
             #[cfg(feature = "sync")]
@@ -111,6 +176,7 @@ impl Vault {
                     result,
                     approved,
                     postcommit.proactivity_changed,
+                    postcommit.consent_answered,
                     (
                         postcommit.task_ids,
                         postcommit.rows,
@@ -118,6 +184,7 @@ impl Vault {
                         postcommit.pad_windows,
                         postcommit.settled_tasks,
                         postcommit.notifications_changed,
+                        postcommit.note_document_ids,
                     ),
                     staged != retirements_before
                         || crate::store::credential_erases_staged() != credentials_before,
@@ -125,13 +192,26 @@ impl Vault {
                 Err(err) => Rows::Discard(Err(E::from(err))),
             }
         })?;
+        // Release the segment permit before any postcommit writer can wait
+        // on another writer that is itself waiting for this publication.
+        // Even a publication error keeps the durable write's postcommit work.
+        let result = after_commit(result);
         // A fence this write's erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         self.store.notify_attempt_observers();
+        if consent_answered {
+            self.notify_consent_answer();
+        }
         if proactivity_changed {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // A pad seal can leave its text frontier unchanged. Wake live NOTE
+        // subscribers only now that the seal is durable (FIX 12110).
+        #[cfg(feature = "sync")]
+        for id in note_document_ids {
+            self.notify_note_document(id);
+        }
         // FIX 3084: a notification this write put or marked wakes the live
         // queries that follow notifications, now that it is durable.
         if notifications_changed {
@@ -154,7 +234,7 @@ impl Vault {
         #[cfg(feature = "sync")]
         self.note_committed_rows(rows);
         #[cfg(not(feature = "sync"))]
-        drop((rows, room_joins));
+        drop((rows, room_joins, note_document_ids));
         // FIX 3321: a join this write filed reaches the live window of its
         // room or thread, now that it is durable.
         #[cfg(feature = "sync")]
@@ -178,7 +258,7 @@ impl Vault {
         // older debts, as the door did here (FIX 11702, Engine 10-31 04:1x).
         if self.claim_vad_payment_worker_attached() {
             self.hand_claim_vads_for_payment(approved_vad_ids);
-            return Ok(result);
+            return result;
         }
         // With none (an embedded SDK, the CLI), nothing pays after the
         // answer, so the door pays before it. The canonical consolidator
@@ -199,7 +279,7 @@ impl Vault {
                 "the owed claim VAD drain after a commit failed; the housekeeping sweep retries it"
             );
         }
-        Ok(result)
+        result
     }
 
     /// Pays up to [`WRITE_DOOR_OWED_VAD_DRAIN`] owed claim VADs after a
@@ -247,7 +327,7 @@ impl Vault {
                 .federation_stale_sweep_owed
                 .load(std::sync::atomic::Ordering::Acquire),
             // raise_found_key_notices_in_txn
-            crate::secret_custody::found_key_notices_due_in_txn(self, &txn)?,
+            crate::store::found_key_notice_queue::found_key_notices_due_in_txn(self, &txn)?,
             // rederive_changed_in_txn, unless this thread defers it
             !crate::scope_summary::rederive_deferred()
                 && crate::scope_summary::rederive_owed_in_txn(self, &txn)?,

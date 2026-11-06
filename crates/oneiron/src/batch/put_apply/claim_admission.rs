@@ -21,7 +21,7 @@ pub(super) fn admit_claim_put(
     id: EntityId,
     input: ClaimPutAdmission<'_>,
 ) -> Result<Option<ClaimBody>> {
-    crate::federation::guard_ruling_overwrite(
+    store.record_hooks.guard_ruling_overwrite(
         store,
         txn,
         &id,
@@ -74,7 +74,7 @@ pub(super) fn admit_claim_put(
         )?;
     }
     crate::booking::publication::guard_publication_put(store, txn, id, body.as_ref())?;
-    crate::workspace_roster::guard_goal_claim_put(
+    store.project_writes.guard_goal_claim_put(
         store,
         txn,
         id,
@@ -87,12 +87,12 @@ pub(super) fn admit_claim_put(
         // consent/demotion transition. Structural validation above still runs;
         // local confidence admission needs a predecessor only on local writes.
         if !input.replicated {
-            crate::write_envelope::carry_forward::validate_admission(
+            crate::carry_forward_admission::validate_admission(
                 store,
                 txn,
                 &id,
                 body,
-                crate::write_envelope::carry_forward::CarryForwardAdmission {
+                crate::carry_forward_admission::CarryForwardAdmission {
                     envelope: input.write_envelope,
                     transition: input.transition,
                     occurred: input.occurred,
@@ -140,21 +140,33 @@ pub(super) fn validate_witness_message_body(
     // Placed BEFORE any store mutation in this function, so a refusal on
     // either road leaves nothing partial behind for the caller's
     // quarantine-and-continue to clean up.
-    if replicated && let Some(machine) = own_device.and_then(|lane| lane.machine_for(id, data)) {
-        // FIX 9600: one of the owner's own machines sent these exact bytes
-        // at this id, over a connection that proved the machine. The
-        // own-device door admits the author buckets this store can bind and
-        // refuses the rest as the door below does. A lane that vouches for
-        // another row or other bytes is no lane: the row meets the door below.
-        crate::gate::validate_own_device_witness_message_body(store, txn, machine, data)?;
+    if replicated
+        && let Some((machine, authored_by)) = own_device.and_then(|lane| {
+            lane.machine_for(id, data)
+                .map(|machine| (machine, lane.authored_by()))
+        })
+    {
+        // FIX 9600, FIX 12113: one of the owner's own machines wrote these
+        // exact bytes at this id, as its writer proof showed, and an own
+        // machine's proven connection sent them. The own-device door admits
+        // the author buckets this store can bind and refuses the rest as the
+        // door below does. A lane that vouches for another row or other bytes
+        // is no lane: the row meets the door below.
+        store.gate_hooks.validate_own_device_witness_message_body(
+            store,
+            txn,
+            machine,
+            authored_by,
+            data,
+        )?;
     } else if replicated {
         // The REPLICATED road has no actor to run the ceiling against and,
         // without a lane, no verified sender: a federated, recovered or
         // unknown replay fails closed for every author bucket (see
-        // `gate::validate_replicated_witness_message_body`).
-        crate::gate::validate_replicated_witness_message_body(data)?;
+        // `store::witness_message_body::validate_replicated_witness_message_body`).
+        crate::store::witness_message_body::validate_replicated_witness_message_body(data)?;
     } else {
-        crate::gate::validate_canonical_witness_message_body(data)?;
+        crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
     }
     Ok(())
 }

@@ -20,13 +20,13 @@ use std::str;
 pub type ObjectId = (u32, u16);
 
 /// Dictionary object.
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default)]
 pub struct Dictionary(IndexMap<Vec<u8>, Object>);
 
 /// Stream object
 /// Warning - all streams must be indirect objects, while
 /// the stream dictionary may be a direct object
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Stream {
     /// Associated stream dictionary
     pub dict: Dictionary,
@@ -46,7 +46,7 @@ pub struct Stream {
 /// one — including a discarded `stream`-first alternative — must not recurse
 /// through the native stack. Both walk with an explicit heap stack and keep
 /// element and entry order identical to the derived implementations.
-#[derive(PartialEq)]
+/// Equality also uses an explicit stack, including nested stream dictionaries.
 pub enum Object {
     Null,
     Boolean(bool),
@@ -58,6 +58,142 @@ pub enum Object {
     Dictionary(Dictionary),
     Stream(Stream),
     Reference(ObjectId),
+}
+
+/// Borrowed pairs left to compare; no graph depth reaches the native stack.
+struct ObjectEquality<'admission, 'left, 'right> {
+    pending: Vec<(&'left Object, &'right Object)>,
+    admission: Option<&'admission dyn DecodeAdmission>,
+}
+
+impl<'admission, 'left, 'right> ObjectEquality<'admission, 'left, 'right> {
+    fn new(admission: Option<&'admission dyn DecodeAdmission>) -> Self {
+        Self {
+            pending: Vec::new(),
+            admission,
+        }
+    }
+
+    fn push(
+        &mut self,
+        left: &'left Object,
+        right: &'right Object,
+    ) -> std::result::Result<(), DecodeAdmissionError> {
+        if let Some(admission) = self.admission {
+            decode_admission::reserve(admission, &mut self.pending, 1)?;
+        }
+        self.pending.push((left, right));
+        Ok(())
+    }
+
+    fn dictionary(
+        &mut self,
+        left: &'left Dictionary,
+        right: &'right Dictionary,
+    ) -> std::result::Result<bool, DecodeAdmissionError> {
+        if left.len() != right.len() {
+            return Ok(false);
+        }
+        for (key, left_value) in &left.0 {
+            let Some(right_value) = right.0.get(key) else {
+                return Ok(false);
+            };
+            self.push(left_value, right_value)?;
+        }
+        Ok(true)
+    }
+
+    fn stream(
+        &mut self,
+        left: &'left Stream,
+        right: &'right Stream,
+    ) -> std::result::Result<bool, DecodeAdmissionError> {
+        if left.content != right.content
+            || left.allows_compression != right.allows_compression
+            || left.start_position != right.start_position
+        {
+            return Ok(false);
+        }
+        self.dictionary(&left.dict, &right.dict)
+    }
+
+    fn run(mut self) -> std::result::Result<bool, DecodeAdmissionError> {
+        while let Some((left, right)) = self.pending.pop() {
+            let equal = match (left, right) {
+                (Object::Null, Object::Null) => true,
+                (Object::Boolean(left), Object::Boolean(right)) => left == right,
+                (Object::Integer(left), Object::Integer(right)) => left == right,
+                (Object::Real(left), Object::Real(right)) => left == right,
+                (Object::Name(left), Object::Name(right)) => left == right,
+                (Object::String(left, left_format), Object::String(right, right_format)) => {
+                    left == right && left_format == right_format
+                }
+                (Object::Reference(left), Object::Reference(right)) => left == right,
+                (Object::Array(left), Object::Array(right)) => {
+                    if left.len() != right.len() {
+                        return Ok(false);
+                    }
+                    for (left, right) in left.iter().zip(right) {
+                        self.push(left, right)?;
+                    }
+                    true
+                }
+                (Object::Dictionary(left), Object::Dictionary(right)) => {
+                    self.dictionary(left, right)?
+                }
+                (Object::Stream(left), Object::Stream(right)) => self.stream(left, right)?,
+                _ => false,
+            };
+            if !equal {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+impl Drop for ObjectEquality<'_, '_, '_> {
+    fn drop(&mut self) {
+        let bytes = self
+            .pending
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(&Object, &Object)>());
+        drop(std::mem::take(&mut self.pending));
+        if let Some(admission) = self.admission {
+            admission.release(bytes);
+        }
+    }
+}
+
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = ObjectEquality::new(None);
+        work.pending.push((self, other));
+        work.run()
+            .expect("unadmitted equality has no fallible reservation")
+    }
+}
+
+impl PartialEq for Dictionary {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = ObjectEquality::new(None);
+        work.dictionary(self, other)
+            .expect("unadmitted equality has no fallible reservation")
+            && work
+                .run()
+                .expect("unadmitted equality has no fallible reservation")
+    }
+}
+
+impl PartialEq for Stream {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = ObjectEquality::new(None);
+        work.stream(self, other)
+            .expect("unadmitted equality has no fallible reservation")
+            && work
+                .run()
+                .expect("unadmitted equality has no fallible reservation")
+    }
 }
 
 impl Drop for Object {
@@ -278,8 +414,11 @@ fn assemble_clone(events: Vec<CloneEvent>) -> Object {
             }
             CloneEvent::MakeStream(content, allows, pos) => {
                 let dict = match values.pop() {
-                    Some(Object::Dictionary(dict)) => dict,
-                    _ => Dictionary::new(),
+                    Some(mut object) => match &mut object {
+                        Object::Dictionary(dict) => std::mem::take(dict),
+                        _ => Dictionary::new(),
+                    },
+                    None => Dictionary::new(),
                 };
                 values.push(Object::Stream(Stream {
                     dict,
@@ -382,6 +521,18 @@ impl From<ObjectId> for Object {
 }
 
 impl Object {
+    /// Compares every nested value without recursion, admitting comparison
+    /// scratch before it grows and returning it after it drops.
+    pub fn eq_admitted(
+        &self,
+        other: &Self,
+        admission: &dyn DecodeAdmission,
+    ) -> std::result::Result<bool, DecodeAdmissionError> {
+        let mut work = ObjectEquality::new(Some(admission));
+        work.push(self, other)?;
+        work.run()
+    }
+
     pub fn string_literal<S: Into<Vec<u8>>>(s: S) -> Self {
         Object::String(s.into(), StringFormat::Literal)
     }
@@ -1032,8 +1183,8 @@ impl std::io::Write for LimitedWriter<'_> {
     }
 }
 
-/// The least room the admitted decoders make before each read. An
-/// implementation buffer size: it never limits how much a stream decodes to.
+/// The least room the decoders make before each read. An implementation
+/// buffer size: it never limits how much a stream decodes to.
 const ADMITTED_READ_CHUNK: usize = 32 * 1024;
 
 impl Stream {
@@ -1270,8 +1421,9 @@ impl Stream {
     }
 
     /// [`Stream::decode_filters`] with every allocation admitted first. Each
-    /// filter's output stays alive while the next filter builds its own, and
-    /// admissions are never released, so both are admitted together.
+    /// filter's output stays alive while the next filter builds its own, so
+    /// both are admitted together; the earlier one's bytes go back once it is
+    /// dropped (FIX 8448).
     fn decode_filters_admitted(&self, limit: Option<usize>, admission: &dyn DecodeAdmission) -> Result<Vec<u8>> {
         let params = self.dict.get(b"DecodeParms").and_then(Object::as_dict).ok();
         let Some(filters) = self.filters_admitted(admission)? else {
@@ -1291,38 +1443,82 @@ impl Stream {
 
         // Filters are in decoding order.
         for filter in filters {
-            output = match filter {
+            let decoded = match filter {
                 b"FlateDecode" => Self::decompress_zlib_admitted(input, params, limit, admission)?,
                 b"LZWDecode" => Self::decompress_lzw_admitted(input, params, limit, admission)?,
                 b"ASCII85Decode" => Self::decode_ascii85_admitted(input, limit, admission)?,
                 _ => return Err(Error::Unimplemented("decompression algorithms")),
             };
             if let Some(max) = limit
-                && output.len() > max
+                && decoded.len() > max
             {
                 return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
             }
+            let spent = output.capacity();
+            output = decoded;
+            decode_admission::release(admission, spent);
             input = &output;
         }
         admission.decoded(output.len());
         Ok(output)
     }
 
-    /// Read `reader` to end, appending to `output`. When `limit` is `Some(max)`,
-    /// at most `max + 1` bytes are read, so an oversized (bomb) stream is
-    /// detected via the `> max` check by the caller without ever allocating the
-    /// full decompressed output.
-    fn read_capped<R: std::io::Read>(reader: R, output: &mut Vec<u8>, limit: Option<usize>) -> std::io::Result<()> {
-        use std::io::Read;
-        match limit {
-            Some(max) => Read::take(reader, (max as u64).saturating_add(1))
-                .read_to_end(output)
-                .map(|_| ()),
-            None => {
-                let mut reader = reader;
-                reader.read_to_end(output).map(|_| ())
+    /// One Flate pass over `input` into `output`, shared by both decode paths
+    /// so a corrupt stream keeps the same partial output in each (FIX 8449):
+    /// every byte the inflater wrote before it found the corruption is kept,
+    /// whatever room each step had. With `zlib` the input has a zlib header
+    /// and checksum; without it the input is raw deflate. `room` makes room at
+    /// the end of `output` and returns the length to fill up to, or `None` once
+    /// `output` holds all it may. The outer `Result` is `room`'s refusal, which
+    /// ends the decode; the inner one is the codec's own status, which callers
+    /// tolerate as before.
+    fn inflate_into(
+        input: &[u8], zlib: bool, output: &mut Vec<u8>, mut room: impl FnMut(&mut Vec<u8>) -> Result<Option<usize>>,
+    ) -> Result<std::io::Result<()>> {
+        use flate2::{Decompress, FlushDecompress, Status};
+        use std::io::{Error as IoError, ErrorKind};
+
+        let mut inflater = Decompress::new(zlib);
+        while let Some(end) = room(output)? {
+            let start = output.len();
+            output.resize(end, 0);
+            let read = usize::try_from(inflater.total_in()).map_or(input.len(), |read| read.min(input.len()));
+            let rest = &input[read..];
+            // As flate2's readers do: finish only once all the input is given.
+            let flush = if rest.is_empty() {
+                FlushDecompress::Finish
+            } else {
+                FlushDecompress::None
+            };
+            let (before_in, before_out) = (inflater.total_in(), inflater.total_out());
+            let status = inflater.decompress(rest, &mut output[start..], flush);
+            let written = usize::try_from(inflater.total_out() - before_out).unwrap_or(0);
+            // The bytes written by a step that failed are kept too.
+            output.truncate(start + written);
+            let consumed = inflater.total_in() - before_in;
+            match status {
+                Ok(Status::StreamEnd) => break,
+                Ok(Status::Ok | Status::BufError) if written == 0 && (rest.is_empty() || consumed == 0) => {
+                    return Ok(Err(IoError::new(ErrorKind::UnexpectedEof, "incomplete deflate stream")));
+                }
+                Ok(_) => {}
+                Err(_) => return Ok(Err(IoError::new(ErrorKind::InvalidInput, "corrupt deflate stream"))),
             }
         }
+        Ok(Ok(()))
+    }
+
+    /// Room at the end of `output` for the next inflate step, grown as a `Vec`
+    /// grows, and the length to fill up to, never past `cap`. `None` once
+    /// `output` already holds `cap` bytes.
+    fn unadmitted_room(output: &mut Vec<u8>, cap: Option<usize>) -> Option<usize> {
+        if cap.is_some_and(|cap| output.len() >= cap) {
+            return None;
+        }
+        if output.len() == output.capacity() {
+            output.reserve(ADMITTED_READ_CHUNK);
+        }
+        Some(cap.map_or(output.capacity(), |cap| output.capacity().min(cap)))
     }
 
     /// Make admitted room at the end of `output` for the next read, and return
@@ -1341,33 +1537,6 @@ impl Stream {
             Some(cap) => output.capacity().min(cap),
             None => output.capacity(),
         }))
-    }
-
-    /// [`Stream::read_capped`], growing `output` only through admitted room.
-    /// The outer `Result` is a refused admission, which ends the decode; the
-    /// inner one is the codec's own status, which callers tolerate as before.
-    fn read_admitted<R: std::io::Read>(
-        mut reader: R, output: &mut Vec<u8>, limit: Option<usize>, admission: &dyn DecodeAdmission,
-    ) -> Result<std::io::Result<()>> {
-        // At most `max + 1` bytes, as `read_capped` reads.
-        let cap = limit.map(|max| max.saturating_add(1));
-        while let Some(end) = Self::admitted_room(output, cap, admission)? {
-            let start = output.len();
-            output.resize(end, 0);
-            match reader.read(&mut output[start..]) {
-                Ok(0) => {
-                    output.truncate(start);
-                    break;
-                }
-                Ok(read) => output.truncate(start + read),
-                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => output.truncate(start),
-                Err(err) => {
-                    output.truncate(start);
-                    return Ok(Err(err));
-                }
-            }
-        }
-        Ok(Ok(()))
     }
 
     fn decompress_lzw(input: &[u8], params: Option<&Dictionary>, limit: Option<usize>) -> Result<Vec<u8>> {
@@ -1489,8 +1658,6 @@ impl Stream {
     }
 
     fn decompress_zlib(input: &[u8], params: Option<&Dictionary>, limit: Option<usize>) -> Result<Vec<u8>> {
-        use flate2::read::ZlibDecoder;
-
         // Reserve a starting capacity, but never pre-allocate beyond the limit so
         // a bomb cannot force a huge allocation up front.
         let initial_capacity = match limit {
@@ -1498,19 +1665,24 @@ impl Stream {
             None => input.len().saturating_mul(2),
         };
         let mut output = Vec::with_capacity(initial_capacity);
+        // At most `max + 1` bytes are inflated, so an oversized (bomb) stream is
+        // detected via the `> max` check below without ever allocating the full
+        // decompressed output.
+        let cap = limit.map(|max| max.saturating_add(1));
+        let room = |output: &mut Vec<u8>| -> Result<Option<usize>> { Ok(Self::unadmitted_room(output, cap)) };
 
         if !input.is_empty()
-            && let Err(err) = Self::read_capped(ZlibDecoder::new(input), &mut output, limit)
+            && let Err(err) = Self::inflate_into(input, true, &mut output, room)?
         {
             warn!("{err}");
             // Zlib decompression failed (e.g. corrupt adler32 checksum in
             // encrypted PDFs). Retry with raw deflate, skipping the 2-byte
             // zlib header and ignoring the checksum.
-            if output.is_empty() && input.len() > 2 {
-                use flate2::read::DeflateDecoder;
-                if let Err(raw_err) = Self::read_capped(DeflateDecoder::new(&input[2..]), &mut output, limit) {
-                    warn!("raw deflate fallback also failed: {raw_err}");
-                }
+            if output.is_empty()
+                && input.len() > 2
+                && let Err(raw_err) = Self::inflate_into(&input[2..], false, &mut output, room)?
+            {
+                warn!("raw deflate fallback also failed: {raw_err}");
             }
         }
         if let Some(max) = limit
@@ -1522,29 +1694,29 @@ impl Stream {
     }
 
     /// [`Stream::decompress_zlib`] with every allocation admitted first. The
-    /// output grows as it is read, with no speculative starting capacity, and
-    /// the decoders read the input in place rather than through a 32 KiB copy.
-    /// A refusal ends the decode at once: it never reaches the raw-deflate
-    /// fallback, which only a codec failure on empty output takes, as before.
+    /// output grows as it is inflated, with no speculative starting capacity,
+    /// and the inflater reads the input in place. A refusal ends the decode at
+    /// once: it never reaches the raw-deflate fallback, which only a codec
+    /// failure on empty output takes, as before.
     fn decompress_zlib_admitted(
         input: &[u8], params: Option<&Dictionary>, limit: Option<usize>, admission: &dyn DecodeAdmission,
     ) -> Result<Vec<u8>> {
-        use flate2::bufread::{DeflateDecoder, ZlibDecoder};
+        // At most `max + 1` bytes, as `decompress_zlib` inflates.
+        let cap = limit.map(|max| max.saturating_add(1));
+        let room = |output: &mut Vec<u8>| -> Result<Option<usize>> { Self::admitted_room(output, cap, admission) };
 
         let mut output = Vec::new();
         if !input.is_empty() {
             // flate2 allocates the inflate state and its window here.
             admission.admit(decode_admission::CODEC_STATE_BYTES)?;
-            if let Err(err) = Self::read_admitted(ZlibDecoder::new(input), &mut output, limit, admission)? {
+            if let Err(err) = Self::inflate_into(input, true, &mut output, room)? {
                 warn!("{err}");
                 // Zlib decompression failed (e.g. corrupt adler32 checksum in
                 // encrypted PDFs). Retry with raw deflate, skipping the 2-byte
                 // zlib header and ignoring the checksum.
                 if output.is_empty() && input.len() > 2 {
                     admission.admit(decode_admission::CODEC_STATE_BYTES)?;
-                    if let Err(raw_err) =
-                        Self::read_admitted(DeflateDecoder::new(&input[2..]), &mut output, limit, admission)?
-                    {
+                    if let Err(raw_err) = Self::inflate_into(&input[2..], false, &mut output, room)? {
                         warn!("raw deflate fallback also failed: {raw_err}");
                     }
                 }
@@ -1718,7 +1890,11 @@ impl Stream {
                     .checked_mul(bits)
                     .ok_or_else(|| Error::InvalidStream("predictor pixel size overflows".to_string()))?
                     / 8;
-                data = png::decode_frame_admitted(data.as_slice(), bytes_per_pixel, pixels_per_row, admission)?;
+                let decoded = png::decode_frame_admitted(data.as_slice(), bytes_per_pixel, pixels_per_row, admission)?;
+                // The undecoded rows are dropped here; their bytes go back (FIX 8448).
+                let spent = data.capacity();
+                data = decoded;
+                decode_admission::release(admission, spent);
             }
         }
         Ok(data)

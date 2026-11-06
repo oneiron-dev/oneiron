@@ -235,6 +235,7 @@ impl ConsolidationExecutor<'_> {
             now: ctx.now_ms / 1_000,
         };
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly links");
             recheck_in_txn(&read, txn, &read_back)?;
             let outputs = writer.claims_in_txn(txn, drafts)?;
             // Each same-as names the proposal claim it wrote, in order.
@@ -421,8 +422,13 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the call's
         // outcome.
-        for (hash, usage) in &spent {
+        for (index, (hash, usage, _)) in spent.iter().enumerate() {
             if let Err(error) = charges.record_terminal(vault, step.attempt_id, *hash, usage) {
+                for (_, usage, memoized) in &spent[index..] {
+                    if !*memoized {
+                        charges.record_usage(usage);
+                    }
+                }
                 return super::residency::spent_or_deferred(error, ctx, charges)
                     .map(ControlFlow::Break);
             }

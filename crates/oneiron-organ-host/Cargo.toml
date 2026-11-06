@@ -48,6 +48,12 @@ x509-cert = { version = "=0.2.5", default-features = false, features = ["std"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# A third-party organ's filesystem fence on Linux: the container crate's
+# Landlock calls, given the organ's own read and write sets (FIX 7885). The
+# engine already links it.
+[target.'cfg(target_os = "linux")'.dependencies]
+oneiron-container = { path = "../oneiron-container" }
+
 [dev-dependencies]
 # Unseeded test vaults keep the blob write door open without a policy fixture.
 oneiron = { path = "../oneiron", features = ["test-support"] }

@@ -2,8 +2,9 @@
 
 use lopdf::{Document, Object};
 
-use crate::api::{Counter, VerifyCheckKind, VerifyFindingCode, note_current};
-use crate::memory::{MemoryLedger, SealMemoryRefusal};
+use crate::api::{Counter, SealResourceLimits, VerifyCheckKind, VerifyFindingCode, note_current};
+use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
+use crate::native::held_bytes;
 
 use super::super::pdf;
 use super::verify_revocation::{crl_entry_valid, issued_by, ocsp_entry_valid};
@@ -36,7 +37,7 @@ pub(super) fn verify_dss(
     covered: &[EmbeddedCert],
     at_unix: u64,
     memory: &MemoryLedger,
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
 ) -> Result<usize, SealMemoryRefusal> {
     let mut decoded = 0;
     check_dss(doc, anchors, covered, at_unix, memory, &mut decoded, checks)?;
@@ -51,7 +52,7 @@ fn check_dss(
     at_unix: u64,
     memory: &MemoryLedger,
     decoded: &mut usize,
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
 ) -> Result<(), SealMemoryRefusal> {
     let catalog = match pdf::catalog(doc) {
         Some(c) => c,
@@ -61,15 +62,15 @@ fn check_dss(
                     VerifyCheckKind::ValidationMaterial,
                     false,
                     VerifyFindingCode::ValidationMaterialInvalid,
-                );
+                )?;
             } else {
-                checks.absent(VerifyCheckKind::ValidationMaterial);
+                checks.absent(VerifyCheckKind::ValidationMaterial)?;
             }
             return Ok(());
         }
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
-        checks.absent(VerifyCheckKind::ValidationMaterial);
+        checks.absent(VerifyCheckKind::ValidationMaterial)?;
         return Ok(());
     };
     let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
@@ -78,7 +79,7 @@ fn check_dss(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        );
+        )?;
         return Ok(());
     };
     if dss.has(b"VRI") {
@@ -86,7 +87,7 @@ fn check_dss(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        );
+        )?;
         return Ok(());
     }
     let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded)?;
@@ -94,7 +95,7 @@ fn check_dss(
         VerifyCheckKind::ValidationMaterial,
         ok,
         VerifyFindingCode::ValidationMaterialInvalid,
-    );
+    )?;
     Ok(())
 }
 
@@ -116,7 +117,8 @@ fn dss_material_valid(
     material_valid(certs, crls, ocsps, anchors, covered, at_unix, memory)
 }
 
-/// The decoded arrays, judged. Memory an `/Certs` parse was refused is
+/// The decoded arrays, judged. Each `/Certs` certificate and each OCSP
+/// responder certificate is held on `memory` (FIX 12260); memory refused is
 /// `Err`, never invalid material.
 fn material_valid(
     certs: DssArray,
@@ -144,10 +146,9 @@ fn material_valid(
             if entries.is_empty() {
                 return Ok(false);
             }
-            memory.admit_len::<EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(c) = EmbeddedCert::from_der(e, memory)? else {
+                let Some(c) = EmbeddedCert::admitted(e, memory)? else {
                     return Ok(false);
                 };
                 v.push(c);
@@ -180,7 +181,9 @@ fn material_valid(
             memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
+                let Some(issuer) =
+                    crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)?
+                else {
                     return Ok(false);
                 };
                 v.push(issuer);
@@ -189,8 +192,9 @@ fn material_valid(
         }
     };
     // Every OCSP entry must be valid; collect the DERs of the target
-    // certificates the valid responses bind to with a `good` status.
-    let mut ocsp_targets: Vec<Vec<u8>> = Vec::new();
+    // certificates the valid responses bind to with a `good` status, read
+    // in place.
+    let mut ocsp_targets: Vec<&[u8]> = Vec::new();
     match ocsps {
         DssArray::Absent => {}
         DssArray::Malformed => return Ok(false),
@@ -199,10 +203,11 @@ fn material_valid(
                 return Ok(false);
             }
             for e in &entries {
-                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix) else {
+                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
+                else {
                     return Ok(false);
                 };
-                memory.admit_len::<Vec<u8>>(targets.len())?;
+                memory.admit_len::<&[u8]>(targets.len())?;
                 ocsp_targets.extend(targets);
             }
         }
@@ -220,7 +225,7 @@ fn material_valid(
         if anchors.iter().any(|a| a.der == c.der) {
             return true;
         }
-        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der)
+        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der.as_slice())
     });
     if !covered_ok {
         return Ok(false);
@@ -229,37 +234,106 @@ fn material_valid(
 }
 
 /// A parsed certificate with its source DER (signature verification takes
-/// the DER form).
+/// the DER form). Its DER copy, its decode and its slot are held on the
+/// operation's ledger until it drops (FIX 12260).
 pub(crate) struct EmbeddedCert {
     pub(super) der: Vec<u8>,
     pub(super) cert: x509_cert::Certificate,
+    /// None only for a test fixture's certificate.
+    _held: Option<LedgerHold>,
 }
 
 impl EmbeddedCert {
-    /// The DER copy plus a share for the parsed form's heap, both reserved
-    /// on `memory` before anything is allocated (FIX 8452). `Ok(None)` is a
-    /// DER that does not parse, never a refusal: memory a copy was refused
-    /// is `Err`. On an unparsable DER nothing is retained, so the admission
-    /// goes back; on a refusal nothing is given back and the operation ends
-    /// refused.
-    pub(crate) fn from_der(
+    /// The already-admitted certificate, borrowed without another decode.
+    pub(crate) fn certificate(&self) -> &x509_cert::Certificate {
+        &self.cert
+    }
+
+    /// A test fixture's certificate, held on no ledger.
+    #[cfg(test)]
+    pub(crate) fn from_der(der_bytes: &[u8]) -> Option<Self> {
+        use der::Decode;
+        Some(Self {
+            der: der_bytes.to_vec(),
+            cert: x509_cert::Certificate::from_der(der_bytes).ok()?,
+            _held: None,
+        })
+    }
+
+    /// `der_bytes` decoded, and copied, both held on `memory`: the decode
+    /// as soon as it is built (the decoder takes no handle), the copy
+    /// before it is made. `Ok(None)` when it is no certificate.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(crate) fn admitted(
         der_bytes: &[u8],
         memory: &MemoryLedger,
     ) -> Result<Option<Self>, SealMemoryRefusal> {
         use der::Decode;
-        let der_len = der_bytes.len();
-        let share = std::mem::size_of::<x509_cert::Certificate>();
-        memory.admit_len::<u8>(der_len)?;
-        memory.take(share as u64)?;
-        let der = der_bytes.to_vec();
-        match x509_cert::Certificate::from_der(der_bytes) {
-            Ok(cert) => Ok(Some(Self { der, cert })),
-            Err(_) => {
-                memory.release(der_len as u64);
-                memory.release(share as u64);
-                Ok(None)
+        let Ok(cert) = x509_cert::Certificate::from_der(der_bytes) else {
+            return Ok(None);
+        };
+        let held = memory.hold(Self::held_bytes(&cert, der_bytes.len()))?;
+        Ok(Some(Self {
+            der: der_bytes.to_vec(),
+            cert,
+            _held: Some(held),
+        }))
+    }
+
+    /// A copy of `cert`, decoded already, with its DER encoding, both held
+    /// on `memory` before they are made. `Ok(None)` when it does not encode.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(super) fn admitted_copy(
+        cert: &x509_cert::Certificate,
+        memory: &MemoryLedger,
+    ) -> Result<Option<Self>, SealMemoryRefusal> {
+        use der::Encode;
+        let Some(der_len) = cert
+            .encoded_len()
+            .ok()
+            .and_then(|len| usize::try_from(len).ok())
+        else {
+            return Ok(None);
+        };
+        let held = memory.hold(Self::held_bytes(cert, der_len))?;
+        let Ok(der) = cert.to_der() else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            der,
+            cert: cert.clone(),
+            _held: Some(held),
+        }))
+    }
+
+    /// Appends to `into` each of `ders` that decodes as a certificate, each
+    /// held on `memory` (see [`Self::admitted`]); the others are skipped.
+    ///
+    /// # Errors
+    /// The ledger's refusal.
+    pub(crate) fn extend_admitted<'d>(
+        into: &mut Vec<Self>,
+        ders: impl IntoIterator<Item = &'d [u8]> + 'd,
+        memory: &MemoryLedger,
+    ) -> Result<(), SealMemoryRefusal> {
+        for der in ders {
+            if let Some(cert) = Self::admitted(der, memory)? {
+                into.push(cert);
             }
         }
+        Ok(())
+    }
+
+    /// What one embedded certificate holds: its slot in the list that keeps
+    /// it, its DER copy of `der_len` bytes, and its decode's allocations.
+    fn held_bytes(cert: &x509_cert::Certificate, der_len: usize) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(der_len)
+            .saturating_add(held_bytes::certificate(cert, der_len))
     }
 }
 
@@ -327,7 +401,8 @@ pub(super) fn collect_reference_chain(
     id: lopdf::ObjectId,
     ids: &mut std::collections::BTreeSet<lopdf::ObjectId>,
     work: &mut usize,
-) -> Option<()> {
+    limits: &SealResourceLimits,
+) -> Result<Option<()>, SealMemoryRefusal> {
     let mut chain = std::collections::BTreeSet::new();
     let mut current = id;
     loop {
@@ -335,16 +410,21 @@ pub(super) fn collect_reference_chain(
         if ids.contains(&current) {
             break;
         }
-        if !chain.insert(current) {
-            return None;
+        if !pdf::admitted::btree_insert(limits, &mut chain, current)? {
+            return Ok(None);
         }
-        let Ok(next) = doc.objects.get(&current)?.as_reference() else {
+        let Some(object) = doc.objects.get(&current) else {
+            return Ok(None);
+        };
+        let Ok(next) = object.as_reference() else {
             break;
         };
         current = next;
     }
-    ids.extend(chain);
-    Some(())
+    for id in chain {
+        pdf::admitted::btree_insert(limits, ids, id)?;
+    }
+    Ok(Some(()))
 }
 
 /// Byte offset the effective `/DSS` revision provably ends before: the
@@ -367,11 +447,17 @@ pub(super) fn collect_reference_chain(
 /// revision no DocTimeStamp attests (probe_c regression). The evaluation
 /// and this measurement resolve through the same uncapped walk, so neither
 /// stops where the other goes on.
-pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
+pub(super) fn dss_revision_end(
+    doc: &Document,
+    bytes: &[u8],
+    limits: &SealResourceLimits,
+) -> Result<Option<u64>, SealMemoryRefusal> {
     let mut work = 0usize;
-    let collected = dss_object_ids(doc, &mut work);
+    let collected = dss_object_ids(doc, &mut work, limits);
     note_current(Counter::DssReferenceWork, work);
-    let ids = collected?;
+    let Some(ids) = collected? else {
+        return Ok(None);
+    };
     let mut newest = None;
     for (num, generation) in ids {
         match doc.reference_table.get(num) {
@@ -382,11 +468,14 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
                 let offset = u64::from(*offset);
                 newest = Some(newest.map_or(offset, |n: u64| n.max(offset)));
             }
-            _ => return None, // compressed or missing: coverage unprovable
+            _ => return Ok(None), // compressed or missing: coverage unprovable
         }
     }
-    let newest = newest?;
-    doc.reference_table
+    let Some(newest) = newest else {
+        return Ok(None);
+    };
+    Ok(doc
+        .reference_table
         .entries
         .values()
         .filter_map(|e| match e {
@@ -395,7 +484,7 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
         })
         .filter(|o| *o > newest)
         .min()
-        .or_else(|| pdf::last_startxref(bytes).ok())
+        .or_else(|| pdf::last_startxref(bytes).ok()))
 }
 
 /// Every object id the effective `/DSS` reaches through the chains the
@@ -405,32 +494,47 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
 fn dss_object_ids(
     doc: &Document,
     work: &mut usize,
-) -> Option<std::collections::BTreeSet<lopdf::ObjectId>> {
-    let catalog = pdf::catalog(doc)?;
-    let dss_obj = catalog.get(b"DSS").ok()?;
+    limits: &SealResourceLimits,
+) -> Result<Option<std::collections::BTreeSet<lopdf::ObjectId>>, SealMemoryRefusal> {
+    let Some(catalog) = pdf::catalog(doc) else {
+        return Ok(None);
+    };
+    let Ok(dss_obj) = catalog.get(b"DSS") else {
+        return Ok(None);
+    };
     let mut ids: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
     if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
-        collect_reference_chain(doc, root, &mut ids, work)?;
+        if collect_reference_chain(doc, root, &mut ids, work, limits)?.is_none() {
+            return Ok(None);
+        }
     }
     if let Object::Reference(id) = dss_obj {
-        collect_reference_chain(doc, *id, &mut ids, work)?;
+        if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+            return Ok(None);
+        }
     }
-    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok())?;
+    let Some(dss) = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok()) else {
+        return Ok(None);
+    };
     for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
         let Ok(arr_obj) = dss.get(key) else {
             continue;
         };
         if let Object::Reference(id) = arr_obj {
-            collect_reference_chain(doc, *id, &mut ids, work)?;
+            if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+                return Ok(None);
+            }
         }
         let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
             continue;
         };
         for item in arr {
             if let Object::Reference(id) = item {
-                collect_reference_chain(doc, *id, &mut ids, work)?;
+                if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+                    return Ok(None);
+                }
             }
         }
     }
-    Some(ids)
+    Ok(Some(ids))
 }

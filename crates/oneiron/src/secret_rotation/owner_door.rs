@@ -14,12 +14,13 @@ use crate::secret_custody::Material;
 use crate::secret_custody::{SecretCustodyWork, SecretRevoked, SecretRotated};
 use crate::secret_custody::{
     put_secret_custody_in_txn, read_secret_custody_meta_in_txn,
-    refuse_bindings_wider_than_live_floor, refuse_revoked_use_in_txn, resolve_secret_ref_in_txn,
+    refuse_bindings_wider_than_live_floor, refuse_revoked_use_in_txn,
 };
 use crate::secret_record::custody_portable;
 use crate::secret_record::{CustodyKeptHere, CustodyPlan};
 use crate::secret_record::{SecretCustodyRecord, SecretCustodyStatus};
 use crate::side_table::HexId;
+use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use oneiron_authority::authority::{ActSurface, CustodyChange};
 use zeroize::Zeroize;
 

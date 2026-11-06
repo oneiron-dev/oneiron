@@ -490,8 +490,8 @@ fn register_field(
         }
         (referenced, seed) => {
             let af_num = next_obj(next)?;
-            let mut af = seed.unwrap_or_default();
             // A dangling /AcroForm reference keeps no fields to preserve.
+            let mut af = seed.unwrap_or_else(lopdf::Dictionary::new);
             let mut fields = if referenced.is_some() {
                 Vec::new()
             } else {

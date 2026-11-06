@@ -15,6 +15,8 @@ refused). The file is a PCM16 WAV, mono or stereo, at any rate from 8 to
 192 kHz; it is downmixed to mono, resampled to 16 kHz and transcribed whole,
 however long (Whisper's long-form decoding, greedy, in the language it
 detects unless the call names one). MP3 and other codecs are not read. The
+body's read has a deadline (FIX 11378, `--upload-read-deadline-ms`): a
+dripping upload answers 408 instead of holding the transcriber. The
 answer is `{"text", "duration", "model", "usage"}`; `usage` holds one
 inference receipt naming the worker's verified identity and its epoch, and
 the launch manifest's digest. One transcription runs at a time; a request
@@ -23,15 +25,16 @@ queued and active requests and the CUDA allocator's reservation.
 
 ## The row
 
-No house pin exists for a speech-recognition model. The operator writes
-the weights manifest: the repository, its full commit, and every file the
-worker loads (`config.json`, `generation_config.json`,
-`preprocessor_config.json`, the tokenizer files and each `*.safetensors`
-shard, plus any index) with its size and SHA-256, and the licence evidence
-file. The documented default is `openai/whisper-large-v3`, whose card
-declares MIT; the licence is admitted as for any model. Build the
-environment lock from `requirements-asr.txt` with the command in its
-header.
+The house pin for speech recognition is `weights = "whisper-large-v3"`
+(`openai/whisper-large-v3` at its pinned commit, card licence apache-2.0).
+An operator's weights manifest stays an option: the repository, its full
+commit, and every file the worker loads (`config.json`,
+`generation_config.json`, `preprocessor_config.json`, the tokenizer files
+and each `*.safetensors` shard, plus any index) with its size and SHA-256,
+and the licence evidence file. The row's `env_lock` names the shipped
+`deploy/asr/whisper-py312.lock` (CPython 3.12, x86_64 Linux, CUDA 12.8
+torch; resolved and hash-locked, GPU not qualified), or an operator-built lock from
+`requirements-asr.txt` with the command in its header.
 
 ```toml
 [models.providers.hearing]
@@ -42,7 +45,8 @@ key_env = "ONEIRON_ASR_TOKEN"
 [models.workers.hearing]
 model = "hearing:whisper-large-v3"
 kind = "asr"
-weights_manifest = "<host-home>/oneiron-manifests/whisper-large-v3.json"
+weights = "whisper-large-v3"
+# or weights_manifest = "<host-home>/oneiron-manifests/whisper-large-v3.json"
 env_lock = "<host-home>/oneiron-locks/whisper-py312.lock"
 # device = "0"
 # idle_stop_secs = 300          # left out: the worker stays up

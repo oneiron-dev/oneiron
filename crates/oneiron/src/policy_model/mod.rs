@@ -87,7 +87,7 @@ mod clock;
 
 pub(crate) use classify::stateless_owner_classification;
 mod concurrent;
-mod contract;
+use oneiron_policy_vocabulary::policy_model::contract;
 mod decide;
 pub use decide::PolicyDecisions;
 pub mod doors;
@@ -110,9 +110,10 @@ pub use owner_rows::{
     PolicyNotificationMode, PolicyNotificationRule, PolicyNotificationTarget, PolicyProposalStatus,
     PolicyRowProposal, PolicyRowReceipt, PolicyRowSubmission, SecretScanReceipt,
     WORLD_PRIVACY_ROW_REF, WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome,
-    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt, WorldPrivacyRequest,
-    WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
-    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, policy_row_grant_target,
+    WorldMachinePlacement, WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt,
+    WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
+    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, machine_placement_settings,
+    policy_row_grant_target,
 };
 pub(crate) use owner_rows::{
     holds_vault_policy_power_in_txn, is_live_vault_owner_for_store_in_txn,
@@ -120,7 +121,7 @@ pub(crate) use owner_rows::{
 };
 mod notes;
 mod notice;
-mod pattern;
+use oneiron_policy_vocabulary::policy_model::pattern;
 mod planes;
 mod prompt;
 mod receipt;
@@ -162,4 +163,4 @@ pub use verdict::{
 #[cfg(test)]
 mod tests;
 
-pub(crate) mod goal_limits;
+pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits;

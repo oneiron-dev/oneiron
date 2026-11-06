@@ -16,24 +16,26 @@
 //! just before the turn instruction.
 //!
 //! The child runs the source's task, model, locality, seat effort, tier,
-//! clock and limits. Its config marker binds the source's teaching
-//! fingerprint and this continuation's digest, so a teaching that drifted
-//! since, or another continuation, refuses through the marker check. A cut
+//! clock and limits. Its first seed keeps that frozen config as child-owned
+//! content, so reopening does not need the parent's start body again. The
+//! child's own content and all current lease, source and cut checks still
+//! apply. Its config marker binds the source's teaching fingerprint and this
+//! continuation's digest, so a teaching that drifted since, or another
+//! continuation, refuses through the marker check. A cut
 //! that a call with an effect follows refuses
 //! ([`ContinuationRefusal::EffectTail`]); [`pre_fail_checkpoint`] never
 //! names one.
 
-use super::record::{record_config_marker, validate_executor_config_marker};
-use super::store::{CONFIG_OUTPUT_PATH, terminal_output_seq};
-use super::types::{
-    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorResult,
-};
+mod seed;
+
+use super::store::terminal_output_seq;
+use super::types::{EngineExecutorConfig, EngineExecutorError, EngineExecutorResult};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayRecord, ExecutorStorage, SelfEffect, StepReplayCapsule,
     StepStartBody, StoredRunContinuation, capsule_start_body, decode_code_run_replay_record,
     encode_code_run_replay_record, put_run_continuation_row_in_txn, recorded_verb_call,
-    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
+    run_continuation_in_txn, step_replay_capsules_in_txn,
 };
 use crate::task_verb::sdk::AgentVerb;
 use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
@@ -173,6 +175,8 @@ struct ProvedStart {
     digest: [u8; 32],
     /// The lease generation of the capsule that holds it.
     lease_generation: u32,
+    actor: EntityId,
+    cut: seed::SourceCut,
 }
 
 /// Validates `continuation`, then writes it as `successor`'s, in `txn`, the
@@ -230,8 +234,10 @@ pub fn run_continuation(
 ///
 /// # Errors
 ///
-/// The refusals [`put_run_continuation_in_txn`] makes, checked again;
-/// [`ContinuationRefusal::SourceMissing`] when the successor carries no
+/// The source, cut and lease refusals [`put_run_continuation_in_txn`] makes,
+/// checked again. A fresh seed needs the source start body; a seeded child
+/// reads its own frozen content instead. [`ContinuationRefusal::SourceMissing`]
+/// when the successor carries no
 /// continuation; [`ContinuationRefusal::Occupied`] when its run is another
 /// one's; and a storage error for a successor that is not leased as the
 /// continued run.
@@ -240,128 +246,39 @@ pub fn fork_executor_run(
     leased_successor: &AttemptRecord,
     child_template: &EngineExecutorConfig,
 ) -> Result<PreparedExecutorContinuation, ContinuationRefusal> {
-    let successor = attempt_key(leased_successor.id)?;
-    let (row, proved) = {
+    let _custody = vault.store.gate_custody_read_guard()?;
+    let _bodies = vault.pin_all_result_bodies();
+    {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        let Some(row) = run_continuation_in_txn(vault, &txn, successor)? else {
-            return Err(ContinuationRefusal::SourceMissing);
-        };
-        if !matches!(leased_successor.state, AttemptState::Leased)
-            || leased_successor.retry_of != Some(row.predecessor)
-            || child_template.run_id != successor
+        let row = continuation_row_in_txn(vault, &txn, leased_successor, child_template)?;
+        if let Some(child) =
+            vault.get_code_run_replay_record_in_txn(&txn, &child_template.run_id)?
         {
-            return Err(Error::InvalidConfig(
-                "continuation fork: the successor is not leased as the continued run".to_owned(),
-            )
-            .into());
-        }
-        let proved = prove_in_txn(vault, &txn, &continuation_of(row.clone()))?;
-        if proved.digest != row.start_digest {
-            return Err(ContinuationRefusal::NoCheckpoint);
-        }
-        (row, proved)
-    };
-    let ProvedStart { body, prefix, .. } = proved;
-    let config = EngineExecutorConfig {
-        run_id: successor,
-        task: body.task,
-        prompt_package_root: child_template.prompt_package_root.clone(),
-        model: body.model,
-        model_locality: body.model_locality,
-        seat_effort: body.seat_effort,
-        global_tier: body.global_tier,
-        determinism: prefix.determinism,
-        limits: EngineExecutorLimits {
-            soft_steps: body.soft_steps,
-        },
-    };
-    let seed = ChildSeed {
-        config: &config,
-        prompt_fingerprint: &body.prompt_fingerprint,
-        digest: continuation_digest(&row),
-        source: row.source_run,
-    };
-    seed.seed_or_reopen(vault, prefix)?;
-    Ok(PreparedExecutorContinuation {
-        config,
-        resume_step: row.step,
-    })
-}
-
-/// The run a fork seeds: its config, the teaching it runs under, its
-/// continuation's digest and the run it forks from.
-struct ChildSeed<'a> {
-    config: &'a EngineExecutorConfig,
-    prompt_fingerprint: &'a str,
-    digest: [u8; 32],
-    source: EntityId,
-}
-
-impl ChildSeed<'_> {
-    /// Seeds the child's replay row from `prefix`, or re-opens the fork a
-    /// seed before this one made. The child holds the prefix's checkpoints,
-    /// bridge calls, bindings and outputs, each output as an occurrence of
-    /// its own, and a config marker of its own for the source's. A seed that
-    /// loses to a concurrent one re-opens that one.
-    fn seed_or_reopen(
-        &self,
-        vault: &Vault,
-        prefix: CodeRunReplayRecord,
-    ) -> Result<(), ContinuationRefusal> {
-        let storage = ExecutorStorage::Canonical(vault);
-        if let Some(child) = vault.get_code_run_replay_record(&self.config.run_id)? {
-            return self.reopen(&storage, &child);
-        }
-        let mut child = prefix;
-        child.run_id = self.config.run_id;
-        child.live_run = None;
-        child
-            .outputs
-            .retain(|output| output.path != CONFIG_OUTPUT_PATH);
-        let inherited = child.outputs.clone();
-        record_config_marker(
-            &storage,
-            &mut child,
-            self.config,
-            self.prompt_fingerprint,
-            Some(&self.digest),
-        )?;
-        match seed_continuation_run(vault, &child, self.source, &inherited) {
-            Ok(_) => Ok(()),
-            Err(Error::ConcurrentWrite(_)) => {
-                let seeded = vault
-                    .get_code_run_replay_record(&self.config.run_id)?
-                    .ok_or(Error::ConcurrentWrite("code-run continuation seed"))?;
-                self.reopen(&storage, &seeded)
-            }
-            Err(error) => Err(error.into()),
+            return seed::reopen(vault, &txn, &row, &child, child_template);
         }
     }
+    seed::create(vault, leased_successor, child_template)
+}
 
-    /// Re-opens a fork already seeded: the child's row must hold this
-    /// continuation's clock and config marker, else it is another run's.
-    fn reopen(
-        &self,
-        storage: &ExecutorStorage<'_>,
-        child: &CodeRunReplayRecord,
-    ) -> Result<(), ContinuationRefusal> {
-        if child.determinism != self.config.determinism {
-            return Err(ContinuationRefusal::Occupied);
-        }
-        match validate_executor_config_marker(
-            storage,
-            child,
-            self.config,
-            self.prompt_fingerprint,
-            Some(&self.digest),
-        ) {
-            Ok(_) => Ok(()),
-            Err(EngineExecutorError::Engine(Error::InvalidConfig(_))) => {
-                Err(ContinuationRefusal::Occupied)
-            }
-            Err(error) => Err(error.into()),
-        }
+fn continuation_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    leased_successor: &AttemptRecord,
+    child_template: &EngineExecutorConfig,
+) -> Result<StoredRunContinuation, ContinuationRefusal> {
+    let successor = attempt_key(leased_successor.id)?;
+    let row = run_continuation_in_txn(vault, txn, successor)?
+        .ok_or(ContinuationRefusal::SourceMissing)?;
+    if !matches!(leased_successor.state, AttemptState::Leased)
+        || leased_successor.retry_of != Some(row.predecessor)
+        || child_template.run_id != successor
+    {
+        return Err(Error::InvalidConfig(
+            "continuation fork: the successor is not leased as the continued run".to_owned(),
+        )
+        .into());
     }
+    Ok(row)
 }
 
 /// The approved note `run` carries, when it is a canonical run forked from a
@@ -494,15 +411,7 @@ fn prove_in_txn(
 ) -> Result<ProvedStart, ContinuationRefusal> {
     let source_run = continuation.checkpoint.source_run;
     let step = continuation.checkpoint.step;
-    let failed = AttemptQueue::new(vault)
-        .get_in_txn(rtxn, continuation.predecessor)?
-        .is_some_and(|attempt| matches!(attempt.state, AttemptState::Failed));
-    if !failed || source_run.as_bytes() != continuation.predecessor.as_bytes() {
-        return Err(ContinuationRefusal::SourceMissing);
-    }
-    let Some(source) = vault.get_code_run_replay_record_in_txn(rtxn, &source_run)? else {
-        return Err(ContinuationRefusal::SourceMissing);
-    };
+    let source = source_in_txn(vault, rtxn, continuation)?;
     let capsules = step_replay_capsules_in_txn(vault, rtxn, source_run)?;
     let capsule = capsules
         .iter()
@@ -526,6 +435,24 @@ fn prove_in_txn(
         return Err(ContinuationRefusal::EffectTail);
     }
     Ok(proved)
+}
+
+fn source_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    continuation: &RunContinuation,
+) -> Result<CodeRunReplayRecord, ContinuationRefusal> {
+    let source_run = continuation.checkpoint.source_run;
+    let failed = AttemptQueue::new(vault)
+        .get_in_txn(rtxn, continuation.predecessor)?
+        .is_some_and(|attempt| matches!(attempt.state, AttemptState::Failed));
+    if !failed || source_run.as_bytes() != continuation.predecessor.as_bytes() {
+        return Err(ContinuationRefusal::SourceMissing);
+    }
+    vault
+        .get_code_run_replay_record_in_txn(rtxn, &source_run)?
+        .filter(|source| source.run_id == source_run)
+        .ok_or(ContinuationRefusal::SourceMissing)
 }
 
 /// Proves a cut after the failed run's last step, from the row its failure
@@ -569,6 +496,8 @@ fn prove_final_row(
         prefix,
         digest: *hasher.finalize().as_bytes(),
         lease_generation: start.lease_generation,
+        actor: start.actor,
+        cut: start.cut,
     })
 }
 
@@ -599,6 +528,9 @@ fn decode_start(
     let Some(start) = &capsule.start else {
         return Ok(None);
     };
+    let Some(actor) = capsule.content.actor() else {
+        return Ok(None);
+    };
     let Some(bytes) = capsule_start_body(vault, rtxn, capsule)? else {
         return Ok(None);
     };
@@ -617,6 +549,12 @@ fn decode_start(
             prefix,
             digest: start.digest,
             lease_generation: capsule.lease_generation,
+            actor,
+            cut: seed::SourceCut {
+                step: capsule.step,
+                bridge_start: start.bridge_start,
+                start_digest: start.digest,
+            },
         },
         bridge_start,
     )))

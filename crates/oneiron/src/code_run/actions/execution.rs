@@ -38,7 +38,7 @@ impl ActionRegistry {
             args: action.args().iter().map(ActionArgument::from_ui).collect(),
             idempotency_key: idempotency_key.to_owned(),
         };
-        self.execute(vault, actor, emitter, &call, binding)
+        self.execute(vault, actor, emitter, &call, binding, None)
     }
     /// One call from either caller, as the host authenticated it: a person's
     /// own app button (a human view) or an agent's call (an agent task). The
@@ -52,7 +52,21 @@ impl ActionRegistry {
         call: &AgentActionCall,
         binding: ActionHostBinding<'_>,
     ) -> Result<ActionDispatch> {
-        self.execute(vault, actor, principal, call, binding)
+        self.execute(vault, actor, principal, call, binding, None)
+    }
+    /// Executes the native Mark behind a public fold whose pre chain already
+    /// ran. Every other call, or a proof for different arguments, keeps the
+    /// native hook boundary; action admission and replay stay the same.
+    pub fn execute_pre_hooked_fold(
+        &self,
+        vault: &Vault,
+        actor: WriteActor,
+        principal: &LensPrincipalBinding,
+        call: &AgentActionCall,
+        binding: ActionHostBinding<'_>,
+        pre: PreHookedFold,
+    ) -> Result<ActionDispatch> {
+        self.execute(vault, actor, principal, call, binding, Some(pre))
     }
     pub fn execute_agent(
         &self,
@@ -64,7 +78,14 @@ impl ActionRegistry {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
         }
-        self.execute(vault, actor, principal, call, ActionHostBinding::default())
+        self.execute(
+            vault,
+            actor,
+            principal,
+            call,
+            ActionHostBinding::default(),
+            None,
+        )
     }
     /// Executes an agent chat action under an INDEPENDENT authenticated-owner
     /// witness bound by the host, never by a transcript or action argument.
@@ -89,8 +110,9 @@ impl ActionRegistry {
             owner_surface: Some(surface),
             live_run: None,
             planner: None,
+            slip_issuer: None,
         };
-        self.execute(vault, actor, principal, call, binding)
+        self.execute(vault, actor, principal, call, binding, None)
     }
     pub(super) fn execute<'a>(
         &self,
@@ -99,6 +121,7 @@ impl ActionRegistry {
         principal: &LensPrincipalBinding,
         request: &AgentActionCall,
         binding: ActionHostBinding<'a>,
+        pre_hooked_fold: Option<PreHookedFold>,
     ) -> Result<ActionDispatch> {
         let ActionHostBinding {
             verb_door,
@@ -106,6 +129,7 @@ impl ActionRegistry {
             owner_surface,
             live_run,
             planner,
+            slip_issuer,
         } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
@@ -147,9 +171,17 @@ impl ActionRegistry {
                 .map_or(Ok(()), |run| run.leased_record(vault).map(drop))
         };
         let previous = vault.get_code_run_replay_record(&run_id)?;
-        let frozen = previous.as_ref().map_or_else(
+        let determinism = previous
+            .as_ref()
+            .map(|record| {
+                record
+                    .determinism
+                    .ok_or_else(|| invalid("action record has unknown determinism"))
+            })
+            .transpose()?;
+        let frozen = determinism.map_or_else(
             || crate::unix_seconds_now().saturating_mul(1000),
-            |record| record.determinism.frozen_unix_ms,
+            |determinism| determinism.frozen_unix_ms,
         );
         let call = match registered.build {
             ActionBuild::Factory(factory) => factory(
@@ -172,7 +204,7 @@ impl ActionRegistry {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, proof)?;
         }
         if let Some(record) = previous {
-            if record.determinism.rng_seed != seed {
+            if record.determinism.map(|determinism| determinism.rng_seed) != Some(seed) {
                 return Err(invalid("idempotency key reused with changed action"));
             }
             if record.bridge_calls.is_empty() {
@@ -240,15 +272,23 @@ impl ActionRegistry {
             Some(planner) => dispatcher.with_planner(planner),
             None => dispatcher,
         };
-        let result = dispatcher.dispatch_for_executor_run(
-            super::ExecutorCallSite {
-                run_id,
-                seq: 0,
-                step_start: 0,
-                earlier: &[],
-            },
-            call.clone(),
-        );
+        let dispatcher = match slip_issuer {
+            Some(issuer) => dispatcher.with_slip_issuer(issuer),
+            None => dispatcher,
+        };
+        let mut dispatcher = dispatcher;
+        dispatcher.pre_hooked_fold = pre_hooked_fold;
+        let result = dispatcher
+            .dispatch_for_executor_run(
+                super::ExecutorCallSite {
+                    run_id,
+                    seq: 0,
+                    step_start: 0,
+                    earlier: &[],
+                },
+                call.clone(),
+            )
+            .map(|(outcome, _)| outcome);
         // The seats a spawn resolved ride its row, a failure's too (FIX 9180).
         let seats = dispatcher.take_spawn_seats();
         let recorded = match &result {
@@ -264,6 +304,8 @@ impl ActionRegistry {
             Err(error) => SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: error.to_string(),
+                code: None,
+                disk_floor: None,
             }),
         };
         // A refused row's own words ride on its record, so a retry under the

@@ -45,9 +45,11 @@ impl MergeQueue<'_> {
     /// message of a tested revision. A landed batch is authored by its last
     /// actually landed proposal's recorded live actor, `Queue batch <id>`;
     /// the baseline by the checked-init approver, `Checked baseline
-    /// <commit>`; the timestamp is the seal intent's. An erased or
-    /// unavailable author holds: no synthetic person or owner stands in.
-    /// Every document's reviewed mode is recorded explicitly.
+    /// <commit>`; the timestamp is the seal intent's. A landed batch whose
+    /// author was erased seals with no author (FIX 7348): the chain keeps
+    /// sealing and that revision's export alone holds. An unavailable
+    /// author holds; no synthetic person or owner stands in. Every
+    /// document's reviewed mode is recorded explicitly.
     ///
     /// # Errors
     /// A store failure.
@@ -74,13 +76,14 @@ impl MergeQueue<'_> {
                         "the batch landed no source",
                     );
                 };
+                let message = format!("Queue batch {batch}");
                 let Some(author) = last.actor.id() else {
-                    return held(
-                        QueueExportHoldReason::AuthorErased,
-                        "the last landed proposal's actor was erased",
-                    );
+                    return Ok(Ok(modes.iter().fold(
+                        CodeCommitMetadata::authorless(message),
+                        |metadata, (document, mode)| metadata.with_file_mode(*document, *mode),
+                    )));
                 };
-                (author, format!("Queue batch {batch}"))
+                (author, message)
             }
         };
         if self.vault.get_entity_type(&author)?.is_none() {
@@ -151,13 +154,17 @@ impl MergeQueue<'_> {
                 "the tested revision has no canonical author",
             );
         };
-        if self.vault.get_entity_type(&metadata.author)?.is_none() {
+        let Some(author) = metadata.author else {
             return held(
                 QueueExportHoldReason::AuthorErased,
-                format!(
-                    "the canonical author {} was erased",
-                    metadata.author.to_hex()
-                ),
+                "the last landed proposal's actor was erased before the seal; a fresh combined \
+                 proposal under a live author lands the same change",
+            );
+        };
+        if self.vault.get_entity_type(&author)?.is_none() {
+            return held(
+                QueueExportHoldReason::AuthorErased,
+                format!("the canonical author {} was erased", author.to_hex()),
             );
         }
         if let Some(path) = revision
@@ -170,6 +177,8 @@ impl MergeQueue<'_> {
                 format!("{path} is a submodule link"),
             );
         }
+        // Store identities are path-derived: recreating a store can leave
+        // the same revision id without its blobs, so re-read presence now.
         let oids = revision
             .blob_frontiers
             .values()

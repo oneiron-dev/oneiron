@@ -10,6 +10,11 @@
 //!
 //! Where he spoke from is the request's own (`machine_routes::act_surface_admitted`):
 //! audit only, no rule reads it.
+//!
+//! `/v1/owner/worlds/privacy/this-machine-only` is the same settings door as
+//! one switch (CLIP-SYNC = A, FIX 12586): on keeps the world on this install
+//! alone with no sealed copy; off syncs it sealed to the owner's machines and
+//! the cloud. The world's model order is kept.
 
 use std::sync::Arc;
 
@@ -19,11 +24,12 @@ use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::EffectiveWorldPrivacy;
-use oneiron::policy_model::{WorldPrivacyReceipt, WorldPrivacySetInput};
+use oneiron::policy_model::{WorldMachinePlacement, WorldPrivacyReceipt, WorldPrivacySetInput};
+use oneiron::world_keys::PolicyRevision;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface_admitted, revision_hex};
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -38,6 +44,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/worlds/privacy/settings",
                 summary: "A world's settings as this install folds them, and the revision a change names as its seen.",
                 row: None,
+                shape: None,
             },
             get(settings),
         ),
@@ -47,6 +54,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/worlds/privacy/settings",
                 summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
                 row: None,
+                shape: Some(RestShape::json(
+                    world_privacy_set_body_schema,
+                    world_privacy_work_schema,
+                )),
             },
             post(set),
         ),
@@ -56,8 +67,35 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/worlds/privacy/reassert",
                 summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
                 row: None,
+                shape: Some(RestShape::json(
+                    world_privacy_set_body_schema,
+                    world_privacy_work_schema,
+                )),
             },
             post(reassert),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/worlds/privacy/this-machine-only",
+                summary: "Whether a world is kept on this install alone with no sealed copy, or syncs sealed to the owner's machines and the cloud, with its settings and the revision a switch names as its seen.",
+                row: None,
+                shape: None,
+            },
+            get(machine_placement),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/this-machine-only",
+                summary: "A holder turns \"this Mac only\" on or off for a world as his own act: on keeps it on this install alone with no sealed copy, off syncs it sealed to his machines and the cloud; the model order is kept. The settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+                row: None,
+                shape: Some(RestShape::json(
+                    this_machine_only_body_schema,
+                    world_privacy_work_schema,
+                )),
+            },
+            post(set_this_machine_only),
         ),
     ]
 }
@@ -67,6 +105,27 @@ pub(super) fn owner_table() -> OwnerTable {
 struct WorldQuery {
     /// The WORLD row, 32 hex.
     world: String,
+}
+
+/// The body of `POST /v1/owner/worlds/privacy/this-machine-only`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ThisMachineOnlyInput {
+    /// The WORLD row, 32 hex.
+    world: String,
+    /// On: read only on this install, with no sealed copy. Off: read on the
+    /// machines marked "yours", with sealed copies on the cloud and on them.
+    this_machine_only: bool,
+    /// The settings revision the surface showed, 64 hex; none takes the
+    /// current one.
+    #[serde(default)]
+    seen: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/this-machine-only`'s
+/// body: [`ThisMachineOnlyInput`].
+fn this_machine_only_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ThisMachineOnlyInput>()
 }
 
 /// One world's settings as this install folds them, and the revision a
@@ -189,6 +248,56 @@ async fn reassert(
         Ok(server
             .vault()
             .reassert_world_privacy(&owner, surface, world, settings, expected)?)
+    })
+    .await?;
+    Ok(Json(WorldPrivacyWork::from(receipt)))
+}
+
+/// `GET /v1/owner/worlds/privacy/this-machine-only?world=<id>`: whether the
+/// world is kept on this install alone or syncs sealed, with its settings and
+/// revision (`Vault::world_machine_placement`).
+async fn machine_placement(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<WorldQuery>, QueryRejection>,
+) -> OwnerReply<WorldMachinePlacement> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let read = blocking(move || -> OwnerResult<WorldMachinePlacement> {
+        let world = entity_id("world", &query.world)?;
+        Ok(server.vault().world_machine_placement(world)?)
+    })
+    .await?;
+    Ok(Json(read))
+}
+
+/// `POST /v1/owner/worlds/privacy/this-machine-only`: the holder turns "this
+/// Mac only" on or off (`Vault::set_world_this_machine_only`). `seen` is the
+/// revision the surface showed him; none takes the current one.
+async fn set_this_machine_only(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ThisMachineOnlyInput>,
+) -> OwnerReply<WorldPrivacyWork> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let input = payload.read(&server).await?;
+    let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
+        let world = entity_id("world", &input.world)?;
+        let seen = input
+            .seen
+            .as_deref()
+            .map(|seen| parse_revision("seen", seen).map(PolicyRevision))
+            .transpose()?;
+        Ok(server.vault().set_world_this_machine_only(
+            &owner,
+            surface,
+            world,
+            input.this_machine_only,
+            seen,
+        )?)
     })
     .await?;
     Ok(Json(WorldPrivacyWork::from(receipt)))

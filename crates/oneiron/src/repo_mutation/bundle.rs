@@ -4,17 +4,17 @@
 //! bundle (G4 PR2) and a native bundle share every step here; only the
 //! received one proves a source candidate, and only the native one is
 //! built from a caller's request and carries a provenance trailer.
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 
+use self::tree::{
+    apply_prepared_bundle_files, bundle_post_snapshot, bundle_tree_edits,
+    prepare_bundle_files_commit,
+};
 use super::git::validate_relative_repo_path;
 use super::mount::RepoMountRef;
 use super::proposal::{RepoProposal, RepoProposalOperation, RepoProposedFile, invalid};
 use super::queue::{PreparedCommitFile, PreparedRepoMutationExecution};
-use super::received_file::tree::{
-    apply_prepared_received_files, prepare_received_files_commit, received_post_snapshot,
-    received_tree_edits,
-};
 use super::snapshot::{SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind};
 use super::trailer::commit_message_with_provenance_trailer;
 use super::types::{RepoBundleFile, RepoForkHash, RepoMutationOperation, RepoMutationRequest};
@@ -23,8 +23,11 @@ use crate::code_document::{CodeFileEdit, CodeFileIngress, CodeFileMetadataEdit, 
 use crate::codebase::{DEFAULT_CODE_FILE_MODE, RepoRef, entity_id_from_hash_material};
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
-use crate::merge_queue::{MergeFile, MergeProposal};
+use crate::merge_queue::{MergeFile, MergeFileExpected, MergeProposal};
+use crate::store::code_tree_blob::MODE_GITLINK;
 use crate::write_envelope::WriteActor;
+
+pub(crate) mod tree;
 
 /// CALL BUNDLE-CHILD-OP: the hash domain of the deterministic document
 /// operation a native bundle's file lowers to, from (proposal, index).
@@ -33,6 +36,11 @@ const BUNDLE_FILE_OPERATION_DOMAIN: &[u8] = b"oneiron:repo-bundle-file-op:v1";
 /// The reviewed bytes one native bundle may hold, all files together: the
 /// same bound one ordinary proposal's file has.
 const BUNDLE_CONTENT_LIMIT_BYTES: usize = 32 * 1024 * 1024;
+
+/// The paths a secret remediation read whole from its pinned commit (FIX
+/// 7608 slice 6), each with the BLAKE3 of the bytes the commit held there,
+/// `None` for a path it did not hold (FIX 10974).
+pub(in crate::repo_mutation) type ProvenFiles = BTreeMap<String, Option<[u8; 32]>>;
 
 /// CALL BUNDLE-NONEMPTY: a native bundle names at least one file, each
 /// path once, at a kept mode, and a removal names no mode.
@@ -129,16 +137,16 @@ pub(in crate::repo_mutation) fn bundle_request_operation(
 /// keeps its base mode unless it names one; a new one is a regular file. A
 /// file the snapshot withholds is changed only on a `proven` path (a secret
 /// remediation's, FIX 7608 slice 6): its state is its kept mode, and its
-/// old bytes stay out of the row.
+/// old bytes stay out of the row; only their BLAKE3 is kept (FIX 10974).
 ///
 /// # Errors
 /// More bytes than the bound, a path the snapshot withholds and no
-/// remediation proved, a removal of an absent path, or a file that changes
-/// nothing.
+/// remediation proved, a proven withheld path its commit does not hold, a
+/// removal of an absent path, or a file that changes nothing.
 pub(in crate::repo_mutation) fn reviewed_bundle_files(
     pre_action: &StoredRepoSnapshot,
     files: Vec<RepoBundleFile>,
-    proven: &BTreeSet<String>,
+    proven: &ProvenFiles,
 ) -> Result<Vec<RepoProposedFile>> {
     let total = files
         .iter()
@@ -157,8 +165,8 @@ pub(in crate::repo_mutation) fn reviewed_bundle_files(
                 .entries
                 .iter()
                 .find(|entry| entry.path == file.path);
-            let (expected, old) = match entry {
-                None => (CodeFilePresence::absent(), None),
+            let (expected, old, withheld_base_blake3) = match entry {
+                None => (CodeFilePresence::absent(), None, None),
                 Some(entry) => match entry.kind {
                     StoredRepoSnapshotEntryKind::File => (
                         CodeFilePresence::file(if entry.executable {
@@ -167,19 +175,32 @@ pub(in crate::repo_mutation) fn reviewed_bundle_files(
                             DEFAULT_CODE_FILE_MODE
                         }),
                         Some(entry.content.clone()),
+                        None,
+                    ),
+                    StoredRepoSnapshotEntryKind::Gitlink => (
+                        CodeFilePresence::file(MODE_GITLINK),
+                        Some(entry.content.clone()),
+                        None,
                     ),
                     StoredRepoSnapshotEntryKind::Symlink => (
                         CodeFilePresence::file(0o120_000),
                         entry.symlink_target.clone().map(String::into_bytes),
-                    ),
-                    StoredRepoSnapshotEntryKind::Withheld if proven.contains(&file.path) => (
-                        CodeFilePresence::file(if entry.executable {
-                            0o100_755
-                        } else {
-                            DEFAULT_CODE_FILE_MODE
-                        }),
                         None,
                     ),
+                    StoredRepoSnapshotEntryKind::Withheld if proven.contains_key(&file.path) => {
+                        let Some(hash) = proven.get(&file.path).copied().flatten() else {
+                            return Err(invalid("a remediated file is not in its pinned commit"));
+                        };
+                        (
+                            CodeFilePresence::file(if entry.executable {
+                                0o100_755
+                            } else {
+                                DEFAULT_CODE_FILE_MODE
+                            }),
+                            None,
+                            Some(hash),
+                        )
+                    }
                     StoredRepoSnapshotEntryKind::Withheld => {
                         return Err(crate::secret_snapshot::SnapshotWithhold::Excluded.refusal());
                     }
@@ -205,6 +226,7 @@ pub(in crate::repo_mutation) fn reviewed_bundle_files(
                 path: file.path,
                 content: file.content,
                 source_operation: None,
+                withheld_base_blake3,
             })
         })
         .collect()
@@ -254,8 +276,8 @@ impl Vault {
                 "a file bundle lands under its proposal",
             ))?)?
             .ok_or(Error::EntityNotFound)?;
-        let edits = received_tree_edits(&row.files)?;
-        let commit = prepare_received_files_commit(repo_root, &edits, &message)?;
+        let edits = bundle_tree_edits(&row.files)?;
+        let commit = prepare_bundle_files_commit(repo_root, &edits, &message)?;
         Ok(PreparedRepoMutationExecution::FileBundle { commit, edits })
     }
 }
@@ -281,7 +303,7 @@ pub(in crate::repo_mutation) fn bundle_post_action_fork_hash(
             "repo HEAD changed while preparing write-ahead intent",
         ));
     }
-    received_post_snapshot(custody, pre_action_snapshot, edits, &commit.new_head)
+    bundle_post_snapshot(custody, pre_action_snapshot, edits, &commit.new_head)
 }
 
 /// Moves the live checkout to a native bundle's prepared commit, once its
@@ -298,7 +320,7 @@ pub(in crate::repo_mutation) fn apply_native_bundle(
         return Err(Error::InvariantViolation("not a native file bundle"));
     };
     let _ = commit_message_with_provenance_trailer(message, request.provenance_claim_id)?;
-    apply_prepared_received_files(repo_root, prepared)
+    apply_prepared_bundle_files(repo_root, prepared)
 }
 
 /// Lowers every file of the file bundle `row` into its document, in ONE
@@ -324,7 +346,9 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
     }
     let repo = RepoRef::parse(&row.repo)?;
     let before = vault.mount_repo_ref(&repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
+    // The repository's code-document identity, the one its symbols are
+    // keyed by (FIX 12761): one resolution for every file of the bundle.
+    let scope = vault.resolve_repo_identity(&repo)?.as_str().to_owned();
     let actor = WriteActor::new(row.actor.live()?, row.document_class()?);
     let utf8 = |bytes: &[u8]| -> Result<String> {
         String::from_utf8(bytes.to_vec())
@@ -336,7 +360,20 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
             .metadata_edit
             .as_ref()
             .ok_or(invalid("a bundle file carries its reviewed state change"))?;
-        let old = utf8(before.read_file(&file.path)?.unwrap_or(b""))?;
+        let base_text = before.read_file(&file.path)?;
+        let mut old = utf8(base_text.unwrap_or(b""))?;
+        // A file the base fork withholds (a remediated key's, FIX 7608 slice
+        // 6) has no base text: a document already holding its path is
+        // lowered from the text it holds, never refused (FIX 10975).
+        let mut held = None;
+        if base_text.is_none()
+            && state.expected.present
+            && vault.code_document_frontier(&scope, &file.path)?.is_some()
+        {
+            let session = vault.open_code_document(&scope, &file.path, &old, row.session)?;
+            old = session.text();
+            held = Some(session);
+        }
         let changed_state = state.expected != state.replacement;
         let (edit, metadata_edit) = match &file.content {
             None => {
@@ -360,9 +397,30 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
                 )
             }
         };
-        let session = vault
-            .open_code_document(&scope, &file.path, &old, row.session)?
-            .with_op_provenance(row.op_provenance.clone());
+        // A new document asserts its initial gitlink mode, not an equal-state edit.
+        // Replays reproduce that assertion and still pass the native receipt checks.
+        let metadata_edit = if metadata_edit.is_none()
+            && state.expected.mode == Some(MODE_GITLINK)
+            && state.replacement.mode == Some(MODE_GITLINK)
+        {
+            let initial_mode = CodeFileMetadataEdit::between(
+                &file.path,
+                CodeFilePresence::absent(),
+                CodeFilePresence::file(MODE_GITLINK),
+            );
+            let initializes = match vault.code_file_edit_receipt(row.file_operation(index)?)? {
+                Some(receipt) => receipt.metadata_edit.as_ref() == Some(&initial_mode),
+                None => vault.code_document_frontier(&scope, &file.path)?.is_none(),
+            };
+            initializes.then_some(initial_mode)
+        } else {
+            metadata_edit
+        };
+        let session = match held {
+            Some(session) => session,
+            None => vault.open_code_document(&scope, &file.path, &old, row.session)?,
+        }
+        .with_op_provenance(row.op_provenance.clone());
         items.push(CodeFileIngress {
             operation: row.file_operation(index)?,
             session,
@@ -380,12 +438,13 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
 /// is pinned at, and every file with the bytes its base fork holds there,
 /// its reviewed bytes and its reviewed state change. A native bundle's
 /// file the fork withholds (a secret remediation's, FIX 7608 slice 6) is
-/// checked by the exact bytes its pinned commit holds, read from the
-/// canonical object store. The caller supplies no file, mode or removal.
+/// checked by the BLAKE3 its remediation read it at (FIX 10974), so no
+/// old byte of it enters a queue row and no object store is read here.
+/// The caller supplies no file, mode or removal.
 ///
 /// # Errors
-/// A row that is no file bundle, or a base fork or commit that cannot be
-/// read.
+/// A row that is no file bundle, a base fork that cannot be read, or a
+/// withheld file with no kept BLAKE3.
 pub(crate) fn bundle_merge_proposal(
     vault: &Vault,
     row: &RepoProposal,
@@ -396,30 +455,22 @@ pub(crate) fn bundle_merge_proposal(
     }
     let repo = RepoRef::parse(&row.repo)?;
     let base = vault.mount_repo_ref(&repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-    let mut withheld = BTreeSet::new();
-    if matches!(row.operation, RepoProposalOperation::CommitFiles) {
-        for file in &row.files {
-            let present = file
-                .metadata_edit
-                .as_ref()
-                .is_some_and(|state| state.expected.present);
-            if present && base.read_file(&file.path)?.is_none() {
-                withheld.insert(file.path.clone());
-            }
-        }
-    }
-    let exact = if withheld.is_empty() {
-        std::collections::BTreeMap::new()
-    } else {
-        super::secret_remediation::pinned_commit_files(vault, &repo, &withheld)?
-    };
+    let native = matches!(row.operation, RepoProposalOperation::CommitFiles);
     let files = row
         .files
         .iter()
         .map(|file| {
+            let present = file
+                .metadata_edit
+                .as_ref()
+                .is_some_and(|state| state.expected.present);
             let expected = match base.read_file(&file.path)? {
-                Some(bytes) => Some(bytes.to_vec()),
-                None => exact.get(&file.path).cloned(),
+                Some(bytes) => Some(MergeFileExpected::Bytes(bytes.to_vec())),
+                None if native && present => Some(MergeFileExpected::Blake3(
+                    file.withheld_base_blake3
+                        .ok_or(invalid("a remediated file keeps its base's BLAKE3"))?,
+                )),
+                None => None,
             };
             Ok(MergeFile {
                 path: file.path.clone(),

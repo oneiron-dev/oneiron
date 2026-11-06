@@ -20,7 +20,7 @@ use heed::RoTxn;
 
 use crate::Vault;
 use crate::authority::WorldPrivacyView;
-use crate::machine_destination::{Destination, EffectiveRead, PeerMachine};
+use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine};
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
 /// host decides it, from the connection the caller reached it on; nothing the
 /// caller sends sets it. A device that forwards its caller's search to the

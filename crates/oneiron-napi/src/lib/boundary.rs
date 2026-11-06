@@ -3,7 +3,10 @@
 use napi::bindgen_prelude::*;
 use oneiron::authority::MachineDeviceClass;
 use oneiron::codebase::CODEBASE_FILE_PATH_MAX_BYTES;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{CODEBASE_CONTENT_HASH_LEN, EdgeKind, EntityId, MemoryError};
+
+use super::codebase::CodebaseMemory;
 
 pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 
@@ -13,8 +16,6 @@ pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 // ONE-479 still finds the established seam; only the source of the numbers
 // moved, so the N-API boundary and the remote boundary cannot drift into two
 // sets of limits that agree only by coincidence.
-pub(super) const MAX_NAPI_SEARCH_LIMIT: u32 = oneiron_remote::MAX_SEARCH_LIMIT as u32;
-
 pub(super) const MAX_NAPI_QUERY_BYTES: usize = oneiron_remote::MAX_QUERY_BYTES;
 
 pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
@@ -22,10 +23,6 @@ pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTI
 /// The entities one transaction of a batch write holds (FIX 11125): a batch
 /// past it is written frame by frame, never refused for its size.
 pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
-
-pub(super) const MAX_NAPI_CODEBASE_FILES: usize = oneiron_remote::MAX_CODEBASE_FILES;
-
-pub(super) const MAX_NAPI_DIMENSIONS: usize = oneiron_remote::MAX_DIMENSIONS;
 
 pub(super) type BoundaryResult<T> = std::result::Result<T, String>;
 
@@ -72,11 +69,7 @@ pub(super) fn parse_created_at(created_at: u64) -> BoundaryResult<i64> {
 
 /// Validate a user-provided search limit before passing it to core search.
 pub(super) fn parse_search_limit(limit: u32) -> BoundaryResult<usize> {
-    if limit > MAX_NAPI_SEARCH_LIMIT {
-        return Err(format!(
-            "limit must be <= {MAX_NAPI_SEARCH_LIMIT}, got {limit}"
-        ));
-    }
+    // The whole u32 range narrows exactly; the door serves the count whole.
     Ok(limit as usize)
 }
 
@@ -124,17 +117,27 @@ pub(super) fn read_vector(
 /// for a size check and a long one if we asked for `files` again during DTO
 /// conversion, so convert the checked array rather than re-reading the object.
 pub(super) fn read_codebase_snapshot(
+    vault: &oneiron::Vault,
     snapshot: Object<'_>,
+    memory: &mut CodebaseMemory,
 ) -> napi::Result<super::types::NapiCodebaseSnapshot> {
-    let files: Array<'_> = required_field(&snapshot, "files")?;
-    validate_codebase_file_count(files.len() as usize).map_err(napi::Error::from_reason)?;
-    let files = (0..files.len())
-        .map(|index| read_codebase_file_entry(&files, index))
-        .collect::<napi::Result<Vec<_>>>()?;
+    let files_array: Array<'_> = required_field(&snapshot, "files")?;
+    let len = files_array.len();
+    let _ = vault.measure_limit(EngineLimit::CodebaseManifestFiles, len as u64);
+    // Reserve pin-span slots before marshalling any file.
+    memory
+        .prepare_pins(len as usize)
+        .map_err(napi::Error::from_reason)?;
+    let mut files = memory
+        .vector::<super::types::NapiCodebaseFileEntry>(len as usize)
+        .map_err(napi::Error::from_reason)?;
+    for index in 0..len {
+        files.push(read_codebase_file_entry(&files_array, index, memory)?);
+    }
     Ok(super::types::NapiCodebaseSnapshot {
-        project_id: required_field(&snapshot, "projectId")?,
-        repo_ref: required_field(&snapshot, "repoRef")?,
-        commit_hash: snapshot.get::<Option<String>>("commitHash")?.flatten(),
+        project_id: read_project_id(&snapshot, memory)?,
+        repo_ref: read_required_js_string(&snapshot, "repoRef", memory)?,
+        commit_hash: read_optional_js_string(&snapshot, "commitHash", memory)?,
         fork_hash: snapshot.get::<Option<Buffer>>("forkHash")?.flatten(),
         scope_key: snapshot.get::<Option<Buffer>>("scopeKey")?.flatten(),
         files,
@@ -146,6 +149,7 @@ pub(super) fn read_codebase_snapshot(
 fn read_codebase_file_entry(
     files: &Array<'_>,
     index: u32,
+    memory: &mut CodebaseMemory,
 ) -> napi::Result<super::types::NapiCodebaseFileEntry> {
     let entry: Object<'_> = files
         .get(index)?
@@ -157,12 +161,71 @@ fn read_codebase_file_entry(
             "codebase snapshot path must be <= {CODEBASE_FILE_PATH_MAX_BYTES} bytes, got {len}"
         )));
     }
+    let path = js_string_owned(path, len as u64, memory)?;
     Ok(super::types::NapiCodebaseFileEntry {
-        path: path.into_utf8()?.into_owned()?,
+        path,
         content_hash: required_field(&entry, "contentHash")?,
         size_bytes: required_field(&entry, "sizeBytes")?,
         content: entry.get::<Option<Buffer>>("content")?.flatten(),
     })
+}
+
+/// Check the core's raw UTF-8 length limit before conversion can wait for
+/// memory. Core rejects whitespace rather than trimming it before validation.
+fn read_project_id(snapshot: &Object<'_>, memory: &mut CodebaseMemory) -> napi::Result<String> {
+    let js: napi::JsString<'_> = required_field(snapshot, "projectId")?;
+    let len = js.utf8_len()?;
+    let max = oneiron::codebase::CODEBASE_PROJECT_ID_MAX_BYTES;
+    if len > max {
+        return Err(napi::Error::new(
+            napi::Status::InvalidArg,
+            format!("codebase snapshot project_id must be <= {max} bytes, got {len}"),
+        ));
+    }
+    js_string_owned(js, len as u64, memory)
+}
+
+fn read_required_js_string(
+    object: &Object<'_>,
+    name: &str,
+    memory: &mut CodebaseMemory,
+) -> napi::Result<String> {
+    let js: napi::JsString<'_> = required_field(object, name)?;
+    let len = js.utf8_len()? as u64;
+    js_string_owned(js, len, memory)
+}
+
+fn read_optional_js_string(
+    object: &Object<'_>,
+    name: &str,
+    memory: &mut CodebaseMemory,
+) -> napi::Result<Option<String>> {
+    let js: Option<napi::JsString<'_>> = object.get(name)?.flatten();
+    match js {
+        None => Ok(None),
+        Some(js) => {
+            let len = js.utf8_len()? as u64;
+            js_string_owned(js, len, memory).map(Some)
+        }
+    }
+}
+
+fn js_string_owned(
+    js: napi::JsString<'_>,
+    len: u64,
+    memory: &mut CodebaseMemory,
+) -> napi::Result<String> {
+    let peak = len
+        .checked_add(
+            len.checked_add(1)
+                .ok_or_else(|| napi::Error::from_reason("string too long"))?,
+        )
+        .ok_or_else(|| napi::Error::from_reason("string too long"))?;
+    memory.reserve(peak).map_err(napi::Error::from_reason)?;
+    let owned = js.into_utf8()?.into_owned()?;
+    let actual = owned.capacity() as u64;
+    memory.allocated(peak, actual);
+    Ok(owned)
 }
 
 fn required_field<T: FromNapiValue>(object: &Object<'_>, name: &str) -> napi::Result<T> {
@@ -195,16 +258,6 @@ pub(super) fn validate_entity_payload_len(len: usize) -> BoundaryResult<()> {
     Ok(())
 }
 
-/// Validate codebase manifest size before allocating core snapshot entries.
-pub(super) fn validate_codebase_file_count(len: usize) -> BoundaryResult<()> {
-    if len > MAX_NAPI_CODEBASE_FILES {
-        return Err(format!(
-            "codebase snapshot accepts at most {MAX_NAPI_CODEBASE_FILES} files, got {len}"
-        ));
-    }
-    Ok(())
-}
-
 /// Validate and copy a 32-byte content hash from JS.
 pub(super) fn parse_content_hash(buf: &Buffer) -> BoundaryResult<[u8; CODEBASE_CONTENT_HASH_LEN]> {
     buf.as_ref().try_into().map_err(|_| {
@@ -227,16 +280,6 @@ pub(super) fn parse_fixed_hash<const N: usize>(
 /// Validate a JS file size before narrowing to u64.
 pub(super) fn parse_file_size(size: i64) -> BoundaryResult<u64> {
     u64::try_from(size).map_err(|_| format!("size_bytes must be >= 0, got {size}"))
-}
-
-/// Validate configured vector dimensions before opening a vault.
-pub(super) fn validate_dimensions(dimensions: usize) -> BoundaryResult<()> {
-    if dimensions > MAX_NAPI_DIMENSIONS {
-        return Err(format!(
-            "dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}"
-        ));
-    }
-    Ok(())
 }
 
 /// Validate vector length before allocating the narrowed f32 copy.

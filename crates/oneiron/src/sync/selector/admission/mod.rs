@@ -34,8 +34,8 @@ pub(in crate::sync) use self::revalidate::{
     revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
 };
 use self::routing::Routes;
-pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
+pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
 
 pub use crate::store::window_protocol::FederationAdmissionRole;
 
@@ -63,8 +63,13 @@ enum ImportGrading {
 /// so callers can import it through the ordinary replay/materialization path
 /// without giving the original remote op ids trust-blind write authority.
 ///
+/// `source_vault`, when present, selects the source's foreign WORLD namespace;
+/// it carries no authentication or first-party standing. Every returned pair
+/// names its actual destination window, in import order. With no source,
+/// admission retains the original window.
+///
 /// No facet stamp a peer sends onto a row this vault lacks is in the
-/// returned update. With no sender named here, nothing can bind such a stamp
+/// returned updates. With no sender named here, nothing can bind such a stamp
 /// to its row's birth, so it is dropped (`copy_admitted_edges`).
 #[cfg(feature = "sync")]
 pub fn admit_federated_window_update(
@@ -72,8 +77,9 @@ pub fn admit_federated_window_update(
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-) -> Result<Vec<u8>> {
-    Ok(admit_window_update(
+    source_vault: Option<&[u8; 32]>,
+) -> Result<Vec<(WindowKey, Vec<u8>)>> {
+    let admitted = admit_window_update(
         vault,
         key,
         update,
@@ -82,9 +88,12 @@ pub fn admit_federated_window_update(
         ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
-        None,
-    )?
-    .bytes)
+        source_vault,
+    )?;
+    Ok(admitted
+        .parts()
+        .map(|part| (part.key().clone(), part.bytes().to_vec()))
+        .collect())
 }
 
 /// [`admit_federated_window_update`] for an update the federation peer
@@ -188,6 +197,7 @@ pub(crate) fn admit_staged_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
     receipt_id: &[u8; 32],
+    source_vault: Option<&[u8; 32]>,
 ) -> Result<AdmittedUpdate> {
     admit_window_update(
         vault,
@@ -198,7 +208,7 @@ pub(crate) fn admit_staged_window_update(
         ImportGrading::Imported {
             scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
         },
-        None,
+        source_vault,
     )
 }
 
@@ -207,7 +217,8 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
     crate::federation::facet_read::HeldLane::Staged(*receipt_id).key()
 }
 
-/// `guest` is the source vault a guest's pact names: with one, the update's
+/// `guest` is the source namespace a guest's pact or a staged artifact's
+/// claimed manifest names, never authentication. With one, the update's
 /// CLAIMs land in their foreign WORLD copies ([`Routes`], FIX 3497), and the
 /// admitted update holds one part per window it lands in.
 #[cfg(feature = "sync")]

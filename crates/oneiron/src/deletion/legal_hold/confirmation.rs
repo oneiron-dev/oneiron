@@ -182,6 +182,8 @@ struct Settled {
     veto_vault: Option<u64>,
     /// Each record's waiting erase, as stored.
     waiting: BTreeMap<EntityId, PendingErase>,
+    /// Native cancellation pairs published only after this writer commits.
+    cancelled: Vec<(crate::attempt_queue::AttemptId, u32)>,
 }
 
 impl Vault {
@@ -264,12 +266,14 @@ impl Vault {
                 });
             }
         };
+        crate::attempt_queue::AttemptQueue::new(self)
+            .erased_payload_cancellations_committed(&settled.cancelled);
         // The lifts committed: a delete they deferred asks again (FIX 1488),
         // and an erase they kept from completing completes (FIX 5844).
         self.note_backup_hold_recheck();
         self.finish_redaction_erases_logged();
         let memory = self.memory(settled.actor, EdgeActorClass::Human);
-        let hard = crate::deletion::SafeDeleteReason::UserHardDelete;
+        let reason = DeleteReason::OwnerErase;
         let now = self.store.clock.now_recorded_at();
         let mut statuses = Vec::with_capacity(records.len());
         let mut failed = false;
@@ -280,7 +284,7 @@ impl Vault {
                     self.wait_out_veto(owner, vault_id, record, &settled.waiting, kept, now)
                 }
                 (None, Some(seen)) => kept_status(seen, now),
-                (None, None) => match memory.owner_confirmed_erase(owner, record, hard) {
+                (None, None) => match memory.owner_confirmed_erase(owner, record, reason) {
                     Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
                     Err(error) => {
                         failed = true;
@@ -416,7 +420,7 @@ impl Vault {
                 confirmed_by: Some(actor.to_hex()),
                 confirmed_at: now,
                 kind: PendingEraseKind::LiftAndErase,
-                reason: DeleteReason::UserHardDelete,
+                reason: DeleteReason::OwnerErase,
                 generation: self.store.clock.entity_id()?,
                 veto_act: None,
                 withdrawn: None,
@@ -427,13 +431,14 @@ impl Vault {
         // A birth these holds kept from an erased actor's scrub goes with
         // them (FIX 6280), and so does each Gate decision scrub they kept
         // (FIX 7993, 7994); a row another hold still names keeps its own.
-        self.settle_held_scrubs_in_txn(txn)?;
+        let cancelled = self.settle_held_scrubs_in_txn(txn)?;
         Ok(Settled {
             actor,
             kept,
             holds: lifting.into_keys().collect(),
             veto_vault,
             waiting,
+            cancelled,
         })
     }
 

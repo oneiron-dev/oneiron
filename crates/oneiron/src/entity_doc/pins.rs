@@ -27,7 +27,6 @@ pub struct CitationPin {
     pub actor: DocActor,
 }
 
-#[cfg(feature = "sync")]
 impl CitationPin {
     /// The quoted entity and the citing record, when the pin is whole: its
     /// ids each in their one spelling, its anchor on its own entity at a
@@ -375,7 +374,8 @@ impl Vault {
                 &HexPair(HexId(*entity), HexId(receipt_id)),
                 &receipt,
             )?;
-            self.store.roll_checkpoint_payload_for_purge_in_txn(txn, entity)?;
+            self.store
+                .roll_checkpoint_payload_for_purge_in_txn(txn, entity)?;
             // A purge changes no text, so only this takes the new floor to
             // the live window that carries a MESSAGE's document (FIX 3552).
             #[cfg(feature = "sync")]

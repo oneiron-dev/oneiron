@@ -48,6 +48,14 @@ pub struct ServeArgs {
     #[arg(long = "managed-by-hypnos")]
     pub managed_by_hypnos: bool,
 
+    /// Operator enterprise/advanced capability for this hosted vault's owner
+    /// to select checkpoint roots without the host. Never owner settings.
+    #[arg(
+        long = "managed-checkpoint-host-opt-out",
+        requires = "managed_by_hypnos"
+    )]
+    pub managed_checkpoint_host_opt_out: bool,
+
     /// Supervisor⇄vault wire contract version this child was spawned against.
     /// Required in managed mode; an unknown version exits non-zero before any
     /// IO happens.
@@ -144,6 +152,17 @@ pub struct ServeArgs {
     #[arg(long = "vsock-guest")]
     pub vsock_guest: bool,
 
+    /// A vault VM's outbox companion admission, which only the image's
+    /// `oneiron-vm-init` passes, only beside a companion it admitted: presence
+    /// is the proof the engine parks around idle. Hidden bootstrap plumbing,
+    /// never operator policy.
+    #[arg(
+        long = "vm-outbox-companion-admitted",
+        hide = true,
+        requires_all = ["vsock_guest", "managed_by_hypnos"]
+    )]
+    pub vm_outbox_companion_admitted: bool,
+
     /// A vault VM's cold restore handoff (FIX 6584), which only the image's
     /// `oneiron-vm-init` passes: the revision of the restore channel its
     /// host answered on, beside `--restore` and the two pipes the bootstrap
@@ -216,6 +235,42 @@ pub struct ServeArgs {
     /// alone.
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
+
+    /// Managed mode: the supervisor-selected absolute native preview socket.
+    /// It routes only already-held private preview bindings, not the vault API.
+    /// The supervisor passes this flag only at its installed-engine build floor.
+    #[arg(long = "preview-socket")]
+    pub preview_socket: Option<PathBuf>,
+
+    /// Managed mode: the separate-user credential broker's absolute Unix
+    /// socket. Pair it with `--broker-uid`; the supervisor owns this binding.
+    #[arg(long = "broker-socket", requires = "managed_by_hypnos")]
+    pub broker_socket: Option<PathBuf>,
+
+    /// Managed mode: the OS user the separate-user credential broker runs as.
+    /// Pair it with `--broker-socket`; no UID is inferred.
+    #[arg(long = "broker-uid", requires = "managed_by_hypnos")]
+    pub broker_uid: Option<u32>,
+
+    /// Managed mode: the same-user credential broker child's absolute binary
+    /// path. Without it, the broker beside this server is used as before.
+    #[arg(long = "broker-program", requires = "managed_by_hypnos")]
+    pub broker_program: Option<PathBuf>,
+
+    /// Managed mode: an absolute PEM roots file the same-user broker child
+    /// trusts beside the system's. Repeat for each file; not for a separate user.
+    #[arg(long = "broker-extra-roots", requires = "managed_by_hypnos")]
+    pub broker_extra_roots: Option<Vec<PathBuf>>,
+
+    /// Managed mode: the explicit host memory allocation in bytes, as the
+    /// operator sized it. Absent is unbounded; no capacity is inferred.
+    #[arg(long = "host-memory-bytes", requires = "managed_by_hypnos")]
+    pub host_memory_bytes: Option<u64>,
+
+    /// Managed mode: the explicit host CPU share in CPU milliseconds per
+    /// second. Absent is unbounded. Advisory, not an OS-enforced quota.
+    #[arg(long = "host-cpu-millis", requires = "managed_by_hypnos")]
+    pub host_cpu_millis: Option<u32>,
 
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
@@ -349,11 +404,12 @@ pub struct ServeArgs {
     /// An organ build this server runs as first party, by its blake3 (64
     /// hex); repeat it for each (FIX 7644). Listing one is the operator's
     /// statement that the build is reviewed first-party code. A pack organ
-    /// build not listed runs as third party, which the organ host refuses to
-    /// start until filesystem confinement for organs lands. Plain or managed
-    /// serve; no config file, settings file or environment sets it. A vault
-    /// VM's init passes one per line of its config drive's
-    /// `trusted-organ-builds` (FIX 7889), argv as on a node.
+    /// build not listed runs as third party, which the organ host starts
+    /// only inside a filesystem fence (Landlock ABI 3 on Linux, Seatbelt on
+    /// macOS) and refuses on a host with none. Plain or managed serve; no
+    /// config file, settings file or environment sets it. A vault VM's init
+    /// passes one per line of its config drive's `trusted-organ-builds`
+    /// (FIX 7889), argv as on a node.
     #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
     pub trusted_organ_builds: Vec<String>,
 
@@ -456,6 +512,14 @@ pub struct ServeArgs {
     /// managed mode refuses.
     #[arg(long)]
     pub oauth_resource_indicator: Option<String>,
+
+    /// The host's own Git door base, `https://<host>/git` (or `http` on
+    /// loopback), that a run's checkout bind names instead of the caller's
+    /// endpoint (`ONEIRON_GIT_DOOR_BASE`; FIX 7181). Unset: the caller's
+    /// explicit endpoint stands. In managed mode the supervisor passes it,
+    /// as it owns the vault's public addresses.
+    #[arg(long, value_parser = git_door_base)]
+    pub git_door_base: Option<String>,
 
     /// Comma-separated public URLs a recovery kit may dial and sign its
     /// fetches for, one per address the home answers on
@@ -661,6 +725,16 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
 /// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
+}
+
+/// Clap value parser for `--git-door-base` (FIX 7181): the same door
+/// grammar GitWire binds a checkout to, so a bad base stops the start.
+fn git_door_base(value: &str) -> Result<String, String> {
+    oneiron::git_wire::validate_checkout_door(value)
+        .map(|()| value.to_owned())
+        .map_err(|_| {
+            "expected the host's Git door: https://<host>/git, or http on loopback".to_owned()
+        })
 }
 
 /// Clap value parser for `--trusted-organ-build`: a blake3 digest, 64 hex,

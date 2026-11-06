@@ -100,10 +100,10 @@
 //! [`Bm25FieldSchemaChanged`]: crate::error::StoreError::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::config::VaultConfig::skip_text_index_manifest_check
 
+pub use extraction_work::ExtractionWork;
 /// Backend-neutral storage contracts and injectable time sources.
 /// Implementations compose in a caller-owned transaction; they never commit it.
-mod extraction_work;
-pub use extraction_work::ExtractionWork;
+use oneiron_store::extraction_work;
 
 pub mod ports {
     pub use crate::ports::{
@@ -119,55 +119,136 @@ pub mod ports {
     };
 }
 
+pub(crate) mod agent_birth_custody;
+pub(crate) use oneiron_store::agent_birth_identity;
+pub(crate) mod agent_definition;
+pub(crate) mod agent_definition_codec;
+pub(crate) mod agent_manifest;
+pub(crate) mod agent_memory_profile;
+pub(crate) use oneiron_store::agent_model;
+pub(crate) mod agent_optional_memory;
 pub mod agent_record;
-pub mod attempt_cleanup;
-pub mod attempt_inputs;
-pub mod attempt_lease;
+pub(crate) mod agent_refusal;
+pub(crate) mod agent_scope;
+pub(crate) mod attempt_archive_mark;
+pub mod attempt_cancel;
+pub use oneiron_store::attempt_cleanup;
+pub use oneiron_store::attempt_hold;
+pub mod attempt_id;
+pub use oneiron_store::attempt_inputs;
+pub use oneiron_store::attempt_lease;
 pub mod attempt_manifest;
-pub mod attempt_result;
+pub mod attempt_outcomes;
+pub(crate) mod attempt_payload_response;
+pub(crate) mod attempt_payload_retire;
+pub(crate) mod attempt_payload_route;
+pub use oneiron_store::attempt_read_producer;
+pub mod attempt_record;
+pub(crate) mod attempt_record_codec;
+pub(crate) mod attempt_record_read;
+pub use oneiron_store::attempt_result;
+pub(crate) use oneiron_store::attempt_retention;
+pub(crate) mod attempt_run_root;
+pub mod attempt_run_signal;
+pub use oneiron_store::attempt_state;
+pub(crate) use oneiron_store::base_agent;
 pub mod canonical_document;
-pub mod checkout_task;
-pub mod checkpoint_host_recipient;
-pub mod code_tree_blob;
-pub mod conversation_body;
-pub mod conversation_record;
-pub mod custody_retirement_status;
+pub(crate) mod centroid_evidence;
+pub use oneiron_store::checkout_task;
+pub mod claim_refinement_control;
+pub(crate) use oneiron_store::claim_vad_payment;
+pub use oneiron_store::consolidation_evidence;
+pub(crate) use oneiron_store::conversation_residency;
+pub(crate) mod housekeeping_wake;
+pub use oneiron_store::checkpoint_host_recipient;
+pub use oneiron_store::code_tree_blob;
+pub use oneiron_store::conversation_body;
+pub use oneiron_store::conversation_record;
+pub use oneiron_store::custody_retirement_status;
+pub(crate) use oneiron_store::writer_hold;
+mod delete_guards;
+pub use delete_guards::StoreDeleteGuards;
+mod hooks;
+pub use hooks::StoreHooks;
+mod scope_stamps;
+pub(crate) use scope_stamps::StoreScopeStamps;
+mod project_writes;
+pub use project_writes::StoreProjectWrites;
+mod record_hooks;
+pub use record_hooks::StoreRecordHooks;
+pub(crate) mod attempt_operations;
+pub(crate) use attempt_operations::StoreAttemptOperations;
+#[cfg(unix)]
+pub(crate) mod voice_bank_response;
+#[cfg(unix)]
+pub(crate) use voice_bank_response::StoreVoiceBankResponse;
+pub(crate) mod core_write_operations;
+pub(crate) use core_write_operations::StoreCoreWriteOperations;
+pub(crate) mod actor_scrubs;
+pub use actor_scrubs::StoreActorScrubs;
+pub(crate) mod critical_confirm_record;
+pub(crate) mod gate_hooks;
+pub(crate) use gate_hooks::StoreGateHooks;
 #[cfg(feature = "sync")]
+mod sync_hooks;
+#[cfg(feature = "sync")]
+pub(crate) use sync_hooks::StoreSyncHooks;
 pub mod document_frame_tags;
-pub mod housekeeping_report;
-pub mod housekeeping_schedule;
+pub mod framing;
+pub use oneiron_store::housekeeping_report;
+pub use oneiron_store::housekeeping_schedule;
 #[cfg(feature = "sync")]
-pub(crate) mod loro_document;
+pub(crate) use oneiron_store::loro_document;
+#[cfg(feature = "sync")]
+pub(crate) use oneiron_store::loro_tombstones;
 #[cfg(feature = "sync")]
 pub mod materialization_event;
-pub mod outbound_outcome;
-pub mod outbound_trigger;
+pub mod model_description_rows;
+pub mod model_score_diff;
+pub(crate) mod model_step_response_carriage;
+pub mod model_step_submission;
+pub(crate) mod model_stream_row;
+pub mod note_body;
+pub use oneiron_store::note_kind;
+pub mod outbound_actor;
+pub use oneiron_store::outbound_outcome;
+pub use oneiron_store::outbound_trigger;
+pub(crate) mod output_decay;
+pub use oneiron_store::pack_hook_actor_class;
+pub mod pack_hook_proposal;
+pub mod pack_predicate_rewrites;
 #[cfg(feature = "sync")]
-pub(crate) mod pad_object_membership;
+pub(crate) use oneiron_store::pad_object_membership;
+pub mod person_billing_account;
+pub mod positive_skill_proposals;
+pub(crate) mod project_kind;
 pub mod proposal_spool;
-pub mod recovery_write_budget;
-pub(crate) mod repo_environment;
-pub mod repo_fork;
-pub mod restore_admission;
+pub use oneiron_store::recovery_write_budget;
+pub(crate) use oneiron_store::repo_environment;
+pub use oneiron_store::repo_fork;
+pub mod resident_budget_rows;
+pub use oneiron_store::restore_admission;
 pub mod result_body_pins;
 pub mod result_memory;
-pub mod retained_memory;
+pub use oneiron_store::retained_memory;
 pub mod sandbox_import;
-pub mod verb_invocation;
-#[cfg(feature = "sync")]
-pub mod window_protocol;
+pub use oneiron_store::verb_invocation;
+pub use oneiron_store::window_protocol;
 #[cfg(feature = "sync")]
 pub(crate) mod window_rows;
 
-pub mod consolidation_scope;
-pub(crate) mod conversation_span;
-pub mod dreamer_attempt_kind;
-pub mod setting_seed;
-pub mod snapshot_key;
-pub mod snapshot_lock_result;
+pub use oneiron_store::consolidation_scope;
+pub(crate) use oneiron_store::context_field_profile;
+pub(crate) use oneiron_store::conversation_span;
+pub use oneiron_store::dreamer_attempt_kind;
+pub(crate) use oneiron_store::dreamer_attempt_payload;
+pub mod dreamer_wake_policy;
+pub use oneiron_store::setting_seed;
+pub use oneiron_store::snapshot_key;
+pub use oneiron_store::snapshot_lock_result;
 
-mod active_write_txn;
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
+use oneiron_store::active_write_txn;
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
@@ -181,44 +262,79 @@ mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 pub mod claim_descriptors;
 mod claim_vad_owed;
-pub mod code_artifact_body;
-pub mod code_document_values;
+pub use oneiron_store::code_artifact_body;
+pub use oneiron_store::code_document_values;
 pub mod code_memory_values;
 pub mod code_snapshot;
-pub(crate) mod query_memo_codec;
+pub(crate) use oneiron_store::query_memo_codec;
 pub mod query_memos;
 pub(crate) use claim_vad_owed::{
     claim_vad_owed_in_txn, owe_claim_vad_in_txn, owed_claim_vad_count_in_txn,
     settle_claim_vad_in_txn,
 };
+pub mod birth_record;
 pub mod body_descriptor;
+pub(crate) mod claim_lineage;
+pub(crate) mod claim_projection;
 mod commitment_due;
+pub mod commitment_due_record;
 mod credential_custody;
 mod deadline_jobs;
+pub mod decision_ask_role;
+pub(crate) mod decision_question_watches;
+pub mod decision_rule_rows;
+pub mod default_skill_hub;
 pub mod derivation;
 pub mod diagnostic_record;
 mod diagnostics;
-pub mod document_segments;
+pub use oneiron_store::document_segments;
 pub mod embedding;
+pub(crate) use oneiron_store::executor_speech_identity;
+pub mod executor_wait_delivery;
+pub(crate) mod file_key_masks;
+pub(crate) mod found_key_notice_queue;
 mod gate_decision;
+pub(crate) mod gate_receipt;
 pub(crate) mod graph_version;
-pub(crate) mod l2_evidence;
-pub mod receipt_identity;
+pub(crate) mod known_value_index;
+pub(crate) use oneiron_store::l2_evidence;
+pub mod owned_body;
+pub(crate) mod pending_custody_revoke;
+pub use oneiron_store::receipt_identity;
+pub mod receipt_row;
+pub mod reference_refusal;
+pub(crate) use oneiron_store::result_body_erasure;
+pub(crate) mod result_body_reader;
+pub(crate) mod result_body_rows;
 pub mod retrieval_deadline;
+pub use oneiron_store::retrieval_signal;
 pub mod row_birth;
-mod scan_checks;
-mod scan_kind;
-mod scan_kind_table;
+use oneiron_store::scan_checks;
+use oneiron_store::scan_kind;
+use oneiron_store::scan_kind_table;
+pub mod seat_model_description;
+pub(crate) mod secret_handle_labels;
+pub(crate) mod secret_handle_purpose;
+pub(crate) mod secret_name_index;
+pub(crate) mod side_table_erase_scan;
+pub mod site_skill_exposure;
+pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
 pub(crate) mod vector_index;
+mod vector_index_dbs;
+pub mod workflow_definition;
 
 pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
 pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
 mod handle;
-pub(crate) mod replay_only_commits;
-pub mod world_registration_keys;
+pub(crate) use oneiron_store::replay_only_commits;
+pub mod world_authority;
+pub(crate) mod world_pad_rows;
+pub use oneiron_store::world_registration_keys;
+// FIX 12569: a vault's own drafter artifact keys.
+pub(crate) mod drafter_custody;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
@@ -233,35 +349,47 @@ mod key_custody;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
-mod local_queue_budget;
+pub(crate) mod linear_pull_cursor;
+pub(crate) mod linear_task_revision;
 pub(crate) use local_queue_budget::check_queue_capacity;
+use oneiron_store::local_queue_budget;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
 mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
-mod page_bound;
+use oneiron_store::page_bound;
 mod pending_embedding;
 mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
 pub(crate) mod reader_fold_receipt;
-pub(crate) mod refinement_carrier;
+pub(crate) use oneiron_store::refinement_carrier;
+#[cfg(feature = "sync")]
+pub(crate) use oneiron_store::replica_edge_key;
 pub mod result_manifest;
 pub mod retrieval_policy;
 mod retrieval_telemetry;
 pub mod retrieval_values;
+pub use oneiron_store::revision_ref;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
 mod served_vaults;
+pub(crate) mod shared_leave_receipt;
 mod short_id_alias;
+pub(crate) mod skill_attribution_causes;
+pub(crate) mod skill_attribution_judgments;
 pub(crate) mod skill_content_index;
+pub use oneiron_store::skill_hub_predicates;
 pub mod skill_package;
+pub(crate) mod skill_refinement_custody;
+pub(crate) mod skill_refinement_origin;
 pub(crate) mod skill_source_carrier;
+pub(crate) mod skill_source_custody;
 mod structural_kind_registry;
 mod sync_responses;
-pub(crate) mod task_body_checks;
+pub(crate) use oneiron_store::task_body_checks;
 mod training_link;
 pub(crate) mod turn_missing;
 mod usage_sources;
@@ -297,8 +425,9 @@ pub(crate) use body_envelope::{
     BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope,
     SealedStream, SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn,
     body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
-    erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
-    prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
+    erase_bodies_in_txn, instance_id, journal_restored_body_key_in_txn,
+    keep_promoted_body_key_in_txn, pin_body_custody_in_txn, prune_retired_bodies_in_rows,
+    release_body_in_txn, remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
     remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
     sealed_body_file_name,
 };
@@ -306,16 +435,18 @@ pub(crate) use body_envelope::{
 // a shared one's final teardown settles.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    erase_bodies_for_owner_in_txn, note_settled_inline_in_txn, settle_inline_asset_in_txn,
+    erase_bodies_for_owner_in_txn, governed_body_instances_in_txn, note_settled_inline_in_txn,
+    settle_inline_asset_in_txn,
 };
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
+    ResponseOwners, ResponseRead, ResponseScan, bind_missing_response_owners_in_txn,
+    bind_response_in_txn, bind_retained_response_owner_in_txn, carrier_row,
     erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn, stamp_opaque_erased,
+    response_owners_bound_in_txn, settle_shared_response_in_txn, stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -336,8 +467,7 @@ pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{
-    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
-    release_vault_handle,
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, LeaderHolds, Rows,
 };
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
@@ -350,8 +480,12 @@ pub(crate) use key_custody::{
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
     CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
     Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
-    standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+    TakeoverRefusal, TargetRecipients, admit_published_host_issuer_seeds, refuse_foreign_binding,
+    retirement_in_txn, route_custody, standing_retirements_in_txn,
+    unbind_in_txn as unbind_custody_in_txn,
+};
+pub(crate) use key_custody::{
+    Requirement as CustodyForkRequirement, binding_in_txn as custody_binding_in_txn,
 };
 // FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.
 #[allow(
@@ -372,6 +506,7 @@ pub use open_gates::*;
 pub(crate) use outbound_send_receipt::*;
 pub(crate) use page_bound::{PageLayout, TreeRows};
 pub(in crate::store) use pending_embedding::*;
+pub(crate) use pending_gate_consent::hashed_string_index_matches;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 #[cfg(all(unix, test))]
@@ -417,7 +552,7 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
-pub(crate) use usage_sources::erase_usage_source_in_txn;
+pub(crate) use usage_sources::{erase_pending_usage_source_in_txn, erase_usage_source_in_txn};
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
@@ -425,40 +560,81 @@ pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::outbound_send_receipt::send_receipt_summary_accepts_masked;
 
-pub mod dispatch_attempt_kind;
+pub use oneiron_store::dispatch_attempt_kind;
 
 pub mod checkout_lease;
+pub mod contract_oracle;
 
-pub mod repo_mutation_record;
+pub use oneiron_store::repo_mutation_record;
 
-pub mod code_commit_metadata;
+pub use oneiron_store::code_commit_metadata;
 
-pub mod code_import_manifest;
+pub use oneiron_store::code_import_manifest;
 
-pub mod own_rate_record;
+pub use oneiron_store::own_rate_record;
 
-pub mod repo_provenance_trailer;
+pub use oneiron_store::repo_provenance_trailer;
 
-pub mod code_revision_identity;
+pub use oneiron_store::code_revision_identity;
 
-pub mod recovery_kit;
+pub use oneiron_store::recovery_kit;
 
-pub mod code_promotion_gap;
+pub use oneiron_store::code_promotion_gap;
 
 pub mod code_revision_record;
 
-pub mod sandbox_path;
+pub use oneiron_store::sandbox_path;
 
-pub mod sandbox_credential;
+pub use oneiron_store::sandbox_credential;
 
 pub mod sandbox_contract;
 
-pub mod critic_lens;
+pub use oneiron_store::critic_lens;
 
-pub mod verb_domain;
+pub use oneiron_store::verb_domain;
 
-pub mod reaction_predicate;
+pub use oneiron_store::reaction_predicate;
 
-pub mod repo_proposal_record;
+pub use oneiron_store::repo_proposal_record;
 
-pub mod repo_import_predicate;
+pub use oneiron_store::repo_import_predicate;
+
+pub(crate) mod habit_streak;
+pub(crate) mod own_rate_rows;
+pub use oneiron_store::persona_snapshot_record;
+
+pub mod query_health;
+pub(crate) mod query_memo_lifetime;
+pub mod skill_source_index;
+pub mod snapshot_catalog;
+pub(crate) mod snapshot_ledger;
+pub(crate) mod snapshot_lifecycle;
+
+pub(crate) use oneiron_store::authority_rows;
+pub use oneiron_store::channel_class;
+pub use oneiron_store::claim_source_ranking;
+pub mod code_document_receipt;
+pub(crate) use oneiron_store::container_output;
+pub(crate) mod identity_redirect_rows;
+pub(crate) use oneiron_store::live_speaker_calls;
+pub mod record_ref;
+pub(crate) mod task_authority_guard;
+pub(crate) mod vad_annotation;
+pub(crate) use oneiron_store::consent_bound;
+pub(crate) use oneiron_store::conversation_summary;
+pub(crate) use oneiron_store::vector_insert_plan;
+pub(crate) mod gate_metrics;
+pub(crate) use oneiron_store::gate_reason;
+pub mod healer_oversight;
+pub(crate) mod pending_comm_stop;
+pub use oneiron_store::plugin_section_predicate;
+pub(crate) mod policy_record;
+pub(crate) mod ppr_cache_invalidation;
+pub(crate) use oneiron_store::record_links;
+pub(crate) use oneiron_store::record_references;
+pub(crate) mod scan_count;
+pub(crate) mod skill_resident;
+
+pub(crate) use oneiron_store::host_issuer_seed;
+pub(crate) use oneiron_store::principal_record;
+pub(crate) use oneiron_store::witness_message_body;

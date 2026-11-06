@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use oneiron::embed::{Embedder, EmbedderLocality};
 use oneiron::llm::run_admission::{
-    CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, RunDenied, RunReceiptSink,
+    AllocationRefusal, CallOutcome, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer,
+    RunAdmission, RunDenied, RunReceiptSink,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, ModelLocality};
 
@@ -277,4 +278,57 @@ impl PaidRequests for AdmittedRequests {
         }
         posted
     }
+}
+
+/// Sends one endpoint query under the caller's run, for the eval
+/// measurement's exact-model leg: admitted and settled on `run`, not on a
+/// meter of its own. `post` makes exactly one request, as
+/// [`PaidRequests::send`]'s does; a fresh [`HttpEmbedder`] with no paid
+/// door is the raw post. Refused or failed like [`PaidRequests::send`].
+fn refused_with_run(denied: RunDenied) -> oneiron::Error {
+    let budget = matches!(
+        &denied,
+        RunDenied::Budget { .. }
+            | RunDenied::NoAllocation
+            | RunDenied::AllocationExhausted
+            | RunDenied::ResidentShareSpent { .. }
+            | RunDenied::AllocationRefused {
+                reason: AllocationRefusal::HostCheck,
+            }
+            | RunDenied::Dispatch { .. }
+    );
+    if budget {
+        oneiron::Error::UpstreamToolFailure {
+            tool: "embedder-remote",
+            code: format!("budget denied: run admission refused the request: {denied}"),
+        }
+    } else {
+        refused(denied)
+    }
+}
+
+pub(super) fn send_with_run(
+    config: &impl EndpointSection,
+    locality: EmbedderLocality,
+    run: &RunAdmission,
+    texts: &[&str],
+    post: &mut dyn FnMut() -> oneiron::Result<Vec<Vec<f32>>>,
+) -> oneiron::Result<Vec<Vec<f32>>> {
+    let connector = connector(config.fields()?, locality)?;
+    let tokens = estimate(texts);
+    let permit = run
+        .admit_paid(&connector, tokens)
+        .map_err(refused_with_run)?;
+    run.dispatch_paid(permit.lease(), &connector)
+        .map_err(refused_with_run)?;
+    let posted = post();
+    // The request went out: a failed one keeps its reservation as spend.
+    let outcome = match &posted {
+        Ok(_) => CallOutcome::UsedCounted(tokens),
+        Err(_) => CallOutcome::Failed,
+    };
+    if let Err(denied) = permit.settle(outcome) {
+        tracing::error!(%denied, "an embedding request's settlement was refused");
+    }
+    posted
 }

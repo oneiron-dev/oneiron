@@ -3,15 +3,15 @@
 use lopdf::{Document, Object};
 
 use crate::api::{
-    Counter, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
-    note_current,
+    Counter, SealResourceLimits, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, note_current,
 };
-use crate::error::{SealError, SealStage};
-use crate::memory::MemoryLedger;
+use crate::error::SealError;
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 
 use super::super::{cms, pdf};
 use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
-use super::verify_chain_gates::{VerifyCtx, malformed_input};
+use super::verify_chain_gates::{VerifyCtx, malformed_input, memory_refused};
 use super::verify_dss_core::EmbeddedCert;
 use super::verify_evidence::CadesEvidence;
 pub(super) use super::verify_evidence::evaluate_envelope;
@@ -81,15 +81,22 @@ fn name_eq(obj: &Object, expected: &[u8]) -> bool {
 ///
 /// The nodes the descent visits are counted for the `[limits]` field-tree
 /// row, a failed descent's too; no count of them stops it (Rule 5).
-pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
+pub(super) fn collect_signatures(
+    doc: &Document,
+    limits: &SealResourceLimits,
+) -> Result<Vec<SigEntry>, SealError> {
     let mut work = 0usize;
-    let collected = discover_signatures(doc, &mut work);
+    let collected = discover_signatures(doc, &mut work, limits);
     note_current(Counter::FieldTreeWork, work);
     collected
 }
 
 /// [`collect_signatures`], counting the nodes it visits in `work`.
-fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>, SealError> {
+fn discover_signatures(
+    doc: &Document,
+    work: &mut usize,
+    limits: &SealResourceLimits,
+) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
     let catalog = pdf::catalog(doc).ok_or_else(malformed_input)?;
     let Ok(af_obj) = catalog.get(b"AcroForm") else {
@@ -125,7 +132,7 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         std::collections::BTreeSet::new();
     let mut stack: Vec<(&Object, bool)> = Vec::new();
     for field in fields.iter().rev() {
-        stack.push((field, false));
+        pdf::admitted::push(limits, &mut stack, (field, false)).map_err(memory_refused)?;
     }
     while let Some((node, inherited_sig_ft)) = stack.pop() {
         *work = work.saturating_add(1);
@@ -134,7 +141,7 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         // once: re-walking cannot discover a new signature, and refusing to
         // recurse is what makes a cycle terminate.
         if let Some(id) = node_id
-            && !visited.insert(id)
+            && !pdf::admitted::btree_insert(limits, &mut visited, id).map_err(memory_refused)?
         {
             continue;
         }
@@ -158,7 +165,8 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
                 .as_array()
                 .map_err(|_| malformed_input())?;
             for kid in kids.iter().rev() {
-                stack.push((kid, is_sig_ft));
+                pdf::admitted::push(limits, &mut stack, (kid, is_sig_ft))
+                    .map_err(memory_refused)?;
             }
         }
         // Signature-discovery looks only at SIGNATURE fields (/FT /Sig,
@@ -231,37 +239,77 @@ fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>
         let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
-        let field_name = field
+        let field_name_bytes = field
             .get(b"T")
             .ok()
             .and_then(|o| pdf::resolve(doc, o))
             .and_then(|o| o.as_str().ok())
-            .map_or_else(
-                || "unnamed".to_owned(),
-                |v| String::from_utf8_lossy(v).into_owned(),
-            );
-        out.push(SigEntry {
-            field_name,
-            is_doc_ts,
-            byte_range: br,
-            contents: contents.clone(),
+            .unwrap_or(b"unnamed");
+        let field_name_len = field_name_bytes.utf8_chunks().fold(0usize, |len, chunk| {
+            len.saturating_add(chunk.valid().len())
+                .saturating_add(if chunk.invalid().is_empty() {
+                    0
+                } else {
+                    char::REPLACEMENT_CHARACTER.len_utf8()
+                })
         });
+        limits
+            .memory
+            .admit::<u8>(field_name_len)
+            .map_err(memory_refused)?;
+        let field_name = String::from_utf8_lossy(field_name_bytes).into_owned();
+        limits
+            .memory
+            .admit::<u8>(contents.len())
+            .map_err(memory_refused)?;
+        pdf::admitted::push(
+            limits,
+            &mut out,
+            SigEntry {
+                field_name,
+                is_doc_ts,
+                byte_range: br,
+                contents: contents.clone(),
+            },
+        )
+        .map_err(memory_refused)?;
     }
+    // Stable sorting may allocate a temporary spine; it never copies the
+    // owned names or contents. Keep equal-revision discovery order intact.
+    let scratch_bytes = if out.len() > 1 {
+        out.len().saturating_mul(std::mem::size_of::<SigEntry>())
+    } else {
+        0
+    };
+    let _sort_hold = limits.memory.hold(scratch_bytes).map_err(memory_refused)?;
     out.sort_by_key(|e| e.byte_range[2].saturating_add(e.byte_range[3]));
     Ok(out)
 }
 
-pub(super) struct Checks {
+pub(super) struct Checks<'a> {
     pub(super) list: Vec<VerifyCheck>,
+    limits: &'a SealResourceLimits,
 }
 
-impl Checks {
-    pub(super) fn new() -> Self {
-        Self { list: Vec::new() }
+impl<'a> Checks<'a> {
+    pub(super) fn new(limits: &'a SealResourceLimits) -> Self {
+        Self {
+            list: Vec::new(),
+            limits,
+        }
     }
 
-    pub(super) fn record(&mut self, kind: VerifyCheckKind, ok: bool, finding: VerifyFindingCode) {
-        self.list.push(VerifyCheck {
+    fn push(&mut self, check: VerifyCheck) -> Result<(), SealMemoryRefusal> {
+        pdf::admitted::push(self.limits, &mut self.list, check)
+    }
+
+    pub(super) fn record(
+        &mut self,
+        kind: VerifyCheckKind,
+        ok: bool,
+        finding: VerifyFindingCode,
+    ) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status: if ok {
                 VerifyCheckStatus::Pass
@@ -269,7 +317,7 @@ impl Checks {
                 VerifyCheckStatus::Fail
             },
             finding: if ok { None } else { Some(finding) },
-        });
+        })
     }
 
     pub(super) fn record_status(
@@ -277,35 +325,35 @@ impl Checks {
         kind: VerifyCheckKind,
         status: VerifyCheckStatus,
         finding: VerifyFindingCode,
-    ) {
-        self.list.push(VerifyCheck {
+    ) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status,
             finding: (status == VerifyCheckStatus::Fail).then_some(finding),
-        });
+        })
     }
 
-    pub(super) fn absent(&mut self, kind: VerifyCheckKind) {
-        self.list.push(VerifyCheck {
+    pub(super) fn absent(&mut self, kind: VerifyCheckKind) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status: VerifyCheckStatus::NotApplicable,
             finding: None,
-        });
+        })
     }
 
-    pub(super) fn not_run(&mut self, kind: VerifyCheckKind) {
-        self.not_run_with_reason(kind, None);
+    pub(super) fn not_run(&mut self, kind: VerifyCheckKind) -> Result<(), SealMemoryRefusal> {
+        self.not_run_with_reason(kind, None)
     }
     pub(super) fn not_run_with_reason(
         &mut self,
         kind: VerifyCheckKind,
         reason: Option<VerifyFindingCode>,
-    ) {
-        self.list.push(VerifyCheck {
+    ) -> Result<(), SealMemoryRefusal> {
+        self.push(VerifyCheck {
             kind,
             status: VerifyCheckStatus::NotRun,
             finding: reason,
-        });
+        })
     }
 
     pub(super) fn passed(&self, kind: VerifyCheckKind) -> bool {
@@ -397,56 +445,42 @@ pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
     Some(first.full)
 }
 
-/// The operation ledger `ctx` runs under; a missing ledger is the
-/// verification's configuration error, never a verdict.
-fn operation_memory(ctx: &VerifyCtx<'_>) -> Result<std::sync::Arc<MemoryLedger>, SealError> {
-    ctx.limits
-        .memory
-        .ledger()
-        .map_err(|refusal| refusal.seal_error(SealStage::Verification))
-}
-
 /// Verify one CAdES-detached signature dictionary. On a parseable envelope
 /// the CMS certificate set is recorded in `covered` so the DSS binding can
 /// require the validation material to speak about this chain (§7.5 step 3).
+/// The CMS parse, its certificates' copies and the signer chain are held on
+/// `memory` (FIX 12260); memory refused is `Err`, never a verdict.
 #[allow(clippy::too_many_lines)]
 pub(super) fn verify_cades_sig(
     bytes: &[u8],
     e: &SigEntry,
     ctx: &VerifyCtx<'_>,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     covered: &mut Vec<EmbeddedCert>,
-) -> Result<CadesEvidence, SealError> {
+    memory: &MemoryLedger,
+) -> Result<CadesEvidence, SealMemoryRefusal> {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
         br_ok,
         VerifyFindingCode::InvalidByteRange,
-    );
+    )?;
     checks.record(
         VerifyCheckKind::UnsignedGap,
         br_ok,
         VerifyFindingCode::InvalidUnsignedGap,
-    );
+    )?;
     let spans_digest = if br_ok {
         pdf::hash_byte_range(bytes, e.byte_range).ok()
     } else {
         None
     };
-    let memory = operation_memory(ctx)?;
     let cms_der = unpadded_cms(&e.contents);
-    // Only an ordinary parse failure is an invalid envelope; a memory refusal
-    // propagates as the verification's resource error, never a verdict.
-    let parsed = if let Some(d) = cms_der {
-        match cms::parse_cms(d, &memory) {
-            Ok(parsed) => Some(parsed),
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
+    let parsed = cms_der
+        .and_then(|d| cms::parse_cms(d).ok())
+        .map(|parsed| parsed.held(memory))
+        .transpose()?;
     let env_ok = parsed.as_ref().is_some_and(|p| {
         p.content_oid == cms::OID_SIGNED_DATA.as_bytes()
             && p.econtent.is_none()
@@ -459,55 +493,50 @@ pub(super) fn verify_cades_sig(
         VerifyCheckKind::CmsEnvelope,
         env_ok,
         VerifyFindingCode::InvalidCms,
-    );
+    )?;
     let Some(parsed) = parsed.filter(|_| env_ok) else {
         checks.record(
             VerifyCheckKind::SignedAttributes,
             false,
             VerifyFindingCode::InvalidSignedAttributes,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::ContentDigest,
             false,
             VerifyFindingCode::DigestMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::SignatureValue,
             false,
             VerifyFindingCode::SignatureMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::SigningCertificateBinding,
             false,
             VerifyFindingCode::CertificateBindingMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::CertificatePath,
             false,
             VerifyFindingCode::CertificatePathInvalid,
-        );
+        )?;
         let timestamp = TimestampEvidence::NotEvaluated.project(
             TimestampKind::Signature,
             checks,
             covered,
-            &memory,
+            memory,
         )?;
         return Ok(CadesEvidence {
             signer_chain: None,
             timestamp,
         });
     };
-    for d in &parsed.certificates {
-        let cert = EmbeddedCert::from_der(d, &memory)
-            .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-        if let Some(cert) = cert {
-            memory
-                .admit_len::<EmbeddedCert>(1)
-                .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-            covered.push(cert);
-        }
-    }
-    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered)
+    EmbeddedCert::extend_admitted(
+        covered,
+        parsed.certificates.iter().map(Vec::as_slice),
+        memory,
+    )?;
+    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered, memory)
 }
 
 /// Signer-level checks after the envelope parses: baseline attributes,
@@ -517,72 +546,52 @@ pub(super) fn verify_cades_sig(
 fn verify_signer(
     ctx: &VerifyCtx<'_>,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
-) -> Result<CadesEvidence, SealError> {
-    let memory = operation_memory(ctx)?;
+    memory: &MemoryLedger,
+) -> Result<CadesEvidence, SealMemoryRefusal> {
     let signer = &parsed.signer;
-    // Only an ordinary attribute failure is an invalid envelope; a memory
-    // refusal propagates as the verification's resource error, never a check.
-    let md = match cms::check_baseline_attrs(signer, &memory) {
-        Ok(digest) => Some(digest),
-        Err(err) if err.is_retryable() => return Err(err),
-        Err(_) => None,
-    };
+    let md = cms::check_baseline_attrs(signer).ok();
     checks.record(
         VerifyCheckKind::SignedAttributes,
         md.is_some(),
         VerifyFindingCode::InvalidSignedAttributes,
-    );
+    )?;
     let digest_ok = matches!((md, spans_digest), (Some(a), Some(b)) if a == b);
     checks.record(
         VerifyCheckKind::ContentDigest,
         digest_ok,
         VerifyFindingCode::DigestMismatch,
-    );
-    let mut signer_idx = None;
-    for (i, c) in parsed.certificates.iter().enumerate() {
-        let (iss, ser) = match cms::issuer_and_serial(c, &memory) {
-            Ok(pair) => pair,
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(_) => continue,
+    )?;
+    let signer_idx = parsed.certificates.iter().position(|c| {
+        let Ok((iss, ser)) = cms::issuer_and_serial(c) else {
+            return false;
         };
-        let mut bound = false;
-        for a in &parsed.signer.signed_attrs {
-            match cms::check_ess_binding(a, c, &iss, &ser, &memory) {
-                Ok(()) => {
-                    bound = true;
-                    break;
-                }
-                Err(err) if err.is_retryable() => return Err(err),
-                Err(_) => continue,
-            }
-        }
-        if bound {
-            signer_idx = Some(i);
-            break;
-        }
-    }
+        parsed
+            .signer
+            .signed_attrs
+            .iter()
+            .any(|a| cms::check_ess_binding(a, c, &iss, &ser).is_ok())
+    });
     checks.record(
         VerifyCheckKind::SigningCertificateBinding,
         signer_idx.is_some(),
         VerifyFindingCode::CertificateBindingMismatch,
-    );
+    )?;
     let Some(idx) = signer_idx else {
         checks.record(
             VerifyCheckKind::SignatureValue,
             false,
             VerifyFindingCode::SignatureMismatch,
-        );
+        )?;
         checks.record(
             VerifyCheckKind::CertificatePath,
             false,
             VerifyFindingCode::CertificatePathInvalid,
-        );
-        let timestamp = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors, &memory)?
-            .project(TimestampKind::Signature, checks, covered, &memory)?;
+        )?;
+        let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
         return Ok(CadesEvidence {
             signer_chain: None,
             timestamp,
@@ -592,9 +601,14 @@ fn verify_signer(
     let alg = cms::cert_signature_algorithm(cert_der);
     let sig_ok = match alg {
         Ok(a) => {
-            let input = cms::signed_attrs_signature_input(signer, &memory)?;
             cms::sig_alg_permitted(a, &signer.signature_alg_oid)
-                && cms::verify_signature_value(a, cert_der, &input, &signer.signature).is_ok()
+                && cms::verify_signature_value(
+                    a,
+                    cert_der,
+                    &cms::signed_attrs_signature_input(signer),
+                    &signer.signature,
+                )
+                .is_ok()
         }
         Err(_) => false,
     };
@@ -602,25 +616,9 @@ fn verify_signer(
         VerifyCheckKind::SignatureValue,
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
-    );
-    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, &memory)?;
-    // The reordered chain below clones every certificate exactly once.
-    memory
-        .admit_len::<u8>(parsed.certificates.iter().map(Vec::len).sum())
-        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-    memory
-        .admit_len::<Vec<u8>>(parsed.certificates.len())
-        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-    let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
-        .chain(
-            parsed
-                .certificates
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != idx)
-                .map(|(_, c)| c.clone()),
-        )
-        .collect();
+    )?;
+    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
+    let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     Ok(CadesEvidence {
         signer_chain: Some(chain_ders),
         timestamp,
@@ -637,10 +635,10 @@ fn verify_ts_token(
     clock_ms: u64,
     signer: &cms::ParsedSignerInfo,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     covered: &mut Vec<EmbeddedCert>,
     memory: &MemoryLedger,
-) -> Result<TimestampResult, SealError> {
+) -> Result<TimestampResult, SealMemoryRefusal> {
     TimestampEvidence::for_signature(clock_ms, signer, anchors, memory)?.project(
         TimestampKind::Signature,
         checks,
@@ -657,28 +655,30 @@ fn verify_ts_token(
 /// DSS evidence freshness only when the ByteRange provably covers the final
 /// /DSS revision (`dss_revision_end`). The genTime is bounded against the
 /// verify clock (`clock_ms`): a future-dated token past the documented skew
-/// is rejected, never clamped.
+/// is rejected, never clamped. The token's parse, decodes and copies are
+/// held on `memory` (FIX 12260); memory refused is `Err`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
     anchors: &[pkix_chain::TrustAnchor],
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
     memory: &MemoryLedger,
-) -> Result<TimestampResult, SealError> {
+) -> Result<TimestampResult, SealMemoryRefusal> {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
         br_ok,
         VerifyFindingCode::InvalidByteRange,
-    );
+    )?;
     checks.record(
         VerifyCheckKind::UnsignedGap,
         br_ok,
         VerifyFindingCode::InvalidUnsignedGap,
-    );
+    )?;
     let covers_end = !is_last
         || e.byte_range
             .get(2..4)

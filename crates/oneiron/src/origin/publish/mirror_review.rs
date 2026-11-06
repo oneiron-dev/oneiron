@@ -1,20 +1,7 @@
-//! The review section of one whole ref an automatic mirror plan pushes (FIX
-//! 6866 part 2; CALLS "FIX 6866 automatic review record").
-//!
-//! A commit tip's section is an exact publish's full-ancestry review
-//! (`review`): `Reach(new) - Reach(the tip the plan read)`, with every merge
-//! parent and each path, mode and object each commit introduces against each
-//! parent; the tip is subtracted only when this store holds it as a commit,
-//! else the section covers the whole closure. A plan reviews its refs in
-//! order, and a later ref leaves out what an earlier ref's section already
-//! names, so the plan's pages hold the union once while each ref keeps its
-//! own section. A tag tip names each annotated tag on its way first, its raw
-//! bytes (message included) in the digest, or for a tag too large to read
-//! whole its oid and size; a tree tip names every path it
-//! holds; a blob tip names itself. Every section passes the one history
-//! policy hook an exact publish's review passes.
+//! Core half of `origin::publish::mirror_review`: its store-layer items live in `oneiron_store::origin::publish::mirror_review` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeSet;
+pub(crate) use oneiron_store::origin::publish::mirror_review::*;
 
 use super::ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS;
 use super::mirror_plan::MirrorRunScope;
@@ -28,9 +15,7 @@ use crate::error::Result;
 use crate::git_wire::{
     GitOid, GitRefEnd, GitRefName, GitRefTag, GitReviewItem, GitWire, GitWireRepo,
 };
-
-/// A section digest's BLAKE3 derive-key context.
-const ORIGIN_MIRROR_REVIEW_DIGEST_CONTEXT: &str = "oneiron:origin-mirror-review:v1";
+use std::collections::BTreeSet;
 
 /// One ref's section as its walk built it, and the commit the walk covered,
 /// which later refs leave out.
@@ -159,6 +144,7 @@ impl Section {
                 pages: count(self.pages.len()),
                 lfs_bytes: OriginPublishLfsBytes::NotSent,
                 lossy_paths: self.lossy_paths,
+                secret_history: None,
             },
             pages: self.pages,
             paths: self.paths,
@@ -211,6 +197,7 @@ impl Vault {
                     commit,
                     base.as_ref(),
                     reviewed,
+                    None,
                 )?;
                 section.absorb(walk);
                 (

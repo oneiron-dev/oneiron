@@ -9,12 +9,12 @@ use super::doors::{
     standing_composition_in_txn, validate_landing_in_txn,
 };
 use super::purpose::SummaryPurpose;
-use crate::attempt_queue::AttemptId;
 use crate::conversation_dag::{actor_in_txn, prove_branch_span, selected_thread_in_txn};
 use crate::dreamer_consolidation::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 use crate::dreamer_runner::DreamerAttemptPayload;
 use crate::error::{Error, Result};
 use crate::memory::Memory;
+use crate::store::attempt_id::AttemptId;
 use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::store::conversation_record::AppendFailure;
 use crate::store::conversation_record::{ScopePath, ScopeSelector};
@@ -23,7 +23,9 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
 mod editor_sources;
+mod remake;
 mod requester_lane;
+pub(super) use requester_lane::inherit_note_requester_lane;
 
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
@@ -307,12 +309,18 @@ pub(super) fn plan_in_txn(
         (None, Some(session)) => super::session::session_sources_in_txn(vault, txn, &session)?,
         // A NOTE set has no conversation to resolve: its NOTEs are read in
         // this writer, as its requester reads them (FIX 5757).
-        (None, None) => note_sources_in_txn(
-            vault,
-            txn,
-            request.requester,
-            admitted.as_deref().unwrap_or_default(),
-        )?,
+        (None, None) => {
+            let lane = requester_lane::declared_lane(input)?;
+            let basis = requester_lane::declared_read_basis(input, &lane)?;
+            note_sources_in_txn(
+                vault,
+                txn,
+                request.requester,
+                admitted.as_deref().unwrap_or_default(),
+                &lane,
+                basis,
+            )?
+        }
     };
     // A sitting that retained no turns has no summary: its attempt completes
     // with none (FIX 7509), never with invented prose.

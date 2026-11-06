@@ -27,7 +27,7 @@ use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireRepo};
 use crate::error::Result;
 use crate::store::code_snapshot::RepoRef;
 
-mod profile;
+use oneiron_store::git_wire::import_fetch::profile;
 pub(super) use profile::ImportProcessProfile;
 
 /// The scratch ref the one fetched outside ref lands on.
@@ -57,6 +57,12 @@ impl FetchedExternalGit {
     #[must_use]
     pub fn base(&self) -> &GitOid {
         &self.base
+    }
+
+    /// The private scratch store the fetch wrote, for a read of what it
+    /// holds (FIX 7596).
+    pub(crate) fn repo(&self) -> &GitWireRepo {
+        &self.repo
     }
 }
 

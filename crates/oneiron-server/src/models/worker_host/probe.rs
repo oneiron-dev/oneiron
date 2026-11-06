@@ -23,9 +23,10 @@
 //! actual render or transcription ([`super::media_worker::probe`]).
 //!
 //! A pinned value the answer contradicts is `Failed`; a pin or a piece of
-//! evidence that is missing is `Unverified`; no answer is `Unreachable`.
+//! evidence that is missing is `Unverified`; no answer is `Unreachable`. A
+//! launch that names its draft's identity (FIX 14976) is pinned to it the
+//! same way: a vault's own draft qualifies only when the answer names it.
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::PoisonError;
 
@@ -38,17 +39,16 @@ use oneiron_driver::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
-use super::super::http::{KeyStyle, MAX_REPLY_BYTES, ProviderHttp};
-use super::bundle::sha256_hex;
+use super::super::ModelHostBudgets;
+use super::super::http::{
+    KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read, holding_chat_replies,
+};
+use super::super::llama_identity::verify_llama_header;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 /// The usage key an EXL3 answer echoes its launch manifest's digest under.
 pub(super) const LAUNCH_MANIFEST_KEY: &str = "launch_manifest";
-
-/// The llama.cpp identity manifest schema this probe reads.
-const LLAMA_SCHEMA_VERSION: u64 = 1;
-const LLAMA_BACKEND: &str = "llama_cpp";
 
 /// The one qualification input: a one-token answer to a fixed prompt, with
 /// thinking off.
@@ -134,8 +134,8 @@ impl HouseProbe {
         http: &ProviderHttp,
         launch: Option<&LaunchRecord>,
     ) -> Result<(JsonValue, Option<JsonValue>), WorkerReadiness> {
-        match launch.and_then(|launch| launch.native_socket.as_deref()) {
-            Some(socket) => native_answer(socket, &qualification_request(&self.wire_model))
+        match launch.filter(|launch| launch.native_socket.is_some()) {
+            Some(launch) => native_answer(launch, &qualification_request(&self.wire_model))
                 .await
                 .map(|(hello, body)| (body, Some(hello)))
                 .map_err(|failure| failed(failure, None)),
@@ -221,12 +221,19 @@ impl HouseProbe {
         }
         let path = format!("/{}.json", alias.manifest.as_str());
         let manifest = match http.get_native_within(&path, MAX_REPLY_BYTES).await {
-            Ok(reply) if (200..300).contains(&reply.status) => verify_llama(
-                &reply.body,
-                alias.manifest.as_str(),
-                &alias.epoch,
-                &self.wire_model,
-            ),
+            Ok(reply) => {
+                let _held = charge_read(reply.body.len());
+                if (200..300).contains(&reply.status) {
+                    verify_llama(
+                        &reply.body,
+                        alias.manifest.as_str(),
+                        &alias.epoch,
+                        &self.wire_model,
+                    )
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
         let Some(identity) = manifest else {
@@ -260,8 +267,18 @@ impl WorkerProbe for HouseProbe {
                 Err(_) => return WorkerReadiness::Unverified { observed: None },
             };
             match expected.kind {
-                WorkerKind::Exl3 => self.exl3(http, expected).await,
-                WorkerKind::LlamaCpp => self.llama(http, expected).await,
+                WorkerKind::Exl3 | WorkerKind::LlamaCpp => {
+                    // A shared worker belongs to no vault; each qualification
+                    // owns its default line rather than capturing the first vault.
+                    let budgets = ModelHostBudgets::unhosted();
+                    holding_chat_replies(&budgets, async {
+                        match expected.kind {
+                            WorkerKind::Exl3 => self.exl3(http, expected).await,
+                            _ => self.llama(http, expected).await,
+                        }
+                    })
+                    .await
+                }
                 WorkerKind::VoxCpm2 | WorkerKind::Asr => {
                     let launch = self.launch();
                     super::media_worker::probe(http, &self.wire_model, expected, launch.as_ref())
@@ -290,18 +307,25 @@ fn epoch_only(epoch: CacheEpoch) -> WorkerDescriptor {
 /// shape.
 #[cfg(unix)]
 async fn native_answer(
-    socket: &Path,
+    launch: &LaunchRecord,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    super::super::native_exl3::qualify(socket, request).await
+    let wire_model = request
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .ok_or(WorkerFailure::InvalidReply)?;
+    let launch = launch
+        .native_launch(wire_model)
+        .ok_or(WorkerFailure::Unreachable)?;
+    super::super::native_exl3::qualify(&launch, request).await
 }
 
 #[cfg(not(unix))]
 async fn native_answer(
-    socket: &Path,
+    launch: &LaunchRecord,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    let _ = (socket, request);
+    let _ = (launch, request);
     Err(WorkerFailure::Unreachable)
 }
 
@@ -332,13 +356,9 @@ fn failed(failure: WorkerFailure, observed: Option<WorkerDescriptor>) -> WorkerR
     WorkerReadiness::Failed { failure, observed }
 }
 
-/// The fields of a llama.cpp identity manifest this probe checks.
+/// The qualification manifest's identity payload.
 #[derive(Deserialize)]
 struct LlamaManifest {
-    schema_version: u64,
-    backend: String,
-    backend_epoch: CacheEpoch,
-    configured_wire_id: String,
     identity: CacheIdentity,
 }
 
@@ -350,15 +370,9 @@ fn verify_llama(
     epoch: &CacheEpoch,
     wire_model: &str,
 ) -> Option<CacheIdentity> {
-    if sha256_hex(bytes) != digest {
-        return None;
-    }
+    verify_llama_header(bytes, digest, epoch, wire_model)?;
     let manifest: LlamaManifest = serde_json::from_slice(bytes).ok()?;
-    (manifest.schema_version == LLAMA_SCHEMA_VERSION
-        && manifest.backend == LLAMA_BACKEND
-        && manifest.backend_epoch == *epoch
-        && manifest.configured_wire_id == wire_model)
-        .then_some(manifest.identity)
+    Some(manifest.identity)
 }
 
 /// One pinned field of an identity.
@@ -421,10 +435,25 @@ pub(super) fn judge_pins(
             return failed(failure, Some(observed));
         }
     }
+    // A launch that names its draft's identity (FIX 14976): an answer naming
+    // another draft contradicts it, and one naming none is unverified.
+    let draft_pins: Vec<&String> = pins
+        .iter()
+        .filter_map(|pin| pin.draft_weights_digest.as_ref())
+        .collect();
+    let draft_contradicted = draft_pins.iter().any(|want| {
+        seen.draft_weights_digest
+            .as_ref()
+            .is_some_and(|got| got != *want)
+    });
+    if draft_contradicted {
+        return failed(WorkerFailure::ModelMismatch, Some(observed));
+    }
     let pinned = |field: Field| pins.iter().any(|pin| field(pin).is_some());
     let complete = required
         .iter()
         .all(|&field| pinned(field) && field(seen).is_some())
+        && (draft_pins.is_empty() || seen.draft_weights_digest.is_some())
         && (!pinned(tokenizer) || seen.tokenizer.is_some())
         && seen.backend_epoch.is_some()
         && observed.build_evidence == WorkerBuildEvidence::VerifiedArtifacts;

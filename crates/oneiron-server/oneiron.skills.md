@@ -296,7 +296,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 - trigger phrases:
   - "change inference default tier"
   - "edit ASR or TTS route"
-- safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
+- safety: Mutating; requires an owner-grade bearer. The seven purpose rows, four speech lanes and `self_compaction` row must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
 
 #### decision-read-probe - `POST /v1/llm/decision_read`
 
@@ -367,7 +367,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "semantic search this vault"
   - "find memories about"
   - "search by meaning"
-- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` when the query text passes `[limits].retrieval_query_bytes` (1 MiB unless set).
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving. `[limits].semantic_query_bytes` defaults to `8_388_608` decoded text bytes; a crossing asks and serves the full query, rather than returning a row-specific 413. This endpoint does not apply stock JSON's body-byte ceiling; other routes keep theirs. Body-memory and embedding-concurrency admission remain separate from this query-byte row.
 
 #### search-text - `GET /api/search/text`
 
@@ -656,9 +656,9 @@ Methods: `GET` and `PUT` on the two Tier-1 inference-defaults routes.
 
 Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core token is not enough.
 
-`GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`).
+`GET` returns `{ "purposes": { ... }, "voice": { ... }, "voice_precedence": "...", "extraction_max_locality": "...", "self_compaction": { "source": "...", "cheap_model": "...", "locality": "..." } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each purpose or voice row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`). The required `self_compaction` row contains `source` (`auto`, `retained_turns`, or `live_fork`), `cheap_model` (a model id) and `locality` (the same locality values). The shipped `source` is `auto`: each compaction uses the live fork while its prefix is warm in the provider prompt cache, otherwise the cheap writer on retained turns. Preserve this row when replacing the whole table.
 
-`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
+`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows. A live policy-power holder receives `200` with the stored table; another admitted caller receives `202` with `{ "proposed": <kept proposal> }`, and the active defaults stay unchanged. Credential grade alone does not grant policy power. Invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
 
 ### Decision Read Probe
 
@@ -835,7 +835,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: comma-separated `f32` values, for example `0.1,0.2,0.3`.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; the whole requested limit is served, and `meta.limitClamped` stays false.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
@@ -875,7 +875,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Request body:
 
 - `text` required: the natural-language question, at most `[limits].retrieval_query_bytes` (1 MiB unless set). The server prepends the model's query instruction and embeds it; the caller sends no vector.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; the whole requested limit is served, and `meta.limitClamped` stays false.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
@@ -928,7 +928,7 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: natural language, exact phrase, identifier fragment, or keyword string.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; the whole requested limit is served, and `meta.limitClamped` stays false.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
@@ -1070,12 +1070,15 @@ Request body:
 - `query` optional: retrieval text.
 - `query_vector` optional: numeric vector as an array of `f32` values.
 - `media` optional: `{ "space", "mime", "bytes_b64" }`. The server embeds the base64 bytes (at most `[limits].retrieval_query_bytes` as sent) into the declared embedding space `space` through the `ai.embed` rung its id names (a rung id from `GET /v1/ai/options`, then `@` and the `[models]` provider key that binds that rung), on the query tower `mime` picks (`image/*`, `audio/*`, or UTF-8 `text/*`), and searches that space as one more ranked list. It may stand in for `query` and `query_vector`. With no `ai.embed` rung for the space the pack answers 503; the vault's inference policy still admits the call. `POST /v1/core/query` takes the same `media`. On the one-space preset (the vault's text kind slot bound to a declared space), both doors also embed `query` through that space's text tower and search it there, in place of the vault's own vector index.
-- `limit` optional: maximum entities to retrieve, default `10`; past `1000` it is served at `1000` and `limit_clamped` says so.
+- `limit` optional: maximum entities to retrieve, default `10`; the whole requested limit is served, and `limit_clamped` stays false.
 - `depth` optional: `edge_hop` and `max_neighbors` controls.
 - `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.
 - `time` optional: `since`, occurred range, or learned range filters.
 - `budget` optional: `max_item_tokens`, `max_field_chars`, and retrieval item budgets.
 - `reader` optional: `definition` (hex agent-definition id the caller can read) and `task_family`. The definition's memory profile picks this reader's optional memory for the family (absent: its default). It only narrows: the smaller token budget and the narrower view win. A reader set to no optional memory gets an empty pack with `state.kind` `skipped` and `state.reason` `skipped_by_profile`; pinned rows and the standing prefix stay.
+- `signals_since` optional: include reaction signals recorded at or after this Unix time for the reader's authored records. `signals_person` names that PERSON; a delegated credential may name only its own bound person. An owner credential without a bound person must supply it.
+- `signals_after` optional: the exclusive cursor from the previous successful signal page. `signals_limit` names a positive page size (at most 1000 per page). Scope, disclosure and optional room filtering run before pagination; withheld signals never become output cursors.
+- `signals_deadline_ms` optional: the caller's signal read/filter/page budget, 1 to 60000 milliseconds, starting after pack assembly when the signal read begins. Requires `signals_since`; invalid values are `400 BAD_REQUEST` before paid work. Omitted, the original complete feed runs without a signal deadline. Checks are cooperative between native operations and around sorting/page construction, not hard preemption. Expiry returns `408 DEADLINE_EXCEEDED` with `details.field` set to `signals_deadline_ms`; no context-pack success, partial signal page or advanced `signals_next` is published. Retry from the previous successful cursor with a larger budget or no deadline. This does not set the pack's retrieval `deadline_exceeded` statistic.
 
 Current response:
 
@@ -1636,6 +1639,7 @@ Fully specified entries:
 
 Codes the server's HTTP error type defines:
 
+- `DEADLINE_EXCEEDED` (408): the explicit signal-read budget expired; retry from the previous successful cursor without advancing it.
 - `BAD_REQUEST`
 - `UNAUTHORIZED`
 - `FORBIDDEN`
@@ -1647,6 +1651,7 @@ Codes the server's HTTP error type defines:
 - `INVALID_STATE`
 - `SNAPSHOT_MISMATCH`
 - `DAILY_BUDGET_EXHAUSTED`
+- `TOO_MANY_ATTEMPTS`
 - `MIRROR_NOT_READY`
 - `UNSUPPORTED_FORMAT`
 - `NOT_ACCEPTABLE`

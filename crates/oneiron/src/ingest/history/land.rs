@@ -35,7 +35,6 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
-use crate::gate::MAX_WITNESS_MESSAGE_ORDER;
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
@@ -194,6 +193,7 @@ pub(super) fn imported_message(
         },
         message_type: format!("import.{}", source.source_id()),
         content: message.text.clone(),
+        parts: None,
         metadata: Some(provenance(source, conversation, message, previous)),
         is_visible: true,
         order,
@@ -499,12 +499,12 @@ impl Import<'_> {
         txn: &heed::RoTxn<'_>,
         run: &[&HistoryMessage],
         count: u32,
-    ) -> MemoryResult<(EntityId, u32)> {
+    ) -> MemoryResult<(EntityId, u64)> {
         let mut place = 0;
         loop {
             let turn_id = self.chain_turn(run, place)?;
             let next_order = next_witness_message_order(&self.vault.store, txn, &turn_id)?;
-            if next_order.saturating_add(count) <= MAX_WITNESS_MESSAGE_ORDER.saturating_add(1) {
+            if next_order + u64::from(count) <= u64::from(u32::MAX) + 1 {
                 return Ok((turn_id, next_order));
             }
             place += 1;
@@ -565,7 +565,7 @@ impl Import<'_> {
                 message,
                 previous.as_ref(),
                 Some(id),
-                next_order,
+                next_order as u32,
             ));
             next_order += 1;
             occurred.push(message.at_ms.unwrap_or(self.fallback_ms) / 1000);

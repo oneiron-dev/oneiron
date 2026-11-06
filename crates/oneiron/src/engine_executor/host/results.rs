@@ -3,7 +3,7 @@
 //! `RecordingJsHost` and `ResolvedResult` are defined by `engine_executor::host`.
 
 use super::*;
-use crate::code_run::{ResultOccurrence, unmarked_secret};
+use crate::code_run::{READER_TASK_SETTLED, ResultOccurrence, unmarked_secret};
 use crate::engine_executor::parse_result_read_path;
 
 /// The ordinal of a stored-value path (`store_result_output_path`'s shape),
@@ -86,6 +86,16 @@ impl RecordingJsHost<'_, '_> {
             .as_ref()
             .zip(agent_verb_rows_of(&self.bridge_calls))
             .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat())
+    }
+
+    /// The rows of an own occurrence's fixed bytes. Unknown provenance uses
+    /// the live union; act gates retain their verb-only row set.
+    fn occurrence_rows(&self, output: &CodeRunRawOutput, callable: bool) -> Option<Vec<EntityId>> {
+        if callable {
+            output.input_rows.clone().or_else(|| self.result_rows())
+        } else {
+            self.verb_rows()
+        }
     }
 
     /// Whether the run's results stay on this device for its door's caller
@@ -217,9 +227,24 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn bind_stored_with(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        let input_rows = self.result_rows();
+        self.bind_stored_sourced(storage, sink, name, inherit, input_rows)
+    }
+
+    /// Binds a native value whose producer supplied its actual source rows.
+    /// All publishing, masking, marks, names and occurrence allocation stay
+    /// on the ordinary stored-result path.
+    pub(super) fn bind_stored_sourced(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
         mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
+        input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         // The sweep's tail goes through first, so the path names the digest
         // the body is published under (FIX 5399b).
@@ -234,7 +259,6 @@ impl RecordingJsHost<'_, '_> {
             .replayed_store_ordinal(&digest)
             .unwrap_or_else(|| self.output_ordinal_base + self.captured.len());
         let path = store_result_output_path(&digest, ordinal);
-        let input_rows = self.result_rows();
         let output =
             storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
         if !inherit.is_empty() {
@@ -312,11 +336,16 @@ impl RecordingJsHost<'_, '_> {
         {
             return Ok(Err(result_refusal("outside_delegated_range")));
         }
-        if found.child_source && !self.gated_write.reader_job_live()? {
+        if found.child_source && !self.observe_reader_job_live()? {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
+        // A scoped child's read of its own result or a finding stops at its
+        // live cutoff too, and the read made carries it (FIX 8233).
+        if self.live_cutoff_reached() {
+            return Ok(Err(result_refusal(READER_TASK_SETTLED)));
+        }
         let rows = match found.rows.clone() {
-            None => own,
+            None => self.occurrence_rows(&found.output, callable),
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
         };
         match self.withholds_rows(rows.clone())? {
@@ -349,14 +378,16 @@ impl RecordingJsHost<'_, '_> {
             range,
             foreign,
         )?
-        .map(|read| (read, rows)))
+        .map(|read| (read.with_live_cutoff(self.live_cutoff()), rows)))
     }
 
     /// What `reference` names for a read by this run: its own result first,
     /// then a reader child's source (a scoped child's lent inputs, each by
     /// its name or handle, FIX 7507), then a finding of one of its children.
+    /// The step's replay context keeps the findings the lookup read (FIX
+    /// 6352).
     pub(super) fn resolve_for_read(
-        &self,
+        &mut self,
         storage: &ExecutorStorage<'_>,
         reference: &JsResultRef,
     ) -> Result<Option<ResolvedResult>> {
@@ -417,10 +448,7 @@ impl RecordingJsHost<'_, '_> {
         let JsResultRef::Handle(handle) = reference else {
             return Ok(None);
         };
-        let Some(finding) = storage
-            .reader_finding(self.run_id, handle)?
-            .and_then(|job| job.finding)
-        else {
+        let Some(finding) = self.observe_settled_finding(storage, handle)? else {
             return Ok(None);
         };
         let Some(output) = recorded_output(storage, finding.owner, &finding.path, &finding.handle)?
@@ -445,27 +473,19 @@ impl RecordingJsHost<'_, '_> {
         ))?;
         Ok(match self.checked_result(target)? {
             Ok(read) => {
-                let mut card = read.card(storage)?;
+                // A card its live cutoff cut answers `reader_task_settled`,
+                // whatever the cut left (FIX 8233).
+                let card = read.card(storage);
+                if self.live_cutoff_reached() {
+                    return Ok(result_refusal(READER_TASK_SETTLED));
+                }
+                let mut card = card?;
                 // A whole fold result's card says what the fold covered, as
                 // its store's did: this step's receipt, or its committed one.
-                if read.range().is_none() {
-                    let output = read.output();
-                    let occurrence =
-                        OccurrenceRef::new(read.owner(), &output.path, &output.handle)?;
-                    let staged = self
-                        .receipts
-                        .iter()
-                        .find(|held| held.folded.occurrence == occurrence.occurrence)
-                        .cloned();
-                    let receipt = match staged {
-                        Some(receipt) => Some(receipt),
-                        None => storage.code_run_reader_fold(read.owner(), &output.path)?,
-                    };
-                    if let Some(receipt) =
-                        receipt.filter(|receipt| receipt.folded.handle == output.handle)
-                    {
-                        card["receipt"] = receipt.card();
-                    }
+                if read.range().is_none()
+                    && let Some(receipt) = self.whole_fold_receipt(storage, &read)?
+                {
+                    card["receipt"] = receipt.card();
                 }
                 json!({ "output": card })
             }
@@ -549,7 +569,13 @@ impl RecordingJsHost<'_, '_> {
             ResultFacet::Query => Some(storage.code_run_output_sink()?),
             _ => None,
         };
-        Ok(match read.read(storage, facet, input, sink.as_mut())? {
+        // A read its live cutoff cut answers `reader_task_settled`, whatever
+        // the cut left; a cut selection is never published (FIX 8233).
+        let reply = read.read(storage, facet, input, sink.as_mut());
+        if self.live_cutoff_reached() {
+            return Ok(result_refusal(READER_TASK_SETTLED));
+        }
+        Ok(match reply? {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {
@@ -573,64 +599,76 @@ impl RecordingJsHost<'_, '_> {
         storage: &ExecutorStorage<'_>,
         path: &str,
     ) -> Result<Option<Vec<u8>>> {
-        if self.withholds_results()? {
-            return Err(Error::InvalidConfig(
-                "stored result read refused: result_withheld".into(),
-            ));
-        }
         // The read names a body by content and, when the card gave one, an
         // occurrence: a same-byte result reads its own occurrence, never
         // the first with its bytes. A path without an occurrence keeps the
         // legacy meaning (the first occurrence with those bytes).
-        let Some((wanted, occurrence, offset)) = parse_result_read_path(path) else {
+        let found = parse_result_read_path(path).and_then(|(wanted, occurrence, offset)| {
+            self.results
+                .iter()
+                .chain(&self.captured)
+                .find(|output| {
+                    output.output_ref() == wanted
+                        && occurrence.as_ref().is_none_or(|occurrence| {
+                            ResultOccurrence::of(Some(self.run_id), output)
+                                .ok()
+                                .map(|mine| mine.id())
+                                .as_ref()
+                                == Some(occurrence)
+                        })
+                })
+                .map(|output| (output, offset))
+        });
+        let Some((output, offset)) = found else {
+            if self.withholds_results()? {
+                return Err(Error::InvalidConfig(
+                    "stored result read refused: result_withheld".into(),
+                ));
+            }
             return Err(Error::InvalidConfig(
                 "stored result is outside this run".into(),
             ));
         };
-        for output in self.results.iter().chain(&self.captured) {
-            if output.output_ref() != wanted {
-                continue;
-            }
-            if let Some(occurrence) = &occurrence {
-                let mine = ResultOccurrence::of(Some(self.run_id), output)
-                    .ok()
-                    .map(|mine| mine.id());
-                if mine.as_ref() != Some(occurrence) {
-                    continue;
-                }
-            }
-            if offset > output.raw_len {
-                return Err(Error::InvalidConfig(
-                    "stored result offset exceeds its body".into(),
-                ));
-            }
-            // A raw chunk is the occurrence's bytes: a tainted occurrence
-            // (a secret mark reads tainted) refuses here, as its facets do.
-            if storage
-                .code_run_result_taint(Some(self.run_id), output)?
-                .0
-                .is_tainted()
-            {
-                return Err(Error::InvalidConfig(
-                    "stored result read refused: tainted".into(),
-                ));
-            }
-            let bytes = storage
-                .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            // A body stored before its scan read every rule may hold a
-            // secret no mark names: a chunk showing one is withheld like a
-            // card or answer showing one is.
-            if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
-                return Err(Error::InvalidConfig(
-                    format!("stored result read refused: {reason}"),
-                ));
-            }
-            return Ok(Some(bytes));
+        let withheld = self
+            .withholds_rows(self.occurrence_rows(output, true))?
+            .map_err(|code| Error::InvalidConfig(format!("stored result read refused: {code}")))?;
+        if withheld {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: result_withheld".into(),
+            ));
         }
-        Err(Error::InvalidConfig(
-            "stored result is outside this run".into(),
-        ))
+        if offset > output.raw_len {
+            return Err(Error::InvalidConfig(
+                "stored result offset exceeds its body".into(),
+            ));
+        }
+        // A raw chunk is the occurrence's bytes: a tainted occurrence
+        // (a secret mark reads tainted) refuses here, as its facets do.
+        if storage
+            .code_run_result_taint(Some(self.run_id), output)?
+            .0
+            .is_tainted()
+        {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: tainted".into(),
+            ));
+        }
+        // A scoped child reads the chunk only before its live cutoff,
+        // checked again before the chunk is released (FIX 8233).
+        self.check_live_cutoff("stored result")?;
+        let bytes = storage
+            .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
+            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        // A body stored before its scan read every rule may hold a
+        // secret no mark names: a chunk showing one is withheld like a
+        // card or answer showing one is.
+        if let Some(reason) = unmarked_secret(&json!(String::from_utf8_lossy(&bytes))) {
+            return Err(Error::InvalidConfig(format!(
+                "stored result read refused: {reason}"
+            )));
+        }
+        self.check_live_cutoff("stored result")?;
+        Ok(Some(bytes))
     }
 
     /// A recorded-output read answers where the step's next bridge call

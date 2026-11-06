@@ -121,11 +121,11 @@ impl SyncSecretProjection {
         let rows = context.get_map(ROWS);
         let held = context.oplog_vv();
         let mut wanted = Vec::new();
-        for (source, hash) in &self.sources {
-            let Some(blob) = self.blobs.get(hash) else {
+        for (source, hash) in self.source_hashes() {
+            let Some(blob) = self.blob(hash) else {
                 continue;
             };
-            let peer = reauthor_peer(local, source, &blob.stamp);
+            let peer = reauthor_peer(local, source, &blob.stamp());
             if held.get(&peer).is_some() {
                 continue;
             }
@@ -157,11 +157,11 @@ impl SyncSecretProjection {
             let row = carrier.as_deref().unwrap_or(raw);
             let Some(blob) = row
                 .get(ENTITY_METADATA_HEADER_LEN..)
-                .and_then(|body| self.blobs.get(blake3::hash(body).as_bytes()))
+                .and_then(|body| self.blob(blake3::hash(body).as_bytes()))
             else {
                 return;
             };
-            let peer = reauthor_peer(local, &id, &blob.stamp);
+            let peer = reauthor_peer(local, &id, &blob.stamp());
             if held.get(&peer).is_some() {
                 return;
             }
@@ -186,11 +186,11 @@ impl SyncSecretProjection {
         if peer >> SOURCE_SHIFT != u64::from(source_bits(&source)) {
             return None;
         }
-        let stored = self.blob_of_source(&source)?.stored.as_ref()?;
+        let stored = self.blob_of_source(&source)?.stored()?;
         let header = submitted.get(..ENTITY_METADATA_HEADER_LEN)?;
         Some(InboundRow::Source {
             id: source,
-            row: [header, stored.as_slice()].concat(),
+            row: [header, stored].concat(),
             landed: None,
         })
     }
@@ -218,9 +218,12 @@ impl SyncSecretProjection {
         };
         let raw: &[u8] = &value;
         let carrier = crate::world_keys::image_pad_row(store, raw);
-        let body = carrier.as_deref().unwrap_or(raw).get(ENTITY_METADATA_HEADER_LEN..)?;
+        let body = carrier
+            .as_deref()
+            .unwrap_or(raw)
+            .get(ENTITY_METADATA_HEADER_LEN..)?;
         let hash = blake3::hash(body);
-        if !self.blobs.contains_key(hash.as_bytes()) && !self.unread.contains_key(hash.as_bytes()) {
+        if self.blob(hash.as_bytes()).is_none() && !self.is_unread(hash.as_bytes()) {
             return None;
         }
         let header = submitted.get(..ENTITY_METADATA_HEADER_LEN)?;

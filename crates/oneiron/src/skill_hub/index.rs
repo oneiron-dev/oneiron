@@ -26,8 +26,7 @@ use super::support::{
 use crate::error::ArtifactError;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-/// Claim predicate for mutable hub aliases attached to canonical skill identity.
-pub const PREDICATE_SKILL_HUB_PROVENANCE: &str = "skill.hub_provenance";
+pub use crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE;
 
 /// Cached capability-surface projection for a hub-derived skill entity.
 const CAPABILITY: SideTable<EntityId, SkillCapabilitySurface, Raw> =
@@ -270,6 +269,7 @@ impl Vault {
                 ClaimLifecycleStatus::Active,
             )?;
             body.source = Some(ClaimSource::Observed);
+            body.scope_facet = self.default_facet_in_txn(wtxn)?;
             self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
             replacement_id
         };
@@ -320,6 +320,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(ClaimSource::Observed);
+        body.scope_facet = self.default_facet_in_txn(wtxn)?;
         self.put_reserved_claim_in_txn(wtxn, &replacement_id, &body, occurred, learned_at)?;
         for (prior_id, prior_start) in prior_rows {
             self.supersede_reserved_claim_in_txn(
@@ -421,6 +422,63 @@ impl Vault {
     ) -> Result<()> {
         surface.validate()?;
         CAPABILITY.put(&self.store, wtxn, entity, surface)
+    }
+
+    /// The installed holder of one hub skill alias: the loadable skill of
+    /// this `name`, or its Superseded lineage anchor, whose current bytes
+    /// one consolidation-eligible provenance claim ties to `source` (same
+    /// claim carries the alias, the matching content hash and the
+    /// eligibility). Pure vault read; only actual consumers decide Active
+    /// load. No Candidate/Quarantined/Stale lift.
+    pub(crate) fn installed_hub_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &HubRef,
+        name: &str,
+    ) -> Result<Option<EntityId>> {
+        self.find_structured_skill_entity_in_txn(txn, |entity, record| {
+            if record.skill_id.as_str() != name {
+                return Ok(None);
+            }
+            if !crate::skill::skill_loadable(record)
+                && record.lifecycle_status != crate::skill::SkillLifecycle::Superseded
+            {
+                return Ok(None);
+            }
+            let Some(content_hash) = record.content_hash else {
+                return Ok(None);
+            };
+            let expected = content_hash.to_hex();
+            for (claim_id, body, _) in self.active_claims_for_predicate_in_txn(
+                txn,
+                &entity,
+                PREDICATE_SKILL_HUB_PROVENANCE,
+            )? {
+                let Some(hash_text) = map_value(&body.value, "contentHash").and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                if hash_text != expected {
+                    continue;
+                }
+                let Some(ref_value) = map_value(&body.value, "hubRef") else {
+                    continue;
+                };
+                if !same_hub_alias(&HubRef::from_value(ref_value)?, source) {
+                    continue;
+                }
+                if !crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    txn,
+                    &claim_id,
+                    crate::gate::ConsolidationReader::HubDefaultPresence,
+                )? {
+                    continue;
+                }
+                return Ok(Some(entity));
+            }
+            Ok(None)
+        })
     }
 }
 

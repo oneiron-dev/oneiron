@@ -553,8 +553,9 @@ pub(super) fn stamp_error_feedback(steps: ErrorProgramSteps, data: &mut Map<Stri
 }
 
 /// The answer's text copy of its structured content (`content[1]`, its
-/// canonical JSON) states it again once its feedback is back in.
-fn sync_content(result: &mut Value) {
+/// canonical JSON) states it again once its feedback is back in, here and
+/// in a `read_result` answer (FIX 10614).
+pub(super) fn sync_content(result: &mut Value) {
     let Some(text) = result
         .get("structuredContent")
         .map(crate::mcp::mcp_canonical_json)

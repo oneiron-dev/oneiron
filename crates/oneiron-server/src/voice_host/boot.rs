@@ -47,7 +47,6 @@ use std::time::Duration;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
-use oneiron::disclosure::RoomParty;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, VoiceChunkPolicy};
 use oneiron::voice_cascade::uds::SocketGuard;
@@ -480,11 +479,20 @@ pub(super) fn prepare_call(
         auth.require(scope).map_err(|_| refused(Refusal::Scope))?;
     }
     let owner = crate::api::owner(auth, server).map_err(|_| refused(Refusal::Owner))?;
-    let actor = auth
-        .principal_ref()
-        .and_then(|principal| EntityId::from_hex(principal).ok())
-        .ok_or_else(|| refused(Refusal::Principal))?;
-    let payer = WriteActor::new(actor, EdgeActorClass::Human);
+    let host_action = crate::api::host_action::host_action_of(vault, auth)
+        .transpose()
+        .map_err(|_| refused(Refusal::Owner))?;
+    let payer = match &host_action {
+        Some(action) => action.actor(),
+        None => {
+            let actor = auth
+                .principal_ref()
+                .and_then(|principal| EntityId::from_hex(principal).ok())
+                .ok_or_else(|| refused(Refusal::Principal))?;
+            WriteActor::new(actor, EdgeActorClass::Human)
+        }
+    };
+    let actor = payer.entity_ref();
     let (agent, instructions) = instructions(auth, vault)?;
     if roster.as_deref().is_some_and(|roster| {
         roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
@@ -535,6 +543,7 @@ pub(super) fn prepare_call(
     );
     session.policy_caller_ref = auth.principal_ref().map(str::to_owned);
     session.policy_person = Some(owner);
+    session.host_action = host_action;
     let brain_room = container.as_ref().map(|bound| bound.container);
     session.container = container;
 
@@ -575,6 +584,7 @@ pub(super) fn prepare_call(
             extraction_prompt: settings.extraction_prompt.clone().unwrap_or_default(),
             session,
             shutdown: shutdown.clone(),
+            speculative_auth: Some(auth.clone()),
             // Each sentence's safeguard runs under the host's policy config,
             // its ladder's paired question lent (FIX 1201).
             owner_policy: server
@@ -640,8 +650,11 @@ fn bind_room(
         .room_audience_members_under(&read, room, Some(caller))
         .map_err(|_| refused(Refusal::Room))?;
     let mut candidates = Vec::new();
-    for party in vault.room_parties(&members).map_err(failed)? {
-        if let RoomParty::Contact(contact) = party
+    // FIX 6558: the contact each member is known by in the room: a live
+    // co-Owner classes VaultOwner now and keeps its contact as a candidate,
+    // exactly the set the binding-only parties named before.
+    for entry in vault.room_party_entries(&members).map_err(failed)? {
+        if let Some(contact) = entry.contact
             && !candidates.contains(&contact)
             && candidates.len() < MAX_ROOM_CANDIDATES
         {

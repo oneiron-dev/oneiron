@@ -36,8 +36,7 @@
 //! fails hides the read's result, one that does not block fails open, and
 //! with no sandbox installed, hooks off or none matching the call passes
 //! through. When a session keeps no records for a call, its hooks' outcomes
-//! apply all the same and each hook's disposition says why the receipt was
-//! not kept.
+//! apply all the same and each hook's disposition says why the receipt was not kept.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -66,10 +65,12 @@ use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, MemoryError, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
-use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
+use super::{VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, chain};
 
+mod invocation_claims;
 mod named_pause;
 mod room_pause;
+mod room_tail;
 mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
@@ -230,6 +231,7 @@ pub(crate) struct SessionHookKeep {
 /// What the keep holds under one key: its records and its paused calls.
 struct Kept {
     overlay: Arc<SessionOverlay>,
+    invocations: Option<invocation_claims::SessionInvocations>,
     /// The calls its hooks' asks paused, by invocation.
     asks: HashMap<[u8; 16], KeptAsk>,
     /// Their typed questions, answers and settlements, by group (FIX 10087).
@@ -267,6 +269,9 @@ pub(super) struct SessionVerbAsk {
     pub(super) ask: EntityId,
     /// Set once a retry resumed the call on a proceed answer it used up.
     pub(super) used: bool,
+    /// Whether the asking hook reads (FIX 1443: a used-but-unfinished READ
+    /// re-opens inline) or writes (an honest unknown-outcome Skipped).
+    pub(super) domain: VerbDomain,
     /// The route a room's call ran on when its hook asked, in RAM only; a
     /// resume refuses once it no longer holds (FIX 5524). `None` with no room.
     pub(super) route: Option<PausedRoute>,
@@ -290,16 +295,15 @@ impl SessionHookKeep {
         let Some(overlay) = self.with_live(vault, key, |kept| Arc::clone(&kept.overlay)) else {
             return Ok(HookRecordsKept::NotKept(SessionHookNotKept::NoRetention));
         };
-        HookRecordsKept::of(
-            vault
-                .with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    let view = vault.store.session_view(Arc::clone(&overlay))?;
-                    rows(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
-                    Ok(segment)
-                })
-                .and_then(TxnSegmentGuard::commit),
-        )
+        HookRecordsKept::of(vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                let view = vault.store.session_view(Arc::clone(&overlay))?;
+                rows(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
+                Ok(segment)
+            },
+            TxnSegmentGuard::commit,
+        ))
     }
 
     /// Reads `key`'s kept records through the keep's composed view; `None`
@@ -367,6 +371,29 @@ impl SessionHookKeep {
             Some(row) if row.ask.ask == ask && !row.ask.used => {
                 row.ask.used = true;
                 row.used_at = Some(now);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Clears the used mark `use_ask` set (FIX 1431), under the same guard:
+    /// false when no used call of that ask stands there. `used_at` clears
+    /// with it so the prune horizon keeps the re-opened pause.
+    pub(super) fn unuse_ask(
+        &self,
+        key: &SessionHookKey,
+        invocation: [u8; 16],
+        ask: EntityId,
+    ) -> bool {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        match kept
+            .get_mut(key)
+            .and_then(|kept| kept.asks.get_mut(&invocation))
+        {
+            Some(row) if row.ask.ask == ask && row.ask.used => {
+                row.ask.used = false;
+                row.used_at = None;
                 true
             }
             _ => false,
@@ -461,6 +488,7 @@ impl SessionHookKeep {
         }
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
             overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
+            invocations: None,
             asks: HashMap::new(),
             ask_records: HashMap::new(),
         })))
@@ -685,11 +713,43 @@ impl Vault {
         check: VerbArgsCheck<'_>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let VerbHookStorage::Session(hooks) = storage else {
-            return chain::pre(self, storage, call, args, check, None, turn);
+        self.pre_verb_hooks_in_with_saved(storage, call, args, check, turn, false)
+    }
+
+    /// A caller-only retained retry on the original storage. A missing
+    /// saved call or an unread chain never passes through as a fresh call.
+    pub(crate) fn pre_verb_hooks_retained_in(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        turn: Option<Arc<TaskWorkTurn>>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_in_with_saved(storage, call, args, check, turn, true)
+    }
+
+    fn pre_verb_hooks_in_with_saved(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        turn: Option<Arc<TaskWorkTurn>>,
+        require_saved: bool,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        let pre = |call, args| {
+            if require_saved {
+                chain::pre_retained(self, storage, call, args, check, turn)
+            } else {
+                chain::pre(self, storage, call, args, check, None, turn)
+            }
         };
-        let own = hooks.answers_unread.then(|| (call.clone(), args.clone()));
-        let ended = match chain::pre(self, storage, call, args, check, None, turn) {
+        let VerbHookStorage::Session(hooks) = storage else {
+            return pre(call, args);
+        };
+        let own = (hooks.answers_unread && !require_saved).then(|| (call.clone(), args.clone()));
+        let ended = match pre(call, args) {
             Ok(ended) => ended,
             Err(error) => {
                 let (Some((call, args)), Some(note)) =
@@ -704,6 +764,8 @@ impl Vault {
                     carry: None,
                     landing: None,
                     session: Some(hooks.carry()),
+                    resumed_ask: None,
+                    read_capture: None,
                 }));
             }
         };

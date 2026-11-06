@@ -459,6 +459,8 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::TasksRefuse,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             })
         };
         let vault = self.coordination_vault()?;
@@ -623,6 +625,8 @@ impl<'a> HostSelfDispatcher<'a> {
             Err(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::SkillsCall,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             }))
         };
         // A turn program's run lends its pinned callable its own leased try.
@@ -657,6 +661,8 @@ impl<'a> HostSelfDispatcher<'a> {
         SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: SelfEffect::SkillsCall,
             error: "skills_call_no_runtime".to_owned(),
+            code: None,
+            disk_floor: None,
         })
     }
 
@@ -681,8 +687,10 @@ impl<'a> HostSelfDispatcher<'a> {
             let request =
                 super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
             for call in &record.bridge_calls {
+                // Observed generations are an outcome fact of the dispatched
+                // wait: compare against the effective request (FIX 1442).
                 if call.effect == SelfEffect::TasksWait
-                    && call.request == request
+                    && call.rewritten_request.as_ref().unwrap_or(&call.request) == &request
                     && let SelfDispatchOutcome::TaskAskStatus(
                         crate::task_verb::TaskAskStatus::Changed { generation, .. },
                     ) = super::super::payload::decode_self_dispatch_outcome(&call.outcome)?
@@ -723,5 +731,7 @@ fn failed(effect: SelfEffect, error: crate::memory::MemoryError) -> SelfDispatch
     SelfDispatchOutcome::Failed(SelfFailedResult {
         effect,
         error: error.code,
+        code: None,
+        disk_floor: None,
     })
 }

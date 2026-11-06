@@ -26,6 +26,8 @@ pub(super) fn create_commit(
     registered_path: &RegisteredPath,
     is_new_vault: bool,
     seed_mode: DefaultPolicySeedMode,
+    gate_hooks: &dyn crate::store::StoreGateHooks,
+    clock: &crate::ports::StoreClock,
     torn_creation_cleanup: &mut TornCreationCleanup,
 ) -> Result<RawDatabases> {
     let raw = RawDatabases {
@@ -64,12 +66,14 @@ pub(super) fn create_commit(
     rekey_short_ids_if_needed_in_txn(&raw, vault_meta_view, &mut wtxn)?;
 
     if is_new_vault && matches!(seed_mode, DefaultPolicySeedMode::Required) {
-        let id = crate::gate::default_policy_manifest_id()?;
+        let id = crate::store::policy_record::default_policy_manifest_id()?;
         let entities = OverlayDb::canonical(raw.entities);
         let type_index = OverlayDb::canonical(raw.type_index);
         let temporal_occurred_start = OverlayDb::canonical(raw.temporal_occurred_start);
         let temporal_learned = OverlayDb::canonical(raw.temporal_learned);
         seed_default_policy_manifest_in_txn(
+            gate_hooks,
+            clock,
             &entities,
             &crate::overlay_db::OverlayStrDb::canonical(raw.sync_state),
             &type_index,

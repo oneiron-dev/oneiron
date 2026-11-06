@@ -10,7 +10,6 @@ use crate::api::{
     Sha256Digest, SignRevisionRequest, SignatureAlgorithm, SigningIdentity,
 };
 use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
-use crate::memory::MemoryLedger;
 
 use super::super::{cms, pdf, tsp};
 use super::dss::append_dss;
@@ -19,24 +18,40 @@ use super::material::{gather_validation_material, trust_anchors};
 /// `/Contents` DER capacity ladder in bytes (§7.2 rule 5): the first
 /// capacities a revision this engine writes tries. Past the last, a
 /// signature or document timestamp the engine writes grows its hole to what
-/// its DER needs (Rule 5); a revision the caller wrote holds only its own.
+/// its DER needs (Rule 5); the caller's revisions hold the capacities it
+/// wrote, and past the largest the caller is told the DER bytes it needs
+/// (`observed.contents_bytes`), to write a larger one (FIX 6270).
 pub(crate) const CAPACITY_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
 
 /// The capacity to try after `capacity` held too little for `needed` DER
 /// bytes: the ladder's next rung, or past the ladder the larger of twice
 /// `capacity` and `needed` to the next power of two, so a fresh signature
-/// or token a few bytes longer than the last still fits. `None` past the
-/// ladder for a revision the caller wrote.
-fn next_capacity(capacity: usize, needed: usize, grows: bool) -> Option<usize> {
+/// or token a few bytes longer than the last still fits.
+fn next_capacity(capacity: usize, needed: usize) -> usize {
     match CAPACITY_LADDER.iter().find(|rung| **rung > capacity) {
-        Some(rung) => Some(*rung),
-        None if grows => Some(
-            capacity
-                .saturating_mul(2)
-                .max(needed.checked_next_power_of_two().unwrap_or(usize::MAX)),
-        ),
-        None => None,
+        Some(rung) => *rung,
+        None => capacity
+            .saturating_mul(2)
+            .max(needed.checked_next_power_of_two().unwrap_or(usize::MAX)),
     }
+}
+
+/// The capacities of the caller's revisions, smallest first: each one's
+/// hole, less its delimiters, holds half as many DER bytes as hex digits.
+fn supplied_capacities(revisions: &[PreparedRevision<'_>]) -> Vec<usize> {
+    let mut capacities: Vec<usize> = revisions
+        .iter()
+        .filter_map(|revision| {
+            let [_, open, close, _] = revision.byte_range;
+            let hex = close.checked_sub(open)?.checked_sub(2)?;
+            usize::try_from(hex / 2)
+                .ok()
+                .filter(|_| hex.is_multiple_of(2))
+        })
+        .collect();
+    capacities.sort_unstable();
+    capacities.dedup();
+    capacities
 }
 
 /// What one capacity's attempt came to: the signed revision, or the DER
@@ -64,20 +79,22 @@ pub(crate) struct AssemblyOutcome {
     pub warnings: Vec<SealWarning>,
 }
 
-/// Derived per-attempt operation id: caller id plus a fixed-shape suffix.
-/// The caller id is bounded at entry (see
-/// [`crate::api::SealRequest::validate_operation_id`]) so this derived id
-/// always fits the backend's [`crate::api::MAX_OPERATION_ID_BYTES`] bound.
+/// Derived per-attempt operation id: the caller id as the backend sees it
+/// (itself, or its bounded alias past the suffix budget, FIX 6271) plus a
+/// fixed-shape suffix, so it always fits the backend's
+/// [`crate::api::MAX_OPERATION_ID_BYTES`] bound. The engine host binds the
+/// same prefix.
 pub(crate) fn sub_operation_id(
     operation_id: &str,
     input_sha256: &Sha256Digest,
     phase: &str,
     capacity: usize,
 ) -> String {
+    let operation_id = oneiron_organ_protocol::seal::backend_operation_id(operation_id);
     debug_assert!(
         operation_id.len() + crate::api::OPERATION_ID_SUFFIX_RESERVE
             <= crate::api::MAX_OPERATION_ID_BYTES,
-        "caller operation id exceeds the reserved suffix budget"
+        "backend operation id exceeds the reserved suffix budget"
     );
     let mut hex = String::with_capacity(16);
     for b in &input_sha256[..8] {
@@ -111,7 +128,7 @@ async fn request_signature(
     identity: &SigningIdentity,
     request: SignRevisionRequest,
     signing_input: &[u8],
-) -> Result<Vec<u8>, SealError> {
+) -> Result<crate::memory::Held<Vec<u8>>, SealError> {
     let signed = ctx
         .backend
         .sign_revision(request)
@@ -134,6 +151,12 @@ async fn request_signature(
             });
         }
     };
+    let hold = ctx
+        .limits
+        .memory
+        .hold(bytes.capacity())
+        .map_err(|refusal| refusal.seal_error(SealStage::BackendSign))?;
+    let bytes = crate::memory::Held::new(bytes, hold);
     cms::verify_signature_value(
         identity.algorithm,
         &identity.signer_certificate_der,
@@ -148,22 +171,40 @@ async fn request_signature(
 }
 
 /// Ordered TSA failover (§5 rule 8, §7.4 step 3). Returns the first token
-/// that passes every §7.4-step-5 check. A response memory refused is the
-/// seal's own resource error, never a reason to try the next authority.
+/// that passes every §7.4-step-5 check. A response memory refused, or the
+/// memory its token's parse and copies need (FIX 12260), is the seal's own
+/// resource error, never a reason to try the next authority.
 async fn fetch_timestamp_token(
     ctx: &SealContext<'_>,
     imprint: &Sha256Digest,
 ) -> Result<Option<tsp::ValidatedToken>, SealError> {
-    let memory: Arc<MemoryLedger> = ctx
+    let anchors = trust_anchors(ctx.config, ctx.limits)
+        .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?
+        .ok_or(SealError::Fatal {
+            stage: SealStage::InputValidation,
+            code: FatalCode::InvalidConfiguration,
+        })?;
+    let memory = ctx
         .limits
         .memory
         .ledger()
         .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
-    let anchors = trust_anchors(ctx.config, &memory)?;
     for endpoint in &ctx.config.timestamp_authorities {
         let mut nonce = [0u8; 16];
         rsa::rand_core::OsRng.fill_bytes(&mut nonce);
-        let req_der = tsp::build_request(imprint, &nonce, &memory)?;
+        let req_der = tsp::build_request(imprint, &nonce)?;
+        // Url owns only its serialized String; keep both copies admitted through fetch.
+        let content_type = "application/timestamp-query";
+        let metadata_bytes = endpoint
+            .url
+            .as_str()
+            .len()
+            .saturating_add(content_type.len());
+        let metadata_hold = ctx
+            .limits
+            .memory
+            .hold(metadata_bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::Timestamp))?;
         let response = ctx
             .fetcher
             .fetch(FetchRequest {
@@ -171,9 +212,10 @@ async fn fetch_timestamp_token(
                 url: endpoint.url.clone(),
                 method: FetchMethod::Post,
                 request_body: req_der,
-                content_type: Some("application/timestamp-query".to_string()),
+                content_type: Some(content_type.to_owned()),
             })
             .await;
+        drop(metadata_hold);
         let resp = match response {
             Ok(resp) => resp,
             Err(FetchError::Memory(refusal)) => {
@@ -182,7 +224,7 @@ async fn fetch_timestamp_token(
             // Denied, unreachable, timed out or invalid: the next authority.
             Err(_) => continue,
         };
-        let validated = tsp::validate_response(
+        match tsp::validate_response(
             &resp.body,
             imprint,
             &nonce,
@@ -190,13 +232,13 @@ async fn fetch_timestamp_token(
             &anchors,
             ctx.clock_ms,
             &memory,
-        );
-        // Only an ordinary response failure moves to the next authority; a
-        // memory refusal is the operation's error, never a failover.
-        match validated {
+        ) {
             Ok(token) => return Ok(Some(token)),
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(_) => continue,
+            Err(tsp::TokenError::Memory(refusal)) => {
+                return Err(refusal.seal_error(SealStage::Timestamp));
+            }
+            // A token that does not validate: the next authority.
+            Err(tsp::TokenError::Invalid) => {}
         }
     }
     Ok(None)
@@ -227,14 +269,12 @@ fn supplied_draft(
             close.checked_sub(open) == Some(2 + 2 * capacity as u64)
         })
         .ok_or_else(invalid)?;
-    let len = input
-        .len()
-        .checked_add(revision.suffix.len())
-        .ok_or_else(invalid)?;
-    let mut bytes = pdf::admitted::vec(limits, len)
+    // The draft is the seal's own copy: reserved before it is made (FIX 8452).
+    limits
+        .memory
+        .admit::<u8>(input.len().saturating_add(revision.suffix.len()))
         .map_err(|refusal| refusal.seal_error(SealStage::PdfIncrementalUpdate))?;
-    bytes.extend_from_slice(input);
-    bytes.extend_from_slice(revision.suffix);
+    let bytes = [input, revision.suffix].concat();
     let [start, open, close, rest] = revision.byte_range.map(|at| usize::try_from(at).ok());
     let (open, close, rest) = (open.ok_or_else(invalid)?, close.ok_or_else(invalid)?, rest);
     if start != Some(0)
@@ -287,23 +327,63 @@ async fn try_capacity(
         code: FatalCode::PdfInvariantFailed,
     })?;
     let content_digest = pdf::hash_byte_range(&draft.bytes, br)?;
-    let memory: Arc<MemoryLedger> = ctx
+    // Declare first so the retained buffers drop before their credit.
+    let _issuer_serial_hold;
+    let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der)?;
+    _issuer_serial_hold = ctx
         .limits
         .memory
-        .ledger()
+        .hold(issuer.capacity().saturating_add(serial.capacity()))
         .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;
-    let (issuer, serial) = cms::issuer_and_serial(&identity.signer_certificate_der, &memory)?;
+    // Conservative Vec-capacity peak for cms::attr_signing_cert_v2 /
+    // cms::build_signed_data working copies (20I+20S+7C + OIDs/headers/slots).
+    // Retained issuer/serial originals, draft and token are held separately;
+    // third-party parse/to_der transients are not covered by these holds.
+    // Hold spans attrs through patch_contents.
+    let _cms_hold = {
+        let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
+        let ilen = issuer.len();
+        let slen = serial.len();
+        let c0 = identity.signer_certificate_der.len();
+        let ch: usize = identity
+            .certificate_chain_der
+            .iter()
+            .map(Vec::len)
+            .fold(0usize, usize::saturating_add);
+        let c = c0.saturating_add(ch);
+        let n = identity.certificate_chain_der.len();
+        let sig_alg = match identity.algorithm {
+            SignatureAlgorithm::RsaPkcs1v15Sha256 => 15usize,
+            SignatureAlgorithm::EcdsaP256Sha256 => 12usize,
+        };
+        let fixed = 1551usize.saturating_add(sig_alg.saturating_mul(8));
+        let bytes = ilen
+            .saturating_mul(20)
+            .saturating_add(slen.saturating_mul(20))
+            .saturating_add(c.saturating_mul(7))
+            .saturating_add(fixed)
+            .saturating_add(h_tlv.saturating_mul(120))
+            .saturating_add(
+                n.saturating_add(1)
+                    .saturating_mul(std::mem::size_of::<&[u8]>())
+                    .saturating_mul(2),
+            )
+            .saturating_add(
+                crate::api::MAX_OPERATION_ID_BYTES
+                    .saturating_add(crate::api::OPERATION_ID_SUFFIX_RESERVE)
+                    .saturating_mul(2),
+            );
+        ctx.limits
+            .memory
+            .hold(bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?
+    };
     let attrs = vec![
-        cms::attr_content_type_data(&memory)?,
-        cms::attr_message_digest(&content_digest, &memory)?,
-        cms::attr_signing_cert_v2(&identity.signer_certificate_der, &issuer, &serial, &memory)?,
+        cms::attr_content_type_data(),
+        cms::attr_message_digest(&content_digest),
+        cms::attr_signing_cert_v2(&identity.signer_certificate_der, &issuer, &serial),
     ];
-    let (wire, signing) = cms::assemble_signed_attrs(attrs, &memory)?;
-    // The request below clones the wire attributes for the backend; the
-    // clone is admitted here, the original was admitted where assembled.
-    memory
-        .admit_len::<u8>(wire.len())
-        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?;
+    let (wire, signing) = cms::assemble_signed_attrs(attrs);
     let request = SignRevisionRequest {
         operation_id: sub_operation_id(operation_id, input_sha, "sign", capacity),
         revision_id,
@@ -312,12 +392,43 @@ async fn try_capacity(
         digest: cms::sha256(&signing),
     };
     let signature = request_signature(ctx, identity, request, &signing).await?;
+    // Downstream signature copies in cms::build_signed_data only (8*Sig+8*H).
+    // The backend-returned original owns its separate hold. This hold spans
+    // build through patch.
+    let _cms_sig_hold = {
+        let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
+        let slen = signature.len();
+        let bytes = slen
+            .saturating_mul(8)
+            .saturating_add(h_tlv.saturating_mul(8));
+        ctx.limits
+            .memory
+            .hold(bytes)
+            .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?
+    };
+    let mut _cms_tok_hold: Option<crate::memory::LedgerHold> = None;
     let mut unsigned = Vec::new();
     let mut token = None;
     if target >= PadesProfile::BaselineT {
         let imprint = cms::sha256(&signature);
         if let Some(t) = fetch_timestamp_token(ctx, &imprint).await? {
-            unsigned.push(cms::attr_ts_token(&t.content_info_der, &memory)?);
+            // Token attribute wrapping in cms::attr_ts_token plus build copies
+            // (9*T+117+26*H+slots), admitted before construction. Token body
+            // already owns its hold (no double count).
+            let h_tlv = std::mem::size_of::<usize>().saturating_add(2);
+            let tlen = t.content_info_der.len();
+            let bytes = tlen
+                .saturating_mul(9)
+                .saturating_add(117)
+                .saturating_add(h_tlv.saturating_mul(26))
+                .saturating_add(4usize.saturating_mul(std::mem::size_of::<Vec<u8>>()));
+            _cms_tok_hold = Some(
+                ctx.limits
+                    .memory
+                    .hold(bytes)
+                    .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))?,
+            );
+            unsigned.push(cms::attr_ts_token(&t.content_info_der));
             token = Some(t);
         }
     }
@@ -328,7 +439,7 @@ async fn try_capacity(
         serial_der: &serial,
         chain_ders: &identity.certificate_chain_der,
     };
-    let cms_der = cms::build_signed_data(&material, &wire, &signature, &unsigned, &memory)?;
+    let cms_der = cms::build_signed_data(&material, &wire, &signature, &unsigned);
     ctx.limits
         .observed
         .note(Counter::ContentsBytes, cms_der.len());
@@ -352,6 +463,15 @@ fn degrade_warning(
         achieved,
         reason,
     }
+}
+
+fn push_warning(
+    ctx: &SealContext<'_>,
+    warnings: &mut Vec<SealWarning>,
+    warning: SealWarning,
+) -> Result<(), SealError> {
+    pdf::admitted::push(ctx.limits, warnings, warning)
+        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
 }
 
 /// Append the DocTimeStamp revision for B-LTA (§7.6). `Ok(None)` means the
@@ -387,10 +507,7 @@ async fn append_doc_timestamp(
                 code: FatalCode::ContentsCapacityExceeded,
                 ..
             }) => {
-                capacity = next_capacity(capacity, needed, true).ok_or(SealError::Fatal {
-                    stage: SealStage::DocumentTimestamp,
-                    code: FatalCode::ContentsCapacityExceeded,
-                })?;
+                capacity = next_capacity(capacity, needed);
             }
             Err(e) => return Err(e),
         }
@@ -418,8 +535,11 @@ pub(crate) async fn assemble(
     let input_sha = cms::sha256(&prepared.bytes);
     // Each capacity is a fresh revision, signed once under its own derived
     // operation id. A revision this engine writes grows past the ladder; the
-    // caller's revisions hold only the capacities it wrote.
-    let mut capacity = CAPACITY_LADDER[0];
+    // caller's revisions are tried smallest first, and past the largest the
+    // DER bytes needed are in the call's counts for the caller to write a
+    // larger one (FIX 6270).
+    let supplied = supplied_capacities(revisions);
+    let mut capacity = supplied.first().copied().unwrap_or(CAPACITY_LADDER[0]);
     let SignedCandidate { draft, token } = loop {
         match try_capacity(
             ctx,
@@ -434,13 +554,18 @@ pub(crate) async fn assemble(
         .await?
         {
             Fit::Signed(candidate) => break candidate,
-            Fit::Short(needed) => {
-                capacity = next_capacity(capacity, needed, revisions.is_empty()).ok_or(
-                    SealError::Fatal {
+            Fit::Short(needed) if revisions.is_empty() => {
+                capacity = next_capacity(capacity, needed);
+            }
+            Fit::Short(_) => {
+                capacity = supplied
+                    .iter()
+                    .copied()
+                    .find(|supplied| *supplied > capacity)
+                    .ok_or(SealError::Fatal {
                         stage: SealStage::PdfIncrementalUpdate,
                         code: FatalCode::ContentsCapacityExceeded,
-                    },
-                )?;
+                    })?;
             }
         }
     };
@@ -449,11 +574,11 @@ pub(crate) async fn assemble(
     if token.is_some() {
         achieved = PadesProfile::BaselineT;
     } else if target >= PadesProfile::BaselineT {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::TimestampUnavailable,
-        ));
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(target, achieved, ProfileDegradeReason::TimestampUnavailable),
+        )?;
     }
     let mut bytes = draft.bytes;
     if target >= PadesProfile::BaselineLt && achieved == PadesProfile::BaselineT {
@@ -462,18 +587,26 @@ pub(crate) async fn assemble(
                 bytes = append_dss(&bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;
             }
-            None => warnings.push(degrade_warning(
+            None => push_warning(
+                ctx,
+                &mut warnings,
+                degrade_warning(
+                    target,
+                    achieved,
+                    ProfileDegradeReason::ValidationMaterialUnavailable,
+                ),
+            )?,
+        }
+    } else if target >= PadesProfile::BaselineLt {
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(
                 target,
                 achieved,
                 ProfileDegradeReason::ValidationMaterialUnavailable,
-            )),
-        }
-    } else if target >= PadesProfile::BaselineLt {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::ValidationMaterialUnavailable,
-        ));
+            ),
+        )?;
     }
     if target == PadesProfile::BaselineLta && achieved == PadesProfile::BaselineLt {
         match append_doc_timestamp(&bytes, ctx).await? {
@@ -481,18 +614,26 @@ pub(crate) async fn assemble(
                 bytes = b;
                 achieved = PadesProfile::BaselineLta;
             }
-            None => warnings.push(degrade_warning(
+            None => push_warning(
+                ctx,
+                &mut warnings,
+                degrade_warning(
+                    target,
+                    achieved,
+                    ProfileDegradeReason::DocumentTimestampUnavailable,
+                ),
+            )?,
+        }
+    } else if target == PadesProfile::BaselineLta {
+        push_warning(
+            ctx,
+            &mut warnings,
+            degrade_warning(
                 target,
                 achieved,
                 ProfileDegradeReason::DocumentTimestampUnavailable,
-            )),
-        }
-    } else if target == PadesProfile::BaselineLta {
-        warnings.push(degrade_warning(
-            target,
-            achieved,
-            ProfileDegradeReason::DocumentTimestampUnavailable,
-        ));
+            ),
+        )?;
     }
     // The output grows by whatever its validation material and timestamps
     // need (Rule 5): the host measures that growth against its `[limits]`

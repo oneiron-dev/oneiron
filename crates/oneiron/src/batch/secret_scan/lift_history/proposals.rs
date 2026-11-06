@@ -192,7 +192,7 @@ pub(super) fn review(vault: &Vault) -> Result<()> {
 /// row as it stands: a known-value pass marks nothing more in that row (FIX
 /// 2781). A close for a rotation, or one the sweep made, leaves it open to
 /// marking.
-pub(super) fn owner_kept_in_txn(
+pub(in crate::batch::secret_scan) fn owner_kept_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     family: LiftFamily,
@@ -372,7 +372,7 @@ fn receipt_in_txn(
         actor_class: "human".into(),
         actor_ref: Some(actor.to_hex()),
         content_kind: CLOSE_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+        policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.into(),
         claim_id: None,
         grant_ref: None,
         diff_handle: blake3::hash(row_key).as_bytes().to_vec(),
@@ -385,7 +385,7 @@ fn receipt_in_txn(
 }
 
 /// Lowercase or uppercase hex as bytes; `None` for anything else.
-fn unhex(text: &str) -> Option<Vec<u8>> {
+pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {
     if text.is_empty() || text.len() % 2 != 0 {
         return None;
     }

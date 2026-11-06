@@ -5,7 +5,6 @@
 //! callers consume the per-identity clamp result before scheduling sends.
 
 use crate::Vault;
-use crate::campaign::send_hygiene::apply_suppression_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::cohort_claims::suppression::{SuppressionCause, SuppressionInput};
@@ -78,6 +77,9 @@ pub struct SenderHealthProjection {
     pub clamp: IdentitySendRateClamp,
     /// The suppression a hard bounce wrote, if any.
     pub suppression: Option<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt>,
+    /// The campaign-pause owner ask this signal committed, or the existing
+    /// open ask for the same [campaign, identity] when already Paused.
+    pub campaign_pause_ask: Option<u64>,
 }
 
 /// Projects one campaign email webhook, opening its own transaction.
@@ -123,20 +125,30 @@ pub(crate) fn project_campaign_email_webhook_in_txn(
     let mut reputation = current;
     reputation.apply_adapter_signal(IdentityReputationSignal::EmailWebhook(event.aggregate))?;
     let clamp = reputation.clamp_send_rate(event.identity_ref, requested_daily_cap);
+    let campaign_pause_ask = crate::campaign::surface::project_campaign_complaint_pause_in_txn(
+        vault,
+        wtxn,
+        event.campaign_ref,
+        event.identity_ref,
+        event.evidence_ref,
+        reputation.complaint_rate,
+    )?;
     let suppression = match event.disposition {
-        EmailDeliveryDisposition::HardBounce => Some(apply_suppression_in_txn(
-            vault,
-            wtxn,
-            SuppressionCause::HardBounce,
-            &SuppressionInput {
-                person_ref: event.person_ref,
-                campaign_ref: event.campaign_ref,
-                channel: event.channel.clone(),
-                sender_ref: Some(event.identity_ref),
-                evidence_ref: event.evidence_ref,
-                occurred_at: event.observed_at,
-            },
-        )?),
+        EmailDeliveryDisposition::HardBounce => {
+            Some(vault.store.record_hooks.apply_suppression_in_txn(
+                vault,
+                wtxn,
+                SuppressionCause::HardBounce,
+                &SuppressionInput {
+                    person_ref: event.person_ref,
+                    campaign_ref: event.campaign_ref,
+                    channel: event.channel.clone(),
+                    sender_ref: Some(event.identity_ref),
+                    evidence_ref: event.evidence_ref,
+                    occurred_at: event.observed_at,
+                },
+            )?)
+        }
         EmailDeliveryDisposition::Delivered
         | EmailDeliveryDisposition::SoftBounce
         | EmailDeliveryDisposition::Complaint => None,
@@ -145,5 +157,6 @@ pub(crate) fn project_campaign_email_webhook_in_txn(
         reputation,
         clamp,
         suppression,
+        campaign_pause_ask,
     })
 }

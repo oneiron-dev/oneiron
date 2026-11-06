@@ -4,11 +4,7 @@
 
 use super::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct EsignRateThresholds {
-    pub(crate) recipient: u64,
-    pub(crate) document: u64,
-}
+pub(crate) use oneiron_store::esign_rate_thresholds::EsignRateThresholds;
 
 const SHIPPED_RECIPIENT_THRESHOLD: u64 = 120;
 const SHIPPED_DOCUMENT_THRESHOLD: u64 = 1200;

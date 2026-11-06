@@ -33,6 +33,8 @@ use crate::skills_pack::{self, OutputMode};
 /// added here.
 pub(crate) mod api;
 pub(crate) mod credential_file;
+mod credential_helper;
+pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
@@ -101,7 +103,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     // named, read before the vault opens (FIX 5788).
     let anchor =
         crate::owner::backup::CustodyAnchorCredentials::handed(args.custody_anchor_credentials_fd)?;
-    serve_anchored(config, files, anchor).await
+    serve_anchored(config, files, anchor, &args).await
 }
 
 /// The files a plain `serve` read its config from, as its runtime file names
@@ -119,6 +121,7 @@ pub use files::files;
 mod history_import;
 mod init;
 pub use init::init;
+pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};
 mod reembed;
 pub use reembed::reembed;
 mod account;
@@ -135,7 +138,8 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 pub(crate) use self::serve::{
-    DRAIN_GRACE, build_embedder, build_server, sign_root_project, start_desktop_workers,
+    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, sign_root_project,
+    start_desktop_workers,
 };
 pub use self::serve::{OpenedServedVault, open_served_vault};
 mod dreamer;
@@ -150,6 +154,8 @@ mod owner;
 pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;
+pub(crate) use owner::page_seal_at;
+pub use owner::reminder_route;
 pub use owner::widen_proposals;
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
@@ -159,7 +165,12 @@ pub use owner::{guests, packs, reveal_secret, revoke_secret, subscriptions};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 mod seat;
-pub use self::seat::{seat_login_plan, seat_routes, seat_runner_policy, seat_runners};
+pub use self::seat::{
+    seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
+    seat_siwc_login, seat_siwc_revoke,
+};
+mod registry;
+pub use self::registry::registry;
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {
@@ -320,6 +331,7 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
     let credential = mint_paired_credential(
         &vault,
         &issuer,
+        None,
         &principal,
         &args.actor_class,
         [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
@@ -490,6 +502,9 @@ fn mint_agent_credential(
     let credential = mint_paired_credential(
         &vault,
         &issuer,
+        // The owner makes the link, so the slip records them as the agent's
+        // minting member (FIX 11713).
+        Some(&owner),
         &principal,
         "agent",
         verbs,
@@ -580,10 +595,14 @@ fn comm_arg(comm: Option<&str>) -> anyhow::Result<Option<oneiron::agent_dispatch
 /// redeems it at once with a fresh connection key: the host-rooted pairing
 /// doors `/v1/core/pairing/redeem` uses, on the stopped vault. The slip is
 /// logged like every paired slip and revoked by its id. `comm` is the
-/// owner's reach for it, fixed on the link (FIX 3899).
+/// owner's reach for it, fixed on the link (FIX 3899). `link_owner`, when
+/// named, makes the link, so the slip records that owner as its minting
+/// member (FIX 11713); `None` is the host-only link, which names no person.
+#[allow(clippy::too_many_arguments)]
 fn mint_paired_credential(
     vault: &oneiron::Vault,
     issuer: &oneiron::authority::HostSlipIssuer,
+    link_owner: Option<&oneiron::consent::AuthenticatedOwner>,
     principal: &str,
     actor_class: &str,
     verbs: std::collections::BTreeSet<String>,
@@ -593,18 +612,28 @@ fn mint_paired_credential(
     use ed25519_dalek::{Signer, SigningKey};
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
-    let link = vault.issue_pairing_link_for_principal(
-        issuer,
-        scope,
-        lifetime_secs,
-        oneiron::authority::PairingPrincipal {
-            holder_ref: Some(principal.to_owned()),
-            actor_class: Some(actor_class.to_owned()),
-            org_ref: None,
-            write_facet: None,
-            comm,
-        },
-    )?;
+    let pairing_principal = oneiron::authority::PairingPrincipal {
+        holder_ref: Some(principal.to_owned()),
+        actor_class: Some(actor_class.to_owned()),
+        org_ref: None,
+        write_facet: None,
+        comm,
+    };
+    let link = match link_owner {
+        Some(owner) => vault.issue_owner_pairing_link(
+            issuer,
+            owner,
+            scope,
+            lifetime_secs,
+            pairing_principal,
+        )?,
+        None => vault.issue_pairing_link_for_principal(
+            issuer,
+            scope,
+            lifetime_secs,
+            pairing_principal,
+        )?,
+    };
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
     let transcript = oneiron::authority::pairing_binding_transcript_pinned(
