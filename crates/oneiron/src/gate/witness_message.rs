@@ -354,6 +354,12 @@ pub(crate) fn canonical_witness_message_body_for_test(
 ///   that has not landed here yet, and is not deleted, merged or split, makes
 ///   the row wait for it (FIX 21271): its refusal keeps the row's retry
 ///   (`companion_author_pending`).
+/// * `user` or `companion` on a shared vault: a member's own words (FIX
+///   21272), when the row's window names, by its `AuthoredBy` edge,
+///   `authored_by`: a live PERSON with a live grant over this vault that
+///   writes content, and `machine` stands on this vault's machine roster on a
+///   profile that PERSON answered for. One member's machine never names
+///   another member, and an agent's row stays refused here.
 /// * `system`: the engine's own voice, never a replay's.
 ///
 /// Every row it does not admit, a body that is no canonical envelope first
@@ -372,6 +378,19 @@ pub(crate) fn validate_own_device_witness_message_body(
     body: &[u8],
 ) -> Result<()> {
     let author = validate_canonical_witness_message_body(body);
+    if let (Ok(WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion), Some(actor)) =
+        (&author, authored_by)
+    {
+        // As below, a store fault admits nothing and refuses.
+        match member_speaks_from(store, txn, machine, actor) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "an own machine's MESSAGE on a shared vault: its author, membership and machine did not read; refused as a replay"
+            ),
+        }
+    }
     if let (Ok(WitnessMessageBodyAuthor::Companion), Some(actor)) = (&author, authored_by) {
         // As for `user` below, a store fault admits nothing and refuses.
         match companion_speaks_from(store, txn, machine, actor) {
@@ -472,6 +491,36 @@ fn companion_speaks_from(
     } else {
         CompanionAuthor::NotArrived
     })
+}
+
+/// Whether `actor`, the author a row's window names, speaks here as a member
+/// of this shared vault, all read in `txn` (FIX 21272): a live PERSON with a
+/// live grant over this vault that writes content, and the PERSON who
+/// answered for `machine` on the profile it proves its key by. `false` on a
+/// personal vault.
+fn member_speaks_from(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    machine: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    if crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?.is_none() {
+        return Ok(false);
+    }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    if fold.machine_proof_owner(machine) != Some(actor) {
+        return Ok(false);
+    }
+    crate::policy_model::is_live_writing_member_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+        &actor,
+    )
 }
 
 /// Whether `machine` stands on this vault's machine roster and this is a
