@@ -428,7 +428,14 @@ pub(super) async fn durable_step_with_generation(
         return Err(erased_step());
     }
 
-    let calls = StepCalls::new(ctx.vault, ctx.deadline, ctx.attempt_id, step_hash)?;
+    let native_invoices = std::sync::Mutex::default();
+    let calls = StepCalls::new(
+        ctx.vault,
+        ctx.deadline,
+        ctx.attempt_id,
+        step_hash,
+        &native_invoices,
+    )?;
     source.native_invocation = calls.original_invocation();
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
@@ -647,6 +654,7 @@ pub(super) async fn durable_step_with_generation(
     // is idempotent on an already-settled lease, so the happy-path settle stays
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
+    source.native_net_invoices = calls.native_invoices(&response.usage);
 
     let payload = serde_json::to_vec(&response).inspect_err(|_| {
         if let Some(usage) = unsaved_usage.as_deref_mut() {

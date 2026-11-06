@@ -122,8 +122,9 @@ native invocation coordinate, when that invocation came from a native admission.
 The source is captured before the call constructor; only that constructor's
 coordinate is attached afterward. Recovery does not recapture the actor, run,
 frontier, subject or time from a later receiver. The private STATE format is
-version 3, with a mandatory nil-or-binary invocation field; no older format is
-accepted. The canonical `dreamer.step` claim format is unchanged.
+version 4, with mandatory invocation and native NET invoice-population fields;
+no older format is accepted. A missing native source is nil, not an inferred
+invoice. The canonical `dreamer.step` claim format is unchanged.
 
 After inserting the actual terminal claim, the same writer binds every retained
 physical call of that original attempt, generation and invocation to that claim.
@@ -139,6 +140,38 @@ original admissions remain missing, not guessed from the latest memo, observed
 call, public lease id or response totals. The association is financial correlation
 data, not permission or proof of payment. It does not activate the payment
 primitive or settle the remaining NET/GROSS coverage and reconciliation work.
+
+### Original native NET response population
+
+Each fresh generation keeps the exact native responses its schema producer
+returned, before corrective usage is combined. The capture records the original
+corrective ordinal and native input-plus-output quantity, including known zeros.
+It uses that producer's existing invocation and allocates no call or lease.
+Transport retries keep their existing coordinate. An unreported error is not
+converted to a zero invoice.
+
+The final successful response, including a successful deterministic fallback,
+pairs this population with the same original source and saved response bytes.
+A checked sum validates the reported NET total; it never selects invoice members
+from an aggregate number or a GROSS meter. Missing provenance, a noncontiguous
+population or overflow leaves this optional capture unknown. Error, cut, refused
+fallback and unsaved-response exits keep their existing behavior and no new
+response-population record.
+
+After the original terminal-alias write, a separate nested savepoint checks each
+selected original call's retained invoice, quantity and exact claim alias. It
+records the immutable response population only on the original invocation's
+ordinal-zero financial row. An admitted but unanswered corrective tail can share
+the terminal alias without belonging to this NET population. A known empty
+population is not a zero invoice for that unanswered call. Recovery keeps the
+same saved population and may add another terminal alias; it cannot replace the
+original population or invoice facts.
+
+A capture or pairing failure is logged and leaves the existing response, aliases,
+charge and result unchanged. A failed parent write rolls back the child record.
+This is source data, not a payment or permission. The actual NET tally/driver
+coverage join, irreversible paid-fact checks and late-call reconciliation remain
+unfinished. Automatic native payment and aggregate subtraction stay off.
 
 ### Original native meter-token capture
 

@@ -12,7 +12,7 @@ use crate::side_table::SideKey;
 use crate::write_envelope::WriteActor;
 use rmpv::Value;
 
-const SOURCE_KEYS: [&str; 8] = [
+const SOURCE_KEYS: [&str; 9] = [
     "actor",
     "class",
     "frontier",
@@ -21,6 +21,7 @@ const SOURCE_KEYS: [&str; 8] = [
     "subject",
     "at",
     "native_invocation",
+    "native_net_invoices",
 ];
 
 /// Source facts, not a grant, a receiver context or proof of payment.
@@ -31,6 +32,7 @@ pub(super) struct StepSource {
     pub(super) subject: EntityId,
     pub(super) at: u64,
     pub(super) native_invocation: Option<AdmittedCallId>,
+    pub(super) native_net_invoices: Option<Vec<(u32, u64)>>,
 }
 
 impl StepSource {
@@ -41,6 +43,7 @@ impl StepSource {
             subject: ctx.subject,
             at: ctx.now_ms,
             native_invocation: None,
+            native_net_invoices: None,
         }
     }
 
@@ -83,6 +86,21 @@ impl StepSource {
                     Value::Binary(bytes)
                 }),
             ),
+            (
+                Value::from("native_net_invoices"),
+                self.native_net_invoices
+                    .as_ref()
+                    .map_or(Value::Nil, |invoices| {
+                        Value::Array(
+                            invoices
+                                .iter()
+                                .map(|&(ordinal, units)| {
+                                    Value::Array(vec![Value::from(ordinal), Value::from(units)])
+                                })
+                                .collect(),
+                        )
+                    }),
+            ),
         ])
     }
 
@@ -108,6 +126,7 @@ impl StepSource {
             subject,
             at,
             native_invocation,
+            native_net_invoices,
         ] = fields;
         let actor = EntityId::from_bytes(fixed_bytes(actor?)?)?;
         let class = u8::try_from(expect_u64(
@@ -149,12 +168,52 @@ impl StepSource {
                 .ok_or(invalid_step("invalid dreamer step native invocation"))?;
             Some(origin)
         };
+        let native_net_invoices = native_net_invoices?;
+        let native_net_invoices = if native_net_invoices.is_nil() {
+            None
+        } else {
+            let Value::Array(invoices) = native_net_invoices else {
+                return Err(invalid_step(
+                    "dreamer step native NET invoices must be an array or nil",
+                ));
+            };
+            if native_invocation.is_none() {
+                return Err(invalid_step("native invoice population has no invocation"));
+            }
+            let mut captured = Vec::with_capacity(invoices.len());
+            for (index, invoice) in invoices.iter().enumerate() {
+                let Value::Array(pair) = invoice else {
+                    return Err(invalid_step(
+                        "dreamer step native NET invoice must be a pair",
+                    ));
+                };
+                let [ordinal, units] = pair.as_slice() else {
+                    return Err(invalid_step(
+                        "dreamer step native NET invoice must be a pair",
+                    ));
+                };
+                let ordinal = u32::try_from(expect_u64(
+                    ordinal,
+                    "native invoice ordinal must be an integer",
+                )?)
+                .map_err(|_| invalid_step("native invoice ordinal exceeds u32"))?;
+                if usize::try_from(ordinal).ok() != Some(index) {
+                    return Err(invalid_step("native invoice population differs"));
+                }
+                captured.push((
+                    ordinal,
+                    expect_u64(units, "native invoice units must be an integer")?,
+                ));
+            }
+            Some(captured)
+        };
         Ok(Self {
             actor,
             run_id,
             subject: EntityId::from_bytes(fixed_bytes(subject?)?)?,
             at: expect_u64(at?, "dreamer step source at must be an integer")?,
             native_invocation,
+            native_net_invoices,
         })
     }
 }

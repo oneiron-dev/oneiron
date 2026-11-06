@@ -1,6 +1,6 @@
 //! Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome.
 
-pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 3;
+pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 4;
 
 pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 10] = [
     "schema_version",

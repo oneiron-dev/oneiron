@@ -182,6 +182,7 @@ pub(crate) struct StepCalls<'a> {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
     origin: Option<crate::dreamer_runner::AdmittedCallId>,
+    native_invoices: &'a Mutex<Vec<(u32, u64)>>,
 }
 
 impl<'a> StepCalls<'a> {
@@ -190,6 +191,7 @@ impl<'a> StepCalls<'a> {
         deadline: Option<&'a WakePassDeadline>,
         attempt_id: AttemptId,
         step_hash: [u8; 32],
+        native_invoices: &'a Mutex<Vec<(u32, u64)>>,
     ) -> crate::Result<Self> {
         let origin = deadline
             .map(|deadline| deadline.admitted_call_id(attempt_id))
@@ -201,6 +203,7 @@ impl<'a> StepCalls<'a> {
             attempt_id,
             step_hash,
             origin,
+            native_invoices,
         })
     }
 
@@ -291,6 +294,28 @@ impl<'a> StepCalls<'a> {
         }
     }
 
+    /// The actual native responses selected by this generation, before
+    /// correction combined their usage. Equality only checks the total; it
+    /// never selects the invoice population.
+    pub(crate) fn native_invoices(
+        &self,
+        usage: &oneiron_model::llm::LlmUsage,
+    ) -> Option<Vec<(u32, u64)>> {
+        self.origin?;
+        let invoices = self
+            .native_invoices
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut total = 0_u64;
+        for (index, &(ordinal, units)) in invoices.iter().enumerate() {
+            if usize::try_from(ordinal).ok()? != index {
+                return None;
+            }
+            total = total.checked_add(units)?;
+        }
+        (Some(total) == usage.input.total.checked_add(usage.output.total)).then(|| invoices.clone())
+    }
+
     /// Keep a physical response's native NET quantity before any corrective
     /// aggregation. This records no payment and never changes the call result.
     pub(crate) fn invoiced(&self, ordinal: u32, usage: &oneiron_model::llm::LlmUsage) {
@@ -299,6 +324,10 @@ impl<'a> StepCalls<'a> {
         };
         origin.ordinal = ordinal;
         let units = crate::dreamer_consolidation::step_charge::usage_units(usage);
+        self.native_invoices
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((ordinal, units));
         if let Err(error) = self.vault.with_write_txn_grouped(|wtxn| {
             crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, origin, units)
         }) {
