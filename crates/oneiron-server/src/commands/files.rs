@@ -40,19 +40,7 @@ pub fn files(command: FilesCommand) -> anyhow::Result<()> {
             } = *args;
             let folder = canonical_folder(&path)?;
             let (vault, owner) = open(&serve)?;
-            let exclude = if no_default_exclude {
-                Some(exclude)
-            } else if exclude.is_empty() {
-                None
-            } else {
-                Some(
-                    DEFAULT_FILES_EXCLUDE
-                        .iter()
-                        .map(|pattern| (*pattern).to_owned())
-                        .chain(exclude)
-                        .collect(),
-                )
-            };
+            let exclude = files_exclusions(exclude, no_default_exclude);
             let (world, source) = vault.attach_files_source(
                 &owner,
                 ActSurface::ThisInstall,
@@ -60,6 +48,18 @@ pub fn files(command: FilesCommand) -> anyhow::Result<()> {
                 include,
                 exclude,
                 kind.as_deref(),
+            )?;
+            emit(&files_attached(&vault, &owner, world, &source)?)
+        }
+        FilesCommand::Convert(args) => {
+            let folder = canonical_folder(&args.path)?;
+            let (vault, owner) = open(&args.serve)?;
+            let exclude = files_exclusions(args.exclude, args.no_default_exclude);
+            let (world, source) = vault.convert_folder_source_to_files(
+                &owner,
+                ActSurface::ThisInstall,
+                &folder,
+                exclude,
             )?;
             emit(&files_attached(&vault, &owner, world, &source)?)
         }
@@ -129,6 +129,22 @@ fn open(
     )?;
     let owner = crate::owner::local_owner(&vault)?;
     Ok((vault, owner))
+}
+
+fn files_exclusions(exclude: Vec<String>, no_default_exclude: bool) -> Option<Vec<String>> {
+    if no_default_exclude {
+        Some(exclude)
+    } else if exclude.is_empty() {
+        None
+    } else {
+        Some(
+            DEFAULT_FILES_EXCLUDE
+                .iter()
+                .map(|pattern| (*pattern).to_owned())
+                .chain(exclude)
+                .collect(),
+        )
+    }
 }
 
 /// The Files source attached at `folder`.

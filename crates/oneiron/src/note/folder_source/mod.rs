@@ -389,6 +389,34 @@ impl Vault {
         })
     }
 
+    pub(in crate::note) fn convert_notes_source_to_files(
+        &self,
+        owner: &AuthenticatedOwner,
+        folder: &str,
+        placement: FilesPlacement,
+    ) -> Result<FolderSource> {
+        let invalid = super::document::invalid;
+        let key = source_key(folder);
+        self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let mut source = SOURCES
+                .get(&self.store, txn, &key)?
+                .ok_or_else(|| invalid("the folder is not an attached notes source"))?;
+            if source.files.is_some() {
+                return Err(invalid("the folder is already a Files source"));
+            }
+            // The old ledger names notes under the folder namespace, not the
+            // Files identity. Keep those notes, as detach does, and scan afresh.
+            for file in FILES.scan_keys(&self.store, txn, files_prefix(folder).as_bytes())? {
+                FILES.delete(&self.store, txn, &file)?;
+            }
+            source.files = Some(placement);
+            source.last_rescan_at = None;
+            SOURCES.put(&self.store, txn, &key, &source)?;
+            Ok(source)
+        })
+    }
+
     /// Every attached folder.
     ///
     /// # Errors
