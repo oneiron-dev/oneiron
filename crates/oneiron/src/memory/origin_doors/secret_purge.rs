@@ -9,8 +9,8 @@
 
 use super::*;
 use crate::origin::secret_purge::{
-    RepoSecretPurgeIdRequest, RepoSecretPurgePlan, RepoSecretPurgeReceipt,
-    RepoSecretPurgeRequest, RepoSecretPurgeView,
+    RepoSecretPurgeIdRequest, RepoSecretPurgePlan, RepoSecretPurgeReceipt, RepoSecretPurgeRequest,
+    RepoSecretPurgeView,
 };
 
 impl Memory<'_> {

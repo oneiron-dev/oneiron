@@ -7,14 +7,17 @@
 //! is asked for, so no body text is read. The token the door injects is the
 //! bare OAuth access token or JSON carrying `access_token`. A refresh-only
 //! grant carrying its OAuth client is exchanged inside that same callback;
-//! an existing access credential keeps its original behavior.
+//! an existing access credential is tried first. An HTTP 401 can refresh its
+//! stored grant and retry that same GET; other failures are not retried.
 
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::Value;
 
-use super::http::{bearer_header_for_client, read_bounded_json};
+use super::http::{
+    bearer_header_for_client, read_bounded_json, refreshed_bearer_header_for_client,
+};
 use super::{
     GmailInboxPage, GmailMessageMetadata, GmailReadAuthority, GmailReadWire, HeaderMailbox,
     MAX_GMAIL_MESSAGES_PER_PAGE,
@@ -56,7 +59,8 @@ impl HttpGmailReadWire {
     /// One page of `mailbox_address`'s messages in `policy` after `cursor`.
     fn read_page(
         &self,
-        auth: &HeaderValue,
+        auth: &mut HeaderValue,
+        token: &[u8],
         mailbox_address: &str,
         policy: PlacementPolicy,
         cursor: Option<&MailboxPageToken>,
@@ -72,7 +76,7 @@ impl HttpGmailReadWire {
         if let Some(cursor) = cursor {
             query.push(("pageToken", cursor.as_str().to_owned()));
         }
-        let listed = self.get_json(GMAIL_MESSAGES_URL, auth, &query)?;
+        let listed = self.get_json(GMAIL_MESSAGES_URL, auth, token, &query)?;
         let mut messages = Vec::new();
         for entry in listed
             .get("messages")
@@ -83,7 +87,7 @@ impl HttpGmailReadWire {
                 .get("id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| unreadable("gmail_read_list_entry_without_id"))?;
-            messages.push(self.read_metadata(auth, mailbox_address, id)?);
+            messages.push(self.read_metadata(auth, token, mailbox_address, id)?);
         }
         let next_cursor = listed
             .get("nextPageToken")
@@ -97,7 +101,8 @@ impl HttpGmailReadWire {
     /// its labels, and its threading headers.
     fn read_metadata(
         &self,
-        auth: &HeaderValue,
+        auth: &mut HeaderValue,
+        token: &[u8],
         mailbox_address: &str,
         id: &str,
     ) -> Result<GmailMessageMetadata> {
@@ -110,7 +115,7 @@ impl HttpGmailReadWire {
                 .iter()
                 .map(|header| ("metadataHeaders", (*header).to_owned())),
         );
-        let value = self.get_json(&format!("{GMAIL_MESSAGES_URL}/{id}"), auth, &query)?;
+        let value = self.get_json(&format!("{GMAIL_MESSAGES_URL}/{id}"), auth, token, &query)?;
         let thread_id = value
             .get("threadId")
             .and_then(Value::as_str)
@@ -151,14 +156,29 @@ impl HttpGmailReadWire {
         Ok(metadata)
     }
 
-    fn get_json(&self, url: &str, auth: &HeaderValue, query: &[(&str, String)]) -> Result<Value> {
-        let response = self
-            .client
-            .get(url)
-            .query(query)
-            .header(AUTHORIZATION, auth.clone())
-            .send()
-            .map_err(|_| unreadable("gmail_read_transport_failed"))?;
+    fn get_json(
+        &self,
+        url: &str,
+        auth: &mut HeaderValue,
+        token: &[u8],
+        query: &[(&str, String)],
+    ) -> Result<Value> {
+        let request = |auth: &HeaderValue| {
+            self.client
+                .get(url)
+                .query(query)
+                .header(AUTHORIZATION, auth.clone())
+                .send()
+                .map_err(|_| unreadable("gmail_read_transport_failed"))
+        };
+        let mut response = request(auth)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            && let Some(refreshed) = refreshed_bearer_header_for_client(&self.client, token)?
+        {
+            drop(response);
+            *auth = refreshed;
+            response = request(auth)?;
+        }
         let status = response.status();
         if !status.is_success() {
             return Err(Error::InvalidConfig(format!(
@@ -180,8 +200,8 @@ impl GmailReadWire for HttpGmailReadWire {
     ) -> Result<GmailInboxPage> {
         let mut page = None;
         let _receipt = authority.with_token_at_door(&mut |token: &[u8]| {
-            let auth = bearer_header_for_client(&self.client, token)?;
-            page = Some(self.read_page(&auth, mailbox_address, policy, cursor)?);
+            let mut auth = bearer_header_for_client(&self.client, token)?;
+            page = Some(self.read_page(&mut auth, token, mailbox_address, policy, cursor)?);
             Ok(())
         })?;
         page.ok_or_else(|| unreadable("gmail_read_credential_door_refused"))
