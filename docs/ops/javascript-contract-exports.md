@@ -100,9 +100,21 @@ otherwise its existing alias is preserved. A terminal `module.exports` must stil
 use the native `module` binding, and terminal `exports` must already alias the
 current module. Rebinding `module` does not prove its new value is the native module.
 
+A direct whole-slot assignment can also contain a flat comma-valued right-hand
+side such as `module.exports = (module.exports = {a: 1}, module.exports)`.
+Every non-final element must be a plain native whole-slot assignment with an
+object literal, function expression, arrow function or class expression value;
+the final element must read the native `module.exports` slot. The outer slot is
+captured before the right-hand side. Replacements apply in source order, including
+each value's unresolved spread or computed-key sites, and the outer store keeps
+the last replacement's keys. The old wrapper `exports` binding remains detached.
+The entire sequence must qualify before any of these effects or reference
+accounting is applied. A final `exports` reference does not qualify, because an
+inner replacement can already have detached it.
+
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
-property assignments, compound operators and sequence-valued terminals keep the
-ordinary outer-only handling and unresolved sites. Terminal values are not executed;
+property assignments, compound operators and other sequence-valued terminals keep
+the ordinary outer-only handling and unresolved sites. Terminal values are not executed;
 their unknown wrapper references still produce unresolved sites, including references
 inside function bodies, class heritage, computed class keys and static initializers
 or blocks. Those sites do not supply inferred runtime properties. No conditional
