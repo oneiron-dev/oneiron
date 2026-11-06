@@ -334,6 +334,16 @@ Receipt order, error mapping and idempotency handling are unchanged. This holder
 does not count the receipt's channel set or interlocutor internals, construction
 peaks, or the independent vectors copied by later consumers.
 
+The HTTP board's separate observation-id vector has a local holder on that same
+server memory line. It records the vector's actual capacity after collecting
+MEMORIES ids and after each extension with capability hits and named board rows.
+The vector stays charged while the session lock is awaited and while the read set
+observes those ids. It drops after the original observation block, before its
+holder. Errors and cancellation also drop the ids before the holder. The read
+set's own point-read vector, decoded rows, retained maps and the later replay
+vectors are separate allocations; allocation and reallocation peaks are not
+covered by this post-allocation holder.
+
 
 ## Chat capture buffer custody
 
