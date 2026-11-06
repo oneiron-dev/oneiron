@@ -2,11 +2,14 @@
 //! run's agent, rendered by the self-brief renderer the authenticated path
 //! uses ([`super::describe_self_for_auth`]).
 //!
-//! A snapshot a trusted host installed for the run
-//! ([`crate::server::SyncServer::install_self_brief_session`], keyed by the
-//! agent and the run's own board connection `run:<run id>`) renders whole,
-//! and goes when that connection does. Without one, the brief is resolved
-//! from the run itself: the agent, the person its subject anchor names, the
+//! A pumped run's resident host installs the run's brief in the server's
+//! self-brief custody, keyed by the agent and the run's own board
+//! connection `run:<run id>`, and keeps it for the run's live run (FIX 17594
+//! D3). Once that brief's prefix was delivered, describe(self) is its tail:
+//! the state the run resolves now is installed again at the brief's epoch
+//! and rendered through that custody, the cached prefix untouched. Before
+//! then, and with no installation, the brief is resolved from the run itself
+//! and rendered whole: the agent, the person its subject anchor names, the
 //! owner's agent Grants that stand for the agent, the run, credential and
 //! parent ceilings and the communication limits its host holds the facts
 //! for ([`BriefHostFacts`]), the policy's class ceilings, the scratchpad of
@@ -163,19 +166,28 @@ pub(crate) async fn describe_self_for_run(
     }
     let people = run_people(server, actor)?;
     let reads = crate::api::run_session_reads(server, actor, connection).await;
-    let installed = server
-        .self_brief_sessions
-        .lock()
-        .await
-        .state(&(actor.entity_ref(), connection.0.clone()))
-        .cloned();
-    let state = match installed {
-        Some(state) => state,
-        None => resolved_state(server, actor, line, &reads, host)?,
+    let state = resolved_state(server, actor, line, &reads, host)?;
+    let key = (actor.entity_ref(), connection.0.clone());
+    let mut briefs = server.self_brief_sessions.lock().await;
+    let (tail, sources) = if briefs.acknowledged(&key).is_some() {
+        // FIX 17594 D3: the run's delivered brief answers with its tail, from
+        // the state the run resolves now, installed again at the brief's
+        // epoch; the prefix the run's requests carry stays as it was.
+        briefs.restate(&key, state)?;
+        let (card, sources) = briefs
+            .tail_listing(&key, &server.vault, &reads, Some(&people))
+            .transpose()?
+            .ok_or_else(|| internal("self brief tail is missing"))?;
+        let tail = card
+            .tail
+            .ok_or_else(|| internal("self brief tail is missing"))?;
+        (tail, sources)
+    } else {
+        drop(briefs);
+        let brief = state.describe(&server.vault, &reads, Some(&people))?;
+        let sources = brief.sources(&server.vault, Some(&people))?;
+        (brief.render(), sources)
     };
-    let brief = state.describe(&server.vault, &reads, Some(&people))?;
-    let tail = brief.render();
-    let sources = brief.sources(&server.vault, Some(&people))?;
     let value = serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
         .map_err(|_| internal("self brief encoding failed"))?;
     Ok((value, sources))
@@ -335,6 +347,39 @@ pub(super) fn resolved_state(
             replay,
         },
     })
+}
+
+/// [`resolved_state`] for a host outside the context board: a pumped run's
+/// brief state as the run resolves it now, for its agent `actor`, its entry
+/// spending on `line`, over the run's own session `reads`, with the facts
+/// its door holds (`host`). A resident run's port installs it (FIX 17594
+/// D3).
+///
+/// # Errors
+///
+/// As [`resolved_state`].
+pub(crate) fn run_brief_state(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    line: Option<&RunAdmission>,
+    reads: &SessionReadSet,
+    host: &BriefHostFacts,
+) -> MemoryResult<SelfBriefState> {
+    resolved_state(server, actor, line, reads, host)
+}
+
+/// [`run_people`] for a host outside the context board: the PEOPLE a pumped
+/// run's self brief lays its roster out from, as its describe(self) reads
+/// them (FIX 17594 D3).
+///
+/// # Errors
+///
+/// As [`run_people`].
+pub(crate) fn run_brief_people(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+) -> MemoryResult<oneiron::context_board::People> {
+    run_people(server, actor)
 }
 
 /// The vault's people as the agent's own lane on this device reads them

@@ -199,8 +199,9 @@ pub struct SyncServer {
     pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
     /// Host-resolved run briefs, keyed by authenticated actor and session,
     /// and their prefix custody: the one owner every host stages, delivers,
-    /// reads and closes them through.
-    pub(crate) self_brief_sessions: super::self_brief_custody::SelfBriefCustody,
+    /// reads and closes them through. The host's live runs share it, to
+    /// close a pumped run's brief as the run retires (FIX 17594 D3).
+    pub(crate) self_brief_sessions: Arc<super::self_brief_custody::SelfBriefCustody>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
