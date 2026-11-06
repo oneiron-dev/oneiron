@@ -5330,8 +5330,10 @@ export type MirrorRefOutcome = "pending" | "dispatched" | "applied" | "observed_
 export type OriginMirrorPlanRefView = { ref_name: string; new?: string | null; observed: MirrorObservedTip; review?: OriginPublishReview | null; first_page: number; batch?: number | null; outcome: MirrorRefOutcome }
 /** `oneiron_store::origin::publish::mirror_plan_types::MirrorBatchClaim` */
 export type MirrorBatchClaim = { state: "pending" } | { state: "claimed"; at: number } | { state: "sent"; at: number } | { state: "paused" }
+/** `oneiron_model::llm::backend::BrokerIsolation` */
+export type BrokerIsolation = "separate_user" | "same_user"
 /** `oneiron::origin::publish::mirror_plan_view::OriginMirrorPlanBatchView` */
-export type OriginMirrorPlanBatchView = { claim: MirrorBatchClaim; refs: number[]; detail?: string | null }
+export type OriginMirrorPlanBatchView = { claim: MirrorBatchClaim; refs: number[]; detail?: string | null; broker_isolation?: BrokerIsolation | null }
 /** `oneiron::origin::publish::types::OriginPublishReviewItem` */
 export type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string } | { kind: "object"; object_type: string; object: string; target?: string | null; name?: string | null; size?: number | null }
 /** `oneiron::origin::publish::mirror_plan_view::OriginMirrorPlanRecord` */
@@ -5362,8 +5364,6 @@ export type OriginPublishAct = { actor?: EntityId | null; class: OriginPublishAc
 export type OriginPublishRefusalReason = "destination_changed" | "remote_moved" | "rejected" | "outcome_unknown" | "authority_changed" | "objects_missing" | "marked_live_secret" | "secret_history_unknown"
 /** `oneiron::origin::publish::types::OriginPublishRefusal` */
 export type OriginPublishRefusal = { reason: OriginPublishRefusalReason; observed?: OriginPublishRemote | null; changed_fields: string[]; detail?: string | null }
-/** `oneiron_model::llm::backend::BrokerIsolation` */
-export type BrokerIsolation = "separate_user" | "same_user"
 /** `oneiron::origin::publish::types::OriginPublishRequestView` */
 export type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null; broker_isolation?: BrokerIsolation | null }
 /** `oneiron_store::origin::publish::inputs::OriginPublishReviewRequest` */

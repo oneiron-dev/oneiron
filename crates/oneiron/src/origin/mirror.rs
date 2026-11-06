@@ -9,8 +9,12 @@
 //! pushes.
 //!
 //! The token leaves custody only through [`Vault::inject_secret_at_door`]
-//! bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`], and reaches git only as this
-//! push's `Authorization` header, never config or disk.
+//! bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`]. On a served host the ref reads
+//! and pushes hand it only to the credential broker, which installs it on
+//! each exchange of the host's mirror relay (`git_transport`, FIX 19083), so
+//! no Git child holds it; on an embedded vault it reaches git only as the
+//! push's `Authorization` header, never config or disk. The Git-LFS upload
+//! after a push still takes it in the daemon (`publish::mirror_lfs`).
 //!
 //! Mirror-main stays read-only. Mirror-side work comes back inbound through
 //! the door as `refs/imported/<source>/<branch>`, which the change index
