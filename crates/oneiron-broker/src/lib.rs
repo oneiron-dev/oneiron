@@ -58,7 +58,7 @@ pub use git_http::{
 #[cfg(unix)]
 pub use git_http::{GitReply, PreparedGitCall};
 pub use send::SendPolicy;
-pub use shape::Shape;
+pub use shape::{Shape, json_member};
 pub use strip::{MARKER, strip};
 
 #[cfg(unix)]

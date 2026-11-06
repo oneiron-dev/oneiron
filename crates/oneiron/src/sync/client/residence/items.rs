@@ -245,6 +245,15 @@ impl SyncClient {
                     }
                     return Ok(());
                 }
+                // A copy of an item erased here, or of a NOTE that cites one,
+                // is not kept: the home may not have erased it yet (FIX 18400).
+                crate::note::refuse_erased_residence_copy_in_txn(
+                    &self.vault,
+                    txn,
+                    item,
+                    header.entity_type,
+                    &document,
+                )?;
                 self.vault
                     .store
                     .sync_state
