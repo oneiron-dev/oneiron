@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ReadDestination;
-use crate::store::invocation_claims::StoredPeerMachine;
+use crate::store::StoredPeerMachine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

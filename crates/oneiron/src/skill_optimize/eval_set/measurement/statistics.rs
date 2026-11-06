@@ -40,7 +40,7 @@ pub(crate) const QUANTILE_METHOD: &str = "linear_p_times_b_minus_one";
 pub(crate) const SAMPLER: &str = "splitmix64_rejection";
 
 /// The method a measurement was asked for and computed with.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeasurementMethodPin {
     pub revision: u32,

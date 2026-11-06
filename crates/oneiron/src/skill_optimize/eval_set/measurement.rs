@@ -34,7 +34,7 @@ pub use self::finish::{JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS};
 pub use self::statistics::{EstimateGap, EvalFamilySummary, MeasurementMethodPin};
 
 /// One arm: the exact model a seat would serve, at its serving revision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalArmPin {
     pub model: String,
@@ -58,7 +58,7 @@ impl EvalArmPin {
 }
 
 /// Which way a score is better.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScoreDirection {
     HigherIsBetter,
@@ -66,7 +66,7 @@ pub enum ScoreDirection {
 }
 
 /// The axis a measurement scores, its direction and its units.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalAxisPin {
     pub axis: String,
@@ -76,7 +76,7 @@ pub struct EvalAxisPin {
 
 /// The floor slices a set must hold enough families in, as a skill's or the
 /// owner's policy declares them. Empty when none is declared.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FloorSlicePolicy {
     /// Case strata that must each hold enough families; one with none counts
@@ -91,7 +91,7 @@ pub struct FloorSlicePolicy {
 /// What a measurement is asked for. Every field is frozen into the digest
 /// that keys its row: a changed pin, cohort, rubric, scorer or method is
 /// another measurement, never this one's card.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalMeasurementRequest {
     /// The decision that waits on it, such as `training_offer`.

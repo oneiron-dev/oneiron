@@ -15,7 +15,9 @@ use crate::{EntityId, Error, Vault};
 
 /// The canonical question a measurement request queued, without serving
 /// its sealed membership, task content or stored answers.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct EvalMeasurementRef {
     pub digest: String,
