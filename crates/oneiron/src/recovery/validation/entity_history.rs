@@ -32,6 +32,7 @@ enum Stage {
     Head,
     HeadMetadata,
     HeadSkillState,
+    HeadReach,
     Versions,
     VersionSummary,
     VersionParents,
@@ -186,10 +187,23 @@ impl HistoryValidation {
                         _ => return Err(invalid("entity document head version")),
                     }
                     self.head_byte = 0;
-                    self.reached = vec![false; self.texts.len()];
-                    self.reached[head] = true;
-
-                    self.next = history.versions.len();
+                    self.reached = Vec::with_capacity(self.texts.len());
+                    self.stage = Stage::HeadReach;
+                    return Ok(false);
+                }
+                Stage::HeadReach => {
+                    let len = self.texts.len();
+                    let end = self
+                        .reached
+                        .len()
+                        .saturating_add(blake3::CHUNK_LEN)
+                        .min(len);
+                    self.reached.resize(end, false);
+                    if end < len {
+                        return Ok(false);
+                    }
+                    self.reached[len - 1] = true;
+                    self.next = history().versions.len();
                     self.stage = Stage::Versions;
                     return Ok(false);
                 }
