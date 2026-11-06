@@ -70,7 +70,21 @@ impl Vault {
         owner: Option<EntityId>,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output_sourced(
+        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None)
+    }
+
+    /// Publishes an occurrence with the producing executor step's native
+    /// starting bridge sequence, when its producer supplied one.
+    pub(crate) fn publish_code_run_output_produced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: Option<EntityId>,
+        input_rows: Option<Vec<EntityId>>,
+        producing_step_start: Option<u64>,
+    ) -> Result<CodeRunRawOutput> {
+        let mut finished = finish_output_sourced(
             path,
             sink,
             complete,
@@ -78,6 +92,7 @@ impl Vault {
             self.limit_watch(),
             |digest| self.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = producing_step_start;
         let mut wtxn = self.store.env.write_txn()?;
         self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
         if owner.is_none() {
@@ -261,7 +276,7 @@ impl Vault {
         let at = ResultOccurrence::of(owner, output)?;
         let mut sink = self.code_run_output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output_sourced(
+        let mut finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
@@ -269,6 +284,7 @@ impl Vault {
             self.limit_watch(),
             |digest| self.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = output.producing_step_start;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
