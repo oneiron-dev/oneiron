@@ -1214,13 +1214,19 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
   }
 });
 
-/* RETRIEVAL-11: evidence inspection and vetting exist, but a Generated/Auto
- * source must be produced on a genuinely leased, caller-owned live run.
- * self.run.attach consumes that state; it cannot create or borrow a lease.
- * Task/spawn queue receipts do not grant the paired owner an agent's run.
- * No source:"generated" upsert or fabricated run is a positive control.
+/* RETRIEVAL-11: evidence inspection and vetting exist; the complete
+ * Generated/Auto + pending-critical production producers are still owed.
+ * Engine 2026-11-07 07:12 JST confirms agents.spawn -> genuine agent holder
+ * pairing -> agents.spawn.get leased -> self.run.attach. That composition is
+ * built; this is not a request for another lease/registration API.
+ * The fixture must retain the actual caller-owned lease for its production
+ * writes. Attach consumes that state; a queue receipt alone does not grant
+ * the paired human owner an agent's run. Deterministic fixture timing and
+ * host-stamped producer setup remain to be qualified, not forged or inferred
+ * from an evidence read. No source:"generated" upsert or fabricated run is
+ * a positive control. Keep the complete original pending-critical oracle.
  */
-suite.todo(test, "RETRIEVAL-11", "waits on a complete typed public caller-owned live-run lease/credential setup for the Generated/Auto and pending-critical producers; attach and consolidation.evidence alone are insufficient");
+suite.todo(test, "RETRIEVAL-11", "waits on merged complete production Generated/Auto and pending-critical producers and qualification of the genuine caller-owned leased-run fixture; spawn/agent-pair/leased-get/attach composition exists, while evidence inspection is not a producer");
 
 /* RETRIEVAL-12 replacement section. Drop-in for retrieval.test.ts: delete the
  * RETRIEVAL-12 suite.todo block and paste this whole section in its place.
