@@ -371,6 +371,54 @@ pub(super) fn put_case_in_txn(
 }
 
 impl Vault {
+    /// Known receipt-content dependencies of a parentless eval case. The
+    /// receipt keeps its original complete read set even when erasure shrinks
+    /// the case's source list. Labels are not source authority, and unknown
+    /// dependencies do not cancel receipt dependencies that are proven.
+    pub(crate) fn eval_case_receipt_sources_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        case: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let key = [CASE_PREFIX, case.as_bytes()].concat();
+        let Some(row) = self
+            .store
+            .vault_meta
+            .get(txn, &key)?
+            .and_then(|raw| rmp_serde::from_slice::<EvalCase>(&raw).ok())
+        else {
+            return Ok(Vec::new());
+        };
+        if row.id != *case || !row.parents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut proven = BTreeSet::new();
+        for receipt in &row.receipts {
+            let receipt =
+                match crate::receipt::attempt_pack_receipt_in_txn(&self.store, txn, receipt) {
+                    Ok(Some(receipt)) => receipt,
+                    Ok(None) | Err(Error::CorruptedIndex(_)) => continue,
+                    Err(Error::Store(crate::error::StoreError::SideTableRow { table, .. }))
+                        if table == crate::side_table::ATTEMPT_PACK_RECEIPT.name =>
+                    {
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+            if let Some(sources) = receipt.pack_source_rows() {
+                proven.extend(sources);
+            }
+        }
+        let live = super::live_source_rows_in(self, txn, Some(proven.into_iter().collect()))?;
+        let mut sources = Vec::new();
+        for id in live.into_iter().flatten() {
+            if self.get_entity_type_in_txn(txn, &id)?.is_some() {
+                sources.push(id);
+            }
+        }
+        Ok(sources)
+    }
+
     /// The lift sweep's door for a stored case (OF-067): case `id` is written
     /// again through [`put_case_in_txn`], the door a new case takes, so each
     /// secret the wall places goes to custody and leaves its handle. No case,
