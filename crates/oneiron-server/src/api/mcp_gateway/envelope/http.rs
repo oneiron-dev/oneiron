@@ -202,16 +202,19 @@ fn mcp_status_refusal(
 
 /// The refusal of a request whose `Origin` this server does not admit (MCP
 /// Streamable HTTP: a present, invalid `Origin` answers 403 Forbidden,
-/// against DNS rebinding). The rule is the HTTP API's own CORS rule, an
-/// engine call (CALLS, FIX 4902): an origin is admitted when
-/// `allowed_origins` names it exactly, and none is when the list is empty.
-/// A request with no `Origin`, as every client outside a browser sends, is
-/// not judged.
+/// against DNS rebinding; canon ARCH-0028 "Origin-validated"). An engine
+/// call (CALLS, FIX 4902): an origin is admitted when `allowed_origins`
+/// names it exactly, when it is this host's own public origin
+/// (`oauth_resource_indicator`), or when its host is a loopback name or
+/// address, which a rebinding page never carries. A request with no
+/// `Origin`, as every client outside a browser sends, is not judged.
 fn mcp_origin_refusal(server: &SyncServer, headers: &HeaderMap, body: &[u8]) -> Option<Response> {
     let origin = headers.get(ORIGIN)?;
-    let admitted = crate::web_client::parse_allowed_origins(&server.config.allowed_origins)
+    let listed = crate::web_client::parse_allowed_origins(&server.config.allowed_origins)
         .is_ok_and(|allowed| allowed.contains(origin));
-    if admitted {
+    let own = crate::builtin_host::public_origin(server.config.oauth_resource_indicator.as_deref())
+        .is_some_and(|own| origin.as_bytes() == own.as_bytes());
+    if listed || own || origin.to_str().is_ok_and(loopback_origin) {
         return None;
     }
     let error = McpGatewayError::new(
@@ -232,6 +235,24 @@ fn mcp_origin_refusal(server: &SyncServer, headers: &HeaderMap, body: &[u8]) -> 
         Value::Null,
         error,
     ))
+}
+
+/// Whether `origin` (`scheme://host[:port]`) names a loopback host:
+/// `localhost`, `127.0.0.1` or `[::1]`.
+fn loopback_origin(origin: &str) -> bool {
+    let Some((scheme, rest)) = origin.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme, "http" | "https") {
+        return false;
+    }
+    let host = match rest.strip_prefix('[') {
+        Some(bracketed) => bracketed.split_once(']').map(|(host, _)| host),
+        None => Some(rest.split(':').next().unwrap_or(rest)),
+    };
+    host.is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+    })
 }
 
 /// The refusal of a POST whose `MCP-Protocol-Version` header names a
