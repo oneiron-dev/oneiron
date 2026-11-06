@@ -151,6 +151,7 @@ pub use self::embedder_serve::embedder_serve;
 mod maintain;
 pub use maintain::maintain;
 mod owner;
+pub(crate) mod replica_target;
 pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;

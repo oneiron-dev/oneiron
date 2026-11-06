@@ -176,7 +176,7 @@ impl SharedEnvRegistry {
     /// its first entry.
     ///
     /// `config` is the serve config the personal vault opened with. Each env
-    /// gets a fresh `config.vault_config()` and its own page seal resolved for
+    /// gets a fresh `config.base_vault_config()` and its own page seal resolved for
     /// its path, existing roots only (a mistyped path refuses, it never mints
     /// a vault). `lease_vault_id` is the host's
     /// numeric lease scope, the same id the served vault's materializer
