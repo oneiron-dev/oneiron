@@ -1920,7 +1920,7 @@ agent = "sys.team_lead"
     await engine.artifacts.json("host-restart.json", { durableWake, task, durableLease });
   } finally {
     await engine.artifacts.json("host-provider-calls.json", providers.seenFixtureCalls);
-    try { await engine.stop(); } finally { await providers.close(); }
+    try { await engine.close(); } finally { await providers.close(); }
   }
 });
 
