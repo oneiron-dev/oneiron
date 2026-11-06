@@ -18,6 +18,10 @@ thread_local! {
 
 struct CopyScope {
     vault: PathBuf,
+    windows: Vec<CopyWindow>,
+}
+
+struct CopyWindow {
     window: String,
     copies: Vec<Arc<PreparedHomeClaimCopy>>,
     attempts: Vec<HomeClaimCopyAttempt>,
@@ -48,7 +52,8 @@ pub(crate) fn observe_writer<'a>(
     COPIES.with(|slot| {
         slot.borrow()
             .as_ref()
-            .filter(|scope| scope.vault == vault.store.env.path() && scope.window == window)
+            .filter(|scope| scope.vault == vault.store.env.path())
+            .and_then(|scope| scope.windows.iter().find(|entry| entry.window == window))
             .map(|scope| CopyWriterObservation {
                 vault,
                 window,
@@ -62,9 +67,17 @@ impl CopyWriterObservation<'_> {
     /// and error ownership. A postcommit error does not mean nothing landed.
     pub(crate) fn finish<T>(self, result: &Result<T>) {
         COPIES.with(|slot| {
-            if let Some(scope) = slot.borrow_mut().as_mut().filter(|scope| {
-                scope.vault == self.vault.store.env.path() && scope.window == self.window
-            }) {
+            if let Some(scope) = slot
+                .borrow_mut()
+                .as_mut()
+                .filter(|scope| scope.vault == self.vault.store.env.path())
+                .and_then(|scope| {
+                    scope
+                        .windows
+                        .iter_mut()
+                        .find(|entry| entry.window == self.window)
+                })
+            {
                 for attempt in &mut scope.attempts[self.first..] {
                     attempt.writer_result = Some(result.as_ref().map(|_| ()).map_err(|e| e.kind()));
                 }
@@ -92,18 +105,39 @@ pub(crate) fn with_copies<T>(
     copies: &[Arc<PreparedHomeClaimCopy>],
     land: impl FnOnce() -> T,
 ) -> (T, Vec<HomeClaimCopyAttempt>) {
-    let scope = (!copies.is_empty()).then(|| CopyScope {
+    with_copy_batch(vault, &[(window, copies)], land)
+}
+
+fn with_copy_batch<T>(
+    vault: &Vault,
+    windows: &[(&WindowKey, &[Arc<PreparedHomeClaimCopy>])],
+    land: impl FnOnce() -> T,
+) -> (T, Vec<HomeClaimCopyAttempt>) {
+    let windows: Vec<_> = windows
+        .iter()
+        .filter(|(_, copies)| !copies.is_empty())
+        .map(|(window, copies)| CopyWindow {
+            window: window.as_str().to_owned(),
+            copies: copies.to_vec(),
+            attempts: Vec::new(),
+        })
+        .collect();
+    let scope = (!windows.is_empty()).then(|| CopyScope {
         vault: vault.store.env.path().to_path_buf(),
-        window: window.as_str().to_owned(),
-        copies: copies.to_vec(),
-        attempts: Vec::new(),
+        windows,
     });
     let _restore = Restore(COPIES.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), scope)));
     let landed = land();
     let attempts = COPIES.with(|slot| {
         slot.borrow_mut()
             .as_mut()
-            .map(|scope| std::mem::take(&mut scope.attempts))
+            .map(|scope| {
+                scope
+                    .windows
+                    .iter_mut()
+                    .flat_map(|window| std::mem::take(&mut window.attempts))
+                    .collect()
+            })
             .unwrap_or_default()
     });
     (landed, attempts)
@@ -115,7 +149,17 @@ pub(crate) fn with_home_claim_copies<T>(
     copies: &[Arc<PreparedHomeClaimCopy>],
     land: impl FnOnce() -> T,
 ) -> T {
-    let (landed, attempts) = with_copies(vault, key, copies, land);
+    with_home_claim_copy_batch(vault, &[(key, copies)], land)
+}
+
+/// Keeps every window's native holders and observations around one real root
+/// writer. The batch caller supplies distinct window keys.
+pub(crate) fn with_home_claim_copy_batch<T>(
+    vault: &Vault,
+    windows: &[(&WindowKey, &[Arc<PreparedHomeClaimCopy>])],
+    land: impl FnOnce() -> T,
+) -> T {
+    let (landed, attempts) = with_copy_batch(vault, windows, land);
     for attempt in attempts {
         tracing::debug!(
             entity = %attempt.entity_id.to_hex(),
@@ -173,7 +217,8 @@ pub(crate) fn copies_for(
         let borrowed = slot.borrow();
         let Some(scope) = borrowed
             .as_ref()
-            .filter(|scope| scope.vault == vault.store.env.path() && scope.window == window)
+            .filter(|scope| scope.vault == vault.store.env.path())
+            .and_then(|scope| scope.windows.iter().find(|entry| entry.window == window))
         else {
             return Vec::new();
         };
@@ -204,7 +249,12 @@ pub(crate) fn retain_copies_in_txn(
             Ok(state)
         })();
         COPIES.with(|slot| {
-            if let Some(scope) = slot.borrow_mut().as_mut() {
+            if let Some(scope) = slot.borrow_mut().as_mut().and_then(|scope| {
+                scope
+                    .windows
+                    .iter_mut()
+                    .find(|entry| entry.window == window)
+            }) {
                 scope.attempts.push(HomeClaimCopyAttempt {
                     entity_id: *id,
                     result,
