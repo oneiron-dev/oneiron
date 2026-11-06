@@ -304,6 +304,24 @@ pub(crate) fn owner_gone_in_txn(
         || dbs.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?)
 }
 
+/// Whether an owner is erased in `txn` for good (FIX 6591): it holds the
+/// hard-delete marker, or its row is removed without an identity soft
+/// delete's marker. A soft-deleted owner, whose hard erase may still come,
+/// is not. Callers keep their own policy for a marker read error.
+pub(crate) fn owner_hard_erased_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<bool> {
+    if dbs.port_deletion_marked(txn, DeletionMarker::HardDelete, owner)? {
+        return Ok(true);
+    }
+    Ok(
+        !dbs.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?
+            && removed_in_txn(dbs, txn, owner)?,
+    )
+}
+
 impl TombstoneStoreRead for Vault {
     fn port_tombstone_records<'a>(
         &self,

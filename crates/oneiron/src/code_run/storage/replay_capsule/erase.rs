@@ -248,3 +248,24 @@ pub(crate) fn actor_gone_in_store(
         true
     })
 }
+
+/// Whether `actor` is erased here for good (FIX 6591): hard-deleted, or
+/// removed with no identity soft delete's marker, so no later erase of it
+/// runs. A row a late write leaves for a gone actor then names none, and
+/// only a soft-deleted actor's row keeps it for that actor's hard erase. A
+/// marker that cannot be read counts as hard-erased, failing closed as
+/// [`actor_gone_in_store`] does.
+pub(crate) fn actor_hard_erased_in_store(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> bool {
+    let erased = crate::ports::owner_hard_erased_in_txn(store, txn, actor);
+    erased.unwrap_or_else(|error| {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "a gone actor's hard-delete markers were not read; its id is not kept"
+        );
+        true
+    })
+}

@@ -97,7 +97,7 @@ pub(crate) use integrity::{
 pub(crate) use lmdb_visibility::{
     deletion_memo_scope, hard_erased_ids_in_txn, names_no_actor_in_txn, recall_memo_key,
 };
-pub(crate) use lmdb_visibility::{owner_gone_in_txn, removed_in_txn};
+pub(crate) use lmdb_visibility::{owner_gone_in_txn, owner_hard_erased_in_txn, removed_in_txn};
 pub use manual_clock::ManualClock;
 use oneiron_store::ports::manual_clock;
 pub use records::*;
