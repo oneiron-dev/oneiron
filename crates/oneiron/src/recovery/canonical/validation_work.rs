@@ -1,12 +1,14 @@
 //! Ordered canonical validation groups shared by synchronous and turn-based recovery.
 
-use super::{CanonicalSnapshot, row_births, validation, withdrawn_cutoffs};
+use super::{CanonicalSnapshot, asset_body_refs, row_births, validation, withdrawn_cutoffs};
 use crate::error::Result;
 
 #[derive(Default)]
 pub(crate) struct CanonicalValidation {
     stage: ValidationStage,
     window_rows: validation::WindowRows,
+    document_rows: validation::DocumentRows,
+    asset_body_refs: asset_body_refs::AssetBodyRefsValidation,
 }
 
 #[derive(Default)]
@@ -23,7 +25,7 @@ enum ValidationStage {
 }
 
 impl CanonicalValidation {
-    /// Validate one group or one window-row page over the same immutable snapshot.
+    /// Validate one group or one row page over the same immutable snapshot.
     pub(crate) fn advance(
         &mut self,
         snapshot: &CanonicalSnapshot,
@@ -42,11 +44,17 @@ impl CanonicalValidation {
                 ValidationStage::AssetBodyRefs
             }
             ValidationStage::AssetBodyRefs => {
-                snapshot.validate_asset_body_refs()?;
+                if !self.asset_body_refs.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.asset_body_refs = asset_body_refs::AssetBodyRefsValidation::default();
                 ValidationStage::Documents
             }
             ValidationStage::Documents => {
-                validation::validate_documents(snapshot)?;
+                if !self.document_rows.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.document_rows = validation::DocumentRows::default();
                 ValidationStage::EntityDocuments
             }
             ValidationStage::EntityDocuments => {
@@ -70,6 +78,13 @@ impl CanonicalValidation {
         if matches!(self.stage, ValidationStage::WindowRows) {
             let (stage, next) = self.window_rows.position();
             return format!("window rows {stage} {next}");
+        }
+        if matches!(self.stage, ValidationStage::Documents) {
+            let (stage, next) = self.document_rows.position();
+            return format!("NOTE documents {stage} {next}");
+        }
+        if matches!(self.stage, ValidationStage::AssetBodyRefs) {
+            return format!("asset body references {}", self.asset_body_refs.position());
         }
         match self.stage {
             ValidationStage::Manifest => "manifest",
