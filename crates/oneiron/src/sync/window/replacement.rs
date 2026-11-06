@@ -92,6 +92,7 @@ pub fn prepare_replacement(
         snapshot,
         evidence,
         ReplacementByteBound::NetworkFrame,
+        None,
     )
 }
 
@@ -181,6 +182,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     snapshot: &[u8],
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
+    positions: Option<crate::sync::origin_positions::OwnDevicePositionImport>,
 ) -> Result<PreparedReplacement> {
     let candidate = admitted_replacement(
         vault,
@@ -262,6 +264,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, &marker.raw)?;
     }
     candidate.commit();
+    // Reverse rematerialization may remove an uninstalled optional root.
+    // Select only this snapshot's still-chosen values before that scrub.
+    let positions = positions.and_then(|positions| positions.select_replacement(&candidate));
     reverse_rematerialize(vault, &candidate, key)?;
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
@@ -286,6 +291,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
             .filter_map(Result::ok)
             .collect()
     };
+    let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
@@ -303,6 +309,11 @@ pub(in crate::sync) fn prepare_bounded_replacement(
                 matches!(conflict.map.as_str(), "entities" | "edges") && conflict.key == carrier
             })
         })?;
+        if let Some(positions) = &positions
+            && let Err(error) = positions.finish_in_txn(vault, wtxn, &candidate)
+        {
+            tracing::warn!(window = %key, %error, "optional own-device replacement positions did not settle");
+        }
         write_window_svf_in_txn(vault, wtxn, key)
     })?;
     Ok(PreparedReplacement {
