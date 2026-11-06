@@ -207,9 +207,20 @@ These buffers are part of this same owned decode and stay unchanged through
 cleanup until the existing-row scope drops before the caller lease. Their known
 capacities join the same materialized observation and stay conservative until
 that lease drops, including errors and unwind. An unbound stage adds no walk.
-Replay inputs, the empty-reason string, remaining decoded backing and the fork
-helper's separate decode remain outside this charge, along with raw-read and
-overlay copies, database pages, transaction scratch and allocation peaks.
+The same observation also includes the existing empty-reason string's actual
+capacity and any replay query and corpus-reference string capacities. Replay
+config backing uses the lower native calculation: string capacities, array
+slots at the native value size, and recursive child values and object-key string
+capacities. These are this decode's own buffers, not the incoming record or a
+separate finalizer decode. Absent fields add no backing. No extra read, clone,
+lease or config mutation is made.
+
+This known replay backing excludes object-map storage and number internals.
+The measured buffers stay unchanged through cleanup and drop before the same
+caller lease, which conservatively retains their charge until it drops.
+Remaining decoded backing and the fork helper's separate decode remain outside
+this charge, along with raw-read and overlay copies, database pages,
+transaction scratch and allocation peaks.
 
 At that bound provisional stage's original false-branch marker put, the same
 caller lease separately records the typed staged row's actual encoded key and

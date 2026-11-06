@@ -816,6 +816,26 @@ fn stage_retrieval_run_with_visibility(
                     bytes.saturating_add(score_breakdown_bytes(&stage.candidates))
                 })
             });
+            let bytes = bytes
+                .saturating_add(
+                    existing
+                        .empty_reason
+                        .as_ref()
+                        .map_or(0, |reason| reason.capacity() as u64),
+                )
+                .saturating_add(existing.replay_inputs.as_ref().map_or(0, |replay| {
+                    replay
+                        .query_ref
+                        .as_ref()
+                        .map_or(0, |reference| reference.capacity() as u64)
+                        .saturating_add(
+                            replay
+                                .corpus_snapshot_ref
+                                .as_ref()
+                                .map_or(0, |reference| reference.capacity() as u64),
+                        )
+                        .saturating_add(replay.known_config_backing_bytes())
+                }));
             memory.materialized(0, bytes);
         }
         super::turn_index::delete_with_memory(target, wtxn, &existing, memory.as_deref_mut())?;
