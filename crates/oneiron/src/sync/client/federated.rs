@@ -84,7 +84,7 @@ impl SyncClient {
             })
             .unwrap_or_default();
         self.import_own_device_window_update_with_retained_copies(
-            window_key, update, from, copies, answers,
+            window_key, update, from, copies, None, answers,
         )
     }
 
@@ -98,19 +98,6 @@ impl SyncClient {
         copies: Vec<
             std::sync::Arc<crate::embed::home_vectors::retained_copy::PreparedHomeClaimCopy>,
         >,
-        answers: Option<&mut Vec<Vec<u8>>>,
-    ) -> std::result::Result<(), TransportError> {
-        self.import_own_device_window_update_with_delivery(
-            window_key, update, from, copies, None, answers,
-        )
-    }
-
-    pub(super) fn import_own_device_window_update_with_delivery(
-        &mut self,
-        window_key: &str,
-        update: &[u8],
-        from: PeerMachine,
-        copies: super::home_claim_copies::HomeClaimCopies,
         copy_delivery: Option<[u8; 32]>,
         answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
