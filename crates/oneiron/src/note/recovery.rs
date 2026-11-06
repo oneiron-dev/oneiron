@@ -25,7 +25,8 @@ pub(crate) fn rebuild(
         doc.get_map("authorship")
             .insert(
                 &record.operation.to_hex(),
-                serde_json::to_string(record).map_err(|_| invalid("recovery authorship encode"))?,
+                serde_json::to_string(&record.stored_for_note(note))
+                    .map_err(|_| invalid("recovery authorship encode"))?,
             )
             .map_err(|_| invalid("recovery authorship insert"))?;
     }
@@ -123,6 +124,10 @@ pub(crate) fn restore(
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
+    let authorship: Vec<_> = authorship
+        .iter()
+        .map(|record| record.stored_for_note(note))
+        .collect();
     let old = super::document_store::load(vault, txn, note)?.view()?;
     if old.markdown == text && old.title.as_deref() == title && old.authorship == authorship {
         return Ok(());
@@ -136,7 +141,7 @@ pub(crate) fn restore(
     {
         return Err(invalid("NOTE recovery would discard admitted provenance"));
     }
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, &authorship)?)?;
     let key_prefix = format!("{}:", note.to_hex()).into_bytes();
     SYNC_QD_E.delete_from(&vault.store, txn, &key_prefix)?;
     SYNC_AD_E.delete_from(&vault.store, txn, &key_prefix)?;

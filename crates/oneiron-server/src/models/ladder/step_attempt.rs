@@ -41,7 +41,18 @@ impl OfferLadder {
         }
         // A managed worker's lease is held through settlement (FIX 8315),
         // and the offer's probation slot through the request.
-        match self.send(call, 0, &|| true, None, None, &mut walk).await? {
+        match self
+            .send(
+                call,
+                0,
+                &|| true,
+                None,
+                None,
+                RungPrompt::Configured,
+                &mut walk,
+            )
+            .await?
+        {
             Sent::Answer(response) => Ok(response),
             Sent::Failed | Sent::Held | Sent::Stopped => {
                 Err(self.record_step_offer_result(call, walk))
