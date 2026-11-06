@@ -1,7 +1,10 @@
 //! OF-544: immutable attempt confessions, directed rechecks and random audit draws.
 //! Checks are host-executed against the pinned result, under the host's ordinary
 //! Grant and budget. Drawing a check grants no authority and runs no model.
+//! A completed random audit also freezes the checker's contract beside the
+//! receipt, the anchor of a contribution check (FIX 3611, [`AuditContract`]).
 
+mod contract;
 pub mod doors;
 mod scope;
 
@@ -15,9 +18,14 @@ use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
+pub use self::contract::{AuditContract, CheckerProtocol, audit_contract, flaw_free};
+pub(crate) use self::contract::{SealedAudit, bound_random_audit_in_txn, pack_receipt_attempt};
+use self::contract::{StoredSeal, freeze_audit_in_txn};
 use self::scope::{attempt_project, audit_rate_in_txn};
 
-const SEALS: SideTable<[u8; 16], SealedAttemptReceipt, Named> =
+/// Each seal as stored: its receipt, and a completed random audit's frozen
+/// contract beside it (FIX 3611).
+const SEALS: SideTable<[u8; 16], StoredSeal, Named> =
     SideTable::new(&side_table::SELF_HEAL_ATTEMPT_SEAL);
 
 /// The agent's report, not an outcome label. Uncertainty requests examination
@@ -251,9 +259,9 @@ impl Vault {
             .unwrap_or(0);
         let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         let key = *confession.attempt.as_bytes();
-        if let Some(receipt) = SEALS.get(&self.store, txn, &key)? {
-            return if receipt.confession == *confession {
-                Ok(receipt)
+        if let Some(stored) = SEALS.get(&self.store, txn, &key)? {
+            return if stored.receipt.confession == *confession {
+                Ok(stored.receipt)
             } else {
                 Err(invalid("an attempt's confession is immutable"))
             };
@@ -305,8 +313,9 @@ impl Vault {
                 now,
             ));
         }
-        SEALS.put(&self.store, txn, &key, &receipt)?;
-        Ok(receipt)
+        let stored = StoredSeal::new(receipt);
+        SEALS.put(&self.store, txn, &key, &stored)?;
+        Ok(stored.receipt)
     }
 
     pub fn sealed_attempt_receipt(
@@ -314,7 +323,9 @@ impl Vault {
         attempt: AttemptId,
     ) -> Result<Option<SealedAttemptReceipt>> {
         let txn = self.store.env.read_txn()?;
-        SEALS.get(&self.store, &txn, attempt.as_bytes())
+        Ok(SEALS
+            .get(&self.store, &txn, attempt.as_bytes())?
+            .map(|stored| stored.receipt))
     }
 
     /// [`Self::sealed_attempt_receipt`] in the caller's snapshot.
@@ -323,7 +334,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         attempt: AttemptId,
     ) -> Result<Option<SealedAttemptReceipt>> {
-        SEALS.get(&self.store, txn, attempt.as_bytes())
+        Ok(SEALS
+            .get(&self.store, txn, attempt.as_bytes())?
+            .map(|stored| stored.receipt))
     }
 
     /// Durable work for the host's auditor. Reading a request does not lease
@@ -340,7 +353,7 @@ impl Vault {
         Ok(SEALS
             .scan(&self.store, txn)?
             .into_iter()
-            .flat_map(|(_, receipt)| receipt.checks)
+            .flat_map(|(_, stored)| stored.receipt.checks)
             .filter(|check| check.outcome.is_none())
             .map(|check| check.request)
             .collect())
@@ -352,7 +365,7 @@ impl Vault {
         Ok(SEALS
             .scan(&self.store, &txn)?
             .into_iter()
-            .flat_map(|(_, receipt)| receipt.checks)
+            .flat_map(|(_, stored)| stored.receipt.checks)
             .filter(|check| check.outcome.is_none())
             .collect())
     }
@@ -366,10 +379,11 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            let Some(mut receipt) = SEALS.get(&self.store, txn, attempt.as_bytes())? else {
+            let Some(mut stored) = SEALS.get(&self.store, txn, attempt.as_bytes())? else {
                 return Ok(());
             };
-            let Some(check) = receipt
+            let Some(check) = stored
+                .receipt
                 .checks
                 .iter_mut()
                 .find(|check| check.request.kind == kind && check.outcome.is_none())
@@ -377,7 +391,7 @@ impl Vault {
                 return Ok(());
             };
             check.last_asked_at = Some(now);
-            SEALS.put(&self.store, txn, attempt.as_bytes(), &receipt)
+            SEALS.put(&self.store, txn, attempt.as_bytes(), &stored)
         })
     }
 
@@ -392,16 +406,37 @@ impl Vault {
         now: u64,
     ) -> Result<SealedAttemptReceipt> {
         self.with_write_txn_grouped(|txn| {
-            self.record_seal_check_outcome_in_txn(txn, attempt, kind, outcome, now)
+            self.record_seal_check_outcome_in_txn(txn, attempt, kind, outcome, None, now)
         })
     }
 
+    /// [`Self::record_seal_check_outcome`] for a check the host's checker
+    /// made under `protocol` (FIX 3611): a completed random audit of every
+    /// objective of the seal's exact result freezes its contract in the
+    /// same write.
+    pub(crate) fn record_checked_seal_outcome(
+        &self,
+        attempt: AttemptId,
+        kind: SealCheckKind,
+        outcome: &SealCheckOutcome,
+        protocol: CheckerProtocol,
+        now: u64,
+    ) -> Result<SealedAttemptReceipt> {
+        self.with_write_txn_grouped(|txn| {
+            self.record_seal_check_outcome_in_txn(txn, attempt, kind, outcome, Some(protocol), now)
+        })
+    }
+
+    /// [`Self::record_seal_check_outcome`] in the caller's write, with the
+    /// checker's `protocol` when the host's checker made the check. A check
+    /// attested without one freezes no audit contract.
     pub(crate) fn record_seal_check_outcome_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         attempt: AttemptId,
         kind: SealCheckKind,
         outcome: &SealCheckOutcome,
+        protocol: Option<CheckerProtocol>,
         now: u64,
     ) -> Result<SealedAttemptReceipt> {
         reference(&outcome.judge_revision)?;
@@ -409,7 +444,7 @@ impl Vault {
             EngineLimit::SealReferenceBytes,
             outcome.judge_revision.len() as u64,
         );
-        let mut receipt = SEALS
+        let StoredSeal { mut receipt, audit } = SEALS
             .get(&self.store, txn, attempt.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let index = receipt
@@ -470,8 +505,13 @@ impl Vault {
         receipt.checks[index].outcome = Some(outcome.clone());
         crate::learning::honesty::project_seal_check_in_txn(self, txn, &receipt, index, now)?;
         crate::skill_optimize::audit_rate::fit_audit_rate_in_txn(self, txn, &receipt, index, now)?;
-        SEALS.put(&self.store, txn, attempt.as_bytes(), &receipt)?;
-        Ok(receipt)
+        let audit = match (audit, protocol) {
+            (None, Some(protocol)) => freeze_audit_in_txn(self, txn, &receipt, index, protocol)?,
+            (audit, _) => audit,
+        };
+        let stored = StoredSeal { receipt, audit };
+        SEALS.put(&self.store, txn, attempt.as_bytes(), &stored)?;
+        Ok(stored.receipt)
     }
 }
 
@@ -485,13 +525,13 @@ pub(crate) fn draw_audits_in_txn(
     now: u64,
 ) -> Result<u64> {
     let mut selected = 0;
-    for (key, mut receipt) in SEALS.scan(&vault.store, txn)? {
-        if !receipt.passing || receipt.draw.is_some() {
+    for (key, mut stored) in SEALS.scan(&vault.store, txn)? {
+        if !stored.receipt.passing || stored.receipt.draw.is_some() {
             continue;
         }
-        let rate = audit_rate_in_txn(vault, txn, &receipt)?;
-        selected += u64::from(draw_audit(&mut receipt, rate, now));
-        SEALS.put(&vault.store, txn, &key, &receipt)?;
+        let rate = audit_rate_in_txn(vault, txn, &stored.receipt)?;
+        selected += u64::from(draw_audit(&mut stored.receipt, rate, now));
+        SEALS.put(&vault.store, txn, &key, &stored)?;
     }
     Ok(selected)
 }
