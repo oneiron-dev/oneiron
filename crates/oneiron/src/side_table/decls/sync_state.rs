@@ -314,11 +314,11 @@ side_tables! {
     /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
     /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
     OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
-    /// One peer-imported row's origin, recorded before it lands (Docs Q04): its wire blake3
-    /// digest (32 bytes), followed for ASSET only by a header/body-facts digest (32 bytes).
-    /// The logical digest survives native inline/file/reference echoes; the wire digest binds
-    /// exact carrier cleanup. Local to this vault, never replicated. Key: hex32 (entity id)
-    /// ":" window key.
+    /// Latest peer carrier's wire digest (32 bytes), plus an ASSET logical body digest (32).
+    /// A distinct still-canonical peer ASSET entry (wire + logical, 64 bytes) precedes it:
+    /// pending replacement never erases the stored row's origin. Logical identity survives
+    /// native inline/file/reference echoes; each wire digest binds exact carrier cleanup.
+    /// Local to this vault, never replicated. Key: hex32 (entity id) ":" window key.
     SYNC_PEER_ORIGIN: SyncState b"po:" Raw;
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
