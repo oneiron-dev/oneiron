@@ -23,6 +23,10 @@ struct FrozenDispatch {
     actor_entity_ref: Option<String>,
     channel_identity_ref: Option<String>,
     counterparty_ref: Option<String>,
+    /// The producer's native or member mail classification, frozen only
+    /// when true (FIX 11869).
+    #[serde(default)]
+    native_mail_recipient: Option<bool>,
     approval_send_ref: Option<String>,
     linear_approval_send_ref: Option<String>,
     reply_thread_ref: Option<String>,
@@ -76,6 +80,7 @@ pub(crate) fn connector_slate_effect_from_frozen_payload(
             connector: &connector,
             target: &frozen.target,
             sender,
+            native_mail_recipient: frozen.native_mail_recipient == Some(true),
             thread_ref: frozen.reply_thread_ref.as_deref(),
             content_ref: frozen.content_ref.as_deref(),
             send_ref: &send_ref,

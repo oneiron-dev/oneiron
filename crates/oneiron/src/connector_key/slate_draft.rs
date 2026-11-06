@@ -385,12 +385,13 @@ fn draft_rows(
         .collect()
 }
 
-fn fresh(draft: SlateDraftRow) -> SlateRow {
-    SlateRow {
+fn fresh(store: &Store, draft: SlateDraftRow) -> Result<SlateRow> {
+    Ok(SlateRow {
+        settings_act: store.clock.entity_id()?,
         draft,
         owner_override: None,
         holder_narrow: None,
-    }
+    })
 }
 
 impl Vault {
@@ -417,8 +418,8 @@ impl Vault {
         let rows = draft_rows("admission", &tools, &rulings, drafter)
             .into_iter()
             .chain(elicitation)
-            .map(fresh)
-            .collect();
+            .map(|draft| fresh(&self.store, draft))
+            .collect::<Result<Vec<_>>>()?;
         self.put_new_slate(new_slate(manifest, rows, None, None, BTreeSet::new())?)
     }
 
@@ -463,7 +464,7 @@ impl Vault {
         for tool in manifest {
             if let Some(draft) = drafted.remove(&tool.name) {
                 reask.insert(tool.name.clone());
-                rows.push(fresh(draft));
+                rows.push(fresh(&self.store, draft)?);
                 continue;
             }
             let mut row = prior
@@ -487,7 +488,10 @@ impl Vault {
                 }
                 None => {
                     reask.insert(ELICITATION_ROW_KEY.to_owned());
-                    rows.push(fresh(rule_draft_elicitation_row(declaration, &rulings)));
+                    rows.push(fresh(
+                        &self.store,
+                        rule_draft_elicitation_row(declaration, &rulings),
+                    )?);
                 }
             }
         }
