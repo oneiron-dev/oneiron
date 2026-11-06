@@ -432,7 +432,8 @@ pub trait StoreRecordHooks: Send + Sync {
         &self,
         vault: &crate::Vault,
         rtxn: &RoTxn<'_>,
-        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+        counterparty: &str,
+        record: &mut crate::counterparty_contact::CounterpartyContactState,
     ) -> Result<()>;
 
     /// The engine's `federation::guard_ruling_overwrite`.

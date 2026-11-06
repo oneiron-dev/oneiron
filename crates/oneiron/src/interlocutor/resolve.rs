@@ -134,14 +134,14 @@ impl Vault {
                     let record = self
                         .get_counterparty_contact_with_memory_in_txn(rtxn, id, memory)?
                         .ok_or(Error::EntityNotFound)?;
-                    match record.status {
+                    match record.status() {
                         CounterpartyContactStatus::Active => self.known_contact_interlocutor(
                             *id,
-                            &record.counterparty,
-                            record.first_touch,
+                            record.counterparty(),
+                            record.first_touch(),
                         )?,
                         CounterpartyContactStatus::Revoked => {
-                            Interlocutor::unknown(record.counterparty, false)
+                            Interlocutor::unknown(record.counterparty().to_owned(), false)
                         }
                     }
                 }

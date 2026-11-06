@@ -196,6 +196,11 @@ pub struct ClaimValueRead {
 }
 
 impl ClaimValueRead {
+    /// Whether this value retains caller-bound memory custody, even at zero bytes.
+    pub fn is_memory_bound(&self) -> bool {
+        self._memory.is_some()
+    }
+
     /// The bytes charged to this field, or zero for a genuinely unbound read.
     pub fn retained_bytes(&self) -> u64 {
         self._memory.as_ref().map_or(0, MemoryLease::bytes)

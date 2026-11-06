@@ -616,9 +616,15 @@ impl StoreRecordHooks for EngineRecordHooks {
         &self,
         vault: &crate::Vault,
         rtxn: &RoTxn<'_>,
-        record: &mut crate::counterparty_contact::CounterpartyContactRecord,
+        counterparty: &str,
+        record: &mut crate::counterparty_contact::CounterpartyContactState,
     ) -> Result<()> {
-        crate::counterparty_contact::fold_party_opt_out_heads_for_store_in_txn(vault, rtxn, record)
+        crate::counterparty_contact::fold_party_opt_out_heads_for_store_in_txn(
+            vault,
+            rtxn,
+            counterparty,
+            record,
+        )
     }
 
     fn guard_ruling_overwrite(

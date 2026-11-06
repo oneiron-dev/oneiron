@@ -320,6 +320,7 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
         self.get_counterparty_contact_with_memory_in_txn(rtxn, id, None)
+            .map(|record| record.map(super::CounterpartyContactRead::into_unbound_record))
             .map_err(ClaimBodyReadError::into_unbound_error)
     }
 
@@ -328,7 +329,7 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
         memory: Option<ClaimScopeReadMemory<'_>>,
-    ) -> std::result::Result<Option<CounterpartyContactRecord>, ClaimBodyReadError> {
+    ) -> std::result::Result<Option<super::CounterpartyContactRead>, ClaimBodyReadError> {
         if let Some(record) =
             counterparty_contact_with_memory_in_claims_in_txn(self, rtxn, id, memory)?
         {
