@@ -24,8 +24,8 @@ mod credential;
 /// Engine-owned open-web relay and owner-local receipts.
 pub mod egress;
 pub mod foreign;
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub(crate) mod guest_error;
+/// A guest program's own error text, masked before it leaves the host (FIX 9209).
+pub mod guest_error;
 mod paths;
 mod proposal;
 /// Host-side preparation of a code-mode program: TypeScript stripped by Oxc

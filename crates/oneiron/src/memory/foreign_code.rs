@@ -274,8 +274,17 @@ impl Memory<'_> {
         );
         let mut streamed =
             crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
-        let outcome =
-            execute_foreign_code(prepared, mounts, artifact, budget, spool, &mut streamed)?;
+        // A failed program's own error is masked with this vault's custody
+        // values before it is answered (FIX 9209).
+        let outcome = execute_foreign_code(
+            prepared,
+            mounts,
+            artifact,
+            budget,
+            spool,
+            &mut streamed,
+            self.vault,
+        )?;
         let mut output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         outputs::merge(streamed, &mut output)?;
