@@ -176,21 +176,27 @@ async fn reply(
             messages
         }
     };
-    // Include the configured route prompt in the fingerprint without sending
-    // it twice: the exact ladder prepends this same message itself.
-    let mut actual = request.clone();
+    // Fingerprint the route's full input on this owned request, then remove
+    // its prompt: the exact ladder prepends that same message for the send.
+    let route_prompt_added = route_prompt.is_some();
     if let Some(prompt) = route_prompt {
-        actual
+        request
             .messages
             .insert(0, text_message(LlmMessageRole::System, prompt));
     }
-    let request_digest = actual.canonical_hash_hex().map_err(|_| internal())?;
-    let system_messages: Vec<_> = actual
-        .messages
-        .iter()
-        .filter(|message| message.role == LlmMessageRole::System)
-        .collect();
-    let assembled = oneiron::receipt::call_json_digest(&json!(system_messages));
+    let (request_digest, assembled) = {
+        let request_digest = request.canonical_hash_hex().map_err(|_| internal())?;
+        let system_messages: Vec<_> = request
+            .messages
+            .iter()
+            .filter(|message| message.role == LlmMessageRole::System)
+            .collect();
+        let assembled = oneiron::receipt::call_json_digest(&json!(system_messages));
+        (request_digest, assembled)
+    };
+    if route_prompt_added {
+        request.messages.remove(0);
+    }
     let prefix_hash = blake3::hash(prefix.as_bytes()).to_hex().to_string();
     let stamp = PromptRecompileStamp {
         schema_version: PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION.to_owned(),
