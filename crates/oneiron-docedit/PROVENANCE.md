@@ -150,6 +150,19 @@ The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
 The non-text inline nodes themselves are preserved unchanged.
 
+The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
+`src/tracked_model.rs`. Eligible destination clones reconstruct their original
+moved text using actual revision identities. When it equals the full paired
+source text, inner deletions retain their character ranges instead of searching
+for unique substrings. Repeated text maps to its own occurrence; empty material
+ranges leave the source unchanged. Hard breaks and opaque inlines retain their
+nodes and receive the deletion status when their one-character span is selected.
+Empty material deletions also leave nonaligned sources unchanged, matching the
+exact-range no-op; destination revision repair still runs. Nonempty nonaligned
+clones keep the existing unique-text mapping, including its non-text statuses.
+Move eligibility, pairing, marker repair and resolution order are unchanged;
+nonaligned ambiguity and suppressed destination pilcrows remain open.
+
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
 Decoration or comment range/reference marker in one carrier at its original
