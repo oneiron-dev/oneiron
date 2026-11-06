@@ -386,6 +386,8 @@ class ExportReceipt(TypedDict):
     bytes: int
     # BLAKE3 of the archive, lowercase hex.
     digest: str
+    # Holder work recorded by this export; absent when there is none.
+    holder_requests: NotRequired[list[Facade.HolderExportRequest]]
     # Each world the owner's own export carries that his recipient choice
     # would keep from where it goes, and why (owner ruling 1-EXPORT = B).
     notices: NotRequired[list[Facade.WorldRecipientNotice]]
