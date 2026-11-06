@@ -167,10 +167,16 @@ impl OutboundDispatchPipeline {
             space_posting,
             policy_risk,
             payload,
+            native_mail_recipient,
             ..
         } = prepared;
-        let effect =
-            super::govern::gate_input(&request, verb_contract, policy_risk, payload.as_deref());
+        let effect = super::govern::gate_input(
+            &request,
+            verb_contract,
+            policy_risk,
+            payload.as_deref(),
+            native_mail_recipient,
+        );
         let approval_digest = super::govern::approval_digest(&effect);
         let verdict = super::effect::execute_admitted(super::effect::EffectInput {
             vault,
@@ -268,8 +274,13 @@ impl OutboundDispatchPipeline {
             });
         // FIX 6424 part 2a: a Linear send's press pins the payload frozen
         // above, the bytes its ledger row and every retry compare.
-        let effect =
-            super::govern::gate_input(&request, verb_contract, policy_risk, payload.as_deref());
+        let effect = super::govern::gate_input(
+            &request,
+            verb_contract,
+            policy_risk,
+            payload.as_deref(),
+            native_mail_recipient,
+        );
         // FIX 6424: the digest an owner's press on this send names, carried
         // by the result while the Gate holds it.
         let approval_digest = super::govern::approval_digest(&effect);

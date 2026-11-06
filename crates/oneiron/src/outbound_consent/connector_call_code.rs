@@ -26,7 +26,6 @@ use crate::code_run::original_authority_holds_in_txn;
 use crate::code_run::read_code_consent_wait_in_txn;
 use crate::code_run::refuse_code_consent_wait_in_txn;
 use crate::code_run::settle_code_consent_wait_listing_in_txn;
-use crate::connector_key::SlateDisposition;
 use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
 use crate::consent::code_wait_state::CodeConsentCallSite;
 use crate::entity_id::EntityId;
@@ -93,6 +92,7 @@ pub(super) struct HeldFacts {
     grant_id: EntityId,
     key_id: EntityId,
     call: ScopedMcpCallContext,
+    remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     manifest_hash: [u8; 32],
     protocol_revision: String,
 }
@@ -139,6 +139,7 @@ pub(super) fn before_send(
                 grant_id,
                 key_id,
                 call: prepared.call().clone(),
+                remember_context: prepared.remember_context(),
                 manifest_hash: binding.manifest_hash,
                 protocol_revision: binding.protocol_revision.clone(),
             });
@@ -215,7 +216,7 @@ impl Vault {
             return Ok(None);
         }
         let remember_offer = if reasons.iter().any(|reason| reason == SLATE_ALWAYS_ASK) {
-            self.connector_stop_asking_offer(&facts.key_id, &facts.call.tool)?
+            self.connector_stop_asking_offer(&facts.key_id, &facts.call, facts.remember_context)?
         } else {
             None
         };
@@ -229,6 +230,8 @@ impl Vault {
             server: facts.call.server.clone(),
             tool: facts.call.tool.clone(),
             endpoint: facts.call.resolved_endpoint.clone(),
+            payload_data_class: facts.call.payload_data_class,
+            remember_context: facts.remember_context,
             manifest_hash: facts.manifest_hash,
             protocol_revision: facts.protocol_revision.clone(),
             credential_record: pending.credential,
@@ -252,33 +255,31 @@ impl Vault {
         )))
     }
 
-    /// The stop-asking offer for `tool` under the governing key `key_id`
-    /// (CALLS: stop-asking for connector.call): the tool's row on the slate
-    /// that key meets, at its current revision, when that row asks always.
-    /// The answer flips that one row back to `auto`; the tool's own scoped
-    /// grant already covers its consent.
+    /// The current connection/class/project box a stop-asking answer can
+    /// remember without changing the shared catalog setting or any narrow.
     fn connector_stop_asking_offer(
         &self,
         key_id: &EntityId,
-        tool: &str,
+        call: &ScopedMcpCallContext,
+        context: Option<crate::connector_key::ConnectorToolRememberContext>,
     ) -> Result<Option<CodeConsentRememberOffer>, IntentLedgerError> {
-        let Some(key) = self.get_connector_key(key_id)? else {
+        let Some(context) = context else {
             return Ok(None);
         };
         let txn = self.store.env.read_txn().map_err(Error::from)?;
-        let Some((slate_ref, slate)) =
-            crate::connector_key::governing_slate_in_txn(&self.store, &txn, &key)?
-        else {
+        let Some(key) = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_id)? else {
             return Ok(None);
         };
-        Ok(
-            (slate.row(tool).is_some() && slate.tool_setting(tool) == SlateDisposition::AlwaysAsk)
-                .then(|| CodeConsentRememberOffer {
-                    slate_ref,
-                    slate_revision: slate.revision(),
-                    tool: tool.to_owned(),
-                }),
-        )
+        Ok(crate::connector_key::connector_tool_remember_bound_in_txn(
+            &self.store,
+            &txn,
+            key_id,
+            &key,
+            call,
+            context,
+            false,
+        )?
+        .map(|(settings_act, _)| CodeConsentRememberOffer { settings_act }))
     }
 
     /// Opens the owner's question for the code consent wait a fresh hold
