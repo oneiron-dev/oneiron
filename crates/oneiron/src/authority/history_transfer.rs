@@ -509,15 +509,14 @@ impl Vault {
     /// while that transaction is open, so it must not write to this vault.
     ///
     /// A main-log frontier wider than one entry names is joined first (FIX
-    /// 11867): the root signs each join through the callback, in the host
+    /// 11867): the root signs the join through the callback, in the host
     /// family, whose rule (a live owner roster key) is the standing the move
-    /// itself stands on, and the move names the join tips. An Ed25519 and a
-    /// P-256 root join alike (FIX 11993). The joins cover every head in this
-    /// call, in groups of [`AUTHORITY_FRONTIER_JOIN_ARITY`] until at most
-    /// [`MAX_PARENTS`] tips are left, so no head count refuses and every head
-    /// stays in the move's causal past, inside its fence. The joins and the
-    /// move are marked for the vault's loaded windows in the write and
-    /// announced once it commits.
+    /// itself stands on, and the move names the join. An Ed25519 and a
+    /// P-256 root join alike (FIX 11993). One join names every head in this
+    /// call (FIX 8527), so no head count refuses and every head stays in the
+    /// move's causal past, inside its fence. The join and the move are
+    /// marked for the vault's loaded windows in the write and announced once
+    /// it commits.
     pub fn re_root_authority<S>(
         &self,
         new_device: DeviceAuthority,
@@ -547,8 +546,8 @@ impl Vault {
     /// frontier wider than one entry names is joined first by `joiner`, the
     /// key the move retires: the host signer, as its host-issued ops are
     /// (FIX 8498, Engine 09:31 (3)), or the root through the move's callback
-    /// (FIX 11867, 11993); the move then names the join tips. With no
-    /// `joiner` the move names the heads alone. The joins and the move are
+    /// (FIX 11867, 11993); the move then names the join. With no `joiner`
+    /// the move names the heads alone. The join and the move are
     /// marked for the vault's loaded windows in `txn`; the rows come back for
     /// the caller to announce once its own commit lands
     /// ([`Self::note_committed_authority_rows`]).
