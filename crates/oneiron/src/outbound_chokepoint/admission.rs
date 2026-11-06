@@ -153,9 +153,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn()?;
+    // The owner the proof names, revalidated under this writer: the Pending
+    // row keeps it, and every later send of the row rechecks it (FIX 11591).
+    let mut authorizing_owner = None;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
         if let Some(owner) = &prepared.owner_proof {
-            owner.revalidate_in_txn(vault, &wtxn)?;
+            authorizing_owner = Some(owner.revalidate_in_txn(vault, &wtxn)?);
         }
         if let Some((actor, actor_class)) = prepared.verified_actor {
             if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
@@ -626,6 +629,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
+    request = request.with_authorizing_owner(authorizing_owner);
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }

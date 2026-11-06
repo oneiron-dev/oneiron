@@ -1,6 +1,7 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
+use super::authority_standing::{frozen_grant_stop, withdrawn_owner};
 use super::types::{
     OutboundEffectCommand, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
     PreparedEffect,
@@ -248,13 +249,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // validation behavior; connector text never opts a row into this branch.
     let requires_frozen_call_validation =
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
+    // A grant no longer active stops the send as a grant that no longer
+    // stands (FIX 11591); every other rejection stays the binding's own.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -403,14 +404,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
         enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
+    // FIX 11591: the owner whose word admitted this send is asked again at
+    // the last in-process boundary. One no longer a live owner stops it,
+    // keeping what it knew of its delivery; a read that fails keeps the path.
+    if let Some(reason) = withdrawn_owner(vault, &record) {
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
+    }
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
