@@ -21,9 +21,59 @@ pub(crate) struct StagedWorldUpdate {
     pub(crate) bytes: Vec<u8>,
     pub(crate) from: crate::authority::PeerMachine,
     pub(crate) copies: Vec<Arc<PreparedHomeClaimCopy>>,
+    /// Original wire bytes, before native repo-copy translation; data only.
+    pub(crate) copy_delivery: Option<[u8; 32]>,
 }
 
 impl SyncClient {
+    pub(super) fn retain_late_window_home_claim_copies(
+        &mut self,
+        key: &WindowKey,
+        envelope: crate::sync::transport::ReceivedWindowPadEnvelope,
+    ) {
+        if self.config.federation_peer.is_some() {
+            return;
+        }
+        let copies = self.vault.prepare_relayed_home_claim_copy_bytes(
+            self.home_peer,
+            &crate::embed::home_vectors::HomeClaimDelivery {
+                window: key.as_str(),
+                payload: &envelope.payload,
+            },
+            &envelope.home_claim_copies,
+        );
+        if copies.is_empty() {
+            return;
+        }
+        let digest = *blake3::hash(&envelope.payload).as_bytes();
+        let mut attached = false;
+        for deferred in &mut self.deferred_sealed_updates {
+            if deferred.key == *key
+                && deferred.from == self.home_peer
+                && deferred.envelope.payload == envelope.payload
+            {
+                deferred.copies.extend(copies.iter().cloned());
+                attached = true;
+            }
+        }
+        for staged in &mut self.staged_world_updates {
+            if staged.key == *key
+                && staged.from == self.home_peer
+                && staged.copy_delivery == Some(digest)
+            {
+                staged.copies.extend(copies.iter().cloned());
+                attached = true;
+            }
+        }
+        if !attached {
+            crate::embed::home_vectors::copy_scope::retain_pending_copies(
+                &self.vault,
+                key,
+                &copies,
+            );
+        }
+    }
+
     pub(in crate::sync::client) fn import_accepted_window_update_with_evidence(
         &mut self,
         window_key: &str,

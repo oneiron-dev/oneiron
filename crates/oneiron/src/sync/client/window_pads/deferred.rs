@@ -365,6 +365,7 @@ impl SyncClient {
             }
             progressed = true;
             // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
+            let copy_delivery = Some(*blake3::hash(&deferred.envelope.payload).as_bytes());
             if let Some(payload) = deferred
                 .envelope
                 .into_payload()
@@ -376,6 +377,7 @@ impl SyncClient {
                         bytes: payload.to_vec(),
                         from: deferred.from,
                         copies: deferred.copies,
+                        copy_delivery,
                     },
                 );
             }
