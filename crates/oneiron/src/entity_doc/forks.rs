@@ -720,7 +720,8 @@ fn settle_one(
             record.status = ForkStatus::Switched;
             // The switched head reaches a loaded window once this writer
             // commits, as any MESSAGE write does; a rollback mirrors nothing
-            // (FIX 5132).
+            // (FIX 5132). Only a build with sync mirrors.
+            #[cfg(feature = "sync")]
             crate::batch::queue_committed_rows(
                 vault,
                 txn,
