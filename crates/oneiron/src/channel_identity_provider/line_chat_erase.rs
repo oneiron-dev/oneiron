@@ -108,7 +108,7 @@ pub(crate) fn erase_line_chat_observations_for_delete_in_txn(
 /// One row's hard delete through the batch delete door, with the marker and
 /// propagation intent that door leaves out. A row of another kind than
 /// `kind`, one already gone, or one a legal hold covers stays.
-fn hard_delete_row_in_txn(
+pub(super) fn hard_delete_row_in_txn(
     writer: &ClaimHeadWriter<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,

@@ -1,8 +1,15 @@
 //! Exact native join-version release. The CONTENT capture ends at claim
 //! teardown; an unfinished release is LIVE until its last holder lets go.
 
+use std::collections::BTreeSet;
+
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+
+mod retirement;
+mod sources;
+
+pub(crate) use sources::erase_line_chat_source_observations_in_txn;
 
 use super::{LineChatArchivePin, PINS};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -18,6 +25,10 @@ use crate::store::Store;
 struct ArchiveRelease {
     pin: LineChatArchivePin,
     erase: bool,
+    sources: BTreeSet<EntityId>,
+    detached: bool,
+    released: bool,
+    inventory: Option<retirement::ReleaseInventory>,
 }
 
 const RELEASES: SideTable<EntityId, ArchiveRelease, Named> =
@@ -35,21 +46,33 @@ pub(crate) fn release_line_chat_archive_pin_in_txn(
     erase: bool,
 ) -> Result<()> {
     let store = write.store;
-    let Some(pin) = PINS.get(store, txn, claim)? else {
-        return Ok(());
+    let prior = RELEASES.get(store, txn, claim)?;
+    let pin = match PINS.get(store, txn, claim)? {
+        Some(pin) => {
+            PINS.delete(store, txn, claim)?;
+            pin
+        }
+        // A content image may omit the capture. The accepted LIVE source
+        // continuation still owns its original immutable selector.
+        None => match prior.as_ref() {
+            Some(release) => release.pin,
+            None => return Ok(()),
+        },
     };
-    PINS.delete(store, txn, claim)?;
-    if pin.own_join {
-        let prior = RELEASES.get(store, txn, claim)?;
-        RELEASES.put(
-            store,
-            txn,
-            claim,
-            &ArchiveRelease {
-                pin,
-                erase: erase || prior.is_some_and(|release| release.erase),
-            },
-        )?;
+    if pin.own_join || prior.is_some() {
+        let mut release = prior.unwrap_or_else(|| ArchiveRelease {
+            pin,
+            erase: false,
+            sources: BTreeSet::new(),
+            detached: false,
+            released: false,
+            inventory: None,
+        });
+        release.erase |= erase;
+        release.sources.insert(*claim);
+        release.detached = true;
+        retirement::capture_in_txn(store, txn, &mut release)?;
+        RELEASES.put(store, txn, claim, &release)?;
     }
     // A borrowed capture may have been the last consumer of an earlier
     // owned join release too. Its own bytes are never selected here.
@@ -62,6 +85,7 @@ pub(crate) fn settle_line_chat_archive_releases_in_txn(
     write: &CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
 ) -> Result<()> {
+    sources::settle_source_observations_in_txn(write, txn)?;
     settle_line_chat_archive_releases_except_in_txn(write, txn, None)
 }
 
@@ -71,7 +95,18 @@ fn settle_line_chat_archive_releases_except_in_txn(
     detaching: Option<&EntityId>,
 ) -> Result<()> {
     let store = write.store;
-    for (claim, release) in RELEASES.scan(store, txn)? {
+    for claim in RELEASES.scan_keys(store, txn, &[])? {
+        // A prior group or recursive native teardown may have settled this row.
+        let Some(release) = RELEASES.get(store, txn, &claim)? else {
+            continue;
+        };
+        if !release.detached {
+            continue;
+        }
+        if !release.pin.own_join || release.released {
+            retirement::finish_in_txn(store, txn, &claim, release)?;
+            continue;
+        }
         let pin = &release.pin;
         // Missing version metadata does not erase a native owner's
         // custody obligation: retained copies can still owe retirement.
@@ -99,15 +134,11 @@ fn settle_line_chat_archive_releases_except_in_txn(
             .into_iter()
             .filter(|(_, other)| same_version(&other.pin, pin))
             .collect();
-        #[cfg(unix)]
-        let (held, inline) = {
-            let held: Vec<[u8; 32]> =
-                crate::provenance::body::owned_bodies_in_txn(store, txn, &asset)?
-                    .iter()
-                    .filter_map(|body| body.state.held().map(|held| held.blake3))
-                    .collect();
-            (held, crate::store::INLINE_ASSETS.get(store, txn, &asset)?)
-        };
+        for (owner, mut release) in releases {
+            retirement::capture_in_txn(store, txn, &mut release)?;
+            retirement::note_sources_in_txn(store, txn, &release)?;
+            RELEASES.put(store, txn, &owner, &release)?;
+        }
         crate::blob_artifact::release_archive_version_in_txn(
             write,
             txn,
@@ -121,19 +152,12 @@ fn settle_line_chat_archive_releases_except_in_txn(
         if exact_version_stands(store, txn, pin)? {
             continue;
         }
-        #[cfg(unix)]
-        let kept = retained_row(store, txn, &asset, crate::registry::ENTITY_TYPE_ASSET)?;
-        for (owner, release) in releases {
-            #[cfg(unix)]
-            if release.erase {
-                crate::store::erase_bodies_for_owner_in_txn(
-                    store, txn, &owner, &asset, &held, kept,
-                )?;
-                crate::store::note_settled_inline_in_txn(store, txn, &owner, &asset, inline)?;
+        for (owner, mut release) in RELEASES.scan(store, txn)? {
+            if !release.detached || !same_version(&release.pin, pin) {
+                continue;
             }
-            #[cfg(not(unix))]
-            let _ = release;
-            RELEASES.delete(store, txn, &owner)?;
+            release.released = true;
+            retirement::finish_in_txn(store, txn, &owner, release)?;
         }
     }
     Ok(())
@@ -244,7 +268,9 @@ pub(super) fn release_pending_in_txn(
     txn: &RoTxn<'_>,
     claim: &EntityId,
 ) -> Result<bool> {
-    RELEASES.contains(store, txn, claim)
+    Ok(RELEASES
+        .get(store, txn, claim)?
+        .is_some_and(|release| release.detached))
 }
 
 /// A truthful pending completion for the native observation's erase.
@@ -254,8 +280,11 @@ pub(crate) fn line_chat_archive_releases_owed_in_txn(
     txn: &RoTxn<'_>,
     sources: &[EntityId],
 ) -> Result<bool> {
-    for (owner, release) in RELEASES.scan(store, txn)? {
-        if release.erase && (sources.contains(&owner) || sources.contains(&release.pin.artifact_id))
+    for (_, release) in RELEASES.scan(store, txn)? {
+        if release.erase
+            && sources
+                .iter()
+                .any(|source| release.sources.contains(source))
         {
             return Ok(true);
         }
