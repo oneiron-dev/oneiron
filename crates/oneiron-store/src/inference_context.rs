@@ -26,8 +26,11 @@ pub enum HostInferenceBinding {
         keyless: bool,
     },
     /// The host's on-device native transport for exactly `model`: the
-    /// server's OfferLadder::native_local ladder, whose offers are free work
-    /// (Payer::Local, no key) as the provider's own were.
+    /// server's OfferLadder::native_local ladder. Its offers keep the payer,
+    /// key custody and rates of the provider offers they stand beside, so
+    /// the run admission charges each call as that offer's: free work stays
+    /// free and paid work stays paid (FIX 14889). This binding names where
+    /// the call runs, never who pays.
     SupervisedNativeLocal {
         model: ModelId,
     },
@@ -48,8 +51,9 @@ impl HostInferenceContext<'_> {
         }
     }
     /// Mirrors selected_locality: None-binding (Registered) is false, and so
-    /// is a supervised native one, whose on-device locality is free work by
-    /// itself (keyless names own-server work only).
+    /// is a supervised native one: keyless names own-server work only, and
+    /// whether an on-device call is free its offer's payer and key custody
+    /// decide in the run admission (FIX 14889).
     pub fn selected_keyless(&self) -> bool {
         matches!(
             &self.binding,
