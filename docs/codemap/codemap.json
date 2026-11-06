@@ -104784,6 +104784,7 @@
      "path": "src/file.rs",
      "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own",
      "surface": {
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -104806,10 +104807,23 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1,
       "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinuxTpmKeystore"
+     ],
+     "path": "src/linux_tpm.rs",
+     "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -104861,6 +104875,13 @@
      "layout": "file",
      "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own"
     },
+    "linux_tpm": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)"
+    },
     "memory": {
      "files": 1,
      "impl_vault": false,
@@ -104878,7 +104899,7 @@
    },
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 0
   },
   "oneiron-lens-wire": {
