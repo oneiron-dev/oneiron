@@ -77,6 +77,12 @@ struct MailClaimRecheck {
     review: u64,
     owed_at: u64,
     settled_at: Option<u64>,
+    /// The claims this round's discovery found, by logical head, each with
+    /// what its live support assertions cite, so a resumed job judges what
+    /// it owes without another scan (FIX 20502); `None` until a discovery
+    /// ran. A later round clears it: a claim born since may be one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    found: Option<Vec<(EntityId, Vec<EntityId>)>>,
 }
 
 impl MailClaimRecheck {
@@ -90,6 +96,20 @@ impl MailClaimRecheck {
             .copied()
     }
 
+    /// Each claim the row's found set names, a head or a support of one.
+    fn found_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.found
+            .iter()
+            .flatten()
+            .flat_map(|(head, supports)| std::iter::once(*head).chain(supports.iter().copied()))
+    }
+
+    /// Whether the row's round found or settled the claim `id`, so a claim
+    /// drawn from it is the re-check's too (FIX 20387).
+    fn judges(&self, id: &EntityId) -> bool {
+        self.settled.contains(id) || self.found.iter().flatten().any(|(head, _)| head == id)
+    }
+
     /// The row without `id`, wherever it names it.
     fn scrub(&mut self, id: &EntityId) {
         if self.turn == Some(*id) {
@@ -97,6 +117,12 @@ impl MailClaimRecheck {
         }
         self.messages.retain(|message| message != id);
         self.settled.retain(|claim| claim != id);
+        if let Some(found) = &mut self.found {
+            found.retain(|(head, _)| head != id);
+            for (_, supports) in found.iter_mut() {
+                supports.retain(|support| support != id);
+            }
+        }
     }
 }
 
@@ -117,6 +143,17 @@ pub(crate) struct MailClaimRecheckOwed {
     pub(crate) deleted_at: u64,
     /// The claims an earlier check of this generation settled.
     pub(crate) settled: Vec<EntityId>,
+    /// What this round's discovery found, when one ran (FIX 20502).
+    pub(crate) found: Option<Vec<(EntityId, Vec<EntityId>)>>,
+}
+
+/// A re-check owed whose round has found no claims yet: the records its
+/// discovery starts from (FIX 20502).
+pub(crate) struct MailClaimRecheckUnfound {
+    key: (EntityId, [u8; 32], u64),
+    round: u64,
+    /// The message's TURN and MESSAGE revisions.
+    pub(crate) targets: BTreeSet<EntityId>,
 }
 
 /// A source's re-checks by where they stand.
@@ -153,6 +190,7 @@ fn owed_row(occurrence: &MailOccurrence, at: u64) -> MailClaimRecheck {
         review: 0,
         owed_at: at,
         settled_at: None,
+        found: None,
     }
 }
 
@@ -192,8 +230,29 @@ fn put_named_in_txn(
     row: &MailClaimRecheck,
 ) -> Result<()> {
     RECHECKS.put(store, txn, key, row)?;
-    for id in row.named() {
+    for id in row.named().chain(row.found_ids()) {
         NAMED.put(store, txn, &(id, (key.0, key.1), key.2), &row.owed_at)?;
+    }
+    Ok(())
+}
+
+/// Clears `row`'s found set for a new round, with each entry of `NAMED`
+/// only that set held: a claim born since may be one the round finds.
+fn clear_found_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, [u8; 32], u64),
+    row: &mut MailClaimRecheck,
+) -> Result<()> {
+    let Some(found) = row.found.take() else {
+        return Ok(());
+    };
+    for (head, supports) in found {
+        for id in std::iter::once(head).chain(supports) {
+            if !row.named().any(|named| named == id) {
+                NAMED.delete(store, txn, &(id, (key.0, key.1), key.2))?;
+            }
+        }
     }
     Ok(())
 }
@@ -204,8 +263,9 @@ fn put_named_in_txn(
 /// a claim drawn from a kept copy after its delete is checked as the claims
 /// drawn before it were. A re-check of that generation reopens for a new
 /// round: the claims it settled stay settled, and its job judges the rest.
-/// A row of a message the provider still holds, or one forgotten, owes
-/// nothing.
+/// A claim drawn from a claim a re-check of that generation found or
+/// settled reopens it so too (FIX 20387). A row of a message the provider
+/// still holds, or one forgotten, owes nothing.
 pub(crate) fn owe_claim_recheck_for_cited_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -214,12 +274,29 @@ pub(crate) fn owe_claim_recheck_for_cited_in_txn(
     let at = crate::unix_seconds_now();
     let mut owed = BTreeSet::new();
     for id in cited {
-        for key in occurrence_keys_of_row_in(&vault.store, txn, id)? {
+        let mut keys: Vec<((EntityId, [u8; 32]), Option<u64>)> =
+            occurrence_keys_of_row_in(&vault.store, txn, id)?
+                .into_iter()
+                .map(|key| (key, None))
+                .collect();
+        for (_, key, generation) in NAMED.scan_keys(&vault.store, txn, id.as_bytes())? {
+            if RECHECKS
+                .get(&vault.store, txn, &(key.0, key.1, generation))?
+                .is_some_and(|row| row.judges(id))
+            {
+                keys.push((key, Some(generation)));
+            }
+        }
+        for (key, drawn_at) in keys {
             let Some(occurrence) = OCCURRENCES.get(&vault.store, txn, &key)? else {
                 continue;
             };
+            let names = match drawn_at {
+                Some(generation) => generation == occurrence.presence_generation,
+                None => occurrence.turn == *id || occurrence.messages.contains(id),
+            };
             if !matches!(occurrence.presence, MailPresence::SourceDeleted { .. })
-                || (occurrence.turn != *id && !occurrence.messages.contains(id))
+                || !names
                 || !owed.insert(key)
             {
                 continue;
@@ -230,6 +307,7 @@ pub(crate) fn owe_claim_recheck_for_cited_in_txn(
                     row.round += 1;
                     row.state = MailClaimRecheckState::Pending;
                     row.settled_at = None;
+                    clear_found_in_txn(&vault.store, txn, &(key.0, key.1, generation), &mut row)?;
                     row
                 }
                 None => owed_row(&occurrence, at),
@@ -269,7 +347,56 @@ pub(crate) fn claim_recheck_owed_in(
     Ok(Some(MailClaimRecheckOwed {
         deleted_at: at,
         settled: row.settled,
+        found: row.found,
     }))
+}
+
+/// Every re-check still owed whose round has found no claims yet, with the
+/// records its discovery starts from: one scan of the claims serves them
+/// all (FIX 20502).
+pub(crate) fn claim_rechecks_unfound_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<MailClaimRecheckUnfound>> {
+    let mut unfound = Vec::new();
+    for row in RECHECKS.iter_from(&vault.store, txn, &[])? {
+        let ((source, occurrence, generation), row) = row?;
+        if row.found.is_some()
+            || claim_recheck_owed_in(vault, txn, source, occurrence, generation)?.is_none()
+        {
+            continue;
+        }
+        unfound.push(MailClaimRecheckUnfound {
+            key: (source, occurrence, generation),
+            round: row.round,
+            targets: row.turn.iter().chain(&row.messages).copied().collect(),
+        });
+    }
+    Ok(unfound)
+}
+
+/// Keeps `found`, what `recheck`'s discovery found, on its row, in the
+/// caller's write, while the round it was found for is still the row's and
+/// owed, with each id it names, so an erase reaches it. A row already
+/// holding a found set keeps it.
+pub(crate) fn record_claim_recheck_found_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    recheck: &MailClaimRecheckUnfound,
+    found: Vec<(EntityId, Vec<EntityId>)>,
+) -> Result<()> {
+    let (source, occurrence, generation) = recheck.key;
+    if claim_recheck_owed_in(vault, txn, source, occurrence, generation)?.is_none() {
+        return Ok(());
+    }
+    let Some(mut row) = RECHECKS.get(&vault.store, txn, &recheck.key)? else {
+        return Ok(());
+    };
+    if row.round != recheck.round || row.found.is_some() {
+        return Ok(());
+    }
+    row.found = Some(found);
+    put_named_in_txn(&vault.store, txn, &recheck.key, &row)
 }
 
 /// Marks `claims` settled by `declaration`'s generation, in the write that
@@ -449,6 +576,9 @@ pub(crate) fn erase_claim_recheck_ids_in_txn(
         };
         row.scrub(id);
         if row.named().next().is_none() {
+            for found in row.found_ids() {
+                NAMED.delete(store, txn, &(found, (source, occurrence), generation))?;
+            }
             RECHECKS.delete(store, txn, &key)?;
         } else {
             RECHECKS.put(store, txn, &key, &row)?;
