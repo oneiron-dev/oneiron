@@ -1,6 +1,6 @@
 //! Chunk, symbol, manifest, graph and embedding value types with their limits.
 
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoIdentity, RepoRef};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -192,6 +192,10 @@ impl CodeSymbolRevision {
 #[non_exhaustive]
 pub struct CodeSymbolManifest {
     pub repo_ref: RepoRef,
+    /// The repository identity its symbol ids were derived under, resolved
+    /// once at extraction (FIX 12761). Readers re-derive ids from it, never
+    /// from a fresh resolution of `repo_ref`.
+    pub repo_identity: RepoIdentity,
     pub commit_hash: Option<String>,
     pub chunks: Vec<CodeChunk>,
     pub symbols: Vec<CodeSymbolRevision>,
@@ -202,6 +206,7 @@ pub struct CodeSymbolManifest {
 impl CodeSymbolManifest {
     pub fn new(
         repo_ref: RepoRef,
+        repo_identity: RepoIdentity,
         commit_hash: Option<String>,
         chunks: Vec<CodeChunk>,
         mut symbols: Vec<CodeSymbolRevision>,
@@ -226,6 +231,7 @@ impl CodeSymbolManifest {
         }
         let manifest = Self {
             repo_ref,
+            repo_identity,
             commit_hash: commit_hash.map(normalize_commit_hash).transpose()?,
             chunks,
             symbols,

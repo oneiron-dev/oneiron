@@ -41,7 +41,7 @@ pub(super) fn validate_relations(manifest: &CodeSymbolManifest) -> Result<()> {
     let symbols = manifest
         .symbols
         .iter()
-        .map(|symbol| super::keys::code_symbol_entity_id(&manifest.repo_ref, symbol))
+        .map(|symbol| super::keys::code_symbol_entity_id(&manifest.repo_identity, symbol))
         .collect::<Result<BTreeSet<_>>>()?;
     let mut previous = None;
     for relation in &manifest.relations {

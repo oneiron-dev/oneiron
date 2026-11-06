@@ -3586,6 +3586,22 @@
       "openapi": true
     },
     {
+      "name": "vault.proactivity.digest",
+      "description": "Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator.",
+      "input": "crate::memory::ProactivityDigestRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
+      "call": "memory.proactivity_digest_as_owner(&memory.embedded_owner(\"vault.proactivity.digest\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.inbox.lens",
       "description": "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent.",
       "input": "crate::agent_inbox_lens::InboxLensRequest",
@@ -16190,7 +16206,7 @@
     },
     {
       "name": "vault.commit",
-      "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
+      "description": "Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt.",
       "refs": [
         "/claims/*/subject_ref",
         "/claims/*/evidence_turn_refs/*"
@@ -20249,7 +20265,7 @@
       "host": {
         "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldMarkRequest",
-        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles.",
+        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console.",
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true

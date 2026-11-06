@@ -3,11 +3,10 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoIdentity, RepoRef};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::keys::repo_identity_key;
 use super::types::{
     CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES,
     CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk,
@@ -19,8 +18,14 @@ use super::validate::{
 };
 use crate::error::CodeError;
 
-pub const CODE_SYMBOL_MANIFEST_BODY_KEYS: [&str; 5] =
-    ["repo_ref", "commit_hash", "chunks", "symbols", "relations"];
+pub const CODE_SYMBOL_MANIFEST_BODY_KEYS: [&str; 6] = [
+    "repo_ref",
+    "commit_hash",
+    "chunks",
+    "symbols",
+    "repo_identity",
+    "relations",
+];
 
 pub const CODE_SYMBOL_CHUNK_KEYS: [&str; 5] = [
     "path",
@@ -62,7 +67,9 @@ pub(super) const KEY_CHUNKS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[2];
 
 pub(super) const KEY_SYMBOLS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[3];
 
-pub(super) const KEY_RELATIONS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[4];
+pub(super) const KEY_REPO_IDENTITY: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[4];
+
+pub(super) const KEY_RELATIONS: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[5];
 
 pub(super) const KEY_PATH: &str = CODE_SYMBOL_CHUNK_KEYS[0];
 
@@ -201,6 +208,10 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
         (Value::from(KEY_CHUNKS), Value::Array(chunks)),
         (Value::from(KEY_SYMBOLS), Value::Array(symbols)),
         (
+            Value::from(KEY_REPO_IDENTITY),
+            Value::from(manifest.repo_identity.as_str()),
+        ),
+        (
             Value::from(KEY_RELATIONS),
             super::relations::encode_relations(&manifest.relations),
         ),
@@ -234,6 +245,7 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
     };
 
     let mut repo_ref: Option<RepoRef> = None;
+    let mut repo_identity: Option<RepoIdentity> = None;
     let mut commit_hash: Option<Option<String>> = None;
     let mut chunks: Option<Vec<CodeChunk>> = None;
     let mut symbols: Option<Vec<CodeSymbolRevision>> = None;
@@ -306,6 +318,19 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
                         .collect::<Result<Vec<_>>>()?,
                 );
             }
+            KEY_REPO_IDENTITY => {
+                let text =
+                    value
+                        .as_str()
+                        .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                            "repo_identity must be a UTF-8 string",
+                        )))?;
+                repo_identity = Some(RepoIdentity::from_key(text).ok_or(Error::Code(
+                    CodeError::InvalidCodeSymbolManifestBody(
+                        "repo_identity must be a portable, local or github identity",
+                    ),
+                ))?);
+            }
             KEY_RELATIONS => relations = Some(super::relations::decode_relations(value)?),
             _ => unreachable!("index resolved from CODE_SYMBOL_MANIFEST_BODY_KEYS"),
         }
@@ -315,6 +340,9 @@ pub(super) fn decode_code_symbol_manifest_value(value: &Value) -> Result<CodeSym
         repo_ref: repo_ref.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key repo_ref",
         )))?,
+        repo_identity: repo_identity.ok_or(Error::Code(
+            CodeError::InvalidCodeSymbolManifestBody("missing required manifest key repo_identity"),
+        ))?,
         commit_hash: commit_hash.ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "missing required manifest key commit_hash",
         )))?,
@@ -562,7 +590,7 @@ pub(crate) fn code_symbol_entity_path(body: &[u8]) -> Result<String> {
 }
 
 pub(super) fn encode_code_symbol_entity_body(
-    repo_ref: &RepoRef,
+    repo: &RepoIdentity,
     symbol: &CodeSymbolRevision,
     start_line: u32,
     end_line: u32,
@@ -572,10 +600,7 @@ pub(super) fn encode_code_symbol_entity_body(
             Value::from(KEY_SCHEMA_VERSION),
             Value::Integer(CODE_SYMBOL_ENTITY_SCHEMA_VERSION.into()),
         ),
-        (
-            Value::from(KEY_REPO_KEY),
-            Value::from(repo_identity_key(repo_ref)),
-        ),
+        (Value::from(KEY_REPO_KEY), Value::from(repo.as_str())),
         (Value::from(KEY_PATH), Value::from(symbol.path.as_str())),
         (Value::from(KEY_NAME), Value::from(symbol.name.as_str())),
         (Value::from(KEY_KIND), Value::from(symbol.kind.as_str())),
