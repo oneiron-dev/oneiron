@@ -39,9 +39,9 @@ The requested allocation is admitted before `try_reserve_exact`; any capacity
 surplus reported by the standard allocator is settled after allocation. This is
 not a bound on transient allocator surplus or allocator metadata. Container
 backing by itself does not count the heap payload owned by its elements.
-DOM/parser and selector internals, merge/CSS strings, encoding scratch, sorting
-scratch, font dictionaries, PDF document/codec objects and output bytes remain
-outside this admission slice.
+DOM/parser and selector internals, merge/CSS strings, sorting scratch, font
+dictionaries, PDF document/codec objects and output bytes remain outside this
+admission slice.
 A drained line keeps its backing admission. Page-operation containers remain
 owned by the generic native `Content` while it encodes them; `AsRef` borrows the
 operations without detaching their backing guard. Cell-page operations move to
@@ -95,5 +95,12 @@ UTF-8 byte capacity. Normalization keeps the same CRLF/CR-to-newline and literal
 four-space tab rules. Word splitting keeps the existing Unicode whitespace and
 non-breaking-space rules. Both buffers retain their admission through borrowed
 word calls; clearing a word reuses its capacity without returning live backing.
-Their character encoding uses only stack scratch. The separate Windows-1252
-encoder's `Cow` allocation remains outside this admission slice.
+Their UTF-8 character encoding uses only stack scratch.
+
+Windows-1252 word encoding borrows ASCII bytes without allocation. Non-ASCII
+words use the native encoder's whole-input upper bound to fill an admitted
+byte buffer, not a guessed multiplier. The same buffer owns its full actual
+capacity through the original wrapping and run-building loop, including unused
+spare capacity and error returns. Unmappable characters and controls still return
+`Font` before any run for that word is emitted. The native encoding call is not
+preempted. This does not admit native PDF string-escaping scratch or output bytes.
