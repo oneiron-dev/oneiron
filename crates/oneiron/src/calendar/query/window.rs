@@ -21,9 +21,18 @@ pub struct CalendarOccurrenceView {
     pub event_ref: String,
     pub master_ref: String,
     pub uid: String,
+    /// The occurrence's recurrence key: a UTC instant, or for an all-day or
+    /// floating series its civil start read as UTC.
     pub original_start_utc: u64,
+    /// Inclusive UTC bounds; for an all-day occurrence in a zone its
+    /// calendar names, its days in that zone; for any other all-day or
+    /// floating occurrence, the span it falls in across every zone. Its days
+    /// or wall times are in [`Self::civil`].
     pub start_utc: u64,
     pub end_utc: u64,
+    /// An all-day or floating occurrence's days or wall times (FIX 17869).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub civil: Option<super::civil::CalendarCivilSpan>,
 }
 
 impl Memory<'_> {
@@ -68,9 +77,12 @@ fn occurrences_in(
     let Some(series) = master.facts.series() else {
         return Ok(Vec::new());
     };
-    let Some(at) = master.occurred else {
+    // A floating or all-day master has no instant: its occurrences step on
+    // the UTC carrier and name their days (FIX 17869).
+    let civil = master.facts.civil_extent();
+    if master.occurred.is_none() && civil.is_none() {
         return Ok(Vec::new());
-    };
+    }
     let withheld = lane.withheld_exception_series()?;
     if master
         .facts
@@ -86,31 +98,92 @@ fn occurrences_in(
             && let Some(key) = row.facts.exception()
             && key.master_ref == master_id
         {
-            exceptions.push((row.id, row.occurred, key.clone()));
+            let named = row.facts.civil_extent().and_then(|(start, _)| {
+                super::civil::civil_span(
+                    row.facts.civil_all_day(),
+                    start,
+                    row.facts.civil_duration(),
+                )
+            });
+            exceptions.push((row.id, row.occurred.or(row.wall_span), named, key.clone()));
         }
         Ok(())
     })?;
-    let keys: Vec<_> = exceptions.iter().map(|(_, _, key)| key.clone()).collect();
-    let starts = expand_master_window(series, range.to_time_range())
-        .map_err(|_| Error::InvalidConfig("calendar recurrence projection failed".into()))?;
-    let duration = at.end.saturating_sub(at.start);
+    let keys: Vec<_> = exceptions
+        .iter()
+        .map(|(_, _, _, key)| key.clone())
+        .collect();
+    let window = range.to_time_range();
+    // A master expands once, before any UID, as a timed one always did;
+    // each UID then masks its own exceptions.
+    let timed = match master.occurred {
+        Some(at) => Some((
+            at,
+            expand_master_window(series, window).map_err(|_| {
+                Error::InvalidConfig("calendar recurrence projection failed".into())
+            })?,
+        )),
+        None => None,
+    };
+    let civil_all = match (master.occurred, civil) {
+        (None, Some((_, length))) => {
+            super::occurrences::civil_starts(&master, series, window, &keys, &[], length)?
+        }
+        _ => Vec::new(),
+    };
     let mut result = Vec::new();
     for uid in master.facts.uids() {
-        for start in mask_master_exceptions(master_id, uid, starts.clone(), &keys) {
-            result.push(CalendarOccurrenceView {
-                event_ref: master_id.to_hex(),
-                master_ref: master_id.to_hex(),
-                uid: uid.clone(),
-                original_start_utc: start,
-                start_utc: start,
-                end_utc: start.saturating_add(duration),
-            });
+        match (&timed, civil) {
+            (Some((at, starts)), _) => {
+                let duration = at.end.saturating_sub(at.start);
+                for start in mask_master_exceptions(master_id, uid, starts.clone(), &keys) {
+                    result.push(CalendarOccurrenceView {
+                        event_ref: master_id.to_hex(),
+                        master_ref: master_id.to_hex(),
+                        uid: uid.clone(),
+                        original_start_utc: start,
+                        start_utc: start,
+                        end_utc: start.saturating_add(duration),
+                        civil: None,
+                    });
+                }
+            }
+            (None, Some(_)) => {
+                let all_day = master.facts.civil_all_day();
+                let duration = master.facts.civil_duration();
+                let kept: std::collections::BTreeSet<u64> = mask_master_exceptions(
+                    master_id,
+                    uid,
+                    civil_all.iter().map(|&(key, _, _)| key).collect(),
+                    &keys,
+                )
+                .into_iter()
+                .collect();
+                for &(key, start, span) in civil_all.iter().filter(|(key, _, _)| kept.contains(key))
+                {
+                    result.push(CalendarOccurrenceView {
+                        event_ref: master_id.to_hex(),
+                        master_ref: master_id.to_hex(),
+                        uid: uid.clone(),
+                        original_start_utc: key,
+                        start_utc: span.start,
+                        end_utc: span.end,
+                        civil: super::civil::civil_span(all_day, start, duration),
+                    });
+                }
+            }
+            (None, None) => {}
         }
-        for (event, occurred, key) in &exceptions {
+        for (event, at, named, key) in &exceptions {
+            // A civil replacement meets the range by its envelope, a timed
+            // one by its start.
             if key.uid == *uid
-                && let Some(at) = occurred
-                && range.start <= at.start
-                && at.start <= range.end
+                && let Some(at) = at
+                && if named.is_some() {
+                    at.start <= range.end && range.start <= at.end
+                } else {
+                    range.start <= at.start && at.start <= range.end
+                }
             {
                 result.push(CalendarOccurrenceView {
                     event_ref: event.to_hex(),
@@ -119,6 +192,7 @@ fn occurrences_in(
                     original_start_utc: key.original_start_utc,
                     start_utc: at.start,
                     end_utc: at.end,
+                    civil: named.clone(),
                 });
             }
         }

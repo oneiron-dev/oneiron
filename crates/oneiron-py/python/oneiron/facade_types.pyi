@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4587 declarations.
+Census: 1264 facade rows, 4588 declarations.
 Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -18615,6 +18615,10 @@ class CalendarIcsImportReceipt(TypedDict):
 class CalendarOccurrencesRequest(TypedDict):
     master_ref: str
     range: CalendarRangeDto
+class CalendarCivilSpan(TypedDict):
+    time_kind: str
+    start: str
+    end: str
 class CalendarOccurrenceView(TypedDict):
     event_ref: str
     master_ref: str
@@ -18622,6 +18626,7 @@ class CalendarOccurrenceView(TypedDict):
     original_start_utc: int
     start_utc: int
     end_utc: int
+    civil: NotRequired[CalendarCivilSpan | None]
 class CalendarInstanceMoveRequest(TypedDict):
     system: str
     source_blob_ref: str
@@ -18640,6 +18645,7 @@ class CalendarEventView(TypedDict):
     end_utc: NotRequired[int | None]
     calendar_systems: list[str]
     blocks_time: bool
+    civil: NotRequired[CalendarCivilSpan | None]
 class CalendarSel(TypedDict):
     system: NotRequired[str | None]
 class CalendarSearchRequest(TypedDict):

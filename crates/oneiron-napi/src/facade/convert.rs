@@ -10,13 +10,14 @@ use super::boundary::{
     BoundaryResult, FORGET_PAGE_SIZE, ts_from_engine, ts_opt_to_engine, ts_to_engine,
 };
 use super::dtos::{
-    NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
-    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEmbeddingMatchEvidence,
-    NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
-    NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope,
-    NapiRecallResidence, NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
-    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
-    NapiTurnProgramWakeOutcome, NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCalendarCivilSpan, NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel,
+    NapiCitedMessage, NapiClaimView, NapiCommitOutcome, NapiCommitReceipt,
+    NapiDreamerParkedJobView, NapiEmbeddingMatchEvidence, NapiEntityRefReceipt, NapiEntityView,
+    NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiMemoryStaleStamp,
+    NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence, NapiRecallResidenceHit,
+    NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta, NapiScopeHonesty,
+    NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome, NapiWitnessAssertions,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -63,6 +64,11 @@ pub(super) fn calendar_event_from_engine(
             .transpose()?,
         calendar_systems: view.calendar_systems,
         blocks_time: view.blocks_time,
+        civil: view.civil.map(|civil| NapiCalendarCivilSpan {
+            time_kind: civil.time_kind,
+            start: civil.start,
+            end: civil.end,
+        }),
     })
 }
 

@@ -23,6 +23,7 @@
 //! waits on CAL-03 (ONE-1785). Both are documented at their call sites rather
 //! than faked here.
 
+mod civil;
 mod facts;
 mod occurrences;
 pub(in crate::calendar) use occurrences::occurrences;
@@ -32,6 +33,7 @@ mod service;
 mod window;
 pub use window::{CalendarOccurrenceView, CalendarOccurrencesRequest, read_occurrences_scoped};
 
+pub use self::civil::CalendarCivilSpan;
 pub use self::facts::CalendarRead;
 pub(crate) use self::facts::visit_calendar_events_for_effect;
 pub(in crate::calendar) use self::facts::{
