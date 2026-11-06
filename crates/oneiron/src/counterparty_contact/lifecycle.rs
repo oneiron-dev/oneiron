@@ -402,8 +402,22 @@ fn contact_claim_bodies_in_txn(
     contact_id: &EntityId,
 ) -> Result<Vec<crate::claim::ClaimBody>> {
     let mut bodies = Vec::new();
+    let mut seen = [false; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
+    let mut duplicate = false;
+    // Keep the first duplicate for the fold, but read every claim so later
+    // read errors still take precedence over the duplicate-head error.
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
         if let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? {
+            if duplicate || !is_live_contact_head(&body) {
+                continue;
+            }
+            let Some(index) = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
+                .iter()
+                .position(|predicate| *predicate == body.predicate)
+            else {
+                continue;
+            };
+            duplicate = std::mem::replace(&mut seen[index], true);
             bodies.push(body);
         }
     }
