@@ -19,7 +19,17 @@ impl<'a> HostSelfDispatcher<'a> {
         binding: &crate::task_verb::HostBinding,
     ) -> crate::Result<Self> {
         let leased = binding.leased_record(vault)?;
-        Self::for_leased_agent_attempt(vault, actor, &leased)
+        let dispatcher = Self::for_leased_agent_attempt(vault, actor, &leased)?;
+        // A host door writes as the run: the external effects its durable
+        // replay record holds, and the external replies its waits consumed,
+        // stay in that write's lineage (ONE-1314), as they do in its steps.
+        if let Some(run) = binding.executor_run()
+            && let Some(record) = vault.get_code_run_replay_record(&run)?
+        {
+            dispatcher.observe_bridge_lineage(&record.bridge_calls);
+            dispatcher.observe_consumed_code_replies(&record)?;
+        }
+        Ok(dispatcher)
     }
 
     /// The write origin of a browser call admitted on this live run. Its
