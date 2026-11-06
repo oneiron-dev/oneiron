@@ -28031,7 +28031,17 @@
      "path": "src/dreamer_consolidation/resources/prior.rs",
      "purpose": "Exact stored-head admission and question routing",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/restated.rs",
+     "purpose": "A candidate that restates the Dreamer's own unvetted head is already said (FIX 12043), whether or not the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -60599,6 +60609,8 @@
      "path": "src/receipt/admission.rs",
      "purpose": "Durable admission observations of named typed calls (ARCH-0044 C5)",
      "surface": {
+      "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 4
@@ -64214,7 +64226,7 @@
      "path": "src/runtime_hooks/verb/credential.rs",
      "purpose": "A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 5,
       "fn": 9,
       "struct": 6,
@@ -64231,11 +64243,23 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 10,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/paced.rs",
+     "purpose": "A verb call a count-bound budget window paced, held in its caller's fair line until its turn (FIX 8753…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8,
+      "fn": 4
      }
     },
     {
@@ -65365,7 +65389,7 @@
      "path": "src/secret_custody/holder_export.rs",
      "purpose": "The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -65380,13 +65404,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/holder_export/part_signature.rs",
+     "purpose": "The holder's signature of each numbered part an export secret copy rides in (FIX 12373; Engine 13:54 call A)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/holder_export/relay.rs",
      "purpose": "An export secret request's sealed copy as it is kept and relayed (FIX 11843): a label, the second its holder…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -67395,7 +67429,7 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 5,
       "re-export": 2,
       "struct": 3
@@ -89922,7 +89956,7 @@
      "path": "src/world_keys/owner_work/result.rs",
      "purpose": "The executor's signed result for one request, and the receipt door that reads where a request stands",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -91676,7 +91710,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92348,7 +92382,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92376,7 +92410,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92777,7 +92811,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6536,
+   "source_files": 6539,
    "test_files": 895
   },
   "oneiron-android": {
@@ -99529,7 +99563,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 22,
+      "const": 23,
       "fn": 7,
       "re-export": 1,
       "struct": 4,
@@ -123231,6 +123265,7 @@
      "path": "src/lib.rs",
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
+      "const": 1,
       "fn": 3,
       "mod": 24,
       "re-export": 2
