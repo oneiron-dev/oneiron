@@ -71,12 +71,12 @@ pub(crate) struct BoundRecordDocuments {
 /// Original payloads are ephemeral here: this is neither a carrier nor a
 /// serializable product and cannot use the ordinary scalar-slot emitter.
 pub(crate) struct ClassifiedRecordDocuments {
-    parts: Parts,
-    plans: Vec<super::classify::Plan>,
-    homes: Vec<super::classify::Home>,
-    turn: Option<super::joined_turns::TurnSource>,
-    native_slots: BTreeSet<AtomId>,
-    sources: BoundRecordDocuments,
+    pub(super) parts: Parts,
+    pub(super) plans: Vec<super::classify::Plan>,
+    pub(super) homes: Vec<super::classify::Home>,
+    pub(super) turn: Option<super::joined_turns::TurnSource>,
+    pub(super) native_slots: BTreeSet<AtomId>,
+    pub(super) sources: BoundRecordDocuments,
 }
 
 impl PreparedRecordDocuments {
@@ -350,6 +350,10 @@ pub(crate) fn open(
 }
 
 impl ClassifiedRecordDocuments {
+    pub(super) fn has_sources(&self) -> bool {
+        !self.sources.sources.is_empty()
+    }
+
     /// Rebuilds one window's snapshot and combined-pending groups together.
     /// Each actual original native source is rejoined ONCE, then used by both
     /// groups at the same operation identity. The result owns real Loro rows
