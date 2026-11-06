@@ -70,6 +70,7 @@ impl AiHandle {
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
             decisions: Arc::default(),
+            turn_wakes: Arc::default(),
             coach_heal_wake: Arc::default(),
             coach_host_wake: Arc::default(),
             host_compaction: Arc::default(),
@@ -327,36 +328,97 @@ impl AiHandle {
     /// Dreamer, so a model-free vault queues nothing that never runs.
     pub fn turn_landed(&self, vault: &Arc<Vault>, subject: WakeTurnSubject) {
         self.inbound.fetch_max(unix_now(), Ordering::AcqRel);
-        drop(self.wake_on_turn(vault, subject));
+        self.queue_turn_wake(vault, subject, None);
     }
 
-    /// [`Self::turn_landed`]'s wake and the task it runs on, for a caller
-    /// that waits for it. `None` without a running Dreamer.
+    /// [`Self::turn_landed`]'s wake, for a caller that waits for it: the
+    /// task ends when the round that took this turn has run. `None` without
+    /// a running Dreamer.
     pub(super) fn wake_on_turn(
         &self,
         vault: &Arc<Vault>,
         subject: WakeTurnSubject,
     ) -> Option<tokio::task::JoinHandle<()>> {
         self.hints.as_ref()?;
-        let (vault, handle) = (Arc::clone(vault), self.clone());
-        Some(tokio::task::spawn_blocking(move || {
-            // An agent waking under a dial its owner moved notes the move in
-            // its own diary before it acts again (OF-533).
+        let (done, ran) = tokio::sync::oneshot::channel();
+        self.queue_turn_wake(vault, subject, Some(done));
+        Some(tokio::spawn(async move {
+            // A round that panicked drops its answer; the worker warned.
+            let _ = ran.await;
+        }))
+    }
+
+    /// Adds a landed turn to its vault's next wake round, and starts the
+    /// vault's turn-wake worker, off the request path, when none runs (FIX
+    /// 14873). A no-op without a running Dreamer.
+    fn queue_turn_wake(
+        &self,
+        vault: &Arc<Vault>,
+        subject: WakeTurnSubject,
+        done: Option<tokio::sync::oneshot::Sender<()>>,
+    ) {
+        if self.hints.is_none() {
+            return;
+        }
+        if self.turn_wakes.offer(vault, subject, done) {
+            let (vault, handle) = (Arc::clone(vault), self.clone());
+            drop(tokio::task::spawn_blocking(move || {
+                handle.run_turn_wakes(&vault);
+            }));
+        }
+    }
+
+    /// The vault's turn-wake worker: one round after another, each taking
+    /// every turn that landed before it, until none is pending.
+    fn run_turn_wakes(&self, vault: &Arc<Vault>) {
+        while let Some(round) = self.turn_wakes.take(vault) {
+            let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.turn_wake_round(vault, &round.subjects, round.sieve_passes);
+            }));
+            if ran.is_err() {
+                tracing::warn!("turn wake round panicked");
+            }
+            round.finish();
+        }
+    }
+
+    /// One round: the sieve reads what landed, then each subject's turn
+    /// wake runs, then the programs the turns woke are admitted.
+    fn turn_wake_round(&self, vault: &Vault, subjects: &[WakeTurnSubject], sieve_passes: usize) {
+        // An agent waking under a dial its owner moved notes the move in
+        // its own diary before it acts again (OF-533).
+        for subject in subjects {
             if let WakeTurnSubject::Agent { id, .. } = subject
-                && let Err(error) = vault.note_refusal_dial_change(id)
+                && let Err(error) = vault.note_refusal_dial_change(*id)
             {
                 tracing::warn!(%error, agent = %id.to_hex(), "refusal dial note not written");
             }
+        }
+        // Each landed turn's own wake read one bounded sieve pass; the round
+        // reads as many, less the one each subject's wake reads, and stops
+        // once the sieve has read everything.
+        let extra = sieve_passes.saturating_sub(subjects.len());
+        for _ in 0..extra {
+            match vault.sieve_pass_on_turn(vault.now_recorded_at()) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(error) => {
+                    tracing::warn!(%error, "turn wake sieve pass failed");
+                    break;
+                }
+            }
+        }
+        for subject in subjects {
             // Queued or not, the turn is news to the wake policy: the pass
             // the hint takes re-reads its rows and re-arms its quiet timer.
-            match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
-                Ok(_) => handle.attempt_queued(),
+            match vault.wake_dreamer_on_turn(*subject, vault.now_recorded_at()) {
+                Ok(_) => self.attempt_queued(),
                 Err(error) => tracing::warn!(%error, ?subject, "turn wake not queued"),
             }
-            // DOOR-141: a program this turn woke is admitted from the wake
-            // its commit recorded; at boot, every wake a stop or crash left.
-            turn_program::drain_turn_programs(&vault);
-        }))
+        }
+        // DOOR-141: a program these turns woke is admitted from the wake
+        // their commits recorded; at boot, every wake a stop or crash left.
+        turn_program::drain_turn_programs(vault);
     }
 
     /// The sieve reads a bounded batch with each turn wake; history it has

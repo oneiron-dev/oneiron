@@ -38,6 +38,7 @@ pub(super) mod checkpoint;
 
 use std::collections::BTreeSet;
 
+use heed::RwTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
@@ -292,6 +293,177 @@ fn holds_message_doc_map(doc: &LoroDoc) -> bool {
     matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(MESSAGE_DOCS_MAP))
 }
 
+/// Decodes one carried head row filed under `map_key`. `None` is malformed:
+/// the caller leaves it out, as before. Shared by the live driver and the
+/// bootstrap batch so the one spelling plus key check lives once.
+fn checked_head(map_key: &str, bytes: &[u8]) -> Option<(CarriedHead, EntityId)> {
+    match decode(bytes) {
+        Ok((carried, message)) if message.to_hex() == map_key => Some((carried, message)),
+        _ => None,
+    }
+}
+
+/// Whether `held` already covers `head`, from a history floor no newer than
+/// its own: the live held-before-join pass-over, reused on the bootstrap
+/// writer.
+fn already_held(held: Option<&CarriedDocument>, head: &CarriedDocument) -> bool {
+    held.is_some_and(|held| held.holds(head) && !head.purges(held))
+}
+
+/// Records one merge outcome: `Written` joins `merged`, every other native
+/// outcome keeps its original log. `Err` stays with the caller: the live
+/// driver logs it and continues, the bootstrap batch propagates it to its
+/// root.
+fn record_merge(
+    window: &str,
+    map_key: &str,
+    message: EntityId,
+    outcome: DocumentMerge,
+    merged: &mut Vec<EntityId>,
+) {
+    match outcome {
+        DocumentMerge::Written => merged.push(message),
+        DocumentMerge::Held => {}
+        DocumentMerge::Waiting => {
+            tracing::debug!(window, key = %map_key, "message document waits for its message");
+        }
+        DocumentMerge::Conflict => tracing::warn!(
+            window,
+            key = %map_key,
+            "message document conflicts; the one held here stands and the other stays in the window"
+        ),
+        DocumentMerge::Refused(reason) => tracing::warn!(
+            window,
+            key = %map_key,
+            reason,
+            "message document does not merge here; left out"
+        ),
+        DocumentMerge::Deferred(reason) => tracing::info!(
+            window,
+            key = %map_key,
+            reason,
+            "message document purge waits; the history held here stands and the head stays in the window"
+        ),
+    }
+}
+
+/// What a message-document merge pass installed, published only after its
+/// write commits. Owned: no live handles, observers or transactions.
+pub(super) struct MessageDocumentEffects {
+    window: String,
+    merged: Vec<EntityId>,
+}
+
+impl MessageDocumentEffects {
+    /// Runs the existing final tracing plus the regenerates wake, exactly as
+    /// the live driver did. Call only after the write actually committed;
+    /// the batch stage never calls this.
+    pub(super) fn publish_after_commit(self, vault: &Vault) {
+        if !self.merged.is_empty() {
+            let window = self.window.as_str();
+            tracing::debug!(
+                window,
+                merged = self.merged.len(),
+                "message documents merged"
+            );
+            // A ready document can prove a `regenerates` link owed on its
+            // message (FIX 6204).
+            crate::sync::bridge::wake_regenerates_after_document(vault, &self.merged);
+        }
+    }
+}
+
+/// One staged bootstrap head: owned, no live handles.
+struct StagedMessageDocument {
+    map_key: String,
+    message: EntityId,
+    head: CarriedDocument,
+    snapshot: Vec<u8>,
+}
+
+/// An isolated bootstrap batch: bare candidates collected off-txn, staged
+/// into the caller's root write txn. It never opens its own reader or
+/// writer, never publishes, and never touches observers.
+pub(super) struct MessageDocumentBatch {
+    window: String,
+    staged: Vec<StagedMessageDocument>,
+}
+
+impl MessageDocumentBatch {
+    /// Collects every bare head `doc` carries under `key`: world windows and
+    /// a missing map stage nothing. Decode, key check and part join are the
+    /// live bodies ([`checked_head`], [`join_parts`]); malformed heads and
+    /// heads whose parts have not landed log and stay out, as live does.
+    pub(super) fn prepare(doc: &LoroDoc, key: &WindowKey) -> Self {
+        let window = key.as_str().to_owned();
+        if key.world().is_some() || !holds_message_doc_map(doc) {
+            return Self {
+                window,
+                staged: Vec::new(),
+            };
+        }
+        let map = doc.get_map(MESSAGE_DOCS_MAP);
+        let mut staged = Vec::new();
+        for (map_key, bytes) in head_rows(&map, |_| true) {
+            let Some((carried, message)) = checked_head(&map_key, &bytes) else {
+                tracing::warn!(
+                    window = window.as_str(),
+                    key = %map_key,
+                    "message document head malformed; left out"
+                );
+                continue;
+            };
+            let Some(snapshot) = join_parts(&map, &carried.snapshot) else {
+                tracing::debug!(
+                    window = window.as_str(),
+                    key = %map_key,
+                    "message document waits for its parts"
+                );
+                continue;
+            };
+            staged.push(StagedMessageDocument {
+                map_key,
+                message,
+                head: carried.head,
+                snapshot,
+            });
+        }
+        Self { window, staged }
+    }
+
+    /// Stages every prepared head into the supplied root write txn, in
+    /// prepare order, through the native leaf. The held precheck reads on
+    /// the same writer, not its own reader. `Written` heads join the
+    /// returned effects; every other native outcome keeps its live log. Any
+    /// `Err` propagates to the root: no nested writer, no log-and-continue
+    /// partial commit. Never publishes: the caller runs the returned effects
+    /// after the root actually commits.
+    pub(super) fn stage_in_txn(
+        self,
+        vault: &Vault,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<MessageDocumentEffects> {
+        let Self { window, staged } = self;
+        let mut merged = Vec::new();
+        for row in &staged {
+            let held = vault.carried_message_document_in_txn(txn, &row.message)?;
+            if already_held(held.as_ref(), &row.head) {
+                continue;
+            }
+            let outcome =
+                vault.merge_carried_message_document_in_txn(txn, &row.head, &row.snapshot)?;
+            record_merge(
+                window.as_str(),
+                &row.map_key,
+                row.message,
+                outcome,
+                &mut merged,
+            );
+        }
+        Ok(MessageDocumentEffects { window, merged })
+    }
+}
+
 /// Installs each carried head's document here, one write each, so a refusal
 /// stays with its message. A head this vault already holds, from a history
 /// floor no newer than its own, is passed over before its parts are joined;
@@ -299,12 +471,9 @@ fn holds_message_doc_map(doc: &LoroDoc) -> bool {
 fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, Vec<u8>)>) {
     let mut merged = Vec::new();
     for (map_key, bytes) in heads {
-        let (carried, message) = match decode(&bytes) {
-            Ok((carried, message)) if message.to_hex() == map_key => (carried, message),
-            _ => {
-                tracing::warn!(window, key = %map_key, "message document head malformed; left out");
-                continue;
-            }
+        let Some((carried, message)) = checked_head(&map_key, &bytes) else {
+            tracing::warn!(window, key = %map_key, "message document head malformed; left out");
+            continue;
         };
         let held = vault
             .store
@@ -313,7 +482,7 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             .map_err(Error::from)
             .and_then(|rtxn| vault.carried_message_document_in_txn(&rtxn, &message));
         match held {
-            Ok(Some(held)) if held.holds(&carried.head) && !carried.head.purges(&held) => continue,
+            Ok(Some(held)) if already_held(Some(&held), &carried.head) => continue,
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(window, key = %map_key, error = %error, "message document not merged");
@@ -328,39 +497,17 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             vault.merge_carried_message_document_in_txn(txn, &carried.head, &snapshot)
         });
         match outcome {
-            Ok(DocumentMerge::Written) => merged.push(message),
-            Ok(DocumentMerge::Held) => {}
-            Ok(DocumentMerge::Waiting) => {
-                tracing::debug!(window, key = %map_key, "message document waits for its message");
-            }
-            Ok(DocumentMerge::Conflict) => tracing::warn!(
-                window,
-                key = %map_key,
-                "message document conflicts; the one held here stands and the other stays in the window"
-            ),
-            Ok(DocumentMerge::Refused(reason)) => tracing::warn!(
-                window,
-                key = %map_key,
-                reason,
-                "message document does not merge here; left out"
-            ),
-            Ok(DocumentMerge::Deferred(reason)) => tracing::info!(
-                window,
-                key = %map_key,
-                reason,
-                "message document purge waits; the history held here stands and the head stays in the window"
-            ),
+            Ok(merge) => record_merge(window, &map_key, message, merge, &mut merged),
             Err(error) => {
                 tracing::warn!(window, key = %map_key, error = %error, "message document not merged");
             }
         }
     }
-    if !merged.is_empty() {
-        tracing::debug!(window, merged = merged.len(), "message documents merged");
-        // A ready document can prove a `regenerates` link owed on its
-        // message (FIX 6204).
-        crate::sync::bridge::wake_regenerates_after_document(vault, &merged);
+    MessageDocumentEffects {
+        window: window.to_owned(),
+        merged,
     }
+    .publish_after_commit(vault);
 }
 
 /// Drops from `doc` the document of each message this vault erased or the
