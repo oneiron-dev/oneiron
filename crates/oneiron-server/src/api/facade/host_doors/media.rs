@@ -300,13 +300,52 @@ pub(crate) async fn ai_media_for_run(
     attempt: Option<&str>,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
+    ai_media_for_run_in_step(server, run, operation, attempt, input, None).await
+}
+
+pub(crate) async fn ai_image_for_run_step(
+    server: &SyncServer,
+    run: &RunAdmission,
+    attempt: Option<&str>,
+    input: AiCallRequest,
+    media_step: &crate::server::RunMediaStep,
+) -> MemoryResult<AiAnswer> {
+    ai_media_for_run_in_step(
+        server,
+        run,
+        AiOperation::Image,
+        attempt,
+        input,
+        Some(media_step),
+    )
+    .await
+}
+
+async fn ai_media_for_run_in_step(
+    server: &SyncServer,
+    run: &RunAdmission,
+    operation: AiOperation,
+    attempt: Option<&str>,
+    input: AiCallRequest,
+    media_step: Option<&crate::server::RunMediaStep>,
+) -> MemoryResult<AiAnswer> {
     let key = input.idempotency_key.clone();
     let (request, voices) = prepare(server, operation, input)?;
     // A pumped run's attempt step key still wins when the call has one, as
     // before; a run or code-mode caller no attempt keys is deduped by the
     // key it sent, in its run's partition (FIX 11615).
     let replay = step_replay(attempt, &request).or_else(|| run_replay(run, key, &request));
-    rendered(server, operation, request, voices, Some(run), None, replay).await
+    super::support::rendered_in_step(
+        server,
+        operation,
+        request,
+        voices,
+        Some(run),
+        None,
+        replay,
+        media_step,
+    )
+    .await
 }
 
 /// `ai.speech` for a pumped agent run (FIX 3194): [`ai_media_for_run`]'s.

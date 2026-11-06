@@ -50,8 +50,13 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "hook_view_served",
     "rewritten_request",
 ];
-pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
-    ["seq", "label", "state_hash", "created_at_ms"];
+pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 5] = [
+    "seq",
+    "label",
+    "state_hash",
+    "created_at_ms",
+    "bridge_calls",
+];
 pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 9] = [
     "handle",
     "path",
@@ -106,6 +111,7 @@ const KEY_REWRITTEN_REQUEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[9];
 const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
 const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
 const KEY_CREATED_AT_MS: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[3];
+const KEY_STEP_BRIDGE_CALLS: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[4];
 
 const KEY_HANDLE: &str = CODE_RUN_RAW_OUTPUT_KEYS[0];
 const KEY_PATH: &str = CODE_RUN_RAW_OUTPUT_KEYS[1];
@@ -124,6 +130,40 @@ const KEY_TRUNCATED: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[2];
 const KEY_NAME: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[0];
 const KEY_FIELDS: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[2];
 const KEY_LAYOUT_HASH: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[3];
+
+/// Identity of the exact source prefix a continuation proved at seed time.
+/// A child may later mask its inherited reply bytes; that does not rewrite
+/// the original source prefix this child-owned witness recorded.
+pub(crate) fn continuation_prefix_digest(
+    record: &CodeRunReplayRecord,
+    steps: u64,
+    bridge_start: u64,
+) -> Result<Option<[u8; 32]>> {
+    let (Ok(steps), Ok(bridge_start)) = (usize::try_from(steps), usize::try_from(bridge_start))
+    else {
+        return Ok(None);
+    };
+    let (Some(checkpoints), Some(calls)) = (
+        record.step_checkpoints.get(..steps),
+        record.bridge_calls.get(..bridge_start),
+    ) else {
+        return Ok(None);
+    };
+    let value = Value::Array(vec![
+        Value::Binary(record.run_id.as_bytes().to_vec()),
+        record
+            .determinism
+            .as_ref()
+            .map_or(Value::Nil, encode_determinism),
+        Value::Array(checkpoints.iter().map(encode_step_checkpoint).collect()),
+        Value::Array(calls.iter().map(encode_bridge_call).collect()),
+    ]);
+    let bytes = encode_value(&value, "continuation prefix MessagePack encode failed")?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:executor-continuation-prefix:v1");
+    hasher.update(&bytes);
+    Ok(Some(*hasher.finalize().as_bytes()))
+}
 
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
@@ -348,7 +388,7 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
 }
 
 fn encode_step_checkpoint(checkpoint: &CodeRunStepCheckpoint) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (Value::from(KEY_SEQ), Value::from(checkpoint.seq)),
         (
             Value::from(KEY_LABEL),
@@ -362,7 +402,15 @@ fn encode_step_checkpoint(checkpoint: &CodeRunStepCheckpoint) -> Value {
             Value::from(KEY_CREATED_AT_MS),
             Value::from(checkpoint.created_at_ms),
         ),
-    ])
+    ];
+    // Present only where the writer recorded the step's calls.
+    if let Some((start, end)) = checkpoint.bridge_calls {
+        entries.push((
+            Value::from(KEY_STEP_BRIDGE_CALLS),
+            Value::Array(vec![Value::from(start), Value::from(end)]),
+        ));
+    }
+    Value::Map(entries)
 }
 
 fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
@@ -379,9 +427,31 @@ fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
             "checkpoint state_hash",
         )?,
         created_at_ms: u64_value(required(fields[3], "missing checkpoint created_at_ms")?)?,
+        bridge_calls: fields[4].map(decode_step_bridge_calls).transpose()?,
     };
     validate_label(&checkpoint.label, "checkpoint label")?;
     Ok(checkpoint)
+}
+
+/// A step's bridge calls, `[start, end]`, a forward range.
+fn decode_step_bridge_calls(value: &Value) -> Result<(u64, u64)> {
+    let Value::Array(items) = value else {
+        return Err(invalid_code_run_replay(
+            "checkpoint bridge_calls must be an array",
+        ));
+    };
+    let [start, end] = items.as_slice() else {
+        return Err(invalid_code_run_replay(
+            "checkpoint bridge_calls must be [start, end]",
+        ));
+    };
+    let (start, end) = (u64_value(start)?, u64_value(end)?);
+    if start > end {
+        return Err(invalid_code_run_replay(
+            "checkpoint bridge_calls run backward",
+        ));
+    }
+    Ok((start, end))
 }
 
 fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
@@ -614,6 +684,14 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
             return Err(invalid_code_run_replay("duplicate checkpoint seq"));
         }
         validate_label(&checkpoint.label, "checkpoint label")?;
+        if checkpoint
+            .bridge_calls
+            .is_some_and(|(_, end)| end > expected_seq)
+        {
+            return Err(invalid_code_run_replay(
+                "checkpoint bridge_calls exceed the record's calls",
+            ));
+        }
     }
 
     let mut output_paths = HashSet::new();

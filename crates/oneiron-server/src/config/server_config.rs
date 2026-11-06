@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
+use super::apns::ApnsConfig;
 use super::backup::BackupConfig;
 use super::channel_endpoints::ChannelEndpointsConfig;
 use super::embedder::EmbedderConfig;
@@ -160,6 +161,9 @@ pub struct SyncServerConfig {
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
+    /// `[apns]`: the Apple push applications the served sinks send through;
+    /// none unless the file names applications.
+    pub apns: ApnsConfig,
     /// `[linear]`: the Linear mirror this server runs and its webhook's
     /// tracker mapping, nonsecret. A plain serve with no section reads its
     /// `ONEIRON_LINEAR_*` environment into this before the server starts
@@ -244,6 +248,7 @@ impl Default for SyncServerConfig {
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
+            apns: ApnsConfig::default(),
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
@@ -421,6 +426,9 @@ pub struct ServeConfig {
     /// The `[device_sync]` section: the home this machine dials, absent until
     /// the config file names it. Absent means it dials no one.
     pub device_sync: Option<super::DeviceSyncConfig>,
+    /// Each `[[shared_env]]` entry: one dedicated shared vault environment
+    /// this host keeps open for leave checks and housekeeping (FIX 2051).
+    pub shared_env: Vec<super::SharedEnvConfig>,
     /// The `[connectors.<name>]` sections: each catalog connector's installed
     /// transport and endpoint, empty until the config file names one.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
@@ -433,6 +441,9 @@ pub struct ServeConfig {
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
+    /// The `[apns]` section: the Apple push applications the served sinks
+    /// send through, none unless the config file names applications.
+    pub apns: ApnsConfig,
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
@@ -557,10 +568,12 @@ impl Default for ServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: Vec::new(),
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
             channel_endpoints: server.channel_endpoints.clone(),
+            apns: server.apns.clone(),
             linear: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -628,6 +641,7 @@ impl ServeConfig {
             skills: self.skills.clone(),
             line: self.line,
             channel_endpoints: self.channel_endpoints.clone(),
+            apns: self.apns.clone(),
             linear: self.linear.clone(),
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.
