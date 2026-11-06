@@ -1229,6 +1229,10 @@ pub enum AgentVerb {
     VaultMailSourcesAudienceEvents,
     VaultMailThreadsShare,
     VaultMailThreadsUnshare,
+    VaultMailReplyDraft,
+    VaultMailReplyDrafts,
+    VaultMailReplyDiscard,
+    VaultMailReplyApprove,
     VaultMailComplianceSetting,
     VaultMailComplianceSet,
     VaultMailComplianceLog,
@@ -2505,6 +2509,10 @@ impl AgentVerb {
         Self::VaultMailSourcesAudienceEvents,
         Self::VaultMailThreadsShare,
         Self::VaultMailThreadsUnshare,
+        Self::VaultMailReplyDraft,
+        Self::VaultMailReplyDrafts,
+        Self::VaultMailReplyDiscard,
+        Self::VaultMailReplyApprove,
         Self::VaultMailComplianceSetting,
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
@@ -3818,6 +3826,10 @@ impl AgentVerb {
             Self::VaultMailSourcesAudienceEvents => "vault.mail.sources.audience_events",
             Self::VaultMailThreadsShare => "vault.mail.threads.share",
             Self::VaultMailThreadsUnshare => "vault.mail.threads.unshare",
+            Self::VaultMailReplyDraft => "vault.mail.reply.draft",
+            Self::VaultMailReplyDrafts => "vault.mail.reply.drafts",
+            Self::VaultMailReplyDiscard => "vault.mail.reply.discard",
+            Self::VaultMailReplyApprove => "vault.mail.reply.approve",
             Self::VaultMailComplianceSetting => "vault.mail.compliance.setting",
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
@@ -5074,6 +5086,10 @@ impl AgentVerb {
                 | Self::VaultMailSourcesAudienceEvents
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDrafts
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
@@ -6379,6 +6395,10 @@ impl AgentVerb {
                 | Self::VaultMailSourcesAudienceEvents
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDrafts
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
@@ -7776,6 +7796,10 @@ impl AgentVerb {
                 | Self::VaultMailSourcesAudienceEvents
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDrafts
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
@@ -8543,6 +8567,9 @@ impl AgentVerb {
                 | Self::VaultMailSourcesMembersSet
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
@@ -9854,6 +9881,10 @@ impl AgentVerb {
             Self::VaultMailSourcesAudienceEvents => &["spec"],
             Self::VaultMailThreadsShare => &["spec"],
             Self::VaultMailThreadsUnshare => &["spec"],
+            Self::VaultMailReplyDraft => &["spec"],
+            Self::VaultMailReplyDrafts => &["spec"],
+            Self::VaultMailReplyDiscard => &["spec"],
+            Self::VaultMailReplyApprove => &["spec"],
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
@@ -11131,6 +11162,10 @@ impl AgentVerb {
             Self::VaultMailSourcesAudienceEvents => &["spec"],
             Self::VaultMailThreadsShare => &["spec"],
             Self::VaultMailThreadsUnshare => &["spec"],
+            Self::VaultMailReplyDraft => &["spec"],
+            Self::VaultMailReplyDrafts => &["spec"],
+            Self::VaultMailReplyDiscard => &["spec"],
+            Self::VaultMailReplyApprove => &["spec"],
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
@@ -14774,6 +14809,18 @@ impl AgentVerb {
             }
             Self::VaultMailThreadsUnshare => {
                 "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."
+            }
+            Self::VaultMailReplyDraft => {
+                "Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."
+            }
+            Self::VaultMailReplyDrafts => {
+                "The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state."
+            }
+            Self::VaultMailReplyDiscard => {
+                "Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."
+            }
+            Self::VaultMailReplyApprove => {
+                "The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."
             }
             Self::VaultMailComplianceSetting => {
                 "Whether org compliance search across mailboxes is on; off by default."

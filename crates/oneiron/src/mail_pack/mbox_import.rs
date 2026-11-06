@@ -262,6 +262,7 @@ impl Intake<'_> {
             from: parsed.header("from").filter(|from| !from.is_empty()),
             to: addresses("to"),
             cc: addresses("cc"),
+            reply_to: addresses("reply-to"),
             subject: parsed.header("subject"),
             date,
             received_at,

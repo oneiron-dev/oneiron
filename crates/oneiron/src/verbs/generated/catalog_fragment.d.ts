@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1302 code-mode rows (1262 host rows, 40 run rows), 4589 declarations.
-// Replies: 1116 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1306 code-mode rows (1266 host rows, 40 run rows), 4596 declarations.
+// Replies: 1120 fully typed, 185 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -4427,6 +4427,13 @@ declare namespace Sdk {
   type SourceAudienceEventView = { revision: number; op: SourceAudienceOp; person_ref?: string | null; by_ref?: string | null; at: number };
   type MailThreadShareRequest = { record_ref: string; person_ref: string };
   type MailThreadShareReceipt = { thread_ref: string; person_ref: string; shared: boolean; changed: boolean; shared_with: string[] };
+  type MailReplyDraftRequest = { thread_ref: string; parent_turn_ref?: string | null; body: string; request_key: string };
+  type MailReplyDraftState = "proposed" | "approved" | "sent" | "unsettled" | "discarded";
+  type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string; subject: string; body: string; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number };
+  type MailReplyDraftsRequest = { thread_ref?: string | null; include_settled?: boolean };
+  type MailReplyDraftPage = { drafts: MailReplyDraftView[] };
+  type MailReplyDraftRef = { draft_ref: string };
+  type MailReplyApproveRequest = { draft_ref: string; revision: number };
   type MailComplianceSettingView = { enabled: boolean; set_by_ref?: string | null; set_at?: number | null };
   type MailComplianceSetRequest = { enabled: boolean; purpose: string };
   type MailComplianceEventKind = "enabled" | "disabled" | "search";
@@ -6527,6 +6534,16 @@ declare const vault: Sdk.VaultHost & {
     pack: {
       /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
       install(input: Sdk.EmptyRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+    };
+    reply: {
+      /** The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice. */
+      approve(input: Sdk.MailReplyApproveRequest): Promise<Sdk.MailReplyDraftView | StoredResult>;
+      /** Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends. */
+      discard(input: Sdk.MailReplyDraftRef): Promise<Sdk.MailReplyDraftView | StoredResult>;
+      /** Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first. */
+      draft(input: Sdk.MailReplyDraftRequest): Promise<Sdk.MailReplyDraftView | StoredResult>;
+      /** The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state. */
+      drafts(input: Sdk.MailReplyDraftsRequest): Promise<Sdk.MailReplyDraftPage | StoredResult>;
     };
     sources: {
       /** Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins. */

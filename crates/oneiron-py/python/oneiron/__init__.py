@@ -5763,6 +5763,9 @@ class Oneiron:
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs":
             return Oneiron._VaultMailThreadsVerbs(self._client)
         @property
+        def reply(self) -> "Oneiron._VaultMailReplyVerbs":
+            return Oneiron._VaultMailReplyVerbs(self._client)
+        @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs":
             return Oneiron._VaultMailComplianceVerbs(self._client)
         def inbox(self, spec):
@@ -5828,6 +5831,21 @@ class Oneiron:
         def read(self, spec):
             """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
             return json.loads(_translate(lambda: self._client.vault_mail_threads_read(json.dumps(spec))))
+    class _VaultMailReplyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def draft(self, spec):
+            """Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_draft(json.dumps(spec))))
+        def drafts(self, spec):
+            """The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_drafts(json.dumps(spec))))
+        def discard(self, spec):
+            """Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_discard(json.dumps(spec))))
+        def approve(self, spec):
+            """The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_approve(json.dumps(spec))))
     class _VaultMailComplianceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

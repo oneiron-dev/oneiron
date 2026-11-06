@@ -37814,6 +37814,106 @@ async fn vault_mail_threads_unshare(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_mail_reply_draft(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.reply.draft",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_mail_reply_drafts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.reply.drafts",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_mail_reply_discard(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.reply.discard",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_mail_reply_approve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.mail.reply.approve")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.mail.reply.approve", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.mail.reply.approve", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::vault_mail_reply_approve(
+                server,
+                auth,
+                facade_door_input(&mut hooks)?,
+            )
+            .await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_mail_compliance_setting(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -42144,6 +42244,10 @@ async fn call_verb_row(
         "vault.mail.threads.unshare" => {
             Box::pin(vault_mail_threads_unshare(server, call, input)).await
         }
+        "vault.mail.reply.draft" => Box::pin(vault_mail_reply_draft(server, call, input)).await,
+        "vault.mail.reply.drafts" => Box::pin(vault_mail_reply_drafts(server, call, input)).await,
+        "vault.mail.reply.discard" => Box::pin(vault_mail_reply_discard(server, call, input)).await,
+        "vault.mail.reply.approve" => Box::pin(vault_mail_reply_approve(server, call, input)).await,
         "vault.mail.compliance.setting" => {
             Box::pin(vault_mail_compliance_setting(server, call, input)).await
         }

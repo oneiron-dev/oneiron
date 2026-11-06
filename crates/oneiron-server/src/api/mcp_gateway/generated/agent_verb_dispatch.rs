@@ -1463,6 +1463,10 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.mail.sources.audience_events" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.threads.share" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.threads.unshare" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.reply.draft" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.reply.drafts" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.reply.discard" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.reply.approve" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.setting" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.set" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.log" => a.spec.clone().ok_or_else(invalid),
@@ -5218,6 +5222,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mail.threads.unshare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.reply.draft" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.reply.drafts" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.reply.discard" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mail.reply.approve" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mail.compliance.setting" => {
@@ -25671,6 +25687,44 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_mail_threads_unshare(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.reply.draft" => {
+            let input: oneiron::mail_pack::MailReplyDraftRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_reply_draft(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.reply.drafts" => {
+            let input: oneiron::mail_pack::MailReplyDraftsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_reply_drafts(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.reply.discard" => {
+            let input: oneiron::mail_pack::MailReplyDraftRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_mail_reply_discard(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mail.reply.approve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mail.reply.approve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::mail_pack::MailReplyApproveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = Box::pin(crate::api::facade::host_doors::vault_mail_reply_approve(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

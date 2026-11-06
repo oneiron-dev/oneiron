@@ -120,6 +120,10 @@ pub(super) struct MailOccurrence {
     /// its body lands.
     #[serde(default)]
     pub(super) attachments: Vec<MailAttachmentRef>,
+    /// The headers a reply to it is built from, whole (FIX 15420); `None`
+    /// for a message landed before replies were drafted, or forgotten.
+    #[serde(default)]
+    pub(super) reply: Option<MailReplyHeaders>,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
 }
@@ -142,6 +146,35 @@ pub(super) fn body_queue_key(
     )
 }
 
+/// The headers of one message a reply to it needs, as its provider gave
+/// them, never cut to a label's length: a reply carries them exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailReplyHeaders {
+    /// The provider's thread id (Gmail `threadId`).
+    pub(super) thread_id: Option<String>,
+    pub(super) rfc_message_id: Option<String>,
+    pub(super) references: Vec<String>,
+    pub(super) from: Option<String>,
+    pub(super) reply_to: Vec<String>,
+    pub(super) subject: Option<String>,
+    /// Whether this mailbox sent it: a reply answers someone else's.
+    pub(super) sent_by_mailbox: bool,
+}
+
+impl MailReplyHeaders {
+    pub(super) fn of(headers: &super::wire::MailHeaders) -> Self {
+        Self {
+            thread_id: headers.thread_id.clone(),
+            rfc_message_id: headers.rfc_message_id.clone(),
+            references: headers.references.clone(),
+            from: headers.from.clone(),
+            reply_to: headers.reply_to.clone(),
+            subject: headers.subject.clone(),
+            sent_by_mailbox: headers.sent_by_mailbox,
+        }
+    }
+}
+
 impl MailOccurrence {
     /// Forgets what the message said: its sender, subject, labels, thread
     /// key, ids and content hashes go, and only the provider id stays, as a
@@ -155,6 +188,7 @@ impl MailOccurrence {
         self.from = None;
         self.subject = None;
         self.attachments.clear();
+        self.reply = None;
         self.updated_at = at;
     }
 }

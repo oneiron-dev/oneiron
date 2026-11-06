@@ -43,7 +43,7 @@ const GMAIL_HISTORY_PAGE_SIZE: u32 = 500;
 /// The deepest MIME nesting read for a body.
 const MAX_PART_DEPTH: usize = 32;
 /// The headers a header stage reads.
-const MESSAGE_HEADERS: [&str; 8] = [
+const MESSAGE_HEADERS: [&str; 9] = [
     "From",
     "To",
     "Cc",
@@ -52,6 +52,7 @@ const MESSAGE_HEADERS: [&str; 8] = [
     "Message-ID",
     "In-Reply-To",
     "References",
+    "Reply-To",
 ];
 
 /// Host-side Gmail REST mail wire over `reqwest::blocking`, for the mailbox
@@ -434,6 +435,7 @@ fn headers_of(message: &Value) -> Result<MailHeaders> {
         from: header("From").map(str::to_owned),
         to: header("To").map(address_list).unwrap_or_default(),
         cc: header("Cc").map(address_list).unwrap_or_default(),
+        reply_to: header("Reply-To").map(address_list).unwrap_or_default(),
         subject: header("Subject").map(str::to_owned),
         date: header("Date").and_then(rfc2822_seconds),
         received_at,
