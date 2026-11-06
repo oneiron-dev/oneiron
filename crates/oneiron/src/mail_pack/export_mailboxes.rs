@@ -431,15 +431,17 @@ impl CarriedMemberMailboxes {
 /// mailbox, in the export audit's own write `txn`, at `at`: one inbox
 /// NOTIFICATION each, for that person alone, naming the source, the exporter
 /// and the export, never a word of the mail. The vault's rule, each source
-/// and the exporter's request for it are read again in `txn` first: a
-/// mailbox the rule no longer carries, a source changed since the copy read
-/// it, or a person gone fails the write, as any notice that is not written
-/// does. Then each approved request the copy uses is read again and marked
-/// used by `export`, and its person told that their approval was used, in
-/// the same write; an approval that no longer stands fails it too. Every
-/// request is read under the PERSON the copy read it under, and an exporter
-/// that no longer exports as that PERSON uses none. Answers how many
-/// mailboxes were told.
+/// and, where the rule alone no longer carries it, the exporter's request
+/// for it are read again in `txn` first: a mailbox goes only while the rule
+/// still carries it, or while its request is still approved and is one the
+/// copy read approved and uses; any other mailbox, a source changed since
+/// the copy read it, or a person gone fails the write, as any notice that is
+/// not written does. Then each approved request the copy uses is read again
+/// and marked used by `export`, and its person told that their approval was
+/// used, in the same write; an approval that no longer stands fails it too.
+/// Every request is read under the PERSON the copy read it under, and an
+/// exporter that no longer exports as that PERSON reads none: the write
+/// fails. Answers how many mailboxes were told.
 ///
 /// # Errors
 ///
@@ -483,26 +485,45 @@ pub(crate) fn tell_member_mailboxes_in_txn(
             )
             .map(drop)
     };
-    if !carried.approvals.is_empty()
+    let owner = shared_vault_owner_in(vault, txn)?;
+    let setting = owners_export_member_mail_in(vault, txn)?;
+    // Whether the vault's rule alone still carries a member's mailbox: the
+    // vault is org-owned, or person-owned with the setting on.
+    let rule_carries = owner.is_some_and(|owner| {
+        member_mailbox_decision(owner, setting, MemberMailRequest::NotRequested)
+            == MemberMailboxDecision::Include
+    });
+    // This write reads a request for each approval the copy uses, and for
+    // each mailbox the rule alone no longer carries: it reads every one under
+    // the PERSON the copy read it under.
+    let reads_requests = !carried.approvals.is_empty()
+        || (owner.is_some() && !rule_carries && !carried.mailboxes.is_empty());
+    if reads_requests
         && exporting_person_in(vault, txn, carried.exporter)? != carried.exporting_person
     {
         return Err(crate::Error::InvalidConfig(
-            "the exporter no longer exports as the Owner whose approvals the export read".into(),
+            "the exporter no longer exports as the Owner whose requests the export read".into(),
         ));
     }
-    let owner = shared_vault_owner_in(vault, txn)?;
-    let setting = owners_export_member_mail_in(vault, txn)?;
     for mailbox in &carried.mailboxes {
-        let (request, _) = member_request_in(
-            vault,
-            txn,
-            mailbox.source,
-            carried.exporting_person,
-            Some(mailbox.person),
-        )?;
-        let carries = owner.is_some_and(|owner| {
-            member_mailbox_decision(owner, setting, request) == MemberMailboxDecision::Include
-        });
+        // Without the rule, only an approval the copy read and uses carries
+        // the mailbox: an approval given since the copy read it waits for the
+        // Owner's next export.
+        let carries = match owner {
+            _ if rule_carries => true,
+            Some(owner) => {
+                let (request, approved) = member_request_in(
+                    vault,
+                    txn,
+                    mailbox.source,
+                    carried.exporting_person,
+                    Some(mailbox.person),
+                )?;
+                member_mailbox_decision(owner, setting, request) == MemberMailboxDecision::Include
+                    && approved.is_some_and(|approved| carried.approvals.contains(&approved))
+            }
+            None => false,
+        };
         let stands = SOURCES
             .get(&vault.store, txn, &mailbox.source)?
             .is_some_and(|row| {
