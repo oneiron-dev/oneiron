@@ -33,13 +33,14 @@ use crate::error::Result;
 use std::cmp::Ordering;
 
 /// The caller supplies a nonempty needle and a positive existing scan quantum.
+/// A rendered-byte window may begin inside a UTF-8 scalar.
 pub(super) fn contains_long_literal(
-    text: &str,
+    haystack: &[u8],
     pattern: &str,
     quantum: usize,
     mut checkpoint: impl FnMut() -> Result<()>,
 ) -> Result<bool> {
-    let (haystack, needle) = (text.as_bytes(), pattern.as_bytes());
+    let needle = pattern.as_bytes();
     if needle.len() > haystack.len() {
         return Ok(false);
     }

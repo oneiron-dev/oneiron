@@ -78,14 +78,9 @@ fn contains_lossy_literal(
         return Ok(true);
     }
     let quantum = scan_bytes.max(char::MAX.len_utf8());
-    let search_bytes = quantum.max(pattern.len());
-    let contains = |window: &str| {
-        if pattern.len() > quantum {
-            contains_literal(window, pattern, reader, scan_bytes)
-        } else {
-            Ok(window.contains(pattern))
-        }
-    };
+    if pattern.len() > quantum {
+        return contains_long_lossy_literal(line, pattern, reader, scan_bytes);
+    }
     let mut window = String::new();
     let mut pending = 0;
     let mut matched = false;
@@ -95,14 +90,59 @@ fn contains_lossy_literal(
         }
         window.push_str(chunk);
         pending += chunk.len();
-        if pending >= search_bytes {
-            matched = contains(&window)?;
+        if pending >= quantum {
+            matched = window.contains(pattern);
             if !matched {
                 let mut keep_from = window.len().saturating_sub(pattern.len() - 1);
                 while !window.is_char_boundary(keep_from) {
                     keep_from -= 1;
                 }
                 drop(window.drain(..keep_from));
+                pending = 0;
+            }
+        }
+        Ok(())
+    })?;
+    checkpoint(reader)?;
+    Ok(matched || window.contains(pattern))
+}
+
+fn contains_long_lossy_literal(
+    line: &[u8],
+    pattern: &str,
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<bool> {
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let contains = |window: &[u8]| {
+        checkpoint(reader)?;
+        super::coreutils_search::contains_long_literal(window, pattern, quantum, || {
+            checkpoint(reader)
+        })
+    };
+    let mut window = Vec::new();
+    let mut pending = 0;
+    let mut matched = false;
+    lossy_for_each(line, reader, scan_bytes, |chunk| {
+        if matched {
+            return Ok(());
+        }
+        window.extend_from_slice(chunk.as_bytes());
+        pending += chunk.len();
+        if pending >= pattern.len() {
+            matched = contains(&window)?;
+            if !matched {
+                // Byte matching permits a retained window to begin inside a UTF-8 scalar.
+                let keep_from = window.len().saturating_sub(pattern.len() - 1);
+                let retained = window.len() - keep_from;
+                let mut copied = 0;
+                while copied < retained {
+                    checkpoint(reader)?;
+                    let end = copied.saturating_add(quantum).min(retained);
+                    window.copy_within(keep_from + copied..keep_from + end, copied);
+                    copied = end;
+                }
+                window.truncate(retained);
                 pending = 0;
             }
         }
@@ -209,42 +249,6 @@ fn line_end(bytes: &[u8], reader: &ContainerReader, scan_bytes: usize) -> Result
         offset += chunk.len();
     }
     Ok(None)
-}
-
-/// Searches bounded standard windows, or a paced constant-space long-needle matcher.
-pub(super) fn contains_literal(
-    text: &str,
-    pattern: &str,
-    reader: &ContainerReader,
-    scan_bytes: usize,
-) -> Result<bool> {
-    checkpoint(reader)?;
-    let quantum = scan_bytes.max(char::MAX.len_utf8());
-    if pattern.is_empty() {
-        return Ok(true);
-    }
-    if pattern.len() > quantum {
-        return super::coreutils_search::contains_long_literal(text, pattern, quantum, || {
-            checkpoint(reader)
-        });
-    }
-    let mut start = 0;
-    while start < text.len() {
-        checkpoint(reader)?;
-        let mut next = start.saturating_add(quantum).min(text.len());
-        while !text.is_char_boundary(next) {
-            next -= 1;
-        }
-        let mut end = next.saturating_add(pattern.len() - 1).min(text.len());
-        while !text.is_char_boundary(end) {
-            end += 1;
-        }
-        if text[start..end].contains(pattern) {
-            return Ok(true);
-        }
-        start = next;
-    }
-    Ok(false)
 }
 
 /// Emits whole-input lossy UTF-8 without splitting a sequence at a scan boundary.
