@@ -373,6 +373,10 @@ struct Frame {
     /// Whether the row last visited was a support.
     visiting_support: bool,
     decided: Option<bool>,
+    /// The lowest stack depth of a row still being judged that a verdict
+    /// this frame took read as `true` (fix list row 16255 review): its own
+    /// depth when none did.
+    low: usize,
 }
 
 /// What a frame asks next.
@@ -391,12 +395,15 @@ impl Frame {
             next_support: 0,
             visiting_support: false,
             decided: None,
+            low: usize::MAX,
         }
     }
 
     /// Takes the verdict on the row last visited: one of `every` that does
-    /// not read decides no; one support that reads decides yes.
-    fn take(&mut self, readable: bool) {
+    /// not read decides no; one support that reads decides yes. `low` is the
+    /// lowest depth of a row still being judged that the verdict read.
+    fn take(&mut self, readable: bool, low: usize) {
+        self.low = self.low.min(low);
         if self.visiting_support {
             if readable {
                 self.decided = Some(true);
@@ -438,51 +445,107 @@ impl Judge<'_, '_, '_> {
     /// a chain of any length is read without growing the call stack (FIX
     /// 12559 follow-up). A row in progress reads as `true` to a cycle back
     /// to it: a cycle adds no restriction.
+    ///
+    /// Only a settled verdict is memoised. A `false` is settled at once: a
+    /// row in progress read as `true` can only have made it more readable.
+    /// A `true` that read a row still in progress waits, conditional, until
+    /// that row settles: kept if it reads, judged again if not (fix list row
+    /// 16255 review). So a cycle never lends a row a `true` its other words
+    /// deny.
     fn row_readable(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
         if let Some(known) = self.rows.get(&id) {
             return Ok(*known);
         }
-        let mut stack = match self.open(id, raw)? {
+        let mut root = match self.open(id, raw)? {
             Opened::Decided(verdict) => {
                 self.rows.insert(id, verdict);
                 return Ok(verdict);
             }
-            Opened::Waiting(frame) => {
-                self.rows.insert(id, true);
-                vec![frame]
-            }
+            Opened::Waiting(frame) => frame,
         };
-        let mut finished: Option<bool> = None;
+        root.low = 0;
+        let mut stack = vec![root];
+        // The rows in progress, by their depth on the stack.
+        let mut in_progress = BTreeMap::from([(id, 0_usize)]);
+        // Each `true` not settled yet, by the lowest depth it read.
+        let mut conditional: BTreeMap<EntityId, usize> = BTreeMap::new();
+        let mut finished: Option<(bool, usize)> = None;
+        let mut verdict_of_root = true;
         while let Some(frame) = stack.last_mut() {
-            if let Some(readable) = finished.take() {
-                frame.take(readable);
+            if let Some((readable, low)) = finished.take() {
+                frame.take(readable, low);
             }
             match frame.next() {
                 Step::Done(verdict) => {
-                    let done = frame.id;
-                    stack.pop();
-                    self.rows.insert(done, verdict);
-                    finished = Some(verdict);
+                    let Some(done) = stack.pop() else {
+                        break;
+                    };
+                    let depth = stack.len();
+                    in_progress.remove(&done.id);
+                    if done.low < depth && verdict {
+                        // It read a row below it still in progress: so does
+                        // every `true` that read it.
+                        for low in conditional.values_mut() {
+                            if *low >= depth {
+                                *low = done.low;
+                            }
+                        }
+                        conditional.insert(done.id, done.low);
+                        finished = Some((true, done.low));
+                        continue;
+                    }
+                    self.rows.insert(done.id, verdict);
+                    if !verdict {
+                        // A `true` that read it, or a row above it, in
+                        // progress is judged again when it is next asked.
+                        conditional.retain(|_, low| *low < depth);
+                    } else if done.low >= depth {
+                        // Every row it read has settled and reads: so does
+                        // each `true` that read it.
+                        let settled: Vec<EntityId> = conditional
+                            .iter()
+                            .filter(|&(_, low)| *low >= depth)
+                            .map(|(row, _)| *row)
+                            .collect();
+                        for row in settled {
+                            conditional.remove(&row);
+                            self.rows.insert(row, true);
+                        }
+                    }
+                    finished = Some((verdict, usize::MAX));
+                    if stack.is_empty() {
+                        verdict_of_root = verdict;
+                    }
                 }
                 Step::Visit(source) => {
                     if let Some(known) = self.rows.get(&source) {
-                        finished = Some(*known);
+                        finished = Some((*known, usize::MAX));
+                        continue;
+                    }
+                    if let Some(&depth) = in_progress.get(&source) {
+                        finished = Some((true, depth));
+                        continue;
+                    }
+                    if let Some(&low) = conditional.get(&source) {
+                        finished = Some((true, low));
                         continue;
                     }
                     match self.open(source, None)? {
                         Opened::Decided(verdict) => {
                             self.rows.insert(source, verdict);
-                            finished = Some(verdict);
+                            finished = Some((verdict, usize::MAX));
                         }
-                        Opened::Waiting(frame) => {
-                            self.rows.insert(source, true);
+                        Opened::Waiting(mut frame) => {
+                            let depth = stack.len();
+                            frame.low = depth;
+                            in_progress.insert(source, depth);
                             stack.push(frame);
                         }
                     }
                 }
             }
         }
-        Ok(finished.unwrap_or(true))
+        Ok(verdict_of_root)
     }
 
     /// What the row `id` needs: its own binding's verdict, its own bytes
