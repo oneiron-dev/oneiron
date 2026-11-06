@@ -538,6 +538,15 @@ impl ArmBodies<'_> {
         if !body.complete {
             return Ok(Err(EngineNotRun::PartialEvidence { arm }));
         }
+        if let Some(reason) = body.secret.as_deref() {
+            return Ok(Err(EngineNotRun::Unavailable {
+                arm,
+                unavailable: ShadowUnavailable::new(
+                    ShadowUnavailableReason::SourceWithheld,
+                    reason,
+                ),
+            }));
+        }
         if let Err(reason) = still_admitted(self.vault, self.gate)? {
             return Ok(Err(reason));
         }

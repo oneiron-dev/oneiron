@@ -6,8 +6,8 @@ use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::ppr;
 use crate::store::Store;
+use crate::store::ppr_cache_invalidation as ppr;
 
 /// What currently occupies a validated AUTHORITY_LOG row's content-derived store
 /// key. `CrossTypeSquatter` is NOT a rejection — see
@@ -133,10 +133,11 @@ pub(super) fn check_authority_log_store_key(
 /// [`registry::is_delete_protected_engine_record`]: crate::registry::is_delete_protected_engine_record
 /// [`identity_topology::reconcile_shell_edges_after_eviction_in_txn`]: crate::identity_topology::reconcile_shell_edges_after_eviction_in_txn
 pub(super) fn evict_authority_log_store_key_squatter(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<BTreeSet<EntityId>> {
+    let store = write.store;
     tracing::warn!(
         entity = %id.to_hex(),
         "authority log admission displaced a non-authority row squatting its content-derived store key"
@@ -147,7 +148,7 @@ pub(super) fn evict_authority_log_store_key_squatter(
         .record_hooks
         .identity_topology_shell_sources_for_store_in_txn(store, wtxn, id)?;
     let induced_shell_sources = displaced_topology_event.unwrap_or_default();
-    let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(store, wtxn, id)?;
+    let (_existed, had_vector, had_graph_mutation, neighbors) = deindex_entity(write, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     if had_graph_mutation {
         crate::store::graph_version::increment_graph_version(store, wtxn)?;

@@ -18,22 +18,18 @@
 //! files its purge leaves unnamed go with an orphan collection housekeeping
 //! runs once they are past the collector's grace (FIX 2413).
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::federation::{SharedActOutcome, SharedVaultChange, SignedSharedActOutcome};
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::side_table::{self, Raw, SideTable};
+use crate::store::shared_leave_receipt::LEAVE_RECEIPTS;
+pub use crate::store::shared_leave_receipt::{SharedLeaveKind, SharedLeaveReceipt};
 
 mod collect;
 
 pub(crate) use collect::{
     collect_left_env_bodies, collect_left_env_bodies_admitted, left_env_body_collect_due_at,
 };
-
-/// This device's leave records, keyed by the notice's receipt id.
-const LEAVE_RECEIPTS: SideTable<String, SharedLeaveReceipt, Named> =
-    SideTable::new(&side_table::SYNC_SHARED_LEAVE_RECEIPT);
 
 /// Unacknowledged local text-document frames.
 const QUEUED_TEXT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_QD_E);
@@ -45,23 +41,6 @@ const QUEUED_NOTE_COMMANDS: SideTable<Vec<u8>, Vec<u8>, Raw> =
 /// Rows one purge pass of the left env deletes, a transaction each
 /// ([`crate::store::local_replica::purge_left_shared_env_in_txn`]).
 const LEAVE_PURGE_ROWS_PER_PASS: usize = 4096;
-
-/// How this member's membership ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedLeaveKind {
-    /// The member left.
-    Left,
-    /// A holder removed the member, an Owner removed as Owner included.
-    Removed,
-    /// The Owner handed ownership on and kept no role.
-    Transferred,
-    /// Another person recovered ownership from this Owner.
-    Recovered,
-    /// The shared vault was deleted. Only a verified home-signed notice says
-    /// so ([`VerifiedLeaveNotice`]).
-    Deleted,
-}
 
 /// A home-signed outcome notice (FIX 2053) this device verified against the
 /// home root it already trusts: its signer is a live root in the authority
@@ -138,40 +117,6 @@ impl VerifiedLeaveNotice {
     }
 }
 
-/// The local record that this device left a shared vault: the notice it
-/// confirmed and the unsynced edits the leave discarded. Local only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SharedLeaveReceipt {
-    /// The shared-act receipt the notice names.
-    pub notice_receipt: String,
-    pub vault_id: u64,
-    /// The member (person id, hex) who left.
-    pub member: String,
-    pub kind: SharedLeaveKind,
-    /// When the shared vault recorded the change.
-    pub changed_at: u64,
-    /// When this device discarded its queued edits.
-    pub completed_at: u64,
-    /// Queued window updates discarded (`q:` rows) plus valid run-buffer
-    /// updates an explicit leave discarded unqueued (leave-only single-try
-    /// Pause, published before `running=false`).
-    pub discarded_window_updates: u64,
-    /// Unacknowledged text frames discarded (`qd:e:` rows).
-    pub discarded_text_frames: u64,
-    /// Pending NOTE commands discarded (`qn:e:` rows).
-    pub discarded_note_commands: u64,
-    /// Every unsynced edit the leave discarded: the three counts together,
-    /// the window count including discarded-unqueued updates.
-    pub discarded_unsynced_edits: u64,
-    /// The env's replica rows the leave purged: entity, edge, index, side and
-    /// sync rows.
-    pub purged_rows: u64,
-    /// The entities the purge kept: authority log and machine rows, rows a
-    /// legal hold names, and the pinned pack map.
-    pub kept_entities: u64,
-}
-
 /// How `notice` ends `member`'s membership in shared vault `vault_id`, when
 /// it is that member's own MemberLeft or MemberRemoved notice for it, or a
 /// notice that took the Owner role from them and left them no other:
@@ -217,11 +162,23 @@ pub fn left_change(
 ///
 /// Storage errors.
 pub fn has_left(vault: &Vault) -> Result<bool> {
+    crate::store::shared_leave_receipt::has_left(&vault.store)
+}
+
+/// Whether the env's recorded leave already purged to its final pass: a
+/// restart derives this instead of reconfirming, so a completed purge never
+/// re-owes its orphan-body collection. No receipt reads false.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn leave_purge_complete(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(LEAVE_RECEIPTS
-        .iter_from(&vault.store, &txn, &[])?
-        .next()
-        .is_some())
+    let Some(first) = LEAVE_RECEIPTS.iter_from(&vault.store, &txn, &[])?.next() else {
+        return Ok(false);
+    };
+    let (_, receipt) = first?;
+    Ok(receipt.purge_complete)
 }
 
 /// Confirms, in `vault` (the env that holds the shared vault), the leave or
@@ -288,6 +245,7 @@ fn confirm_leave(
         .fold(0_u64, |total, rows| total.saturating_add(count(rows)));
         receipt.purged_rows = receipt.purged_rows.saturating_add(rows);
         receipt.kept_entities = count(pass.kept_total);
+        receipt.purge_complete = pass.complete;
         LEAVE_RECEIPTS.put(&vault.store, wtxn, &notice.receipt_id, receipt)?;
         if pass.complete {
             // The final pass owes the env its orphan body collection.
@@ -297,6 +255,9 @@ fn confirm_leave(
     };
     let (mut receipt, mut complete) = vault.with_write_txn_grouped(|wtxn| {
         if let Some(mut receipt) = LEAVE_RECEIPTS.get(&vault.store, wtxn, &notice.receipt_id)? {
+            if receipt.purge_complete {
+                return Ok((receipt, true));
+            }
             // Confirmed before: finish the purge an interrupted call left.
             let complete = purge(wtxn, &mut receipt)?;
             return Ok((receipt, complete));
@@ -330,6 +291,7 @@ fn confirm_leave(
                 .saturating_add(discarded_note_commands),
             purged_rows: 0,
             kept_entities: 0,
+            purge_complete: false,
         };
         let complete = purge(wtxn, &mut receipt)?;
         Ok((receipt, complete))

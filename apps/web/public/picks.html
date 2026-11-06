@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>picks · the decision desk</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper: light-dark(#f3f0e9, #1b1815);
+    --well:  light-dark(#ebe7dd, #211d19);
+    --ink:   light-dark(#1c1a17, #ece5d6);
+    --s1: light-dark(#4a463f, #c9c1b2);
+    --s2: light-dark(#6f6a60, #a49c8c);
+    --s3: light-dark(#9a948a, #7a7366);
+    --hair: light-dark(rgba(28,26,23,.14), rgba(236,229,214,.14));
+    --ok:   light-dark(#2e6b47, #86bb97);
+    --warn: light-dark(#8a6116, #d0a55a);
+    --red:  light-dark(#b3261e, #e5484d);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper); color: var(--ink);
+    font: 16px/1.55 "Source Serif 4", Georgia, serif;
+    padding: 56px 24px 140px;
+  }
+  .page { max-width: 780px; margin: 0 auto; }
+  .mono { font-family: "Server Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 6px; }
+  .sub { color: var(--s2); margin: 0 0 8px; max-width: 62ch; }
+  .how { color: var(--s3); font-size: 14px; margin: 0 0 40px; max-width: 66ch; }
+  .ghead {
+    margin: 44px 0 6px; font-size: 13px; color: var(--s3);
+    font-family: ui-monospace, Menlo, monospace; letter-spacing: .02em;
+  }
+  .ghead .note { color: var(--s3); font-style: italic; font-family: Georgia, serif; letter-spacing: 0; }
+  .card { padding: 18px 0 14px; }
+  .card + .card { border-top: 1px solid var(--hair); }
+  .chead { display: flex; align-items: baseline; gap: 12px; }
+  .ct { font-weight: 600; font-size: 17px; }
+  .card[data-st="d"] .ct { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--s3); }
+  .st { margin-left: auto; font-size: 13px; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; }
+  .st.r { color: var(--ok); } .st.d { color: var(--s3); } .st.a { color: var(--warn); }
+  .q { color: var(--s1); margin: 6px 0 10px; max-width: 66ch; }
+  .diag { display: block; font: 12px/1.6 ui-monospace, Menlo, monospace; color: var(--s1);
+    background: var(--well); border-radius: 8px; padding: 10px 12px; margin: 10px 0 4px;
+    overflow-x: auto; white-space: pre; }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  .opt {
+    font: 13px/1 ui-monospace, Menlo, monospace; color: var(--s1);
+    background: none; border: 1px solid var(--hair); border-radius: 999px;
+    padding: 7px 12px; cursor: pointer; text-align: left;
+  }
+  .opt:hover { border-color: var(--s3); }
+  .opt.sel { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .opt .rk { opacity: .55; margin-right: 6px; }
+  .opt .rec { opacity: .6; font-style: italic; margin-left: 6px; font-family: Georgia, serif; }
+  .row2 { display: flex; gap: 14px; align-items: center; }
+  .cmt {
+    flex: 1; font: 15px/1.5 Georgia, serif; color: var(--ink);
+    background: none; border: 0; border-bottom: 1px solid var(--hair);
+    padding: 4px 0; resize: none; min-height: 30px;
+  }
+  .cmt:focus { outline: none; border-bottom-color: var(--s3); }
+  .cmt::placeholder { color: var(--s3); }
+  .acts { display: flex; gap: 4px; }
+  .act {
+    font: 13px/1 ui-monospace, Menlo, monospace; color: var(--s2);
+    background: none; border: 0; padding: 7px 8px; cursor: pointer; border-radius: 6px;
+  }
+  .act:hover { color: var(--ink); background: var(--well); }
+  .card[data-st="r"] .act[data-a="r"], .card[data-st="a"] .act[data-a="a"] { color: var(--ok); }
+  .card[data-st="a"] .act[data-a="a"] { color: var(--warn); }
+  .card[data-st="d"] .act[data-a="d"] { color: var(--s1); }
+  .bar {
+    position: fixed; inset: auto 0 0 0; background: var(--well);
+    border-top: 1px solid var(--hair); padding: 12px 24px;
+  }
+  .barin { max-width: 780px; margin: 0 auto; display: flex; align-items: center; gap: 18px; }
+  .prog { font: 13px/1 ui-monospace, Menlo, monospace; color: var(--s2); }
+  .bara { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .bact {
+    font: 13px/1 ui-monospace, Menlo, monospace; color: var(--s1); background: none;
+    border: 1px solid var(--hair); border-radius: 999px; padding: 8px 14px; cursor: pointer;
+  }
+  .bact:hover { border-color: var(--s3); }
+  .bact.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .bact.armed { color: var(--red); border-color: var(--red); }
+  .roomb { border: 0; color: var(--s3); background: none; cursor: pointer;
+    font: 13px/1 ui-monospace, Menlo, monospace; padding: 8px 6px; }
+  .roomb:hover { color: var(--ink); }
+  html.light { color-scheme: light; } html.dark { color-scheme: dark; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>The decision desk</h1>
+  <p class="sub">Every open call in one place: the 15 picks from the scour audit, then the 08-18 pack's remaining questions.</p>
+  <p class="how">Pick an option, then <span class="mono">ratify</span> — with nothing picked, ratify takes the marked <em>rec</em>. <span class="mono">deny</span> drops the item. <span class="mono">amend</span> wants a word in the comment first. Everything autosaves in this browser; <span class="mono">copy the sheet</span> puts your verdicts on the clipboard to paste back to Claude.</p>
+  <div id="list"></div>
+</div>
+<div class="bar"><div class="barin">
+  <span class="prog" id="prog"></span>
+  <div class="bara">
+    <button class="roomb" id="room" title="room: follow the system / light / dark">room</button>
+    <button class="bact" id="clear">clear all</button>
+    <button class="bact primary" id="copy">copy the sheet</button>
+  </div>
+</div></div>
+<script>
+const ITEMS = [
+// ——— scour picks (docs/scour-20260819/AUDIT.md) ———
+{g:'scour · inbox', t:'snooze / not-now', q:'Does the inbox get a defer verb? Nothing in canon or the steal register covers this.', o:[['a','none — rows only settle'],['b','`not now`, with a wake'],['c','defer + mute-predicate']], rec:'b'},
+{g:'scour · palette', t:'typed prefixes', q:'Search filters in the palette: Linear-style typed prefixes (`c ` claims, `e ` entities, `w ` worlds), or keep typing the group name, or neither.', o:[['a','typed prefixes'],['b','group name, as built'],['c','neither']], rec:'b'},
+{g:'scour · vault', t:'the second time axis', q:'The scrubber moves the learned axis honestly. What about occurred?', o:[['a','second hairline, same track'],['b','stays a column filter; scrubber labeled “as believed”'],['c','a mode flip on the scrubber']], rec:'b'},
+{g:'scour · vault', t:'where saved views live', q:'A saved view = name + filters + sort + columns + link (OF-403).', o:[['a','the rail’s lenses group'],['b','the vault head'],['c','the palette']], rec:'a'},
+{g:'scour · graph', t:'where a first graph lands', q:'Nothing graph-shaped is built yet; the ≤30-dot neighborhood law is canon. If and where one lands is yours:', o:[['a','a small constellation inside the claim/entity record (≤20 dots, every dot a door)'],['b','a third vault projection: table · board · graph'],['c','no graph for now']], rec:'a'},
+{g:'scour · runs', t:'the run record', q:'The run record is unbuilt — the next door to place. What should it open?', o:[['a','a full sheet like the agent’s — flat receipted steps first'],['b','the context column'],['c','a tree ⇄ timeline switch']], rec:'a'},
+{g:'scour · threads', t:'shape — branch-lanes', q:'Settled in conversation 08-19, yours to stamp: the room is a river that only ever shows rows. Replying to a message births a branch — flat inside, no trees; the house mind names it and keeps a one-line summary on its river-row; open it and it is its own lane; promote takes the branch as the unit. References do the fine pointing: quote-reply with a door both directions — the origin quietly lists what points at it. Where an opened branch lands rides the open-law pick.<pre class="diag">the river — one row per branch\n| mika   shipment landed fine\n| > [pilot quote] · 12 replies · 14:02\n|   Antevon: agreed at ¥380k; waiting on mika\n| eiri   warehouse called about Thursday\n\nopen the row — the lane, flat\n| mika  the pilot quote looks fine    (anchor)\n| you   locking it in\n| re: locking it in -> actually...    (reference)</pre>', o:[['a','branch-lanes, as drawn'],['b','plain chat-first, no branches'],['c','history-first, as built']], rec:'a'},
+{g:'scour · voice', t:'where voice input joins', q:'A browser tab cannot own a system-wide overlay, so the real choice is:', o:[['a','a mic on the composer'],['b','an in-app hold-to-talk overlay'],['c','not yet']], rec:'a'},
+{g:'scour · consent', t:'the admission slate', q:'Adding a pack or connector grants its scopes in one tap today.', o:[['a','one tap; the slate prints after'],['b','a per-row slate before the tap — reads pre-checked, writes unchecked'],['c','reads now; each write asks on first use']], rec:'c'},
+{g:'scour · consent', t:'the graduation offer', q:'After a streak of unchanged drafts, the offer to stop asking lives… (offer, never silent promotion — OF-399).', o:[['a','inside the ask row it graduates from'],['b','a quiet offer row on the registry'],['c','not in the mock yet']], rec:'a'},
+{g:'scour · mint', t:'name the posture', q:'Two doors exist: /mint is a local file, /signin is hosted. Which posture is the story the mock tells?', o:[['a','local-file first; signin is the hosted door'],['b','hosted first'],['c','one posture only, for now']], rec:'a'},
+{g:'scour · mint', t:'the restore fork', q:'A door for opening an existing vault is still to be placed.', o:[['a','a quiet “open an existing vault” under mint step 1'],['b','a third act in signin’s alt row'],['c','both']], rec:'c'},
+{g:'scour · grants', t:'one registry', q:'Standing grants live in five places (registry, agent verbs, connectors, packs, thread identities); the registry lists one. Canon’s line: not on the registry = not a grant.', o:[['a','the registry becomes the union; every row deep-links home'],['b','five homes, as built']], rec:'a'},
+{g:'scour · grants', t:'the expires column', q:'The ledger shows hard expiry dates; canon says grants never auto-expire (OF-453 L8).', o:[['a','render the date as the slip’s lifetime word'],['b','drop the column'],['c','keep dates — standing grants can expire (overrules the canon line)']], rec:'a'},
+{g:'scour · packs', t:'the widening update', q:'`update` settles in one beat today; the tooltip already names the fuller shape — the diff waits for your stamp.', o:[['a','show the scope diff + fresh consent, via the install ladder'],['b','keep the throbber']], rec:'a'},
+// ——— 08-18 pack · cross-cutting ———
+{g:'08-18 · cross-cutting', t:'the open law (rule 39)', q:'How a row opens, everywhere. Feel each in the inbox: tuner ` → open law.', o:[['a','gesture — click = glance under the row; “open →” = the column'],['b','column — click docks the context column'],['c','kind — each row kind picks its own']], rec:'a'},
+{g:'08-18 · cross-cutting', t:'the focus ring', q:'Keyboard focus is a 2px red ring on every link and button today; red is scarce and the ring reads as alarm.', o:[['a','1.5px silver-3 ring; red only when an act arms'],['b','keep the red ring']], rec:'a'},
+{g:'08-18 · cross-cutting', t:'worlds vocabulary', q:'The vault says one set, FLOWS §2 the other. One word wins; one pass fixes every page.', o:[['a','base · work · health · fiction'],['b','base · clients · internal']], rec:'b'},
+// ——— 08-18 pack · faces (on hold) ———
+{g:'08-18 · faces — on hold, answer whenever', t:'the family', q:'On /faces.html: animal stamps (B/D), the gods (Iris · Athena · Mnemosyne), spirits, presences. Honest read: the gods keep identity at 24–32px; spirits and presences do not.', o:[['a','animal stamps (B/D)'],['b','the gods'],['c','spirits'],['d','presences']]},
+{g:'08-18 · faces — on hold, answer whenever', t:'big portrait on the agent sheet', q:'D at 72 is placed. Keep the D mask, or A (three inks) for the big size?', o:[['a','D mask'],['b','A, three inks']]},
+{g:'08-18 · faces — on hold, answer whenever', t:'the roster row', q:'Tuner → roster face.', o:[['a','portrait'],['b','mark'],['c','none — name-in-ink alone']]},
+{g:'08-18 · faces — on hold, answer whenever', t:'the night plate for D', q:'Two on the sheet: drawn night print vs computed plate + wash (the app uses computed).', o:[['a','drawn'],['b','computed']]},
+{g:'08-18 · faces — on hold, answer whenever', t:'small pictogram beside names', q:'Runs ledger, Now rows.', o:[['a','D-sign, as placed'],['b','the G pictogram set'],['c','none — name-in-ink (rule 36)']]},
+// ——— 08-18 pack · vault ———
+{g:'08-18 · vault', t:'the narrow ledger', q:'Below 1400px the ledger hides `source` and `by` so the claim keeps ~30ch (both stay in the record).', o:[['a','keep hiding'],['b','sideways scroll with every column']], rec:'a'},
+{g:'08-18 · vault', t:'the conf column', q:'Confidence was ink-only at rest with the numeral on hover; the built ledger shows a sortable numeral column.', o:[['a','ink-only at rest; sort stays, numeral goes hover-tier'],['b','keep the visible column']], rec:'a'},
+{g:'08-18 · vault', t:'`today` while scrubbed', q:'The as-of scrubber travels honestly. Keep the `today` act when scrubbed back?', o:[['a','keep'],['b','drop']], rec:'a'},
+// ——— 08-18 pack · pipeline ———
+{g:'08-18 · pipeline', t:'the board at 1280', q:'Sourced → deposit runs left to right; the money end sits offscreen.', o:[['a','money-end first, left'],['b','early stages collapse to narrow count-columns'],['c','as built — scroll']], rec:'b'},
+{g:'08-18 · pipeline', t:'money on early cards', q:'Cards show money only from audit up.', o:[['a','expected value on call-stage cards'],['b','silence until proposal']], rec:'b'},
+{g:'08-18 · pipeline', t:'the backward drop', q:'Dropping a card from a money stage back into sourced/qualified is a free move today.', o:[['a','ask (arm) first'],['b','free move']], rec:'a'},
+// ——— 08-18 pack · notes · briefs ———
+{g:'08-18 · notes · briefs', t:'gutter provenance', q:'Per-block provenance appears on hover.', o:[['a','always visible for agent-written blocks'],['b','hover only, as built']], rec:'a'},
+{g:'08-18 · notes · briefs', t:'`cite` in the selection toolbar', q:'Cite wraps the selection as a proposed claim.', o:[['a','keep it in the toolbar'],['b','editor act only']], rec:'a'},
+{g:'08-18 · notes · briefs', t:'brief titles', q:'Note titles edit inline.', o:[['a','briefs edit the same way'],['b','briefs stay titled by Antevon']], rec:'b'},
+// ——— 08-18 pack · agents ———
+{g:'08-18 · agents', t:'roster click', q:'Click = glance under the row, Enter/→ = the sheet — or click = sheet directly (the roster is short)? Rides the open-law pick.', o:[['a','glance first, as built'],['b','click = the sheet']]},
+{g:'08-18 · agents', t:'the schedule ladder', q:'Four rungs: continuous · mornings · nights · on ask.', o:[['a','keep `nights`'],['b','drop it']], rec:'a'},
+{g:'08-18 · agents', t:'the runs `by` door', q:'`by` opens that agent’s setup today.', o:[['a','correct as built'],['b','it should open the run']], rec:'b'},
+// ——— 08-18 pack · orgs ———
+{g:'08-18 · orgs', t:'row click', q:'Today: dossier column AND a glance under the row. Rides the open-law pick; until then —', o:[['a','dossier column only'],['b','column + glance, as written']], rec:'a'},
+{g:'08-18 · orgs', t:'the org page', q:'Sections layout.', o:[['a','two-column (people | pipeline, threads | briefs), timeline/claims full width'],['b','one column, top to bottom']], rec:'a'},
+{g:'08-18 · orgs', t:'the money line', q:'Under the org’s name.', o:[['a','mono beside the name, as built'],['b','serif under it']], rec:'a'},
+// ——— 08-18 pack · rail · palette ———
+{g:'08-18 · rail · palette', t:'tuner in the shortcut sheet', q:'The hold-⌘ sheet lists ` (the dev tuner).', o:[['a','keep while the tuner exists'],['b','hide it']], rec:'a'},
+{g:'08-18 · rail · palette', t:'Enter on a palette claim', q:'Claims open the vault ledger today.', o:[['a','open the claim’s record directly'],['b','the ledger, as built']], rec:'a'},
+{g:'08-18 · rail · palette', t:'the chip-menu moth', q:'Vault rows carry line icons; the moth is a face now.', o:[['a','use the D moth mark for antevon'],['b','keep the line icon']], rec:'a'},
+// ——— 08-18 pack · settings ———
+{g:'08-18 · settings', t:'the nav split', q:'`you` (account, appearance) · `vault · antevon` (the rest). Right split? Name anything missing in the comment (notifications, sessions, passkeys have no fixture yet).', o:[['a','right as built'],['b','amend — say how']], rec:'a'},
+{g:'08-18 · settings', t:'usage', q:'`usage` in the chip menu lands on /settings/billing (meters live at the top).', o:[['a','one page for both'],['b','usage as its own page']], rec:'a'},
+{g:'08-18 · settings', t:'account stays thin', q:'Seal, name, address, sign out.', o:[['a','keep thin until fixtures exist'],['b','add passkeys/sessions fixtures now']], rec:'a'},
+{g:'08-18 · settings', t:'esc = back to the app', q:'Esc with nothing open leaves settings.', o:[['a','keep'],['b','drop']], rec:'a'},
+];
+const KEY = 'oneiron-picks-20260819';
+let S = {}; try { S = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) {}
+const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+const stWord = { r: 'ratified', d: 'denied', a: 'amended' };
+
+function render() {
+  const root = document.getElementById('list');
+  root.innerHTML = '';
+  let lastG = null;
+  ITEMS.forEach((it, i) => {
+    const id = 'p' + i, st = S[id] || {};
+    if (it.g !== lastG) {
+      lastG = it.g;
+      const h = document.createElement('div');
+      h.className = 'ghead';
+      const m = it.g.match(/^(.*?)( — .*)$/);
+      h.innerHTML = m ? m[1] + '<span class="note">' + m[2] + '</span>' : it.g;
+      root.appendChild(h);
+    }
+    const c = document.createElement('div');
+    c.className = 'card'; c.dataset.st = st.st || '';
+    const opts = (it.o || []).map(([k, label]) =>
+      `<button class="opt${st.opt === k ? ' sel' : ''}" data-k="${k}"><span class="rk">${k}</span>${label}${it.rec === k ? '<span class="rec">rec</span>' : ''}</button>`
+    ).join('');
+    c.innerHTML =
+      `<div class="chead"><span class="ct">${it.t}</span><span class="st ${st.st || ''}">${st.st ? stWord[st.st] + (st.st !== 'd' && st.opt ? ' · ' + st.opt : '') : ''}</span></div>` +
+      `<div class="q">${it.q}</div>` +
+      (opts ? `<div class="opts">${opts}</div>` : '') +
+      `<div class="row2"><textarea class="cmt" rows="1" placeholder="a word, if you have one…">${st.c || ''}</textarea>` +
+      `<div class="acts"><button class="act" data-a="r">ratify</button><button class="act" data-a="d">deny</button><button class="act" data-a="a">amend</button></div></div>`;
+    c.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+      const cur = S[id] || (S[id] = {});
+      cur.opt = cur.opt === b.dataset.k ? null : b.dataset.k;
+      if (cur.opt && !cur.st) cur.st = 'r';
+      if (!cur.opt && cur.st === 'r' && !it.rec) delete cur.st;
+      save(); render();
+    });
+    const ta = c.querySelector('.cmt');
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    ta.oninput = () => { (S[id] || (S[id] = {})).c = ta.value; save(); grow(); };
+    setTimeout(grow, 0);
+    c.querySelectorAll('.act').forEach(b => b.onclick = () => {
+      const a = b.dataset.a, cur = S[id] || (S[id] = {});
+      if (cur.st === a) { delete cur.st; save(); render(); return; }
+      if (a === 'r') { if (!cur.opt && it.rec) cur.opt = it.rec; if (!cur.opt && it.o) { ta.placeholder = 'pick an option first, or amend'; ta.focus(); return; } }
+      if (a === 'a' && !(cur.c || '').trim()) { ta.placeholder = 'amend wants your words here first'; ta.focus(); return; }
+      cur.st = a; save(); render();
+    });
+    root.appendChild(c);
+  });
+  const done = ITEMS.filter((_, i) => (S['p' + i] || {}).st).length;
+  document.getElementById('prog').textContent = done + ' / ' + ITEMS.length + ' decided';
+}
+
+document.getElementById('copy').onclick = async (e) => {
+  const lines = ['# Owner verdicts — the decision desk, ' + new Date().toISOString().slice(0, 10)];
+  let lastG = null, open = 0;
+  ITEMS.forEach((it, i) => {
+    const st = S['p' + i] || {};
+    if (!st.st) { open++; return; }
+    if (it.g !== lastG) { lastG = it.g; lines.push('', '## ' + it.g); }
+    const opt = st.opt && it.o ? (it.o.find(o => o[0] === st.opt) || [])[1] : null;
+    let line = '- ' + it.t + ' — ' + stWord[st.st].toUpperCase();
+    if (st.st !== 'd' && opt) line += ' (' + st.opt + ': ' + opt + ')';
+    if ((st.c || '').trim()) line += ' · “' + st.c.trim() + '”';
+    lines.push(line);
+  });
+  lines.push('', 'undecided: ' + open + ' of ' + ITEMS.length);
+  await navigator.clipboard.writeText(lines.join('\n'));
+  e.target.textContent = 'copied ' + new Date().toTimeString().slice(0, 5);
+  setTimeout(() => { e.target.textContent = 'copy the sheet'; }, 4000);
+};
+document.getElementById('clear').onclick = (e) => {
+  if (!e.target.classList.contains('armed')) { e.target.classList.add('armed'); e.target.textContent = 'clear all?'; return; }
+  S = {}; save(); e.target.classList.remove('armed'); e.target.textContent = 'clear all'; render();
+};
+const rooms = ['', 'light', 'dark'];
+document.getElementById('room').onclick = () => {
+  const h = document.documentElement;
+  const cur = h.classList.contains('light') ? 1 : h.classList.contains('dark') ? 2 : 0;
+  h.classList.remove('light', 'dark');
+  const next = rooms[(cur + 1) % 3];
+  if (next) h.classList.add(next);
+};
+render();
+</script>
+</body>
+</html>

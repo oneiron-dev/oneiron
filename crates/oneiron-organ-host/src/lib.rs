@@ -70,7 +70,7 @@ pub use error::{HostError, Unavailable};
 pub use fetch::GuardedFetch;
 pub use handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 #[cfg(unix)]
-pub use host::{CallMeasure, CallSize, OrganHost};
+pub use host::{CallMeasure, CallSize, LentRegion, OrganHost};
 pub use isolation::{DescendantFence, NamespaceFact, OrganIsolation};
 pub use landing::propose_organ_outputs;
 #[cfg(unix)]

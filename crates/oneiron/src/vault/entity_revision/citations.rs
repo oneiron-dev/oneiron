@@ -1,6 +1,9 @@
 //! Revision-pinned short references and Loro cursor citations.
 
-use super::storage::{ensure_document, fork_revision, load_doc, read_entity_revision_in_txn};
+use super::storage::{
+    RevisionNamespace, ensure_document, fork_revision_with_namespace, load_doc,
+    read_entity_revision_in_txn,
+};
 use super::{PinnedCitation, ReadMode, ResolvedCitation, RevisionRef};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, parse_short_id_value};
 use crate::error::{Error, Result};
@@ -56,8 +59,8 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let (live, _) = ensure_document(self, &mut txn, id)?;
         let revision = selected_revision(self, &txn, id, mode, live)?;
-        let doc = fork_revision(&self.store, &txn, id, revision)?;
-        let text = citation_text(&self.store, &txn, id, &doc, field)?
+        let (doc, namespace) = fork_revision_with_namespace(&self.store, &txn, id, revision)?;
+        let text = citation_text(&self.store, &txn, id, &doc, field, Some(namespace))?
             .ok_or_else(|| Error::InvalidConfig("citation field is not editable text".into()))?;
         let value = text.to_string();
         if start > end || end > value.chars().count() {
@@ -118,7 +121,7 @@ impl Vault {
         {
             return Err(Error::InvalidKey);
         }
-        let pinned = fork_revision(
+        let (pinned, namespace) = fork_revision_with_namespace(
             &self.store,
             &txn,
             &citation.entity,
@@ -136,6 +139,7 @@ impl Vault {
                 &citation.entity,
                 &pinned,
                 &citation.field,
+                Some(namespace),
             )?,
             &start,
             &end,
@@ -148,7 +152,14 @@ impl Vault {
         let live = load_doc(&self.store, &txn, &citation.entity)?;
         let drifted = cursor_quote(
             &live,
-            citation_text(&self.store, &txn, &citation.entity, &live, &citation.field)?,
+            citation_text(
+                &self.store,
+                &txn,
+                &citation.entity,
+                &live,
+                &citation.field,
+                None,
+            )?,
             &start,
             &end,
         )
@@ -283,8 +294,11 @@ fn citation_text(
     id: &EntityId,
     doc: &loro::LoroDoc,
     field: &str,
+    namespace: Option<RevisionNamespace>,
 ) -> Result<Option<loro::LoroText>> {
-    if let Some(body_field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
+    if !matches!(namespace, Some(RevisionNamespace::Generic))
+        && let Some(body_field) = crate::entity_doc::pointer_field_in(store, txn, id)?
+    {
         let matches = match body_field {
             crate::entity_doc::TextField::Utf8Body => field == "body",
             crate::entity_doc::TextField::MapField(name) => name == field,

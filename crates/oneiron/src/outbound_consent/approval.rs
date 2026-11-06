@@ -17,9 +17,9 @@
 //!
 //! A held call's row keeps the prepared request its approvable holds asked
 //! about ([`ConnectorCallApproval`], each a [`HeldConnectorAsk`]: the
-//! digest, the frozen bytes' digest and the endpoint's digest; digests only,
-//! no bytes, no address) (CALLS `FIX 6424 pre-ask prepared snapshot
-//! retention`, MCP half): the CURRENT ask, the one its last pass held as
+//! digest, the frozen bytes' digest and the endpoint's digest, plus the
+//! Gate-composed consent attachment when available; no request bytes or address)
+//! (CALLS `FIX 6424 pre-ask prepared snapshot retention`, MCP half): the CURRENT ask, the one its last pass held as
 //! approvable, which its status and its owner question name (an
 //! administrative or uncertain-only hold clears it), and the last approvable
 //! one any pass named. Each retry prepares the call again and is gated on
@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::gate::{ApprovalTarget, ExternalEffectGateInput, ScopedMcpCallFacts};
+use crate::llm::decision::AskConsent;
 
 use super::connector_call::PendingConnectorCall;
 use super::tool_call::PreparedToolCall;
@@ -96,7 +97,7 @@ pub fn scoped_mcp_approve_once_digest(
 }
 
 /// The prepared request one approvable hold of a connector call asked the
-/// owner to press for: digests only.
+/// owner to press for, with the Gate-composed consent facts when available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct HeldConnectorAsk {
@@ -106,6 +107,9 @@ pub(super) struct HeldConnectorAsk {
     pub(super) payload_digest: String,
     /// BLAKE3 of the endpoint the call was prepared for, 64 lower-hex.
     pub(super) endpoint_digest: String,
+    /// The actual hydrated effect and its action bound, captured by the Gate
+    /// for a live first admission, never recomposed from the pending row.
+    pub(super) ask_consent: Option<AskConsent>,
 }
 
 impl HeldConnectorAsk {
@@ -118,6 +122,7 @@ impl HeldConnectorAsk {
             endpoint_digest: bytes_to_hex_lower(
                 blake3::hash(prepared.call().resolved_endpoint.as_bytes()).as_bytes(),
             ),
+            ask_consent: None,
         })
     }
 }

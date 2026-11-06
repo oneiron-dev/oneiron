@@ -14,7 +14,7 @@ use oneiron::world_keys::{IssuedVaultKeyKit, IssuedWorldKit, StoredCost, VaultKe
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets};
+use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock_for_secret};
 use super::{INSTEAD, emit, read_passphrase};
 use crate::cli::RecoveryKitIssueArgs;
 use crate::commands::credential_file;
@@ -45,15 +45,17 @@ struct Issued {
 
 pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
-    refuse_two_stdin_secrets(
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock_for_secret(
+        &config,
         &unlock,
+        KeyNeed::Open,
+        INSTEAD,
         passphrase_reads_stdin(&args),
         "the kit passphrase",
         "--secret-file",
     )?;
     let (homes, passphrase) = issue_inputs(&args)?;
-    let config = resolve_serve_config(&args.serve)?;
-    let vault = open_with_unlock(&config, &unlock, KeyNeed::Open, INSTEAD)?;
     refuse_this_machine_without_keystore(&vault, &homes)?;
     let owner = host_owner(&vault)?;
     let vault_id = vault
@@ -115,15 +117,17 @@ struct IssuedVaultKey {
 /// kit, its escrow wrap and every other wrap stay as they are.
 pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let unlock = UnlockRequest::of(&args.unlock);
-    refuse_two_stdin_secrets(
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock_for_secret(
+        &config,
         &unlock,
+        KeyNeed::HeldIfAny,
+        INSTEAD,
         passphrase_reads_stdin(&args),
         "the kit passphrase",
         "--secret-file",
     )?;
     let (homes, passphrase) = issue_inputs(&args)?;
-    let config = resolve_serve_config(&args.serve)?;
-    let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
     refuse_this_machine_without_keystore(&vault, &homes)?;
     let owner = host_owner(&vault)?;
     if vault.vault_key_status()? == VaultKeyStatus::NoKey {

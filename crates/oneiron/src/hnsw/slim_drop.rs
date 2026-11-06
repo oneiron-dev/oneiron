@@ -3,7 +3,7 @@
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
-use crate::store::{ManifestDbs, Store};
+use oneiron_store::vector_index::VectorIndexDbs;
 
 use super::keys::{
     COUNT_KEY, DROPPED_REBUILDABLE_ENABLED, DROPPED_REBUILDABLE_KEY, ENTRY_POINT_KEY,
@@ -15,8 +15,8 @@ use super::one_way::clear_one_way_exceptions;
 ///
 /// Fail-closed like [`read_link_discipline`]: a present-but-malformed marker
 /// is [`Error::CorruptedIndex`], never a silent "not dropped".
-pub(crate) fn hnsw_is_dropped(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
-    match store.hnsw_meta().get(txn, DROPPED_REBUILDABLE_KEY)? {
+pub(crate) fn hnsw_is_dropped(store: &impl VectorIndexDbs, txn: &RoTxn<'_>) -> Result<bool> {
+    match store.index_meta().get(txn, DROPPED_REBUILDABLE_KEY)? {
         None => Ok(false),
         Some(raw) if *raw == [DROPPED_REBUILDABLE_ENABLED] => Ok(true),
         Some(_) => Err(Error::CorruptedIndex(ERR_DROPPED_MARKER_BYTES)),
@@ -36,7 +36,7 @@ pub(crate) fn hnsw_is_dropped(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Resu
 /// rows are unchanged. Re-running while already dropped is safe and re-parks
 /// whatever lazy use re-inflated since the previous shed.
 pub(crate) fn drop_rebuildable_hnsw(
-    store: &Store,
+    store: &impl VectorIndexDbs,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<crate::heap_drop::HeapDropReport> {
     // Read the marker FIRST so a malformed one fails closed before any
@@ -45,7 +45,7 @@ pub(crate) fn drop_rebuildable_hnsw(
 
     let mut hnsw_nodes = 0_u64;
     let mut estimated_reclaimed_bytes = 0_u64;
-    for entry in store.hnsw_neighbors().iter(&*wtxn)? {
+    for entry in store.index_neighbors().iter(&*wtxn)? {
         let (key, neighbors) = entry?;
         hnsw_nodes = hnsw_nodes
             .checked_add(1)
@@ -54,11 +54,11 @@ pub(crate) fn drop_rebuildable_hnsw(
             estimated_reclaimed_bytes.saturating_add((key.len() + neighbors.len()) as u64);
     }
 
-    store.hnsw_neighbors().clear(wtxn)?;
-    store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
-    store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+    store.index_neighbors().clear(wtxn)?;
+    store.index_meta().delete(wtxn, COUNT_KEY)?;
+    store.index_meta().delete(wtxn, ENTRY_POINT_KEY)?;
     clear_one_way_exceptions(store, wtxn)?;
-    store.hnsw_meta().put(
+    store.index_meta().put(
         wtxn,
         DROPPED_REBUILDABLE_KEY,
         &[DROPPED_REBUILDABLE_ENABLED],

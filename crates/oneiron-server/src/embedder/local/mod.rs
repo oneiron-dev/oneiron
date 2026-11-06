@@ -35,7 +35,10 @@ use std::time::Instant;
 
 use candle_core::{DType, Device};
 use candle_nn::VarBuilder;
-use oneiron::embed::{Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput};
+use oneiron::EntityId;
+use oneiron::embed::{
+    EmbeddedVector, Embedder, EmbedderLocality, EmbeddingProvenance, PendingEmbeddingInput,
+};
 use tokenizers::Tokenizer;
 
 use self::evidence::RunProfile;
@@ -103,18 +106,20 @@ pub(super) enum Priority {
 pub(super) struct Embedded {
     pub(super) rows: Vec<Vec<f32>>,
     pub(super) tokens: usize,
+    pub(super) tokens_per_item: Vec<usize>,
 }
 
 /// One forward runs at a time, and a query goes first.
 ///
 /// A bulk forward takes its turn layer by layer and gives it up between layers
-/// whenever a query is waiting; a query holds its turn for its whole call. So a
-/// recall waits for at most one bulk layer, and the memory a forward's widest
-/// step needs (a full-length input's attention scores are a gibibyte) is
-/// needed by one forward at a time, as when the model sat behind one lock.
-/// After [`QUERY_STREAK`] queries in a row while a bulk forward waits, the
-/// bulk forward runs one layer: steady recall traffic slows a fill but never
-/// stops it.
+/// whenever a query is waiting; a query holds its turn for its whole call. The
+/// running bulk forward yields at the next layer boundary, and the memory a
+/// forward's widest step needs (a full-length input's attention scores are a
+/// gibibyte) is needed by one forward at a time, as when the model sat behind
+/// one lock. After [`QUERY_STREAK`] queries in a row while a bulk forward
+/// waits, the bulk forward runs one layer: steady recall traffic slows a fill
+/// but never stops it. Waiters take the turn in per-class mutex-enrollment
+/// FIFO order; a bulk forward re-enrolls at the tail at each layer.
 #[derive(Default)]
 struct Turns {
     state: Mutex<TurnState>,
@@ -127,8 +132,10 @@ const QUERY_STREAK: usize = 4;
 #[derive(Default)]
 struct TurnState {
     running: bool,
-    queries_waiting: usize,
-    bulk_waiting: usize,
+    query_head: u64,
+    query_next: u64,
+    bulk_head: u64,
+    bulk_next: u64,
     /// Queries that took a turn while a bulk forward waited, since a bulk
     /// forward last ran.
     query_streak: usize,
@@ -136,22 +143,35 @@ struct TurnState {
 
 impl TurnState {
     fn bulk_owed(&self) -> bool {
-        self.bulk_waiting > 0 && self.query_streak >= QUERY_STREAK
+        self.bulk_head != self.bulk_next && self.query_streak >= QUERY_STREAK
     }
 }
 
 impl Turns {
     fn take(&self, priority: Priority) -> Turn<'_> {
         let mut state = self.state();
-        match priority {
-            Priority::Query => state.queries_waiting += 1,
-            Priority::Bulk => state.bulk_waiting += 1,
-        }
+        let ticket = match priority {
+            Priority::Query => {
+                let ticket = state.query_next;
+                state.query_next = state.query_next.wrapping_add(1);
+                ticket
+            }
+            Priority::Bulk => {
+                let ticket = state.bulk_next;
+                state.bulk_next = state.bulk_next.wrapping_add(1);
+                ticket
+            }
+        };
         loop {
+            let own_turn = match priority {
+                Priority::Query => state.query_head == ticket,
+                Priority::Bulk => state.bulk_head == ticket,
+            };
             let blocked = state.running
+                || !own_turn
                 || match priority {
                     Priority::Query => state.bulk_owed(),
-                    Priority::Bulk => state.queries_waiting > 0 && !state.bulk_owed(),
+                    Priority::Bulk => state.query_head != state.query_next && !state.bulk_owed(),
                 };
             if !blocked {
                 break;
@@ -163,13 +183,13 @@ impl Turns {
         }
         match priority {
             Priority::Query => {
-                state.queries_waiting -= 1;
-                if state.bulk_waiting > 0 {
+                state.query_head = state.query_head.wrapping_add(1);
+                if state.bulk_head != state.bulk_next {
                     state.query_streak += 1;
                 }
             }
             Priority::Bulk => {
-                state.bulk_waiting -= 1;
+                state.bulk_head = state.bulk_head.wrapping_add(1);
                 state.query_streak = 0;
             }
         }
@@ -418,6 +438,7 @@ impl LocalEmbedder {
             return Ok(Embedded {
                 rows: Vec::new(),
                 tokens: 0,
+                tokens_per_item: Vec::new(),
             });
         }
         let tokenized = batcher::tokenize(&self.tokenizer, texts)?;
@@ -480,29 +501,34 @@ impl LocalEmbedder {
                 ))
             })
             .collect::<oneiron::Result<_>>()?;
+        let total: usize = lengths.iter().sum();
         Ok(Embedded {
             rows,
-            tokens: lengths.iter().sum(),
+            tokens: total,
+            tokens_per_item: lengths,
         })
     }
 
-    /// Embeds texts and holds each output to the numerics contract.
+    /// Embeds texts and holds each output to the numerics contract, with the
+    /// actual per-item encoder input counts alongside in input order.
     fn embed_finished(
         &self,
         texts: &[String],
         side: Side,
         priority: Priority,
-    ) -> oneiron::Result<Vec<Vec<f32>>> {
-        self.embed_raw(texts, side, None, priority)?
+    ) -> oneiron::Result<(Vec<Vec<f32>>, Vec<usize>)> {
+        let embedded = self.embed_raw(texts, side, None, priority)?;
+        let rows = embedded
             .rows
             .into_iter()
             .map(|row| self.common.finish_vector(row))
-            .collect()
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        Ok((rows, embedded.tokens_per_item))
     }
 
     /// Embeds document texts in input order, each behind the model's own
-    /// document prompt.
-    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
+    /// document prompt, with the actual per-item encoder input counts.
+    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<(Vec<Vec<f32>>, Vec<usize>)> {
         self.embed_finished(texts, Side::Document, Priority::Bulk)
     }
 }
@@ -628,10 +654,46 @@ impl Embedder for LocalEmbedder {
             .map(|input| self.common.document_text(input))
             .collect::<oneiron::Result<_>>()?;
         self.embed_documents(&texts)
+            .map(|(vectors, _tokens_per_item)| vectors)
     }
 
     fn provenance(&self) -> EmbeddingProvenance {
         self.provenance.clone()
+    }
+
+    fn embed_marked_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
+        let texts: Vec<String> = inputs
+            .iter()
+            .map(|input| self.common.document_text(input))
+            .collect::<oneiron::Result<_>>()?;
+        let (vectors, tokens_per_item) = self.embed_documents(&texts)?;
+        if vectors.len() != inputs.len() || tokens_per_item.len() != inputs.len() {
+            return Err(oneiron::Error::InvariantViolation(
+                "embedder answered another number of counts than inputs",
+            ));
+        }
+        Ok(vectors
+            .into_iter()
+            .zip(tokens_per_item)
+            .map(|(vector, input_tokens)| EmbeddedVector {
+                vector,
+                provenance: self.provenance.clone(),
+                input_tokens: Some(input_tokens as u64),
+            })
+            .collect())
+    }
+
+    fn embed_released_measured(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<EmbeddedVector>> {
+        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
+        release(&rows)?;
+        self.embed_marked_measured(inputs)
     }
 }
 
@@ -645,7 +707,8 @@ impl QueryEmbedder for LocalEmbedder {
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
-        let mut vectors = self.embed_finished(&[text.to_owned()], Side::Query, Priority::Query)?;
+        let (mut vectors, _tokens_per_item) =
+            self.embed_finished(&[text.to_owned()], Side::Query, Priority::Query)?;
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder answered a single query with no row",
         ))

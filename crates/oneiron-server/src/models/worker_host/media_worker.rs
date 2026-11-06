@@ -187,6 +187,7 @@ impl ProcessLauncher {
             backend_model: Some(record),
             bundle_sha256: &installation.bundle_sha256,
             draft_record_sha256: None,
+            draft_weights_digest: None,
             env_freeze_sha256: Some(env.freeze_sha256.as_str()),
             env_lock_sha256: Some(env.lock_sha256.as_str()),
             kind: self.row.kind,
@@ -333,8 +334,10 @@ async fn vox_answer(http: &ProviderHttp) -> Result<Answered, WorkerReadiness> {
         // next probe instead of parking until its config changes.
         return Err(failed(WorkerFailure::Unreachable, None));
     }
-    let warm = serde_json::from_slice::<WarmTarget>(&ready.body)
+    let warm = serde_json::from_slice::<JsonValue>(&ready.body)
         .ok()
+        .and_then(|ready| WarmTarget::from_ready(ready).ok())
+        .map(|(warm, _)| warm)
         .filter(|warm| warm.validate().is_ok())
         .ok_or_else(|| failed(WorkerFailure::InvalidReply, None))?;
     let target = json!({

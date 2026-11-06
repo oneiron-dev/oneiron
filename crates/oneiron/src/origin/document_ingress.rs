@@ -1,12 +1,13 @@
 //! Crash-idempotent push-to-document lowering under the origin single-writer lock.
 use super::document_candidate_types::{ReceivedRefIngress, ReceivedRefSource};
 use super::smart_http::{ReceivePackAttribution, RefUpdate};
-use crate::code_document::{CodeEditReceipt, CodeFileIngress};
+use crate::code_document::CodeFileIngress;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::EngineScan;
+use crate::store::code_document_receipt::CodeEditReceipt;
 use crate::store::code_document_values::CodeFileEdit;
 use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
@@ -164,10 +165,18 @@ impl Vault {
                 .transpose()?
                 .unwrap_or_default();
             let paths: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
-            // The repository's own scope, as every local writer spells it:
-            // one document per path whatever ref a push moves (FIX 12199).
-            let scope =
-                crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+            // The repository's code-document identity, the one its symbols
+            // are keyed by: one document per path whatever ref a push moves
+            // (FIX 12199), its standing portable id when one stands (FIX
+            // 12761).
+            let scope = self
+                .resolve_repo_identity(
+                    &crate::git_wire::mutation_commands::canonical_mutation_repo_ref(
+                        repo.repo_root(),
+                    )?,
+                )?
+                .as_str()
+                .to_owned();
             // A file the push renamed keeps its document, as a local rename
             // does, so its symbols and notes keep their ids (FIX 12199).
             let mut renames = received_renames(

@@ -23,10 +23,11 @@ use crate::store::Store;
 /// entity holds none. Registered in `deletion/derived_rows.rs`, so it runs
 /// before the record's body and edges go, on soft deletes too.
 pub(crate) fn erase_section_fit_receipts_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let Some(entity_type) = entity_type_in_txn(store, wtxn, id)? else {
         return Ok(());
     };
@@ -43,7 +44,7 @@ pub(crate) fn erase_section_fit_receipts_in_txn(
         receipts.extend(hub_receipts_in_txn(store, wtxn, id)?);
     }
     for receipt in receipts {
-        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, wtxn, &receipt)?;
+        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, wtxn, &receipt)?;
         crate::batch::stage_cascade_tombstone_in_txn(store, wtxn, &receipt)?;
         crate::ppr::invalidate_ppr_for_delete(store, wtxn, &receipt, &neighbors)?;
         if graph {

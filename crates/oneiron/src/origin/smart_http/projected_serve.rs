@@ -27,7 +27,6 @@ use super::recipient_serve::{RepoGitReadContext, store_holds_readable_marks_in_t
 use super::serve::unpinned_repo_ref;
 use super::serve_cmd::{ServeCommand, ServeRequest};
 use crate::Vault;
-use crate::checkout::lease::CheckoutLeaseAct;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
@@ -46,6 +45,7 @@ use crate::origin::secret_projection::git::{
 };
 use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
 use crate::secret_custody::RepoFileReadDisclosure;
+use crate::store::checkout_lease::CheckoutLeaseAct;
 
 /// What a masked recipient's exchange on a marked store runs against.
 pub(super) enum ProjectedExchange {

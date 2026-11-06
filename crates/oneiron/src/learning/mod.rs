@@ -28,6 +28,7 @@ pub mod coordination;
 pub mod doors;
 pub mod estimate;
 pub mod evidence;
+mod frozen;
 pub mod honesty;
 pub mod judge;
 mod pack_erase;

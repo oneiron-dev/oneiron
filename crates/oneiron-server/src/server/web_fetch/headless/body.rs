@@ -6,6 +6,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, Write};
 
+use axum::body::Bytes;
 use oneiron_browser::BrowserBody;
 
 use crate::byte_line::{ByteLine, HeldBytes};
@@ -13,6 +14,20 @@ use crate::wire_telemetry::LimitQuestions;
 
 /// The decoded bytes a body keeps in memory before it spills to disk.
 pub(super) const INLINE_BODY_BYTES: usize = 256 * 1024;
+
+/// The converted allocation together with its original retained charge,
+/// pinned as one `Bytes` owner. Field order drops the bytes before the
+/// charge releases.
+struct RetainedBody {
+    bytes: Vec<u8>,
+    _held: Option<HeldBytes>,
+}
+
+impl AsRef<[u8]> for RetainedBody {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
 
 /// A complete response body that can be read back without first assembling
 /// its decoded bytes in memory again. `held` keeps the retained line's room
@@ -32,16 +47,18 @@ pub(super) enum SpooledBody {
 impl SpooledBody {
     /// The body's bytes without a second full copy: an inline body hands
     /// over its buffer; a spilled body is read back once from its file.
-    pub(super) fn into_vec(self) -> io::Result<Vec<u8>> {
-        match self {
-            Self::Inline { bytes, .. } => Ok(bytes.into_inner()),
-            Self::Spilled { mut file, .. } => {
+    /// The returned owner keeps the original retained charge with the bytes.
+    pub(super) fn into_bytes(self) -> io::Result<Bytes> {
+        let (bytes, held) = match self {
+            Self::Inline { bytes, held } => (bytes.into_inner(), held),
+            Self::Spilled { mut file, held, .. } => {
                 file.rewind()?;
                 let mut out = Vec::new();
                 file.read_to_end(&mut out)?;
-                Ok(out)
+                (out, held)
             }
-        }
+        };
+        Ok(Bytes::from_owner(RetainedBody { bytes, _held: held }))
     }
 
     pub(super) fn len(&self) -> u64 {
