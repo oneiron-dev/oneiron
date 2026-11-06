@@ -46,6 +46,7 @@ use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::quarantine::{QuarantineContainer, quarantine_once_in_txn};
 use super::types::WindowKey;
+use super::window_rows::HISTORY_FREE_WINDOW;
 use crate::Vault;
 use crate::entity_doc::DocumentMerge;
 use crate::entity_id::EntityId;
@@ -274,6 +275,14 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
             }
         };
         let outcome = vault.with_write_txn_grouped(|txn| {
+            // An erased receipt in the window may have replaced a live one
+            // whose actor and MadeBy its history still holds, here or on the
+            // machine that erased it: the window is pinned history-free in
+            // this writer, whatever the merge, before any export of it can
+            // ship that history.
+            if !record.names_actor() {
+                HISTORY_FREE_WINDOW.put(&vault.store, txn, &window.to_owned(), &[1u8])?;
+            }
             let merge = merge_carried_receipt_in_txn(vault, txn, &record)?;
             if merge == DocumentMerge::Conflict {
                 let divergence = receipt_divergence_digest(vault, txn, &record, &bytes)?;
