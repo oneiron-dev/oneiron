@@ -367,6 +367,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.digest_feedback.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.concerns.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.proactivity.digest" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups.resolve" => a.spec.clone().ok_or_else(invalid),
@@ -2264,6 +2265,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inbox.concerns.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.proactivity.digest" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inbox.lens" => {
@@ -9146,6 +9150,32 @@ async fn execute_agent_verb_row_on(
                     oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                         &memory,
                         "vault.inbox.concerns.review",
+                    ),
+                    input,
+                ))
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.proactivity.digest" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.proactivity.digest", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ProactivityDigestRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_proactivity_digest(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.proactivity.digest",
                     ),
                     input,
                 ))
