@@ -413,6 +413,7 @@ impl Drop for NativeMeterCapture<'_> {
                 wtxn,
                 self.origin,
                 self.lease.id(),
+                snapshot.guard_id,
                 range,
             )
         }) {
