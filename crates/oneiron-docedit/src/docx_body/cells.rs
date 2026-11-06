@@ -20,6 +20,15 @@ pub(super) fn read(
             _ => None,
         })
         .ok_or_else(|| invalid("table"))?;
+    read_table(view, table, false, comment)
+}
+
+fn read_table(
+    view: &BlockView,
+    table: &stemma::domain::TableNode,
+    ancestor_locked: bool,
+    comment: bool,
+) -> Result<Vec<DocxCell>, DoceditError> {
     view.cells
         .iter()
         .map(|view_cell| {
@@ -37,7 +46,8 @@ pub(super) fn read(
                     at == view_cell.col
                 })
                 .ok_or_else(|| invalid("cell"))?;
-            let structural = cell.v_merge == VerticalMerge::Continue
+            let structural = ancestor_locked
+                || cell.v_merge == VerticalMerge::Continue
                 || cell
                     .tracking_status
                     .as_ref()
@@ -60,6 +70,87 @@ pub(super) fn read(
             })
         })
         .collect()
+}
+
+/// Actual nested tables, after every existing top-level story block.
+pub(super) fn descendant_table_blocks(
+    blocks: &[TrackedBlock],
+    comment: bool,
+) -> Result<Vec<super::DocxBlock>, DoceditError> {
+    let mut tables = Vec::new();
+    for tracked in blocks {
+        if let BlockNode::Table(table) = &tracked.block {
+            append_descendant_tables(
+                table,
+                tracked.status != TrackingStatus::Normal,
+                comment,
+                &mut tables,
+            )?;
+        }
+    }
+    Ok(tables)
+}
+
+fn append_descendant_tables(
+    table: &stemma::domain::TableNode,
+    ancestor_locked: bool,
+    comment: bool,
+    tables: &mut Vec<super::DocxBlock>,
+) -> Result<(), DoceditError> {
+    for row in &table.rows {
+        for cell in &row.cells {
+            let structural = ancestor_locked
+                || cell.v_merge == VerticalMerge::Continue
+                || cell
+                    .tracking_status
+                    .as_ref()
+                    .or(row.tracking_status.as_ref())
+                    .is_some();
+            for block in &cell.blocks {
+                if let BlockNode::Table(nested) = block {
+                    let view = stemma::view::build_story_block_view(block, &TrackingStatus::Normal);
+                    tables.push(super::DocxBlock {
+                        id: view.id.to_string(),
+                        kind: super::DocxBlockKind::Table,
+                        role: None,
+                        text: String::new(),
+                        runs: Vec::new(),
+                        cells: read_table(&view, nested, structural, comment)?,
+                        locked: structural.then_some(DocxLock::Tracked),
+                    });
+                    append_descendant_tables(nested, structural, comment, tables)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Find only an actual nested table; callers retain top-level lookup priority.
+pub(super) fn descendant_table<'a>(blocks: &'a [TrackedBlock], id: &str) -> Option<&'a BlockNode> {
+    blocks.iter().find_map(|tracked| match &tracked.block {
+        BlockNode::Table(table) => table_descendant(table, id),
+        _ => None,
+    })
+}
+
+fn table_descendant<'a>(table: &'a stemma::domain::TableNode, id: &str) -> Option<&'a BlockNode> {
+    for block in table
+        .rows
+        .iter()
+        .flat_map(|row| &row.cells)
+        .flat_map(|cell| &cell.blocks)
+    {
+        if let BlockNode::Table(nested) = block {
+            if nested.id.to_string() == id {
+                return Some(block);
+            }
+            if let Some(found) = table_descendant(nested, id) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn read_paragraph(

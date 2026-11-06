@@ -20,10 +20,13 @@
 //! Invariant M holds: this verb resolves and calls the shared core, which
 //! builds the materializer's input; no second materializer is added.
 
-use super::super::story_addr::{StoryRef, find_block_index_in_story, story_blocks_mut};
-use super::super::{EditError, MaterializationMode};
+use super::super::story_addr::{StoryRef, story_blocks_mut};
+use super::super::{CellStep, EditError, MaterializationMode};
 use super::footnotes::NoteKind;
-use crate::domain::{BlockNode, CanonDoc, HeaderFooterKind, NodeId, RevisionInfo, TrackedBlock};
+use crate::domain::{
+    BlockNode, CanonDoc, HeaderFooterKind, NodeId, RevisionInfo, TableNode, TrackedBlock,
+    TrackingStatus, VerticalMerge,
+};
 use crate::semantic_hash::check_block_guard;
 
 /// Which story a story-cell edit targets. Header/footer carry the [`StoryRef`]
@@ -101,11 +104,18 @@ pub(crate) fn apply(
                     step_index,
                 });
             }
-            let idx = find_block_index_in_story(doc, story_ref, block_id, step_index)?;
             let blocks = story_blocks_mut(doc, story_ref, step_index)?;
-            check_guard_and_table(blocks, idx, block_id, semantic_hash, step_index)?;
+            let path =
+                find_table_path(blocks, block_id).ok_or_else(|| EditError::StoryBlockNotFound {
+                    story: story_ref.clone(),
+                    block_id: block_id.clone(),
+                    step_index,
+                })?;
+            check_guard_and_table(block_at(blocks, &path), block_id, semantic_hash, step_index)?;
+            let (block, enclosing_insert) =
+                block_at_mut(blocks, &path, block_id, transaction_floor, step_index)?;
             super::super::apply_set_cell_text_on_table_block(
-                &mut blocks[idx].block,
+                block,
                 block_id,
                 row_index,
                 col_index,
@@ -117,16 +127,34 @@ pub(crate) fn apply(
                 mode,
                 step_index,
                 false,
+                enclosing_insert,
             )
             // The H/F paragraph verb recomputes no story hash; the cell path
             // matches that law.
         }
         StoryCellAddress::Note { kind, id } => {
             let mut story = note_story_mut(doc, *kind, id, step_index)?;
-            let idx = find_story_block_index(&story.blocks, block_id, step_index)?;
-            check_guard_and_table(&story.blocks, idx, block_id, semantic_hash, step_index)?;
+            let path = find_table_path(&story.blocks, block_id).ok_or_else(|| {
+                EditError::BlockNotFound {
+                    block_id: block_id.clone(),
+                    step_index,
+                }
+            })?;
+            check_guard_and_table(
+                block_at(&story.blocks, &path),
+                block_id,
+                semantic_hash,
+                step_index,
+            )?;
+            let (block, enclosing_insert) = block_at_mut(
+                &mut story.blocks,
+                &path,
+                block_id,
+                transaction_floor,
+                step_index,
+            )?;
             super::super::apply_set_cell_text_on_table_block(
-                &mut story.blocks[idx].block,
+                block,
                 block_id,
                 row_index,
                 col_index,
@@ -138,6 +166,7 @@ pub(crate) fn apply(
                 mode,
                 step_index,
                 false,
+                enclosing_insert,
             )?;
             // Recompute the ENTIRE chosen note story's content hash (the runs
             // verbs' law); every other block and the reference runs survive.
@@ -148,10 +177,27 @@ pub(crate) fn apply(
         }
         StoryCellAddress::Comment { id } => {
             let mut story = comment_story_mut(doc, id, step_index)?;
-            let idx = find_story_block_index(&story.blocks, block_id, step_index)?;
-            check_guard_and_table(&story.blocks, idx, block_id, semantic_hash, step_index)?;
+            let path = find_table_path(&story.blocks, block_id).ok_or_else(|| {
+                EditError::BlockNotFound {
+                    block_id: block_id.clone(),
+                    step_index,
+                }
+            })?;
+            check_guard_and_table(
+                block_at(&story.blocks, &path),
+                block_id,
+                semantic_hash,
+                step_index,
+            )?;
+            let (block, enclosing_insert) = block_at_mut(
+                &mut story.blocks,
+                &path,
+                block_id,
+                transaction_floor,
+                step_index,
+            )?;
             super::super::apply_set_cell_text_on_table_block(
-                &mut story.blocks[idx].block,
+                block,
                 block_id,
                 row_index,
                 col_index,
@@ -163,6 +209,7 @@ pub(crate) fn apply(
                 mode,
                 step_index,
                 true,
+                enclosing_insert,
             )?;
             // Recompute the ENTIRE chosen comment story's content hash (the
             // runs verb's law); author/date, threading/resolve sidecar, all
@@ -217,31 +264,126 @@ pub(crate) fn find_base_table_block<'a>(
             .iter()
             .find_map(|s| (&s.id == id).then_some(s.blocks.as_slice()))?,
     };
-    let idx = super::super::find_block_index(blocks, block_id)?;
-    Some(&blocks[idx].block)
+    let path = find_table_path(blocks, block_id)?;
+    Some(block_at(blocks, &path))
 }
 
-/// Story-local id lookup over the ACTUAL note/comment blocks (all three block
-/// kinds, so a paragraph id never misresolves and a table id is found). This
-/// deliberately does not call the body `find_block_index`: a colliding body id
-/// must never resolve here. Missing ids surface as `BlockNotFound`, the runs
-/// verbs' law for in-story misses.
-fn find_story_block_index(
-    blocks: &[TrackedBlock],
+/// An internal canonical path, never a wire address. Old top-level ids win.
+struct TablePath {
+    top: usize,
+    descent: Vec<CellStep>,
+}
+
+fn find_table_path(blocks: &[TrackedBlock], block_id: &NodeId) -> Option<TablePath> {
+    if let Some(top) = super::super::find_block_index(blocks, block_id) {
+        return Some(TablePath {
+            top,
+            descent: Vec::new(),
+        });
+    }
+    for (top, tracked) in blocks.iter().enumerate() {
+        if let BlockNode::Table(table) = &tracked.block
+            && let Some(descent) = find_table_in_table(table, block_id)
+        {
+            return Some(TablePath { top, descent });
+        }
+    }
+    None
+}
+
+fn find_table_in_table(table: &TableNode, block_id: &NodeId) -> Option<Vec<CellStep>> {
+    for (row_idx, row) in table.rows.iter().enumerate() {
+        for (cell_idx, cell) in row.cells.iter().enumerate() {
+            for (block_in_cell_idx, block) in cell.blocks.iter().enumerate() {
+                if let BlockNode::Table(nested) = block {
+                    let step = CellStep {
+                        row_idx,
+                        cell_idx,
+                        block_in_cell_idx,
+                    };
+                    if &nested.id == block_id {
+                        return Some(vec![step]);
+                    }
+                    if let Some(mut path) = find_table_in_table(nested, block_id) {
+                        path.insert(0, step);
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn block_at<'a>(blocks: &'a [TrackedBlock], path: &TablePath) -> &'a BlockNode {
+    let mut block = &blocks[path.top].block;
+    for step in &path.descent {
+        let BlockNode::Table(table) = block else {
+            unreachable!("table path")
+        };
+        block = &table.rows[step.row_idx].cells[step.cell_idx].blocks[step.block_in_cell_idx];
+    }
+    block
+}
+
+fn block_at_mut<'a>(
+    blocks: &'a mut [TrackedBlock],
+    path: &TablePath,
     block_id: &NodeId,
+    transaction_floor: u32,
     step_index: usize,
-) -> Result<usize, EditError> {
-    blocks
-        .iter()
-        .position(|tb| match &tb.block {
-            BlockNode::Paragraph(p) => &p.id == block_id,
-            BlockNode::Table(t) => &t.id == block_id,
-            BlockNode::OpaqueBlock(o) => &o.id == block_id,
-        })
-        .ok_or_else(|| EditError::BlockNotFound {
-            block_id: block_id.clone(),
-            step_index,
-        })
+) -> Result<(&'a mut BlockNode, bool), EditError> {
+    let tracked = &mut blocks[path.top];
+    let mut enclosing_insert = false;
+    if !path.descent.is_empty() {
+        enclosing_insert = own_insert(&tracked.status, transaction_floor);
+        if !enclosing_insert
+            && let Some(status) = super::super::tracking_status_label(&tracked.status)
+        {
+            return Err(EditError::BlockHasTrackedStatus {
+                block_id: block_id.clone(),
+                status,
+                step_index,
+            });
+        }
+    }
+    let mut block = &mut tracked.block;
+    for step in &path.descent {
+        let BlockNode::Table(table) = block else {
+            unreachable!("table path")
+        };
+        let row = &mut table.rows[step.row_idx];
+        let cell = &mut row.cells[step.cell_idx];
+        if cell.v_merge == VerticalMerge::Continue {
+            return Err(EditError::TableCellNotEditable {
+                block_id: block_id.clone(),
+                reason: "an enclosing cell is a vertical-merge continuation; edit its anchor cell"
+                    .to_string(),
+                step_index,
+            });
+        }
+        if let Some(status) = cell
+            .tracking_status
+            .as_ref()
+            .or(row.tracking_status.as_ref())
+        {
+            if !own_insert(status, transaction_floor) {
+                return Err(EditError::TableCellNotEditable {
+                    block_id: block_id.clone(),
+                    reason: "an enclosing cell or row carries a pre-existing tracked revision"
+                        .to_string(),
+                    step_index,
+                });
+            }
+            enclosing_insert = true;
+        }
+        block = &mut cell.blocks[step.block_in_cell_idx];
+    }
+    Ok((block, enclosing_insert))
+}
+
+fn own_insert(status: &TrackingStatus, floor: u32) -> bool {
+    matches!(status, TrackingStatus::Inserted(revision) if revision.revision_id >= floor)
 }
 
 /// The live-table preconditions shared by all three story families: the
@@ -250,14 +392,13 @@ fn find_story_block_index(
 /// paragraph id refuses `NotATable` — the shared core's `unreachable!` on
 /// non-tables is only sound behind this check, as behind the body's).
 fn check_guard_and_table(
-    blocks: &[TrackedBlock],
-    idx: usize,
+    block: &BlockNode,
     block_id: &NodeId,
     semantic_hash: Option<&str>,
     step_index: usize,
 ) -> Result<(), EditError> {
     if let Some(expected) = semantic_hash
-        && let Err(actual) = check_block_guard(&blocks[idx].block, expected)
+        && let Err(actual) = check_block_guard(block, expected)
     {
         return Err(EditError::BlockSemanticHashMismatch {
             block_id: block_id.clone(),
@@ -266,7 +407,7 @@ fn check_guard_and_table(
             step_index,
         });
     }
-    match &blocks[idx].block {
+    match block {
         BlockNode::Table(_) => Ok(()),
         BlockNode::Paragraph(_) => Err(EditError::NotATable {
             block_id: block_id.clone(),

@@ -321,3 +321,22 @@ verbs, first-direct paragraph selection, materialization and core live-unit
 handling are unchanged. This is the native scoped-reader slice only, not whole
 nested ParagraphAsk/live-pin/projection or FIX 14487 closure. No test, compiler
 or runtime/Word result is claimed.
+
+## Nested named-story table identities and cell edits
+
+Named-story `read_docx_body` results append actual nested table blocks after all
+previous story blocks. Each table keeps its native story-local id and direct
+cell paragraph ids. The existing core story-table model imports those blocks;
+no separate path field or shadow table store is added. The body read and scoped
+paragraph read keep their previous results and ordering.
+
+Story-cell projection and transaction-base/live resolution find the actual
+nested table inside the exact named story. Old top-level ids keep priority.
+Every enclosing row/cell tracking state and vertical-merge continuation is
+checked before the existing leaf edit. A same-transaction enclosing insertion
+uses the existing plain-text insertion branch, without exempting a foreign
+tracked target cell. An absent paragraph selector still means the first direct
+paragraph. Direct and comment settlement still touch only that paragraph.
+
+This is retained source work for FIX 14487/594. It does not claim parent PRs
+merged, a production compile, Word behavior, or complete story/live-unit closure.

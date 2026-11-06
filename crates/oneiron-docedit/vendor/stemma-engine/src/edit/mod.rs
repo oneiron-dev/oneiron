@@ -13383,6 +13383,7 @@ pub(crate) fn apply_set_cell_text_in_place(
         materialization_mode,
         step_index,
         false,
+        false,
     )
 }
 
@@ -13404,6 +13405,7 @@ pub(crate) fn apply_set_cell_text_on_table_block(
     materialization_mode: MaterializationMode,
     step_index: usize,
     comment_annotation: bool,
+    enclosing_insert: bool,
 ) -> Result<(), EditError> {
     let table = match block {
         BlockNode::Table(t) => t,
@@ -13485,12 +13487,12 @@ pub(crate) fn apply_set_cell_text_on_table_block(
     // `InsertedThenDeleted` status, or an `Inserted` status predating this
     // transaction, is always foreign.
     let effective_status = cell.tracking_status.clone().or(row_status);
-    let own_pending_insert = matches!(
+    let cell_pending_insert = matches!(
         &effective_status,
         Some(TrackingStatus::Inserted(rev)) if rev.revision_id >= transaction_floor
     );
     if let Some(status) = &effective_status
-        && !own_pending_insert
+        && !cell_pending_insert
     {
         let revision_ids = match status {
             TrackingStatus::Normal => Vec::new(),
@@ -13525,6 +13527,10 @@ pub(crate) fn apply_set_cell_text_on_table_block(
             step_index,
         });
     }
+
+    // A fresh enclosing insertion owns the nested text too, but never exempts
+    // the target cell from its own foreign-revision check above.
+    let own_pending_insert = enclosing_insert || cell_pending_insert;
 
     // Resolve only inside this cell. An absent selector retains the body's
     // first-paragraph intent; a supplied id never falls back to that paragraph
