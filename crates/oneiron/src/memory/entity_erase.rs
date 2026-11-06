@@ -311,7 +311,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         act_id: &str,
     ) -> MemoryResult<DeleteReceipt> {
-        let planned = {
+        let (planned, already_deleted) = {
             let txn = self
                 .vault
                 .store
@@ -331,11 +331,7 @@ impl Memory<'_> {
                     )
                 })?;
             let held = self.held_erase_in_txn(&txn, &act)?;
-            if act.execution.is_some()
-                || self
-                    .vault
-                    .local_hard_delete_marker_exists_in_txn(&txn, &held.holder)?
-            {
+            if act.execution.is_some() {
                 return self.executed_erase_in_txn(&txn, &held.holder, act.execution.as_ref());
             }
             if !self.vault.authority_act_completed_in_txn(&txn, &act)? {
@@ -345,12 +341,117 @@ impl Memory<'_> {
                     &["Execute it once the window has run out with no objection."],
                 ));
             }
-            PlannedMatch {
-                act: Some(act.id),
-                ..held
+            let already_deleted = self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(&txn, &held.holder)?;
+            if already_deleted
+                && !self
+                    .vault
+                    .hard_deleted_without_active_scope_in_txn(&txn, &held.holder)?
+            {
+                return self.executed_erase_in_txn(&txn, &held.holder, None);
             }
+            (
+                PlannedMatch {
+                    act: Some(act.id),
+                    ..held
+                },
+                already_deleted,
+            )
         };
+        if already_deleted {
+            return self.erase_completed_marker(owner, act_id);
+        }
         self.unshare_and_erase_match(&planned, EraseReason::OwnerErase, Some(owner))
+    }
+
+    /// Fulfils a completed owner erase whose record an earlier hard delete
+    /// already removed. Neither the marker nor the empty active scope is
+    /// authority: the live owner and completed act authorize retirement,
+    /// claimed with its receipt in one
+    /// writer. The earlier deletion's marker and request stay unchanged.
+    fn erase_completed_marker(
+        &self,
+        owner: &AuthenticatedOwner,
+        act_id: &str,
+    ) -> MemoryResult<DeleteReceipt> {
+        self.vault.prepare_install_signing()?;
+        let erased = self.vault.try_with_write_txn_grouped(|txn| {
+            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+            self.require_own_proof_in_txn(txn, owner)?;
+            self.require_live_owner_in_txn(txn)?;
+            let act = self
+                .vault
+                .pending_authority_act_in_txn(txn, act_id)?
+                .ok_or_else(|| {
+                    MemoryError::new(
+                        MEMORY_CODE_NOT_FOUND,
+                        "no such act",
+                        &["Use the act id a held record returned."],
+                    )
+                })?;
+            let held = self.held_erase_in_txn(txn, &act)?;
+            if act.execution.is_some() {
+                return self.executed_erase_in_txn(txn, &held.holder, act.execution.as_ref());
+            }
+            if !self.vault.authority_act_completed_in_txn(txn, &act)? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "this erase's veto window is open or an owner objects",
+                    &["Execute it once the window has run out with no objection."],
+                ));
+            }
+            if !self
+                .vault
+                .hard_deleted_without_active_scope_in_txn(txn, &held.holder)?
+            {
+                return Err(Error::ConcurrentWrite("erase target changed").into());
+            }
+            let actor = HoldActor::owner(self.actor);
+            self.vault
+                .store
+                .reject_legal_holds_in_txn(txn, &[held.holder], &actor)?;
+            crate::world_keys::reject_held_pad_world_as_in_txn(
+                &self.vault.store,
+                txn,
+                &[held.holder],
+                &actor,
+            )?;
+            let request = self.vault.store.clock.ulid()?;
+            let requested_at = self.vault.store.clock.now_recorded_at();
+            crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
+                &self.vault.store,
+                txn,
+                &held.holder,
+                Some(DeleteReason::OwnerErase.into()),
+            )?;
+            let receipt = self.vault.record_completed_owner_payload_erase_in_txn(
+                txn,
+                &held.holder,
+                self.actor,
+                request,
+                requested_at,
+            )?;
+            self.vault.claim_completed_authority_act_in_txn(
+                txn,
+                &act.id,
+                uuid::Uuid::from_bytes(request).to_string(),
+                Some(receipt.to_hex()),
+            )?;
+            Ok(DeleteReceipt {
+                existed: true,
+                reason: DeleteReason::OwnerErase.as_str().to_owned(),
+                receipt_ref: Some(format!("redaction:{}", receipt.to_hex())),
+                state: DeleteRequestState::Applied,
+            })
+        });
+        self.vault.store.flush_legal_hold_refusals_settled();
+        if erased.is_ok() {
+            self.vault
+                .store
+                .finish_checkpoint_payload_retirements_after_commit();
+        }
+        erased
     }
 
     /// A held match's own `erase` act, its payload the record and the bytes the preview named.

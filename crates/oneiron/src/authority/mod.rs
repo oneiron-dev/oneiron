@@ -312,7 +312,7 @@ pub(crate) use home_candidacy::{
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
 };
-pub use host_action::HostActionAuthority;
+pub use host_action::{HostActionAuthority, HostActionIdentity};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
@@ -376,7 +376,7 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
@@ -419,7 +419,7 @@ pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };
-pub(crate) use host_action::{HostActionGuard, HostActionIdentity, host_action_refused};
+pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]
@@ -464,7 +464,8 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
+    evidence_without_machine_signature, machine_claim_needs_history,
+    machine_claim_needs_history_observing, machine_claim_read_admitted,
     machine_history_authority_descends, machine_history_authority_descends_with_image,
     machine_history_host_context, resign_machine_claim_after_mask_in_txn,
     verify_machine_claim_in_txn,

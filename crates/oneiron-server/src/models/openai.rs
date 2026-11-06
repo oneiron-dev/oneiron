@@ -201,6 +201,20 @@ impl OpenAiCompatTransport for OpenAiHttp {
     }
 }
 
+/// Keeps a brokered request's actual native receipt before error handling
+/// or strict reply parsing can discard it. The sender, not the worker's
+/// JSON, supplies the admitted engine model.
+pub(super) fn observe_broker_reply(
+    publisher: &InferencePublisher,
+    body: &JsonValue,
+    model: &ModelId,
+) {
+    if let Some(mut receipt) = carried_receipts(body).pop() {
+        receipt.model = Some(model.clone());
+        publisher.partial(receipt);
+    }
+}
+
 /// The receipts a reply's or a chunk's usage carries (FIX 9417), as
 /// [`carry_chat_evidence`] wrote them.
 fn carried_receipts(body: &JsonValue) -> Vec<InferenceCallReceipt> {

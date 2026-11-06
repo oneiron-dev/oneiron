@@ -29,7 +29,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The op table's version. A call naming another refuses before any op runs.
-pub const CONTRACT_SCHEMA: u32 = 2;
+pub const CONTRACT_SCHEMA: u32 = 4;
 
 /// Error detail ceiling in bytes, as an organ's error detail.
 pub const MAX_DETAIL_BYTES: usize = 512;
@@ -43,7 +43,7 @@ pub const PPTX_MEDIA_TYPE: &str =
 pub const JSON_MEDIA_TYPE: &str = "application/json";
 
 /// One call: the contract schema, the op and its args.
-/// `{"schema": 2, "op": "docx.read", "args": {...}}`.
+/// `{"schema": 4, "op": "docx.read", "args": {...}}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Call {
     pub schema: u32,
@@ -51,7 +51,7 @@ pub struct Call {
     pub op: Op,
 }
 
-/// The schema-2 op table. Each op names its byte inputs by index into the
+/// The schema-4 op table. Each op names its byte inputs by index into the
 /// call's inputs, and every op that reads a package takes the caller's limits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", content = "args")]
@@ -408,7 +408,7 @@ pub enum AssetMedia {
 }
 
 /// Where a held asset came from. A generated image carries adapter receipts
-/// the engine keeps; schema 2 has no door for them.
+/// the engine keeps; schema 4 has no door for them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetOrigin {
@@ -1022,7 +1022,7 @@ pub fn reply_schema() -> Value {
     schema_value::<Reply>()
 }
 
-/// The schema-2 op table, as `contract.describe` answers it.
+/// The schema-4 op table, as `contract.describe` answers it.
 #[must_use]
 pub fn describe() -> Description {
     Description {
