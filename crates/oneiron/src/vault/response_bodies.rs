@@ -187,6 +187,25 @@ impl Vault {
         })
     }
 
+    /// Keeps a media job and its clips in the caller's existing writer,
+    /// with the same key and erase fences as [`Self::media_job_put`]. The
+    /// caller commits this write together with the original allocation hold.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a key that is not a job's row, or a part key that is
+    /// not one of its clips.
+    #[doc(hidden)]
+    pub fn media_job_put_in_write_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        key: &str,
+        row: &[u8],
+        parts: &[(String, Vec<u8>)],
+    ) -> Result<bool> {
+        crate::store::media_job_put_fenced_in_txn(self, wtxn, key, row, parts, false)
+    }
+
     /// [`Self::media_job_put`] over the job row already kept at `key`, as a
     /// job's end is written (FIX 9511): a row a delete dropped is not
     /// written back, and neither are its clips; `false` comes back for it,

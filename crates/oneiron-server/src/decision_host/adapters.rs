@@ -495,6 +495,20 @@ impl DecisionProvider for SystemOneRung {
             })
     }
 
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        self.decide_pack_with_context(pack, None).map(|outcomes| {
+            outcomes
+                .into_iter()
+                .map(|outcome| match outcome {
+                    DecisionReadOutcome::Answered(answer) => answer,
+                    DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                        unreachable!("an ordinary decision has no generation gate")
+                    }
+                })
+                .collect()
+        })
+    }
+
     fn decide_captured(
         &self,
         call: &DecisionCall<'_>,

@@ -76,6 +76,7 @@ impl RunAdmission {
             admitted,
             Some(admission.model.clone()),
             &self.capture,
+            self.allocation_intent.as_deref(),
         )
     }
 

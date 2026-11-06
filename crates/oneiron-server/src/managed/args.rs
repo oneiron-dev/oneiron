@@ -218,6 +218,8 @@ pub struct ManagedArgs {
     pub ready_fd: RawFd,
     /// [`NO_FD`] in a vault VM, whose boot channel carries the frame.
     pub credentials_fd: RawFd,
+    /// The supervisor's original allocation JSON, consumed once at startup.
+    pub allocation_fd: Option<RawFd>,
     /// The pipe the custody anchor door's owner credential arrives on
     /// (`--custody-anchor-credentials-fd`), read before storage on each
     /// start the supervisor hands one. In a vault VM only the bootstrap's,
