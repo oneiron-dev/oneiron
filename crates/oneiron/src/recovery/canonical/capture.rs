@@ -151,8 +151,10 @@ impl CanonicalCapture {
                 "room_facts",
                 "document_pins",
                 "message_docs",
-                // FIX 12470: not captured; the rebuilt window takes its rows
-                // again from this vault's typed body receipts.
+                // FIX 2691, FIX 12470: not captured; the rebuilt window takes
+                // their rows again from this vault's office proposals and
+                // typed body receipts on its next reverse pass.
+                "office_proposals",
                 "typed_body_rows",
                 "repo_manifests",
                 "withdrawn_cutoffs",
