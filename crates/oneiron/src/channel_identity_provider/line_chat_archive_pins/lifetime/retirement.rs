@@ -27,16 +27,13 @@ pub(super) fn capture_in_txn(
     txn: &mut RwTxn<'_>,
     release: &mut ArchiveRelease,
 ) -> Result<()> {
-    if !release.erase || !release.pin.own_join {
+    if !release.erase || !release.owns_version() {
         return Ok(());
     }
     #[cfg(unix)]
     {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&release.pin.content_hash)?;
-        if release.inventory.is_none() {
-            if !super::exact_version_stands(store, txn, &release.pin)? {
-                return Ok(());
-            }
+        if super::exact_version_stands(store, txn, &release.pin)? {
             let mut digests: Vec<_> =
                 crate::provenance::body::owned_bodies_in_txn(store, txn, &asset)?
                     .iter()
@@ -50,12 +47,23 @@ pub(super) fn capture_in_txn(
             let inline = crate::store::INLINE_ASSETS.get(store, txn, &asset)?;
             let expected =
                 crate::store::governed_body_instances_in_txn(store, txn, &digests, &[asset])?;
-            release.inventory = Some(ReleaseInventory {
-                digests,
-                inline,
-                expected,
-                retirements: BTreeSet::new(),
-            });
+            match release.inventory.as_mut() {
+                Some(inventory) => {
+                    inventory.digests.extend(digests);
+                    inventory.digests.sort_unstable();
+                    inventory.digests.dedup();
+                    inventory.expected.extend(expected);
+                    inventory.inline = inline;
+                }
+                None => {
+                    release.inventory = Some(ReleaseInventory {
+                        digests,
+                        inline,
+                        expected,
+                        retirements: BTreeSet::new(),
+                    });
+                }
+            }
         }
     }
     #[cfg(not(unix))]
@@ -71,7 +79,7 @@ pub(super) fn note_sources_in_txn(
     release: &ArchiveRelease,
 ) -> Result<()> {
     #[cfg(unix)]
-    if release.erase {
+    if release.erase && super::exact_version_stands(store, txn, &release.pin)? {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&release.pin.content_hash)?;
         let Some(inventory) = release.inventory.as_ref() else {
             return Ok(());
@@ -105,12 +113,12 @@ pub(super) fn finish_in_txn(
     claim: &EntityId,
     mut release: ArchiveRelease,
 ) -> Result<()> {
-    if !release.erase || !release.pin.own_join {
+    if !release.erase || !release.owns_version() {
         RELEASES.delete(store, txn, claim)?;
         return Ok(());
     }
-    capture_in_txn(store, txn, &mut release)?;
-    note_sources_in_txn(store, txn, &release)?;
+    // Never re-read or mark a later same-hash carrier after this version
+    // released. Only the independently captured original instances count.
     #[cfg(unix)]
     if let Some(inventory) = release.inventory.as_mut() {
         let sources: Vec<_> = release.sources.iter().copied().collect();

@@ -16,7 +16,9 @@ use crate::secret_custody::CustodyWrite;
 
 /// Accepts only native capture rows of this stored MACHINE or artifact.
 /// Every selector is recorded before any observation goes, including one
-/// a hold keeps. A text archive remains borrowed, never an owned join.
+/// a hold keeps. A MACHINE erase borrows a text archive. An erase of the
+/// actual source artifact already authorizes that artifact's bytes; its
+/// accepted source id, not the observation, carries that authority.
 /// The full artifact-delete caller must preserve held captured versions;
 /// this door does not replace that caller's whole-chain lifecycle.
 pub(crate) fn erase_line_chat_source_observations_in_txn(
@@ -52,6 +54,18 @@ pub(crate) fn erase_line_chat_source_observations_in_txn(
         release.sources.extend([claim, *source]);
         retirement::capture_in_txn(store, txn, &mut release)?;
         RELEASES.put(store, txn, &claim, &release)?;
+    }
+    // A prior observation erase can already have detached the capture.
+    // Join its accepted native selector before this source's graph goes too.
+    for (claim, mut release) in RELEASES.scan(store, txn)? {
+        if (machine || release.pin.artifact_id == *source)
+            && (!release.sources.contains(source) || !release.erase)
+        {
+            release.erase = true;
+            release.sources.extend([claim, *source]);
+            retirement::capture_in_txn(store, txn, &mut release)?;
+            RELEASES.put(store, txn, &claim, &release)?;
+        }
     }
     // No ClaimOf or source row is needed when a later pass retries these.
     settle_source_observations_in_txn(write, txn)?;
