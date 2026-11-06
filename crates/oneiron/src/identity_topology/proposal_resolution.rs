@@ -487,11 +487,19 @@ impl Vault {
         let seal = resolve_seal_in_txn(self, wtxn, seal, Some(*proposal))?;
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
-        // The proposal read whole (FIX 10188): its scope, op and evidence are
-        // the decision's, never a manifest's.
-        let record = self
-            .identity_topology_decision_in_txn(&*wtxn, proposal)?
+        // The proposal as stored and read whole (FIX 10188): its seal binds
+        // the stored record, a manifest for a large decision, while its op,
+        // evidence and structural scope are the whole decision's.
+        let stored = self
+            .identity_topology_event_in_txn(&*wtxn, proposal)?
             .ok_or(Error::EntityNotFound)?;
+        let record = super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+            &self.store,
+            &*wtxn,
+            proposal,
+            stored.clone(),
+        )?
+        .ok_or(Error::EntityNotFound)?;
         // The resolution rule, shared with replicated admission: the park
         // is still open, the fold has not retired it, and the ruling's own
         // axis is effective. The replicated replay of the row this door is
@@ -522,7 +530,7 @@ impl Vault {
         // FIX 9870: the proposer handle the proposal's seal binds, or this
         // vault's own for the author its own carrier names.
         let proposer = super::proposer_scope::settled_proposer_scope_actor_in_txn(
-            self, wtxn, *proposal, &record,
+            self, wtxn, *proposal, &stored,
         )?;
         let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op, &proposer)?;
         let proposer_evidence = record.evidence.as_ref();
