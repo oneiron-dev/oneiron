@@ -82,6 +82,8 @@ mod key_value;
 mod lens_actions;
 mod lens_frames;
 mod lens_selections;
+mod model_catalogs;
+pub(crate) use model_catalogs::lift_model_catalog_revision;
 mod notifications;
 mod policy_settings;
 mod proposal_results;

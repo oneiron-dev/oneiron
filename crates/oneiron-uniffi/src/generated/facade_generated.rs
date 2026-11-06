@@ -4644,12 +4644,12 @@ export_facade! {
 "vault.models.catalog.refresh" => fn vault_models_catalog_refresh(&self, input: ModelCatalogRefresh) -> ModelCatalogRevision = |client| {
     let input: oneiron::llm::catalog_doors::ModelCatalogRefresh = crate::codec::lower_record("vault.models.catalog.refresh", input)?;
     let output = client.vault_models_catalog_refresh(&input)?;
-    crate::codec::lift_record("vault.models.catalog.refresh", &output)
+    crate::codec::lift_model_catalog_revision("vault.models.catalog.refresh", output)
 };
 "vault.models.catalog.get" => fn vault_models_catalog_get(&self, input: ModelCatalogGet) -> ModelCatalogRevision = |client| {
     let input: oneiron::llm::catalog_doors::ModelCatalogGet = crate::codec::lower_record("vault.models.catalog.get", input)?;
     let output = client.vault_models_catalog_get(&input)?;
-    crate::codec::lift_record("vault.models.catalog.get", &output)
+    crate::codec::lift_model_catalog_revision("vault.models.catalog.get", output)
 };
 "vault.models.catalog.diff" => fn vault_models_catalog_diff(&self, input: ModelCatalogDiffRequest) -> ModelCatalogDiff = |client| {
     let input: oneiron::llm::catalog_doors::ModelCatalogDiffRequest = crate::codec::lower_record("vault.models.catalog.diff", input)?;

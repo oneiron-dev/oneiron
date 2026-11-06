@@ -2424,6 +2424,8 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_foreign_code_result({name}, output)'
             elif row['output'] == 'crate::vault_cleanup::CleanupReviewView':
                 result = f'crate::codec::lift_cleanup_review({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelCatalogRevision':
+                result = f'crate::codec::lift_model_catalog_revision({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
