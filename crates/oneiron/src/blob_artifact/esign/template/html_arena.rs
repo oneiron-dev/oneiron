@@ -31,7 +31,7 @@ impl Deref for HtmlDocument {
 }
 
 pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument> {
-    let (document, backing) = if budget.admits_memory() {
+    let (mut document, backing) = if budget.admits_memory() {
         let (tree, backing) = Tree::try_new_with_reservation(
             NodeData::Document,
             |bytes| reserve(budget, bytes),
@@ -53,6 +53,59 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         nodes: backing,
         errors: Backing::new(budget.clone()),
     }));
+    let text_error = budget
+        .admits_memory()
+        .then(|| Arc::new(Mutex::new(None::<ContentTemplateError>)));
+    if let Some(error) = &text_error {
+        let create_error = Arc::clone(error);
+        let append_error = Arc::clone(error);
+        let create_budget = budget.clone();
+        let append_budget = budget.clone();
+        document.tree = document.tree.with_parser_text_reservation(
+            move |text| {
+                let mut error = create_error.lock().unwrap_or_else(PoisonError::into_inner);
+                if error.is_some() {
+                    return None;
+                }
+                match html5ever::tendril::Tendril::try_from_slice_with_reservation(
+                    text,
+                    |bytes| reserve(&create_budget, bytes),
+                    Backing::resize,
+                )
+                .map_err(tendril_error)
+                {
+                    Ok(text) => Some(text),
+                    Err(refusal) => {
+                        error.get_or_insert(refusal);
+                        None
+                    }
+                }
+            },
+            move |text, additional| {
+                let mut error = append_error.lock().unwrap_or_else(PoisonError::into_inner);
+                if error.is_some() {
+                    return false;
+                }
+                let result = u32::try_from(additional)
+                    .map_err(|_| ContentTemplateError::Overflow)
+                    .and_then(|additional| {
+                        text.try_reserve_with_reservation(
+                            additional,
+                            |bytes| reserve(&append_budget, bytes),
+                            Backing::resize,
+                        )
+                        .map_err(tendril_error)
+                    });
+                match result {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error.get_or_insert(refusal);
+                        false
+                    }
+                }
+            },
+        );
+    }
     let parser = html5ever::parse_document_with_checkpoint(
         document,
         html5ever::ParseOpts {
@@ -62,11 +115,12 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
             },
             ..Default::default()
         },
-        || budget.checkpoint(),
+        || text_checkpoint(text_error.as_deref(), budget),
     );
     let document = if budget.admits_memory() {
         let budget = budget.clone();
         let current = Arc::clone(&backing);
+        let native_text_error = text_error.clone();
         let open_elements = Mutex::new(Backing::new(budget.clone()));
         let temporary_buffer = Mutex::new(Backing::new(budget.clone()));
         let tag_name = Mutex::new(Backing::new(budget.clone()));
@@ -132,7 +186,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                 .map_err(tendril_error)
             })
             .with_tree_sink_checkpoint(move |document, operation| {
-                budget.checkpoint()?;
+                text_checkpoint(native_text_error.as_deref(), &budget)?;
                 if matches!(operation, TreeSinkOperation::ParseError) {
                     let mut backing = current.lock().unwrap_or_else(PoisonError::into_inner);
                     backing
@@ -165,6 +219,18 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         document,
         _backing: backing,
     })
+}
+
+fn text_checkpoint(
+    error: Option<&Mutex<Option<ContentTemplateError>>>,
+    budget: &Budget,
+) -> Result<()> {
+    if let Some(error) =
+        error.and_then(|state| state.lock().unwrap_or_else(PoisonError::into_inner).clone())
+    {
+        return Err(error);
+    }
+    budget.checkpoint()
 }
 
 fn reserve(budget: &Budget, bytes: usize) -> Result<Backing> {

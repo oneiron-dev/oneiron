@@ -1,5 +1,8 @@
 use std::cell::{Ref, RefCell};
 use std::fmt::{self, Debug};
+use std::sync::Arc;
+
+use super::text::ParserTextReservation;
 
 #[allow(unused_imports)]
 use html5ever::namespace_url;
@@ -19,6 +22,7 @@ use super::traversal::Traversal;
 /// An implementation of arena-tree.
 pub struct Tree {
     pub(crate) nodes: RefCell<Vec<TreeNode>>,
+    pub(super) parser_text: Option<Arc<ParserTextReservation>>,
 }
 
 impl Debug for Tree {
@@ -32,6 +36,7 @@ impl Clone for Tree {
         let nodes = self.nodes.borrow();
         Self {
             nodes: RefCell::new(nodes.clone()),
+            parser_text: self.parser_text.clone(),
         }
     }
 }
@@ -132,6 +137,7 @@ impl Tree {
         let root_id = NodeId::new(0);
         Self {
             nodes: RefCell::new(vec![TreeNode::new(root_id, root)]),
+            parser_text: None,
         }
     }
     /// Creates a new node with the given data.

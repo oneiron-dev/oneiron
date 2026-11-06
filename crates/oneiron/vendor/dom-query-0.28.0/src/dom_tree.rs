@@ -1,6 +1,7 @@
 mod arena;
 mod helpers;
 mod ops;
+mod text;
 mod traversal;
 mod tree;
 mod validation;

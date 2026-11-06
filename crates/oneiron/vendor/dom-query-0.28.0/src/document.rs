@@ -378,19 +378,17 @@ impl TreeSink for Document {
             NodeOrText::AppendNode(node_id) => self.tree.append_child_of(parent, &node_id),
             NodeOrText::AppendText(text) => {
                 let last_child = self.tree.last_child_of(parent);
-                let merged = last_child
-                    .is_some_and(|child| append_to_existing_text(&child, &text));
-
-                if merged {
-                    return;
+                if let Some(child) = last_child {
+                    match append_to_existing_text(&child, &text) {
+                        TextAppend::Updated | TextAppend::Stopped => return,
+                        TextAppend::NotText => {}
+                    }
                 }
-
-                self.tree.append_child_data_of(
-                    parent,
-                    NodeData::Text {
-                        contents: wrap_tendril(text),
-                    },
-                );
+                let Some(contents) = self.tree.create_parser_text(text) else {
+                    return;
+                };
+                self.tree
+                    .append_child_data_of(parent, NodeData::Text { contents });
             }
         }
     }
@@ -403,16 +401,16 @@ impl TreeSink for Document {
         match child {
             NodeOrText::AppendText(text) => {
                 let prev_sibling = self.tree.prev_sibling_of(sibling);
-                let merged = prev_sibling
-                    .is_some_and(|sibling| append_to_existing_text(&sibling, &text));
-
-                if merged {
-                    return;
+                if let Some(sibling) = prev_sibling {
+                    match append_to_existing_text(&sibling, &text) {
+                        TextAppend::Updated | TextAppend::Stopped => return,
+                        TextAppend::NotText => {}
+                    }
                 }
-
-                let id = self.tree.create_node(NodeData::Text {
-                    contents: wrap_tendril(text),
-                });
+                let Some(contents) = self.tree.create_parser_text(text) else {
+                    return;
+                };
+                let id = self.tree.create_node(NodeData::Text { contents });
                 self.tree.insert_before_of(sibling, &id);
             }
 
@@ -493,18 +491,23 @@ impl TreeSink for Document {
     }
 }
 
-fn append_to_existing_text(prev: &NodeRef, text: &StrTendril) -> bool {
+enum TextAppend {
+    NotText,
+    Updated,
+    Stopped,
+}
+
+fn append_to_existing_text(prev: &NodeRef, text: &StrTendril) -> TextAppend {
     prev.tree
         .update_node(&prev.id, |tree_node| match tree_node.data {
             NodeData::Text { ref mut contents } => {
-                #[cfg(not(feature = "atomic"))]
-                contents.push_tendril(text);
-
-                #[cfg(feature = "atomic")]
-                contents.push_slice(text);
-                true
+                if prev.tree.append_parser_text(contents, text) {
+                    TextAppend::Updated
+                } else {
+                    TextAppend::Stopped
+                }
             }
-            _ => false,
+            _ => TextAppend::NotText,
         })
-        .unwrap_or(false)
+        .unwrap_or(TextAppend::NotText)
 }
