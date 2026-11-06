@@ -293,7 +293,15 @@ impl GraphFsResolver<'_, '_> {
                     return Err(Error::EntityNotFound);
                 }
                 let relative = path.trim_start_matches('/');
-                let Some(file) = snapshot.files.iter().find(|file| file.path == relative) else {
+                let mut selected = None;
+                for candidate in &snapshot.files {
+                    checkpoint(reader)?;
+                    if candidate.path == relative {
+                        selected = Some(candidate);
+                        break;
+                    }
+                }
+                let Some(file) = selected else {
                     return Ok(None);
                 };
                 let vault = self.scoped_read.vault();
@@ -320,7 +328,7 @@ impl GraphFsResolver<'_, '_> {
                     )?
                 };
                 Ok(Some(GraphFsFile {
-                    path: path.to_owned(),
+                    path: copy_text_parts(&[path], reader, self.options.page_byte_cap)?,
                     mount: self.options.mount,
                     // A body kept in its ASSET's file is masked as it is
                     // read, as the hosted door reads it (FIX 6557).
