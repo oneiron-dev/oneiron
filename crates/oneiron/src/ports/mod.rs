@@ -30,7 +30,12 @@ pub(crate) use lmdb_query::checkpoint;
 mod lmdb_retrieval_inventory;
 mod lmdb_staging;
 mod lmdb_timeline;
+mod deletion_reads;
 mod lmdb_visibility;
+pub(crate) use deletion_reads::{
+    DeletionStateObserver, DeletionStateOrigin, DeletionStateRead,
+};
+pub(crate) use lmdb_visibility::deletion_state_observed_in_txn;
 mod lmdb_window_rows;
 mod query;
 pub use query::*;
