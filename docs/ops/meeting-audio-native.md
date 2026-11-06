@@ -73,8 +73,9 @@ existing alignment, diarization, cleanup, ASR policy, and import-consent inputs.
 A produced artifact keeps `raw_turns`, the exact aligned turns before cleanup,
 alongside the cleaned `turns` and the existing word and correction provenance.
 The raw text remains part of the exported artifact and its import-consent hash;
-cleanup does not remove it. This is in-memory artifact retention, not vault
-persistence, a SESSION revision history, or an erase-lifetime implementation.
+cleanup does not remove it. The producer itself retains this in memory. The
+owner-selected storage doors below use native blob versions; neither API is a
+SESSION revision history or a separate erase-lifetime implementation.
 
 `ProducedMeetingTranscript::with_speaker_labels` returns a separate artifact.
 Its map keys are the existing anonymous speaker clusters. Its values are explicit
@@ -85,6 +86,40 @@ artifact is never mutated. A changed artifact must obtain import consent for its
 own exact bytes through the existing `authorize_import` method. Imported/Proposed
 admission and all downstream Gate checks remain unchanged.
 
-The authenticated owner speaker-resolution door, durable raw/corrected versions,
-and their SESSION links are still separate, unimplemented work. This API does
-not stand in for those doors or for voiceprint consent.
+## Owner-selected native artifact storage
+
+`Vault::persist_meeting_transcript_as_owner` accepts a real `AuthenticatedOwner`,
+an exact retained source-audio version pin, the produced artifact, and an explicit
+name. It revalidates the owner in its committing writer. The actual source bytes
+must match both `recording.source_sha256` and `recording_id`; the native version
+claim and BLAKE3 pin are checked in that same snapshot. This binds the selected
+recording bytes, not proof that the host ran ASR or used the named model.
+
+Each explicit save creates a fresh `application/json` blob artifact and stores
+the exact JSON bytes as its first native version in the same transaction. The
+artifact inherits the source artifact's secret-taint references. Its native
+`made_by` inputs include the exact source-audio version's ledger claim. No second
+revision table or consent ledger is added. `StoredMeetingTranscript` returns the
+source and transcript version pins; those data fields are not credentials.
+
+`Vault::label_meeting_transcript_as_owner` reads the selected stored version and
+its source audio again in one owner-bound writer. It checks the persisted
+source-version relationship and derives labels from those exact JSON bytes.
+An unchanged map returns the original pin. A changed map appends when the base
+is the current head, or explicitly forks from the selected base when a newer
+head exists. The newer version and all existing history remain retained; the
+new version becomes the native head. This is not a pre-read followed by an
+unchecked latest-head append.
+
+The version ledger records the owner's upload or label action as `UserUpload`;
+its `Auto` status does not confirm the generated transcript's facts. Original
+inference receipts remain in the immutable artifact. Storage does not import
+observations or spend a bulk-consent receipt. Import still requires consent for
+the selected exact artifact bytes and uses Imported/Proposed admission and the
+existing Gate. Speaker labels grant no PERSON, biometric, or send authority.
+
+These doors use ordinary blob version, ASSET, high-water, erase, hold and archive
+machinery. They add no separate lifetime system or global-erasure guarantee.
+Typed SESSION projection, revision-to-SESSION links, served owner routes and host
+receipt retention remain separate work. No text-flattening adapter or duplicate
+SESSION lifecycle is installed, and no voiceprint consent is implied.
