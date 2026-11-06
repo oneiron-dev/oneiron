@@ -31,7 +31,11 @@ holds the existing `OwnerWrite` admission through its dispatcher, result encodin
 and receipt. The admitted task runs to completion even if its answer waiter goes
 away. When the engine pauses writes for reap, the socket returns the existing
 managed pause body in `rpc.err`, without running the verb or writing a receipt.
-Pings and protocol-refusal receipts use the existing synchronous receipt gate.
+Pings, protocol-refusal receipts and routed send-time release use the existing
+synchronous receipt gate. Release can replace a recorded answer with a refusal
+receipt, so it must not run outside admission after the call completes. A frozen
+send returns the native pause for that request without running release or
+writing the replacement receipt.
 Vault deletion and engine stop use the ordinary transport and upgrade lifetime;
 the carrier drains calls it already admitted before ending.
 

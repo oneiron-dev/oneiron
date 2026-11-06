@@ -120,22 +120,33 @@ async fn serve(
         crate::livequery::connection::Hub::for_server(&server),
         conn_id,
     );
-    let mut calls: tokio::task::JoinSet<Result<RpcReply, ProtocolError>> =
+    let mut calls: tokio::task::JoinSet<Result<(u64, RpcReply), ProtocolError>> =
         tokio::task::JoinSet::new();
     'serving: loop {
         let data = tokio::select! {
             biased;
             () = stop.turned() => break,
             Some(answered) = calls.join_next(), if !calls.is_empty() => {
-                let Ok(Ok(reply)) = answered else { break };
+                let Ok(Ok((request_id, reply))) = answered else { break };
                 for mut frame in reply.queued(conn_id) {
                     if crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
-                        let Some(released) =
+                        match caller.managed.admit_receipt(|| {
                             release.release_for(caller.locality, caller.machine, &frame)
-                        else {
-                            continue;
-                        };
-                        frame = released;
+                        }) {
+                            Ok(Some(released)) => frame = released,
+                            Ok(None) => continue,
+                            Err(pause) => {
+                                let Ok(reply) = RpcReply::paused(request_id, pause.body()) else {
+                                    break 'serving;
+                                };
+                                for paused in reply.queued(conn_id) {
+                                    if !transport.send_binary(paused).await {
+                                        break 'serving;
+                                    }
+                                }
+                                continue 'serving;
+                            }
+                        }
                     }
                     if !transport.send_binary(frame).await {
                         break 'serving;
@@ -259,9 +270,10 @@ async fn serve(
         match answer {
             Ok(answer) => {
                 calls.spawn(async move {
-                    answer.await.map_err(|_| {
+                    let reply = answer.await.map_err(|_| {
                         ProtocolError::InvalidPayload("booking call ended without an answer")
-                    })?
+                    })??;
+                    Ok((request_id, reply))
                 });
             }
             Err(pause) => {
