@@ -1,8 +1,9 @@
 //! The server log as `load dream` reads it: the lines written since the
-//! last read, the Dreamer's `dreamer partition stages` and `dreamer wake
-//! pass` lines (target `oneiron::dreamer::stages`, L07 DREAM-OBSERVE) as
-//! `key=value` fields, and the WARN and ERROR lines by message. The lines
-//! are tracing's default fmt text; a field may be missing or quoted.
+//! last read, the Dreamer's `dreamer partition stages`, `dreamer wake pass`,
+//! `dreamer sitting open` and `dreamer sitting close` lines (target
+//! `oneiron::dreamer::stages`, L07 DREAM-OBSERVE) as `key=value` fields, and
+//! the WARN and ERROR lines by message. The lines are tracing's default fmt
+//! text; a field may be missing or quoted.
 
 use std::collections::BTreeMap;
 use std::io::{Read as _, Seek as _, SeekFrom};
@@ -13,6 +14,10 @@ use std::time::Instant;
 pub(super) const STAGES: &str = "dreamer partition stages";
 /// The message of one wake pass's line.
 pub(super) const PASS: &str = "dreamer wake pass";
+/// The message of a sitting's open line: TURNs witnessed after it join it.
+pub(super) const OPEN: &str = "dreamer sitting open";
+/// The message of a sitting's close line: the Meso round it queued.
+pub(super) const CLOSE: &str = "dreamer sitting close";
 
 /// A line's `key=value` fields, values unquoted.
 pub(super) type Fields = BTreeMap<String, String>;
@@ -76,6 +81,8 @@ pub(super) struct Alarm {
 pub(super) struct Scan {
     pub(super) stages: Vec<Seen>,
     pub(super) passes: Vec<Seen>,
+    pub(super) opens: Vec<Seen>,
+    pub(super) closes: Vec<Seen>,
     pub(super) alarms: Vec<Alarm>,
 }
 
@@ -97,6 +104,10 @@ impl Scan {
                 self.stages.push(Seen { at_ms, fields });
             } else if let Some(fields) = fields(&line, PASS) {
                 self.passes.push(Seen { at_ms, fields });
+            } else if let Some(fields) = fields(&line, OPEN) {
+                self.opens.push(Seen { at_ms, fields });
+            } else if let Some(fields) = fields(&line, CLOSE) {
+                self.closes.push(Seen { at_ms, fields });
             }
         }
     }

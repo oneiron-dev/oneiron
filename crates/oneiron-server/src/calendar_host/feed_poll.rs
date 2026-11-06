@@ -1,4 +1,4 @@
-//! The host's ICS feed poll worker (FIX 7846): it claims each due
+//! The host's calendar poll worker (FIX 7846): it claims each due
 //! `calendar.ics.poll` row, polls the feed the row names as the vault's local
 //! owner through the custody door, records the completion on the installed
 //! feed, and settles the row. The poll itself queues the chain's next row
@@ -13,6 +13,11 @@
 //! from the archived feed or connector resource version, under the owner's
 //! CAL-09 dial as a poll runs. One that fails runs again
 //! [`CONTINUATION_RETRY`] later.
+//!
+//! The same worker consumes `calendar.caldav.sync` (FIX 4628). It honors the
+//! payload's not-before instant, but resumes the current installed seat's
+//! cursor, never the payload's cursor. A first explicit pull starts a new
+//! seat's chain; successful polls queue its successors through the kernel.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,11 +26,16 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
     FailAttempt, RequeueAttempt,
 };
+use oneiron::calendar::connectors::door::{self as connector, CalendarConnectorRequest};
 use oneiron::calendar::ingest::feed_door::{self, CalendarIcsFeedRequest};
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
     IcsFeedPollConfig, IcsFeedPollPayload, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
+};
+use oneiron::calendar::{
+    CALDAV_SYNC_ATTEMPT_KIND, CalDavConnector, CalendarConnectorSeatConfig,
+    CalendarConnectorSeatState, CalendarConnectorSyncPayload,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::{EdgeActorClass, Vault};
@@ -49,7 +59,7 @@ const CONTINUATION_RETRY: u64 = 300;
 /// housekeeping pass is, so a vault frozen for reap polls nothing. Its first
 /// pass returns to the queue every row a stopped host claimed and never
 /// settled: this worker is the kind's only one.
-pub(crate) fn spawn_ics_feed_polls(
+pub(crate) fn spawn_calendar_polls(
     server: Arc<SyncServer>,
     admit: HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
@@ -77,7 +87,7 @@ pub(crate) fn spawn_ics_feed_polls(
                 Ok(Err(error)) => format!("{error:#}"),
                 Err(error) => error.to_string(),
             };
-            tracing::warn!(error = %error, "calendar feed poll pass failed");
+            tracing::warn!(error = %error, "calendar poll pass failed");
         }
     })
 }
@@ -86,6 +96,7 @@ fn recover_polls(vault: &Vault) -> anyhow::Result<()> {
     for kind in [
         ICS_POLL_ATTEMPT_KIND,
         ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
+        CALDAV_SYNC_ATTEMPT_KIND,
     ] {
         AttemptQueue::new(vault).cleanup_kind_leases(
             kind,
@@ -99,7 +110,7 @@ fn recover_polls(vault: &Vault) -> anyhow::Result<()> {
 }
 
 /// Claims, polls and settles up to [`PASS_LIMIT`] due rows, then runs up to
-/// [`PASS_LIMIT`] due property continuations.
+/// [`PASS_LIMIT`] due property continuations and queued CalDAV syncs each.
 fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
     let owner = match crate::owner::local_owner(vault) {
         Ok(owner) => owner,
@@ -134,6 +145,19 @@ fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
             break;
         };
         settle_continuation(&queue, vault, &owner, &attempt)?;
+    }
+    for _ in 0..PASS_LIMIT {
+        let claimed = queue.claim_kind(
+            CALDAV_SYNC_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: LEASE_OWNER.to_owned(),
+                now: vault.now_recorded_at(),
+            },
+        )?;
+        let ClaimOutcome::Claimed(attempt) = claimed else {
+            break;
+        };
+        settle_connector(&queue, vault, &owner, &attempt)?;
     }
     Ok(())
 }
@@ -290,5 +314,120 @@ fn poll_installed_feed(
         poll = %completion.poll_ref,
         "calendar feed polled"
     );
+    Ok(())
+}
+
+/// The native connector enqueues immediately and carries its due instant in
+/// the payload, so early claims return to the queue without provider I/O.
+fn settle_connector(
+    queue: &AttemptQueue<'_>,
+    vault: &Arc<Vault>,
+    owner: &AuthenticatedOwner,
+    attempt: &AttemptRecord,
+) -> anyhow::Result<()> {
+    let payload = match serde_json::from_slice::<CalendarConnectorSyncPayload>(&attempt.payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            queue.fail(FailAttempt {
+                id: attempt.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                reason: format!("calendar connector sync payload did not decode: {error}"),
+                now: vault.now_recorded_at(),
+            })?;
+            return Ok(());
+        }
+    };
+    if vault.now_recorded_at() < payload.not_before {
+        queue.requeue(RequeueAttempt {
+            id: attempt.id,
+            lease_owner: LEASE_OWNER.to_owned(),
+            attempt_count: attempt.attempt_count,
+            reason: "calendar connector sync is not due yet".to_owned(),
+            due_at: payload.not_before,
+        })?;
+        return Ok(());
+    }
+    match poll_installed_seat(vault, owner, &payload.config) {
+        Ok(()) => {
+            queue.complete(CompleteAttempt {
+                id: attempt.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now: vault.now_recorded_at(),
+            })?;
+        }
+        Err(error) => {
+            let reason = format!("{error:#}");
+            let now = vault.now_recorded_at();
+            // This temporary state supplies only the native cadence arithmetic.
+            // It is never an operation or a replacement for the installed row.
+            let cadence = CalendarConnectorSeatState::new(payload.config.clone());
+            match cadence.jittered_next_poll_at(now, now) {
+                Ok(due_at) => {
+                    tracing::warn!(
+                        seat = %payload.config.seat_ref,
+                        error = %reason,
+                        "calendar connector sync failed; it runs again one cadence step later"
+                    );
+                    queue.requeue(RequeueAttempt {
+                        id: attempt.id,
+                        lease_owner: LEASE_OWNER.to_owned(),
+                        attempt_count: attempt.attempt_count,
+                        reason,
+                        due_at,
+                    })?;
+                }
+                Err(error) => {
+                    queue.fail(FailAttempt {
+                        id: attempt.id,
+                        lease_owner: LEASE_OWNER.to_owned(),
+                        attempt_count: attempt.attempt_count,
+                        reason: format!("calendar connector sync config is invalid: {error}"),
+                        now,
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Poll the current installed registration, including its cursor and kill
+/// state, through the same owner-bound wire as the explicit pull door.
+fn poll_installed_seat(
+    vault: &Arc<Vault>,
+    owner: &AuthenticatedOwner,
+    config: &CalendarConnectorSeatConfig,
+) -> anyhow::Result<()> {
+    let memory = vault.memory(owner.actor_for_read(vault)?, EdgeActorClass::Human);
+    let request = CalendarConnectorRequest {
+        seat_ref: config.seat_ref.clone(),
+    };
+    let Some(row) = connector::get(&memory, owner, &request)? else {
+        return Ok(());
+    };
+    if row.seat.config != *config {
+        tracing::info!(seat = %config.seat_ref, "calendar connector sync row outlived its seat");
+        return Ok(());
+    }
+    let wire = super::HttpCalDav::new(Arc::clone(vault), owner.clone(), row.clone())?;
+    let operation = wire.operation().clone();
+    let now = vault.now_recorded_at();
+    let outcome = oneiron::calendar::run_calendar_connector_sync(
+        vault,
+        &operation,
+        &CalDavConnector::new(wire),
+        now,
+        now,
+    )?;
+    if let Err(error) = connector::observe_sync(&memory, owner, &row, &outcome) {
+        if connector::get(&memory, owner, &request)?.as_ref() == Some(&row) {
+            return Err(error.into());
+        }
+        // A successful run already queued its successor. A newer registration
+        // must keep its own cursor rather than replay this completed pull.
+        tracing::info!(seat = %config.seat_ref, "calendar connector seat moved after sync");
+    }
     Ok(())
 }

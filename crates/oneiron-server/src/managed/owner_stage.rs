@@ -19,6 +19,10 @@
 //! past it (FIX 5619, Rule 5): its size never refuses it, only the disk's
 //! floor ([`verify_held`]).
 
+mod widen;
+
+pub(super) use widen::verify_widen;
+
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
 use axum::body::{Body, BodyDataStream, Bytes};
