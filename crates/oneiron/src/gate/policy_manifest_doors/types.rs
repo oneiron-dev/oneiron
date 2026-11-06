@@ -18,11 +18,17 @@ pub enum PolicyCriticality {
     Critical,
 }
 
+/// A predicate class's rung on the DEC-0005 content ladder: `public`,
+/// `private`, `sensitive`, `restricted`. `normal` is the ordinary,
+/// non-sensitive label the shipped packs carry; it keeps that meaning.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicySensitivity {
-    Normal,
+    Public,
+    Private,
     Sensitive,
+    Restricted,
+    Normal,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
