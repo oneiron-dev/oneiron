@@ -1724,6 +1724,12 @@ class Oneiron:
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs":
             return Oneiron._VaultCampaignProgramVerbs(self._client)
+        def held(self, spec=None):
+            """The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_held(json.dumps({} if spec is None else spec))))
+        def approve_once(self, spec):
+            """The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_approve_once(json.dumps(spec))))
     class _VaultCampaignComplianceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
