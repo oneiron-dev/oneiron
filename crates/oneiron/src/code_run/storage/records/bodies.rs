@@ -65,11 +65,11 @@ impl Vault {
         owner: Option<EntityId>,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None)
+        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None, None)
     }
 
     /// Publishes an occurrence with the producing executor step's native
-    /// starting bridge sequence, when its producer supplied one.
+    /// starting bridge sequence and effect, when its producer supplied them.
     pub(crate) fn publish_code_run_output_produced(
         &self,
         path: String,
@@ -78,6 +78,7 @@ impl Vault {
         owner: Option<EntityId>,
         input_rows: Option<Vec<EntityId>>,
         producing_step_start: Option<u64>,
+        producing_effect: Option<String>,
     ) -> Result<CodeRunRawOutput> {
         let mut finished = finish_output_sourced(
             path,
@@ -88,6 +89,7 @@ impl Vault {
             |digest| self.pin_result_body(digest),
         )?;
         finished.output.producing_step_start = producing_step_start;
+        finished.output.producing_effect = producing_effect;
         let mut wtxn = self.store.env.write_txn()?;
         self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
         if owner.is_none() {
