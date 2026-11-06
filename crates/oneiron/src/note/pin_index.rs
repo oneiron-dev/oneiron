@@ -55,9 +55,9 @@ pub(super) fn remove_citing(store: &Store, txn: &mut heed::RwTxn<'_>, id: Entity
     Ok(())
 }
 
-/// Each `(citing, cited)` a queued citation request names for a cited id in
-/// `erased` (FIX 18270): the request rows keyed by the cited ids go when a
-/// restore does not open that record, so the citing row is read.
+/// Each `(citing, request)` of a queued citation request that names a cited
+/// id in `erased` (FIX 18270): the request rows keyed by the cited ids go
+/// when a restore does not open that record, so the citing row is read.
 pub(super) fn requests_citing(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -65,10 +65,8 @@ pub(super) fn requests_citing(
 ) -> Result<Vec<(EntityId, EntityId)>> {
     let mut out = Vec::new();
     for (key, refs) in NOTE_PIN_REQUEST_CITING.scan(store, txn)? {
-        for id in [refs.document, refs.claim] {
-            if erased.contains(&id) {
-                out.push(((key.0).0, id));
-            }
+        if erased.contains(&refs.document) || erased.contains(&refs.claim) {
+            out.push(((key.0).0, (key.1).0));
         }
     }
     Ok(out)
@@ -111,6 +109,28 @@ fn source_present(store: &Store, txn: &heed::RoTxn<'_>, source_key: &[u8]) -> Re
         Some(key) => NOTE_PIN_SOURCE.contains(store, txn, &key),
         None => Ok(false),
     }
+}
+
+/// Writes `citing`'s reverse rows for `pins`: each pin's SOURCE row, keyed by
+/// the cited document, and the CLAIM and CITING rows that point at it.
+pub(super) fn index_pins(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citing: EntityId,
+    pins: &[super::NotePin],
+) -> Result<()> {
+    for pin in pins {
+        let value = NOTE_PIN_SOURCE.encode_value(pin)?;
+        let hash = blake3::hash(&value).to_hex().to_string();
+        let index = HexHexHash(HexId(pin.document), HexId(citing), hash.clone());
+        let index_bytes = NOTE_PIN_SOURCE.key_bytes(&index);
+        NOTE_PIN_SOURCE.put(store, txn, &index, pin)?;
+        let claim_index = HexHexHash(HexId(pin.claim), HexId(citing), hash.clone());
+        NOTE_PIN_CLAIM.put(store, txn, &claim_index, &index_bytes)?;
+        let citing_index = HexHexHash(HexId(citing), HexId(pin.document), hash);
+        NOTE_PIN_CITING.put(store, txn, &citing_index, &index_bytes)?;
+    }
+    Ok(())
 }
 
 pub(super) fn dependents(

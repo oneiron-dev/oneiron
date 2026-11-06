@@ -1,6 +1,6 @@
 //! Hard-erase dependency fences. No source text or substring matching is stored here.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::error::RecordError;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -76,8 +76,13 @@ pub(crate) fn erase_citations_in_txn(
     id: &EntityId,
 ) -> Result<Vec<EntityId>> {
     let mut dependents = fence_dependents(&vault.store, txn, *id)?;
-    scrub_stored_proposal_citations(vault, txn)?;
-    scrub_retired_canonical_citations(vault, txn)?;
+    let mut scrubbed = scrub_stored_proposal_citations(vault, txn)?;
+    scrubbed.extend(scrub_retired_canonical_citations(vault, txn)?);
+    // A retained head or proposal held the erased pin: the NOTE's saved
+    // full-view receipts may hold it too (FIX 18270).
+    for note in &scrubbed {
+        drop_view_receipts(&vault.store, txn, *note)?;
+    }
     dependents.retain(|citing| citing != id);
     #[cfg(feature = "sync")]
     for citing in &dependents {
@@ -91,16 +96,18 @@ pub(crate) fn erase_citations_in_txn(
 /// included: the citing NOTE's compartment opens, the erased record's does
 /// not, and the reverse pin rows that depended on that record are gone, so
 /// the reverse index no longer finds the citing NOTE. Each of `erased` is
-/// marked citation-erased, as the live erase marks the record it erases.
-/// Every NOTE whose current document or queued citation request still names
-/// one is fenced, its reverse rows left without their pin row dropped, and,
-/// with sync, rebuilt without that citation, history included; retained
-/// heads and proposal documents are scrubbed as the live erase scrubs them.
-/// In the restore's own transaction, before it commits; nothing is notified.
+/// marked citation-erased, as the live erase marks the record it erases. A
+/// queued citation request that names one goes. Every NOTE whose current
+/// document pins one is rebuilt without that citation, history included
+/// ([`rebuild_restored`]), and its reverse rows left without their pin row
+/// go. Retained heads and proposal documents are scrubbed as the live erase
+/// scrubs them, and every NOTE a scrub changed loses its saved full-view
+/// receipts. In the restore's own transaction, before it commits; nothing is
+/// notified.
 ///
 /// # Errors
 ///
-/// Storage errors, or a scrubbed document that does not read or persist.
+/// Storage errors, or a scrubbed document that does not read or write.
 pub(crate) fn erase_restored_citations_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -109,41 +116,39 @@ pub(crate) fn erase_restored_citations_in_txn(
     if erased.is_empty() {
         return Ok(());
     }
+    let store = &vault.store;
     for id in erased {
-        NOTE_ERASE_SOURCE.put(&vault.store, txn, &HexId(*id), &())?;
+        NOTE_ERASE_SOURCE.put(store, txn, &HexId(*id), &())?;
     }
-    let citers = restored_citers(vault, txn, erased)?;
-    let citing: BTreeSet<EntityId> = citers.keys().copied().collect();
-    super::pin_index::drop_dangling_citing(&vault.store, txn, &citing)?;
-    for (note, sources) in &citers {
-        for source in sources {
-            let fence = HexPair(HexId(*note), HexId(*source));
-            NOTE_ERASE_PENDING.put(&vault.store, txn, &fence, &())?;
-        }
+    for (citing, request) in super::pin_index::requests_citing(store, txn, erased)? {
+        let queued = HexPair(HexId(citing), HexId(request));
+        super::sync_rows::SYNC_QN_E.delete(store, txn, &queued)?;
+        super::pin_index::remove_citation_request(store, txn, citing, request)?;
     }
-    scrub_stored_proposal_citations(vault, txn)?;
-    scrub_retired_canonical_citations(vault, txn)?;
-    #[cfg(feature = "sync")]
-    for citing in &citing {
-        super::citation_scrub::scrub_pending(vault, txn, *citing)?;
+    let citing = restored_citers(vault, txn, erased)?;
+    super::pin_index::drop_dangling_citing(store, txn, &citing)?;
+    for note in &citing {
+        rebuild_restored(vault, txn, *note)?;
+        drop_edit_frames(store, txn, *note)?;
+    }
+    let mut scrubbed = scrub_stored_proposal_citations(vault, txn)?;
+    scrubbed.extend(scrub_retired_canonical_citations(vault, txn)?);
+    for note in citing.iter().chain(&scrubbed) {
+        drop_view_receipts(store, txn, *note)?;
     }
     Ok(())
 }
 
-/// Each NOTE whose current document or queued citation request names one of
-/// `erased`, with the ones it names. Every NOTE's document is read whole: the
-/// reverse rows that would name it went with the record the restore did not
-/// open. An erased NOTE cites nothing. A document that does not load is
-/// passed over: its readers load it the same way, so none serves it.
+/// Each NOTE whose current document pins one of `erased`. Every NOTE's
+/// document is read whole: the reverse rows that would name it went with the
+/// record the restore did not open. An erased NOTE cites nothing. A document
+/// that does not load is passed over: its readers load it the same way, so
+/// none serves it.
 fn restored_citers(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     erased: &BTreeSet<EntityId>,
-) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
-    let mut citers: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
-    for (citing, source) in super::pin_index::requests_citing(&vault.store, txn, erased)? {
-        citers.entry(citing).or_default().insert(source);
-    }
+) -> Result<BTreeSet<EntityId>> {
     let notes = crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
         txn,
@@ -151,6 +156,7 @@ fn restored_citers(
         None,
     )?
     .collect::<Result<Vec<EntityId>>>()?;
+    let mut citing = BTreeSet::new();
     for note in notes {
         if erased.contains(&note) {
             continue;
@@ -161,16 +167,65 @@ fn restored_citers(
         let Ok(pins) = read else {
             continue;
         };
-        for pin in pins {
-            for id in [pin.document, pin.claim] {
-                if erased.contains(&id) {
-                    citers.entry(note).or_default().insert(id);
-                }
-            }
+        if pins
+            .iter()
+            .any(|pin| erased.contains(&pin.document) || erased.contains(&pin.claim))
+        {
+            citing.insert(note);
         }
     }
-    citers.retain(|citing, _| !erased.contains(citing));
-    Ok(citers)
+    Ok(citing)
+}
+
+/// Rebuilds a restored NOTE's current document without its erased citations
+/// (FIX 18270): each erased pin goes, and so does every byte of it in the
+/// document's history (a state-only copy, as the live scrub stores one),
+/// its text, authorship and surviving pins kept; its reverse rows are written
+/// again from the pins that stay. Unlike the live scrub it writes only the
+/// document and those rows: the body is the one the image held, admitted
+/// when it was written, so it is neither admitted nor projected again, and
+/// no custody read runs before the restore commits.
+fn rebuild_restored(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: EntityId) -> Result<()> {
+    let doc = super::document::NoteDocument::from_loro(
+        note,
+        super::storage::load_for_erasure(vault, txn, note)?,
+    )?;
+    let floor = HexId(note);
+    if NOTE_ERASE_AUTHORITY_FLOOR
+        .get(&vault.store, txn, &floor)?
+        .is_none()
+    {
+        let vv = doc.doc.oplog_vv().encode();
+        NOTE_ERASE_AUTHORITY_FLOOR.put(&vault.store, txn, &floor, &vv)?;
+    }
+    remove_erased_pins(vault, txn, &doc)?;
+    doc.doc.commit();
+    let clean = super::document::NoteDocument::load(note, &super::storage::state_copy(&doc.doc)?)?;
+    let pins = clean.pins()?;
+    validate_pins(vault, txn, &pins)?;
+    super::storage::snapshot(vault, txn, note, &clean.doc, true)?;
+    super::pin_index::remove_citing(&vault.store, txn, note)?;
+    super::pin_index::index_pins(&vault.store, txn, note, &pins)
+}
+
+/// Drops `note`'s unacknowledged local edit frames and disclosure floors, as
+/// the live scrub does once it has rebuilt the document: they were cut from
+/// the history the rebuild left behind.
+fn drop_edit_frames(store: &Store, txn: &mut heed::RwTxn<'_>, note: EntityId) -> Result<()> {
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    super::sync_rows::SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
+    super::sync_rows::SYNC_AD_E.delete_from(store, txn, &key_prefix)?;
+    Ok(())
+}
+
+/// Drops `note`'s saved full-view receipts: each holds a whole old document
+/// view, its erased pins and quotes included. Its authored operation ids
+/// survive in the authorship map, so a replay cannot apply its command again.
+fn drop_view_receipts(store: &Store, txn: &mut heed::RwTxn<'_>, note: EntityId) -> Result<()> {
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    super::sync_rows::NOTE_RECEIPT_BY_REQUEST.delete_from(store, txn, &key_prefix)?;
+    super::sync_rows::SYNC_NC_E.delete_from(store, txn, &key_prefix)?;
+    Ok(())
 }
 
 pub(super) fn pin_is_erased(
@@ -234,7 +289,12 @@ pub(super) fn remove_erased_pins(
 
 /// Retired heads can retain authenticated pins after the live head stopped
 /// citing their source. They are not all in the live reverse-pin index.
-fn scrub_stored_proposal_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+/// Returns the NOTEs whose proposal documents lost a pin.
+fn scrub_stored_proposal_citations(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut scrubbed = BTreeSet::new();
     for key in super::documents::NOTE_PROPOSAL_DOC.scan_keys(&vault.store, txn, &[])? {
         let Some(raw) = super::documents::NOTE_PROPOSAL_DOC.get(&vault.store, txn, &key)? else {
             continue;
@@ -248,17 +308,23 @@ fn scrub_stored_proposal_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> 
             let retained = super::document::NoteDocument::load((key.0).0, &clean)?;
             validate_pins(vault, txn, &retained.pins()?)?;
             super::documents::NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &clean)?;
+            scrubbed.insert((key.0).0);
         }
     }
-    Ok(())
+    Ok(scrubbed)
 }
 
 /// A switched-away canonical slot keeps its own snapshot and update journal,
 /// independently of the proposal carrier and the current reverse-pin index.
-fn scrub_retired_canonical_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+/// Returns the NOTEs whose retained heads lost a pin.
+fn scrub_retired_canonical_citations(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
     use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
 
-    let mut slots = std::collections::BTreeSet::new();
+    let mut scrubbed = BTreeSet::new();
+    let mut slots = BTreeSet::new();
     for (note, head) in super::documents::NOTE_HEAD_DOC.scan_keys(&vault.store, txn, &[])? {
         slots.insert((note, note));
         slots.insert((note, head));
@@ -311,6 +377,7 @@ fn scrub_retired_canonical_citations(vault: &Vault, txn: &mut heed::RwTxn<'_>) -
             &clean.doc.shallow_since_vv().to_vv().encode(),
         )?;
         vault.store.port_document_updates_delete(txn, slot)?;
+        scrubbed.insert(note);
     }
-    Ok(())
+    Ok(scrubbed)
 }
