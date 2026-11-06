@@ -167,6 +167,14 @@ impl ExecutorStorage<'_> {
                     expected,
                     healed_model,
                     |wtxn| {
+                        // FIX 4747: an agent run's step, whose run is its
+                        // attempt's own, commits only while this machine
+                        // holds the run; the fence renews its lease.
+                        crate::agent_dispatch::fence_agent_run_step_in_txn(
+                            vault,
+                            wtxn,
+                            crate::attempt_queue::AttemptId::from_bytes(record.run_id.as_bytes())?,
+                        )?;
                         for receipt in receipts {
                             let key = (receipt.folded.owner, receipt.folded.occurrence);
                             FOLDS.put(&vault.store, wtxn, &key, receipt)?;

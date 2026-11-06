@@ -30,6 +30,22 @@ pub(super) fn settle(
     let status = &claimed.status;
     let attempt = &status.attempt;
     let now = unix_now();
+    // FIX 4747: a run whose run TASK moved to another machine while it ran
+    // stands down here: its try ends with its typed cause, and neither its
+    // run TASK nor the TASK it realizes changes. A media trap already parked
+    // the try; its wake's claim judges the run TASK again.
+    if !matches!(ran, Ok(BoundRun::Trapped))
+        && let Some(fence) = &claimed.fence
+        && AgentDispatcher::new(vault).stand_down_moved_agent_run(
+            fence,
+            attempt,
+            LEASE_OWNER,
+            now,
+        )?
+    {
+        tracing::warn!(attempt = ?attempt.id, "an agent run stood down: another machine runs it");
+        return Ok(());
+    }
     // OF-540: the run's execution context, bound while its lease holds; one
     // that cannot bind leaves the run to close unattributed.
     if let Err(error) =

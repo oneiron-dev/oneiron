@@ -339,6 +339,16 @@ impl<'a> AgentDispatcher<'a> {
                     )?;
                 }
                 let mut status = agent_dispatch_status(status)?;
+                // FIX 4747: the run's portable record and this machine's
+                // executor lease, minted in this write; a dispatch that
+                // dedupes to its existing try mints nothing.
+                super::run_task::mint_agent_run_task_in_txn(
+                    self.vault,
+                    wtxn,
+                    status.attempt.id,
+                    &status.input,
+                    input.now,
+                )?;
                 let index: Vec<_> = status
                     .input
                     .definition

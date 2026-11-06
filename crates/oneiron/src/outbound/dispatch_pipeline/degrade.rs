@@ -70,6 +70,7 @@ fn ambient_alternative_request(
     // FIX 4747: the alternative sends for the interrupt's TASK, so its
     // transport call passes the same send executor fence.
     request.send_executor_fence = parent.send_executor_fence;
+    request.agent_run_fence = parent.agent_run_fence;
     // FIX 4747 (review #6574): the alternative is a send of its own under an
     // engine send id derived from its interrupt's and its surface, the same
     // on every machine. An alternative an earlier executor may have sent is

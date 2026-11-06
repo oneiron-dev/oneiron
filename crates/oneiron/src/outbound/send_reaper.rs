@@ -60,13 +60,13 @@ pub struct ConnectorSendLeaseReap {
 
 impl Vault {
     /// FIX 4747 (review #6574): a new serve run over a vault that stayed open
-    /// takes, renews and reaps send executor leases again. The embedded
-    /// engine calls it when it serves again after a stop, once the stopped
-    /// run's workers have joined, so no pass of that run outlives the
-    /// release; an app whose lid or sleep hook released the leases calls it
-    /// when the machine wakes.
-    pub fn resume_send_executor_leases(&self) {
-        self.send_executor_leases_released
+    /// takes, renews and reaps executor leases again, its connector sends'
+    /// and its agent runs'. The embedded engine calls it when it serves
+    /// again after a stop, once the stopped run's workers have joined, so no
+    /// pass of that run outlives the release; an app whose lid or sleep hook
+    /// released the leases calls it when the machine wakes.
+    pub fn resume_executor_leases(&self) {
+        self.executor_leases_released
             .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -84,7 +84,7 @@ impl Vault {
     /// # Errors
     /// Storage errors.
     pub fn release_send_executor_leases(&self) -> Result<usize, Error> {
-        self.send_executor_leases_released
+        self.executor_leases_released
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let now = self.now_recorded_at();
         let (node_id, held) = {
@@ -135,7 +135,7 @@ impl Vault {
         holds_channel: &dyn Fn(&ConnectorSendTask) -> bool,
     ) -> Result<ConnectorSendLeaseReap, Error> {
         if self
-            .send_executor_leases_released
+            .executor_leases_released
             .load(std::sync::atomic::Ordering::SeqCst)
         {
             return Ok(ConnectorSendLeaseReap::default());
