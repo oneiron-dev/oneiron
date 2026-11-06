@@ -30,7 +30,7 @@ pub(super) struct NativeAggregateObservation {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-enum NativeObservedLeaseState {
+pub(super) enum NativeObservedLeaseState {
     Unknown,
     Open {
         reserve_units: u64,
