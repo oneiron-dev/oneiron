@@ -15,10 +15,11 @@ oneiron = { path = "../oneiron" }
 # sketch — is in neither `Cargo.lock` nor the local registry cache, so choosing
 # it would add a fetch and a second TLS stack to buy nothing.
 #
-# `json` is deliberately NOT enabled: every body on this client is serialized
-# and deserialized by hand so the 64 MiB request and response ceilings are
-# enforced BEFORE any decode allocation (I13). A convenience `.json()` would
-# decode first and measure never.
+# `json` is deliberately NOT enabled: request serialization measures the raw
+# request ceiling before send. Synchronous replies decode through the capped
+# reader, without a whole raw-body copy. Typed allocations can begin before
+# its final size probe, but read failures still precede the decode result.
+# A convenience `.json()` would bypass that response-reader boundary.
 reqwest = { version = "0.12", default-features = false, features = [
   "blocking",
   "rustls-tls",

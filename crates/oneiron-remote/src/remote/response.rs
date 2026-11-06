@@ -1,12 +1,10 @@
 use super::*;
 
-/// Maximum bytes read from a FAILING response before parsing is attempted.
+/// Maximum bytes admitted from a failing response.
 ///
-/// Far smaller than the success ceiling and for a different reason: an error
-/// body is a small JSON envelope, and anything large arriving on an error
-/// status is a proxy's HTML apology. Reading 64 KiB is enough to parse the
-/// envelope and little enough that a hostile endpoint cannot make the client
-/// buffer a response it will refuse anyway.
+/// Typed decoding proceeds as the capped reader consumes the body. The
+/// one-byte probe checks the final size before its result is returned; this
+/// does not promise that every typed allocation waits for that final check.
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 
 /// The server's error envelope, exactly as `api/facade.rs` serializes it:
