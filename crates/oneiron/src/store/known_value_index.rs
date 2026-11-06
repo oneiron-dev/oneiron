@@ -44,6 +44,7 @@ mod run;
 mod writer_index;
 
 use std::cmp::Reverse;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -426,6 +427,51 @@ impl KnownValues {
         spans
     }
 
+    /// Each custody record a known value in `data` is held by, past those
+    /// `keep` exempts (FIX 8966): every value at every offset, overlapping
+    /// or not, and each holder of the same bytes, in the bytes as they are
+    /// and in each spelling [`spans`](Self::spans) reads. What a release of
+    /// `data` shows, never which value wins a place: a grant judged by these
+    /// holders covers every value the bytes carry.
+    pub(crate) fn holders_except(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+    ) -> BTreeSet<EntityId> {
+        let mut holders = BTreeSet::new();
+        let mut read = |bytes: &[u8]| {
+            let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, bytes);
+            for at in 0..bytes.len() {
+                let hits = scan.hits(at);
+                if hits == 0 {
+                    continue;
+                }
+                let rest = &bytes[at..];
+                self.each_in(rest, hits, |known| {
+                    if let ValueOrigin::Custody(custody) = known.origin
+                        && !keep(&rest[..known.len])
+                    {
+                        holders.insert(custody);
+                    }
+                });
+            }
+        };
+        read(data);
+        for view in [forms::percent_view(data), forms::json_view(data)]
+            .into_iter()
+            .flatten()
+        {
+            read(&view.bytes);
+        }
+        if let Some(view) = forms::form_view(data) {
+            read(&view.bytes);
+        }
+        for (_, view) in forms::base64_views(data, self.reach()) {
+            read(&view.bytes);
+        }
+        holders
+    }
+
     /// The known value `data` is, whole.
     /// Exact raw whole-value identity, without exposing its keyed fingerprint.
     pub(crate) fn is_exact_value(&self, data: &[u8]) -> bool {
@@ -607,6 +653,35 @@ impl KnownValues {
                     && self.keys.fingerprint(&rest[..known.len]) == known.fingerprint
             })
         })
+    }
+
+    /// Hands `found` every known value `rest` starts with whose first
+    /// window's length `hits` names, each holder of the same bytes
+    /// included: [`Self::longest_in`]'s candidates, all of them.
+    fn each_in<'s>(&'s self, rest: &[u8], hits: u32, mut found: impl FnMut(&'s Known)) {
+        let mut hasher = blake3::Hasher::new_keyed(&self.keys.tag);
+        let mut hashed = 0;
+        for (lane, &window) in self.windows.iter().enumerate() {
+            if window > rest.len() {
+                break;
+            }
+            if hits & (1 << lane) == 0 {
+                continue;
+            }
+            hasher.update(&rest[hashed..window]);
+            hashed = window;
+            let Some(bucket) = self.bucket(&tag_of(&hasher.finalize())) else {
+                continue;
+            };
+            for known in bucket {
+                if known.len.min(TAG_WINDOW) == window
+                    && known.len <= rest.len()
+                    && self.keys.fingerprint(&rest[..known.len]) == known.fingerprint
+                {
+                    found(known);
+                }
+            }
+        }
     }
 
     /// `data` with each known value replaced by its handle's text, as far

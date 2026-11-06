@@ -233,6 +233,16 @@ struct ProjectionInputs {
     facts: RepoMarkFacts,
 }
 
+impl ProjectionInputs {
+    /// The known-value history witness the base was read under.
+    fn known_history(&self) -> Option<[u8; 32]> {
+        match &self.base {
+            RepoProjectionRecord::Graph { known_history, .. } => *known_history,
+            _ => None,
+        }
+    }
+}
+
 /// The inputs `roots` of `canonical` would be copied under now; `None`
 /// when no mark is readable and custody knows no value, which needs no
 /// copy.
@@ -389,8 +399,10 @@ fn standing_for_base(
 /// when no readable mark and no value custody knows touches the closure:
 /// the caller keeps the canonical path, and nothing is written. The walk
 /// reads the known values in one pass under the custody read guard, after
-/// the witness its record names was read, so a value learned between them
-/// moves the copy, never hides in it.
+/// the witness its record names was read; once it ends the witness is read
+/// again, and a walk that custody learned or erased a value during is done
+/// again (FIX 8966), so neither a copy nor a clean answer leaves out a
+/// value custody knew before it was returned.
 ///
 /// # Errors
 /// An object the canonical store lacks, a failed git effect or write, or
@@ -402,55 +414,67 @@ pub(crate) fn materialize_masked_git_graph(
     roots: &RepoGitProjectionRoots,
     now: u64,
 ) -> Result<Option<RepoGitProjection>> {
-    let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
-        return Ok(None);
-    };
-    require_store_not_erased(vault, inputs.store_id)?;
-    let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
-    let _building_lock = building_lock(vault, inputs.store_id, key)?;
-    if let Some(standing) = standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots)? {
-        return Ok(Some(standing));
-    }
-    let building = building_dir(vault, inputs.store_id, key)?;
-    // A building directory is an interrupted copy: it starts over.
-    if building.exists() {
-        std::fs::remove_dir_all(&building)?;
-    }
-    let copy_store = wire.init_projection_store(&building)?;
-    let copy = vault.with_known_values(|known| {
-        copy_repo_projection_objects(
+    loop {
+        let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
+            return Ok(None);
+        };
+        require_store_not_erased(vault, inputs.store_id)?;
+        let key = RepoProjectionClaim::graph(inputs.base.clone())?.graph;
+        let _building_lock = building_lock(vault, inputs.store_id, key)?;
+        if let Some(standing) =
+            standing_for_base(vault, wire, &inputs.base, inputs.store_id, roots)?
+        {
+            return Ok(Some(standing));
+        }
+        let building = building_dir(vault, inputs.store_id, key)?;
+        // A building directory is an interrupted copy: it starts over.
+        if building.exists() {
+            std::fs::remove_dir_all(&building)?;
+        }
+        let copy_store = wire.init_projection_store(&building)?;
+        let copy = vault.with_known_values(|known| {
+            copy_repo_projection_objects(
+                vault,
+                wire,
+                canonical,
+                &copy_store,
+                &roots.tips(),
+                &inputs.facts,
+                inputs.store_id,
+                None,
+                known,
+            )
+        })?;
+        let witness = {
+            let txn = vault.store.env.read_txn()?;
+            vault.store.known_history_witness_in_txn(&txn)?
+        };
+        if witness != inputs.known_history() {
+            std::fs::remove_dir_all(&building)?;
+            continue;
+        }
+        if !copy.changed_any() {
+            std::fs::remove_dir_all(&building)?;
+            return Ok(None);
+        }
+        let marks = closure_marks(&inputs.facts, &copy)?;
+        let graph = RepoProjectionClaim::graph(graph_record_with(
+            &inputs.base,
+            marks,
+            RepoProjectionAudience::Masked,
+        ))?;
+        return land_copy(
             vault,
             wire,
-            canonical,
-            &copy_store,
-            &roots.tips(),
-            &inputs.facts,
+            &building,
+            &graph,
             inputs.store_id,
-            None,
-            known,
+            roots,
+            &copy,
+            now,
         )
-    })?;
-    if !copy.changed_any() {
-        std::fs::remove_dir_all(&building)?;
-        return Ok(None);
+        .map(Some);
     }
-    let marks = closure_marks(&inputs.facts, &copy)?;
-    let graph = RepoProjectionClaim::graph(graph_record_with(
-        &inputs.base,
-        marks,
-        RepoProjectionAudience::Masked,
-    ))?;
-    land_copy(
-        vault,
-        wire,
-        &building,
-        &graph,
-        inputs.store_id,
-        roots,
-        &copy,
-        now,
-    )
-    .map(Some)
 }
 
 /// The masked copy that stands for `roots` of `canonical` now, admitted
