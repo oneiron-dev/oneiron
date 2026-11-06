@@ -97,14 +97,21 @@ pub(in crate::code_run::storage) fn raw_put_descriptor_in_txn(
     output: &CodeRunRawOutput,
     body: &StoredBody,
 ) -> Result<Option<crate::provenance::body::OwnedBody>> {
-    use crate::provenance::body::{OwnedBody, owned_body_in_txn};
+    use crate::provenance::body::{BodyLocation, OwnedBody, owned_body_in_txn};
     let slot = owned_body(owner, output, body)?;
     let prior = owned_body_in_txn(store, txn, &owner, &slot.occurrence);
     if raw_put_publishes_descriptor(&prior, &slot) {
         return Ok(Some(slot));
     }
+    // The hold names where these bytes are stored now, so the same bytes
+    // stored again at the other location take a hold of their own, and the
+    // owner's release reaches the copy the row holds.
+    let location = slot
+        .state
+        .held()
+        .map_or(BodyLocation::Inline, |held| held.location);
     let hold = OwnedBody {
-        occurrence: ResultOccurrence::raw(owner, &output.path, &output.raw_blake3)?.id(),
+        occurrence: ResultOccurrence::raw(owner, &output.path, &output.raw_blake3, location)?.id(),
         ..slot
     };
     let hold_prior = owned_body_in_txn(store, txn, &owner, &hold.occurrence)?;
