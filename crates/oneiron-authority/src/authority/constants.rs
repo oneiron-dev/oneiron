@@ -160,6 +160,10 @@ pub const SLIP_KEY_TRUSTED_CONTACT: &str = "trusted_contact";
 /// trusted-contact key. Present only on a seat-child mint, so every other
 /// slip's wire form is unchanged.
 pub const SLIP_KEY_SEAT_CLAIM: &str = "seat_claim";
+/// The member who approved the pairing a mint redeems (FIX 11713), after the
+/// seat-claim key. Present only on a mint a person approved, so every other
+/// mint's wire form is unchanged.
+pub const SLIP_KEY_MINTING_MEMBER: &str = "minting_member";
 pub const DELEGATION_KEY_PURPOSE: &str = "purpose";
 pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
 pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";
