@@ -17,3 +17,10 @@ pub(super) use self::decode_residence_operation_budgets::{
 };
 
 pub(crate) use self::policy_scope_migration::normalize_policy_manifest_scope;
+
+/// The native scoped-grant parser shared with the typed manifest projection.
+pub(super) fn decode_scoped_grant_table(
+    value: &rmpv::Value,
+) -> Option<Vec<crate::gate::grants::PolicyScopedGrant>> {
+    decode_policy_tables::parse_scoped_grants(value)
+}

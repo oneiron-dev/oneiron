@@ -73,7 +73,7 @@ pub(crate) fn normalize_policy_manifest_scope(data: &[u8]) -> Option<Vec<u8>> {
         }
     }
     let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &Value::Map(entries)).ok()?;
+    crate::gate::value_encoding::write_value(&mut out, &Value::Map(entries)).ok()?;
     decode_policy_manifest(&out)?;
     (out != data).then_some(out)
 }

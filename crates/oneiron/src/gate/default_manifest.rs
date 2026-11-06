@@ -113,7 +113,7 @@ pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<V
         default_owner_policy_change_notifications(),
     ));
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(fields))
+    super::value_encoding::write_value(&mut encoded, &Value::Map(fields))
         .map_err(|_| Error::InvariantViolation("policy manifest notification encode"))?;
     Ok(encoded)
 }
