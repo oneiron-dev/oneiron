@@ -746,15 +746,26 @@ fn stage_retrieval_run_with_visibility(
     wtxn: &mut RwTxn<'_>,
     record: &RetrievalRunRecord,
     published: bool,
-    memory: Option<&mut crate::host_memory::MemoryLease>,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     record.state.validate()?;
     if let Some(trace) = &record.policy_trace {
         trace.validate()?;
     }
-    if let Some(existing) = RETRIEVAL_RUN.get(target, &*wtxn, &record.run_id)? {
-        super::turn_index::delete(target, wtxn, &existing)?;
-        delete_retrieval_trace_fork_indexes_for_run(target, wtxn, record.run_id)?;
+    if let Some(existing) =
+        RETRIEVAL_RUN.get_with_key_capacity(target, &*wtxn, &record.run_id, |bytes| {
+            if let Some(memory) = memory.as_deref_mut() {
+                memory.materialized(0, bytes);
+            }
+        })?
+    {
+        super::turn_index::delete_with_memory(target, wtxn, &existing, memory.as_deref_mut())?;
+        delete_retrieval_trace_fork_indexes_for_run_with_memory(
+            target,
+            wtxn,
+            record.run_id,
+            memory.as_deref_mut(),
+        )?;
     }
     if let Some(memory) = memory {
         let row = RETRIEVAL_RUN.stage(&record.run_id, record)?;

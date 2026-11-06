@@ -159,6 +159,24 @@ bound detached path. Serialization scratch, keys and values of marker, index,
 session and other unbound writes, finalized rows and later decoded records are
 separate allocations outside it.
 
+Before the provisional stage's original retrieval-row put, the same optional
+caller lease also records its original lookup key's actual capacity. A found
+existing row still triggers direct by-turn deletion, followed by the original
+trace-fork cleanup. The direct turn delete records its original encoded key's
+actual capacity before the same operation; a record without a turn still does
+nothing. The fork cleanup reuses its existing capacity accounting on that same
+lease, including its original fallback scan when required. No extra lookup,
+scan, encoding, copy or lease is added.
+
+The pre-put lookup still propagates errors, unlike the fork helper's existing
+error-to-scan fallback. The existing-row scope, cleanup order, validation and
+later puts are unchanged. Native keys and cleanup buffers drop before the
+caller lease, which conservatively keeps their known charges until it drops.
+An unbound stage uses the same native operations without capacity accounting.
+This covers neither the separately decoded existing row and trace nor raw
+value copies, overlay copies, database pages, transaction scratch, allocation
+peaks or a full working-set bound. Other pre-put and marker/index allocations
+remain separate.
 
 A bound context pack also carries that same supplied host-memory handle through
 its run and deferred-pack owners after the pipeline is consumed. Each terminal
