@@ -410,27 +410,28 @@ impl RepoProposal {
 
 impl Vault {
     /// Routes `evidence`, a verdict that lists a removed public name, to a
-    /// person review on each stored proposal it names, in one writer (FIX
-    /// 4365). A repeated check finds the request it routed before, decided
-    /// or not, and writes nothing. An id that names no stored proposal has
-    /// no review route and is skipped. Answers the hex ids of the named
-    /// proposals whose review no person decided yet.
+    /// person review on each stored proposal it names, in the caller's
+    /// writer (FIX 4365). That writer settles the verdict's slot, after its
+    /// own checks, so a refused completion routes nothing. A repeated check
+    /// finds the request it routed before, decided or not, and writes
+    /// nothing. An id that names no stored proposal has no review route and
+    /// is skipped. Answers the hex ids of the named proposals whose review
+    /// no person decided yet.
     ///
     /// # Errors
     /// A store failure, or a kept request for this verdict whose binding
     /// differs.
-    pub(crate) fn route_contract_review(
+    pub(crate) fn route_contract_review_in_txn(
         &self,
+        txn: &mut heed::RwTxn<'_>,
         evidence: &ContractReviewEvidence,
     ) -> Result<Vec<String>> {
-        let mut txn = self.store.env.write_txn()?;
         let mut waiting = Vec::new();
-        let mut routed = false;
         for hex in &evidence.proposals {
             let Ok(id) = EntityId::from_hex(hex) else {
                 continue;
             };
-            let Some(mut row) = PROPOSAL.get(&self.store, &txn, &id)? else {
+            let Some(mut row) = PROPOSAL.get(&self.store, txn, &id)? else {
                 continue;
             };
             let kept = row
@@ -452,14 +453,10 @@ impl Vault {
                         evidence: evidence.clone(),
                         decision: None,
                     });
-                    store(self, &mut txn, &row)?;
-                    routed = true;
+                    store(self, txn, &row)?;
                     waiting.push(hex.clone());
                 }
             }
-        }
-        if routed {
-            txn.commit()?;
         }
         Ok(waiting)
     }

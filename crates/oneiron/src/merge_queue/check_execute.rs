@@ -13,11 +13,13 @@ use super::check_inputs::{
 use super::check_store::{
     QueueCheckConfiguration, QueueCheckRequest, QueueCheckStatus, QueueCheckWork, WorkUpdate,
 };
+use super::contract_review::contract_review_evidence;
 use super::plan::RepoCheckPlan;
 use super::{BatchState, CheckPhase, MergeBatch, MergeQueue, SpeculativePath};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::git_wire::lock_repository;
+use crate::repo_mutation::proposal::ContractReviewEvidence;
 use crate::store::contract_oracle::{CommandOutput, ContractOracle, ContractVerdict, invalid};
 
 impl MergeQueue<'_> {
@@ -249,13 +251,13 @@ impl MergeQueue<'_> {
             let status = QueueCheckStatus::Settled {
                 verdict_ref: verdict_ref.clone(),
             };
-            return self.finish_step(work, step, status, None, Some(verdict_ref), None);
+            return self.finish_step(work, step, status, None, Some(verdict_ref), None, None);
         }
         let environment = match host.environment() {
             Ok(environment) => environment,
             Err(need) => {
                 let status = QueueCheckStatus::NeedsConfiguration(need);
-                return self.finish_step(work, step, status, None, None, None);
+                return self.finish_step(work, step, status, None, None, None, None);
             }
         };
         let (input_scope, input_taint) = snapshot_input_scope_taint(self.vault, config.repo)?;
@@ -288,7 +290,7 @@ impl MergeQueue<'_> {
         }
         if receipt.verdict_ref.is_none() {
             if let Some(status) = self.run_bound(&batch, &path, &mut receipt, host, stop)? {
-                return self.finish_step(work, step, status, Some(receipt), None, None);
+                return self.finish_step(work, step, status, Some(receipt), None, None, None);
             }
         }
         let verdict_ref = receipt
@@ -298,9 +300,6 @@ impl MergeQueue<'_> {
         let verdict = ContractOracle::new(self.vault)
             .verdict(&verdict_ref)?
             .ok_or(Error::CorruptedIndex("merge verdict is missing"))?;
-        // A removed public name routes to a person review before the slot
-        // settles (FIX 4365). The verdict stays red.
-        self.route_contract_review(&batch, step.mask, step.phase, &path.tree, &verdict)?;
         let passed = verdict.passes();
         let _guard = lock_repository(self.repo.common_dir())?;
         let mut current = self.batch(&step.batch)?;
@@ -316,10 +315,15 @@ impl MergeQueue<'_> {
                 QueueCheckHoldReason::Refused,
                 error.to_string(),
             ));
-            return self.finish_step(work, step, status, Some(receipt), None, None);
+            return self.finish_step(work, step, status, Some(receipt), None, None, None);
         }
         let status = QueueCheckStatus::Completed { passed };
         let key = self.batch_key(&current.id);
+        // A removed public name routes to a person review in the writer that
+        // settles the slot, after its lease and live approval checks (FIX
+        // 4365). The verdict stays red.
+        let review =
+            contract_review_evidence(&current, step.mask, step.phase, &path.tree, &verdict);
         self.finish_step(
             work,
             step,
@@ -327,6 +331,7 @@ impl MergeQueue<'_> {
             Some(receipt),
             Some(verdict_ref),
             Some((key, &current)),
+            review,
         )
     }
 
@@ -398,6 +403,7 @@ impl MergeQueue<'_> {
 
     /// Commits one bound step: a whole check ends its work; an inline step
     /// of a diagnosis keeps it running unless it could not reach a verdict.
+    /// `contract_review` routes with the settled `batch` slot (FIX 4365).
     #[allow(clippy::too_many_arguments)]
     fn finish_step(
         &self,
@@ -407,6 +413,7 @@ impl MergeQueue<'_> {
         receipt: Option<QueueCheckReceipt>,
         verdict_ref: Option<String>,
         batch: Option<(String, &MergeBatch)>,
+        contract_review: Option<ContractReviewEvidence>,
     ) -> Result<QueueCheckWork> {
         let ends = !step.inline
             || !matches!(
@@ -420,6 +427,7 @@ impl MergeQueue<'_> {
                 receipts: receipt.into_iter().collect(),
                 verdict_ref,
                 batch,
+                contract_review,
                 ..WorkUpdate::default()
             },
         )
