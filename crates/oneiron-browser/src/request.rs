@@ -64,7 +64,8 @@ impl BrowserBody for Cursor<bytes::Bytes> {
 #[cfg(feature = "driver")]
 pub struct SpooledResponse {
     pub status: u16,
-    pub headers: Vec<(String, String)>,
+    /// HTTP field values as received, without UTF-8 decoding.
+    pub headers: Vec<(String, Vec<u8>)>,
     pub body: Box<dyn BrowserBody>,
 }
 
