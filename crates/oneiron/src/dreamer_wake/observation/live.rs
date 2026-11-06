@@ -277,6 +277,7 @@ impl<'a> StepCalls<'a> {
                 wtxn,
                 self.step_hash,
                 &owed,
+                snapshot.guard_id,
             )
         }) {
             skipped(&error, "native call admission");
@@ -413,6 +414,7 @@ impl Drop for NativeMeterCapture<'_> {
                 wtxn,
                 self.origin,
                 self.lease.id(),
+                snapshot.guard_id,
                 range,
             )
         }) {
