@@ -238,6 +238,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 extraction_egress: call.inference.extraction_egress,
                 generation: Some(&generation),
                 native_source: Some(crate::llm::decision::DecisionCallSource::new(
+                    ctx.vault,
                     ctx.deadline,
                     step.attempt_id,
                 )),

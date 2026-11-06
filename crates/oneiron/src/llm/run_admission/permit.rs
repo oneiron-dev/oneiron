@@ -92,6 +92,12 @@ impl RunPermit {
         Ok(())
     }
 
+    /// Borrows the source captured on this actual permit before the native read.
+    #[must_use]
+    pub fn native_decision_admission(&self) -> Option<&crate::dreamer_wake::DecisionCallAdmission> {
+        self.capture.native_admission()
+    }
+
     #[must_use]
     pub fn facts(&self) -> &PermitFacts {
         &self.facts

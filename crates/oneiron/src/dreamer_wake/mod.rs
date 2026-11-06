@@ -11,7 +11,7 @@
 mod arc_backstop;
 mod deadline;
 mod decision_source;
-pub use decision_source::{DecisionCallAdmission, DecisionCallSource};
+pub use decision_source::{DecisionCallAdmission, DecisionCallInvoice, DecisionCallSource};
 mod driver;
 pub(crate) mod follower;
 mod grain;
@@ -208,7 +208,6 @@ fn text_turns_in_txn(
 
 // `settlement` is impl-only: it re-opens `impl DreamerWakeDriver` and owns no
 // name the rest of the crate reaches for, so it needs no re-export.
-
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
