@@ -54,6 +54,10 @@ pub struct SelfBriefInput<'a> {
     /// The vault's people as the reader's read admits them, when the host
     /// read them; the prefix holds a budgeted roster of them.
     pub people: Option<&'a People>,
+    /// The roster's token budget when the agent's board layout gives
+    /// `people` a share (BOARD-LAYOUT); `None` keeps
+    /// [`super::PEOPLE_PREFIX_BUDGET_TOK`].
+    pub people_budget_tok: Option<usize>,
 }
 
 /// A skill index row is resolved from the skill record and reliability claim;
@@ -119,7 +123,12 @@ impl SelfBrief {
         let people = input.people.map(|people| {
             let mut pinned = vec![input.self_ref, input.principal];
             pinned.extend(input.cast.iter().copied());
-            people.residence(&pinned)
+            people.residence_within(
+                &pinned,
+                input
+                    .people_budget_tok
+                    .unwrap_or(super::PEOPLE_PREFIX_BUDGET_TOK),
+            )
         });
         Ok(Self {
             self_ref: input.self_ref,
@@ -274,6 +283,18 @@ impl SelfBriefState {
         read_set: &SessionReadSet,
         people: Option<&People>,
     ) -> Result<SelfBrief> {
+        self.describe_within(vault, read_set, people, None)
+    }
+
+    /// [`Self::describe`] with the prefix roster's token budget, when the
+    /// agent's layout gives `people` a share.
+    pub fn describe_within(
+        &self,
+        vault: &Vault,
+        read_set: &SessionReadSet,
+        people: Option<&People>,
+        people_budget_tok: Option<usize>,
+    ) -> Result<SelfBrief> {
         SelfBrief::describe(
             vault,
             SelfBriefInput {
@@ -291,6 +312,7 @@ impl SelfBriefState {
                 read_set,
                 working_set: &self.working_set,
                 people,
+                people_budget_tok,
             },
         )
     }
@@ -304,9 +326,20 @@ pub struct SelfBriefSession {
     /// The persons the cached prefix's `people` roster holds; the live board
     /// names them by bare handle.
     resident_people: BTreeSet<EntityId>,
+    /// The prefix roster's token budget the next epoch boundary lays out
+    /// (BOARD-LAYOUT): a layout change reaches the cached prefix only at
+    /// turn one or a fold, never in between.
+    people_budget_tok: Option<usize>,
 }
 
 impl SelfBriefSession {
+    /// Sets the prefix roster's token budget the next turn one or fold
+    /// renders under: the `people` share of the agent's board layout, or
+    /// `None` for [`super::PEOPLE_PREFIX_BUDGET_TOK`].
+    pub fn set_people_budget_tok(&mut self, budget_tok: Option<usize>) {
+        self.people_budget_tok = budget_tok;
+    }
+
     pub fn turn_one(
         &mut self,
         vault: &Vault,
@@ -314,7 +347,7 @@ impl SelfBriefSession {
         read_set: &SessionReadSet,
         people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
-        let brief = state.describe(vault, read_set, people)?;
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
         self.resident_people = brief.resident_people();
         self.cached_prefix = Some(brief.render());
         Ok(PlacedSelfBrief {
@@ -335,7 +368,7 @@ impl SelfBriefSession {
                 "self brief fold before turn one",
             ));
         }
-        let brief = state.describe(vault, read_set, people)?;
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
         self.resident_people = brief.resident_people();
         self.cached_prefix = Some(brief.render());
         Ok(PlacedSelfBrief {

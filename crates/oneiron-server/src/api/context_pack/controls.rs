@@ -292,6 +292,12 @@ pub(crate) struct CoreContextPackRequest {
     /// Signals per page, 1..=1000.
     #[serde(default)]
     pub(super) signals_limit: Option<usize>,
+    /// Optional signal read/filter/page budget, in milliseconds (1..=60000).
+    /// Starts when the signal read begins, after pack assembly. Expiry returns
+    /// 408 DEADLINE_EXCEEDED with no partial page or advanced cursor. Omitted,
+    /// the complete feed is read without a signal deadline.
+    #[serde(default)]
+    pub(super) signals_deadline_ms: Option<u64>,
     /// The PERSON whose messages' signals are read. Required for an owner
     /// credential without a bound person; a delegated credential may only
     /// name its own bound person.

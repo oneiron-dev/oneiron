@@ -32,7 +32,7 @@ pub(super) fn catalog_entry(
     model: &ModelRef,
     provider: &ProviderConfig,
 ) -> anyhow::Result<LlmCatalogEntry> {
-    let entry = LlmCatalogEntry {
+    let mut entry = LlmCatalogEntry {
         model: engine_model_id(model, provider)?,
         display_name: model.model.clone(),
         locality: provider.locality,
@@ -49,6 +49,16 @@ pub(super) fn catalog_entry(
             JsonValue::String(model.model.clone()),
         )]),
     };
+    for (key, value) in [
+        ("chat_path", provider.chat_path.as_ref()),
+        ("prefill_wire", provider.prefill_wire.as_ref()),
+    ] {
+        if let Some(value) = value {
+            entry
+                .metadata
+                .insert(key.to_owned(), JsonValue::String(value.clone()));
+        }
+    }
     Ok(match model_family(model, provider) {
         Some(family) => entry.with_family(family),
         None => entry,

@@ -26,7 +26,7 @@ pub enum ProviderKind {
     /// Cartesia's speech API (`POST /tts/bytes`, `x-api-key`): a
     /// `[models.media.speech]` rung only.
     Cartesia,
-    /// ElevenLabs' speech API (`POST /v1/text-to-speech/{voice}/stream`,
+    /// ElevenLabs' speech API (`POST /v1/text-to-speech/{voice}`,
     /// `xi-api-key`): a `[models.media.speech]` rung only.
     Elevenlabs,
     /// An own-server VoxCPM2 worker (`deploy/voxcpm2`): it renders each
@@ -53,10 +53,11 @@ impl ProviderKind {
     }
 
     /// Whether a `key_secret` key of this kind can leave through the
-    /// credential broker: a chat wire's, or the Gemini API's media wire's.
+    /// credential broker: a chat wire's, the Gemini API's media wire's, or a
+    /// hosted speech wire's.
     #[must_use]
     pub fn brokers(self) -> bool {
-        self.generates() || matches!(self, Self::Gemini)
+        self.generates() || matches!(self, Self::Gemini | Self::Cartesia | Self::Elevenlabs)
     }
 
     /// Whether this kind serves media seats and nothing else.
@@ -232,12 +233,13 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env` or
 /// `key_secret`, never as a literal in a config file.
-const CREDENTIAL_HEADERS: [&str; 5] = [
+const CREDENTIAL_HEADERS: [&str; 6] = [
     "authorization",
     "x-api-key",
     "x-goog-api-key",
     "api-key",
     "proxy-authorization",
+    "xi-api-key",
 ];
 
 /// A local Sign in with ChatGPT registration. This is a locator, never a
@@ -267,6 +269,8 @@ pub(super) struct ProviderFile {
     max_output_tokens: Option<u64>,
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
+    chat_path: Option<String>,
+    prefill_wire: Option<String>,
     embed_shape: Option<EmbedShape>,
     capabilities: Option<Vec<LlmCapability>>,
     #[serde(default)]
@@ -309,6 +313,12 @@ pub struct ProviderConfig {
     pub output_limit_field: OutputLimitField,
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
+    /// `unversioned` selects `/chat/completions` on the default chat path.
+    /// Other values leave the configured path unchanged.
+    pub chat_path: Option<String>,
+    /// `prefix` sends the trailing assistant's prefix flag when the selected
+    /// model declares `AssistantPrefill`. Other values have no effect.
+    pub prefill_wire: Option<String>,
     /// The shape the provider's embedding endpoint speaks (FIX 866):
     /// `vllm_chat`, `infinity`, `jina` or `cohere`. Unset, it is vLLM's
     /// chat form.
@@ -324,7 +334,10 @@ pub struct ProviderConfig {
     pub family: Option<String>,
     /// One wire model's own family, in place of `family`.
     pub model_families: BTreeMap<String, String>,
-    /// Where calls to this provider run, for the engine's route checks.
+    /// Where calls to this provider's endpoint run, for the engine's route
+    /// checks. Never on device: a managed EXL3 worker's native channel is a
+    /// separate on-device offer the server derives (I2-LOCAL), and this is
+    /// the locality of every call that may reach the endpoint.
     pub locality: ModelLocality,
     /// Revision stamped on every engine model id from this provider, so a
     /// change of served weights can be recorded as a new identity.
@@ -444,9 +457,13 @@ impl ProviderFile {
                 "models.providers.{name}.response_format applies to OpenAI-compatible providers only"
             );
         }
+        // On device is a property of a transport, never of an endpoint: an
+        // in-process runtime, or the native channel to a managed worker this
+        // server supervises (I2-LOCAL), which the server derives itself. A
+        // provider row names an HTTP endpoint, so it cannot assert it.
         if self.locality == Some(ModelLocality::OnDevice) {
             anyhow::bail!(
-                "models.providers.{name}.locality: on_device names an in-process runtime; a model server reached over HTTP, even on this machine, is own_server"
+                "models.providers.{name}.locality: on_device is derived, never configured: an in-process runtime, or the authenticated native channel to a managed worker this server supervises; a model server reached over HTTP, even on this machine, is own_server"
             );
         }
         let revision = self.revision.unwrap_or_else(|| "live".to_owned());
@@ -523,6 +540,8 @@ impl ProviderFile {
             max_output_tokens: self.max_output_tokens,
             output_limit_field: self.output_limit_field.unwrap_or_default(),
             response_format: self.response_format.unwrap_or_default(),
+            chat_path: self.chat_path,
+            prefill_wire: self.prefill_wire,
             embed_shape: self.embed_shape.unwrap_or_default(),
             capabilities,
             model_capabilities: self.model_capabilities,
@@ -666,7 +685,7 @@ fn validate_key_secret(
     }
     if !kind.brokers() {
         anyhow::bail!(
-            "models.providers.{name}.key_secret applies to generating and gemini providers only"
+            "models.providers.{name}.key_secret applies to generating, gemini and hosted speech providers only"
         );
     }
     if !base_url.starts_with("https://") {
