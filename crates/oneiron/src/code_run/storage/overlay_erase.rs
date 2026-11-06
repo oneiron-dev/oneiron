@@ -21,8 +21,10 @@
 //! holder gate); the sweep is the cleanup of rows nothing reads any more.
 //! A room that is closing, sealed or gone takes no segment and is left to
 //! its close, which drops the overlay whole. Session raw puts publish body
-//! descriptors in the overlay (FIX 15865), but this sweep does not release
-//! those descriptors or their bytes yet; the bytes still stay until close.
+//! descriptors in the overlay (FIX 15865); the fence and sweep release each
+//! erased reply occurrence. The existing result collector retries their raw
+//! rows and session files, preserving live holders and pins and unlinking
+//! only after the release and row removal committed.
 //!
 //! Lock order is the vault writer, then the overlay's segment permit, as a
 //! routed write takes them. No session entry lock is taken.
@@ -46,10 +48,10 @@ use crate::{EntityId, Result, Vault};
 /// in that writer (FIX 7366): as given while its replies are kept, else its
 /// erased form, its owner row then marked Erased. Its replies are erased
 /// once its owner row says so, or once the actor that row, `stamped` (the
-/// run and actor this writer stamped it for, which the writer's view does
-/// not show yet) or its live run binding names is gone in the vault. The caller puts
-/// what this returns: the view reads the snapshot before this writer's
-/// own puts, so the record is fenced as supplied, never read back.
+/// run and actor this writer stamped it for) or its live run binding names
+/// is gone in the vault. The caller puts
+/// what this returns: the supplied record may not have been put yet, even
+/// though the active segment's view reads this writer's earlier puts.
 ///
 /// # Errors
 ///
@@ -78,6 +80,7 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
         || stamped.map_or(record.run_id, |(run, _)| run),
         |owner| owner.run,
     );
+    super::overlay_bodies::release_reply_outputs_in_txn(dbs, txn, record.run_id, &record.outputs)?;
     erase_replies(record.to_mut())?;
     mark_response_erased_in_txn(dbs, txn, record.run_id, run)?;
     Ok(record)
@@ -182,18 +185,17 @@ fn erase_record_in_txn(
         return Ok(());
     };
     let owner = response_owner_in_txn(dbs, wtxn, &record_id)?;
-    if owner.is_some_and(ResponseOwner::erased) {
-        return Ok(());
-    }
-    let named = owner
-        .and_then(ResponseOwner::actor)
-        .into_iter()
-        .chain(record.live_run.as_ref().map(|live| live.actor))
-        .any(|actor| gone.contains(&actor));
+    let named = owner.is_some_and(ResponseOwner::erased)
+        || owner
+            .and_then(ResponseOwner::actor)
+            .into_iter()
+            .chain(record.live_run.as_ref().map(|live| live.actor))
+            .any(|actor| gone.contains(&actor));
     if !named {
         return Ok(());
     }
     let run = owner.map_or(record.run_id, |owner| owner.run);
+    super::overlay_bodies::release_reply_outputs_in_txn(dbs, wtxn, record.run_id, &record.outputs)?;
     REPLAY_RECORDS.put_erased(dbs, wtxn, &record_id, Erased::of(record)?)?;
     mark_response_erased_in_txn(dbs, wtxn, record_id, run)
 }

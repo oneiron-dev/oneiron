@@ -130,6 +130,23 @@ pub(super) fn unlink_body(
     }
 }
 
+/// Unlinks every file instance of one released digest in a session's own
+/// directory, including a duplicate publisher's unused instance. The caller
+/// holds the writer and pin lock and has rechecked every live reference.
+pub(super) fn unlink_session_digest(dir: &BodyDir, digest: &[u8; 32]) -> Result<()> {
+    let entries = body_entries(dir)?
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.digest == *digest => Some(Ok(entry)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for entry in entries {
+        unlink_body(dir, digest, entry.instance.as_ref())?;
+    }
+    Ok(())
+}
+
 /// What removing one unnamed body came to (FIX 12248): it went, a reader's
 /// pin kept it, or it was not this entry's to remove yet. One result, read
 /// once: a pin taken and released between two probes would be counted by

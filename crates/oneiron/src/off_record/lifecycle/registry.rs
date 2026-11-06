@@ -393,6 +393,17 @@ impl OffRecordSessionRegistry {
             .collect()
     }
 
+    /// Published session references with their overlays, without registry or
+    /// entry locks. Body collection uses the reference only to open its own
+    /// directory, never to acquire a session handle under the vault writer.
+    pub(crate) fn live_overlay_bindings(&self) -> Vec<(String, Arc<SessionOverlay>)> {
+        self.published
+            .load()
+            .iter()
+            .map(|(key, entry)| (key.clone(), entry.overlay.clone()))
+            .collect()
+    }
+
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
         let sessions = self.published.load();
         for entry in sessions.values() {

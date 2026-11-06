@@ -17,7 +17,8 @@ pub(crate) const BODY: SideTable<(EntityId, EntityId), OwnedBody, Named> =
 pub(crate) const BODY_DIGEST: SideTable<([u8; 32], EntityId), EntityId, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_DIGEST);
 
-/// File digests no descriptor holds any longer, for the file collector.
+/// Released body digests awaiting the collector's live-holder recheck.
+/// Session releases also queue inline rows; canonical releases queue files.
 /// Key: bytes32 (BLAKE3); value: recorded-at of the release.
 pub(crate) const BODY_RELEASED: SideTable<[u8; 32], u64, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_RELEASED);
