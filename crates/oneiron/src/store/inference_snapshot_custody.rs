@@ -118,7 +118,7 @@ impl Store {
     /// An archived vault or one without local custody lists none.
     ///
     /// # Errors
-    /// Custody and file faults.
+    /// Custody, file and allocation faults.
     pub(crate) fn inference_snapshot_key_subjects(&self) -> Result<Vec<CustodySubject>> {
         if self.core.gate_custody_archived() {
             return Ok(Vec::new());
@@ -129,6 +129,7 @@ impl Store {
         let mut subjects = Vec::new();
         for subject in custody.subjects_with_prefix(CustodyKind::InferenceSnapshot, &[])? {
             if custody.published(&subject.at(0))? {
+                subjects.try_reserve(1).map_err(std::io::Error::from)?;
                 subjects.push(subject);
             }
         }
