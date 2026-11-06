@@ -325,11 +325,22 @@ impl Vault {
         access: &AccessSnapshot,
     ) -> Result<Option<ModelPackRoleChoice>> {
         let txn = self.store.env.read_txn()?;
-        let manifest = super::manifest::read_manifest(&self.store, &txn)?;
+        self.model_pack_role_choice_in_txn(&txn, role, access)
+    }
+
+    /// The same role choice in the caller's snapshot, including its manifest
+    /// and active pack. The host still supplies the offers it actually serves.
+    pub fn model_pack_role_choice_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        role: ModelRole,
+        access: &AccessSnapshot,
+    ) -> Result<Option<ModelPackRoleChoice>> {
+        let manifest = super::manifest::read_manifest(&self.store, txn)?;
         if manifest_outranks_model_pack(manifest.as_ref()) {
             return Ok(None);
         }
-        let Some(active) = self.active_model_pack_in_txn(&txn)? else {
+        let Some(active) = self.active_model_pack_in_txn(txn)? else {
             return Ok(None);
         };
         let key = model_pack_role_key(role);
