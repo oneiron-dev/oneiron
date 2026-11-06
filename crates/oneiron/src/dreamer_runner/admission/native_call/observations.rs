@@ -1,6 +1,6 @@
 //! Raw retained-token observations from each successful aggregate writer.
 
-use oneiron_model::llm::BudgetLeaseState;
+use oneiron_model::llm::{BudgetGuardId, BudgetLeaseState};
 use serde::{Deserialize, Serialize};
 
 use super::super::{DreamerBudgetSettlement, NativeMeterSnapshot, SettleDreamerBudget};
@@ -13,6 +13,7 @@ use crate::model_step_context::StepReceipt;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct NativeAggregateObservation {
+    snapshot_guard_id: BudgetGuardId,
     attempt_id: AttemptId,
     reservation_birth_generation: Option<u32>,
     reserved_units: u64,
@@ -93,6 +94,7 @@ pub(in crate::dreamer_runner::admission) fn record_native_aggregate_observations
                 ));
             }
             row.aggregate_observations.push(NativeAggregateObservation {
+                snapshot_guard_id: native.guard_id(),
                 attempt_id: reservation.attempt_id,
                 reservation_birth_generation: reservation.birth_generation,
                 reserved_units: reservation.reserved_units,
