@@ -88,6 +88,20 @@ impl<'a> From<&'a SkillEditProposalReadPosition> for NativeReadPosition<'a> {
     }
 }
 
+impl<'a> From<&'a crate::skill_reliability::RuleOutcomeReadPosition> for NativeReadPosition<'a> {
+    fn from(position: &'a crate::skill_reliability::RuleOutcomeReadPosition) -> Self {
+        Self {
+            scope: &position.scope,
+            kind_band: position.kind_band,
+            relationship: &position.relationship,
+            private: position.private,
+            body_worlds: &position.body_worlds,
+            body_facets: &position.body_facets,
+            anchors: &position.anchors,
+        }
+    }
+}
+
 impl ScopedRead<'_> {
     pub(super) fn native_position_lane_admitted_in(
         &self,

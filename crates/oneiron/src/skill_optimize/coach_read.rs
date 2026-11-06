@@ -34,6 +34,60 @@ impl CoachReadRequest {
         }
     }
 
+    /// The rule scanner reads all raw rows before membership and brief filters.
+    pub(super) fn rule_outcome_receipts(
+        &self,
+        vault: &Vault,
+        skill: &crate::EntityId,
+    ) -> Result<(Vec<String>, Option<NativeFamilySources>)> {
+        use crate::skill_reliability::{
+            CanonicalRuleOutcome, canonical_rule_outcomes_in_txn, rule_outcome_receipts_in_txn,
+        };
+        let unknown = || {
+            let txn = vault.store.env.read_txn()?;
+            rule_outcome_receipts_in_txn(vault, &txn, skill).map(|rows| (rows, None))
+        };
+        let Some(key) = &self.key else {
+            return unknown();
+        };
+        let lane = vault
+            .scoped_read(key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded);
+        if lane.persist_grant_clock().is_err() {
+            return unknown();
+        }
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+        let Ok(_custody) = vault.store.gate_custody_read_guard() else {
+            return unknown();
+        };
+        let txn = vault.store.env.read_txn()?;
+        let (rows, prefix) = canonical_rule_outcomes_in_txn(vault, &txn, skill)?;
+        let captured = rows.iter().all(|row| {
+            matches!(
+                lane.native_rule_outcome_admitted_in_txn(&txn, skill, row),
+                Ok(true)
+            )
+        });
+        let receipt = captured
+            .then(|| lane.read_projected_in_txn(&txn, &[], None, |_, _| Ok(())))
+            .and_then(std::result::Result::ok)
+            .map(|read| read.receipt);
+        let sources = receipt.map(|receipt| NativeFamilySources {
+            source: crate::store::attempt_sources::NativeReadSource::RuleOutcomeScan {
+                skill: *skill,
+                prefix,
+                rows: rows.iter().map(CanonicalRuleOutcome::source).collect(),
+            },
+            receipt,
+        });
+        Ok((
+            rows.iter()
+                .filter_map(|row| row.receipt().map(str::to_owned))
+                .collect(),
+            sources,
+        ))
+    }
+
     /// The original eager judgment scan, before its brief filters. Every
     /// decoded row, including a later rejected candidate, is witnessed.
     pub(super) fn attribution_judgments(

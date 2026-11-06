@@ -18,6 +18,51 @@ pub(super) fn unavailable_in_txn(
     source: &NativeReadSource,
 ) -> Result<Option<&'static str>> {
     match source {
+        NativeReadSource::RuleOutcome {
+            skill,
+            receipt,
+            row: source,
+        } => {
+            let Some(row) = crate::skill_reliability::canonical_rule_outcome_in_txn(
+                lane.vault(),
+                txn,
+                skill,
+                receipt,
+            )?
+            else {
+                return Ok(Some("source_missing"));
+            };
+            if row.source() != *source {
+                return Ok(Some("source_changed"));
+            }
+            Ok(
+                (!lane.native_rule_outcome_admitted_in_txn(txn, skill, &row)?)
+                    .then_some("withheld"),
+            )
+        }
+        NativeReadSource::RuleOutcomeScan {
+            skill,
+            prefix,
+            rows,
+        } => {
+            let (current, current_prefix) =
+                crate::skill_reliability::canonical_rule_outcomes_in_txn(lane.vault(), txn, skill)?;
+            if current_prefix != *prefix
+                || current.len() != rows.len()
+                || current
+                    .iter()
+                    .zip(rows)
+                    .any(|(row, source)| row.source() != *source)
+            {
+                return Ok(Some("source_changed"));
+            }
+            for row in &current {
+                if !lane.native_rule_outcome_admitted_in_txn(txn, skill, row)? {
+                    return Ok(Some("withheld"));
+                }
+            }
+            Ok(None)
+        }
         NativeReadSource::AttributionJudgment { row: source } => {
             let Some(row) =
                 canonical_attribution_judgment_in_txn(lane.vault(), txn, source.sequence)?

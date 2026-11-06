@@ -24,6 +24,13 @@ mod read;
 mod resident;
 mod row_ids;
 mod rule_outcome;
+mod rule_outcome_position;
+mod rule_outcome_read;
+
+pub(crate) use self::rule_outcome_position::RuleOutcomeReadPosition;
+pub(crate) use self::rule_outcome_read::{
+    CanonicalRuleOutcome, canonical_rule_outcome_in_txn, canonical_rule_outcomes_in_txn,
+};
 
 pub(crate) use self::amended::{
     AmendedOutcome, amended_share_in_txn, reconcile_amended_outcomes_in_txn,

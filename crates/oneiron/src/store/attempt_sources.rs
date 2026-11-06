@@ -61,10 +61,39 @@ pub struct SkillEditProposalSource {
     pub body_hash: [u8; 32],
 }
 
+/// The result of the original rule scanner's raw-row classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleOutcomeReadKind {
+    Rule,
+    Outcome,
+    UnreadableKey,
+    UnreadableValue,
+}
+
+/// A consulted physical row, including rows the ordinary scanner skips.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RuleOutcomeReadSource {
+    pub key: Vec<u8>,
+    pub body_hash: [u8; 32],
+    pub kind: RuleOutcomeReadKind,
+}
+
 /// Family tags never grant ENTITY access, even for UUID-shaped native keys.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "snake_case")]
 pub enum NativeReadSource {
+    RuleOutcome {
+        skill: EntityId,
+        receipt: String,
+        row: RuleOutcomeReadSource,
+    },
+    /// Every consulted raw row, before rule membership and brief filters.
+    RuleOutcomeScan {
+        skill: EntityId,
+        prefix: Vec<u8>,
+        rows: Vec<RuleOutcomeReadSource>,
+    },
     AttributionJudgment {
         row: AttributionJudgmentSource,
     },
