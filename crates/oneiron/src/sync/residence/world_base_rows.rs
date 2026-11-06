@@ -27,7 +27,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
-use crate::store::local_replica::{KeepControls, remove_local_members_in_txn};
+use crate::store::local_replica::{KeepControls, KeepReason, remove_local_members_in_txn};
 use crate::sync::WindowKey;
 
 /// A BASE row the owner's discard took as one world's alone, by its id: the
@@ -72,56 +72,95 @@ pub(super) fn discard_base_rows(vault: &Vault, world: EntityId) -> Result<BaseRo
         ..KeepControls::default()
     };
     let mut rows = BaseRows::default();
-    for (window, ids) in by_window {
-        for batch in ids.chunks(BASE_ROW_BATCH) {
-            vault.unload_idle_window(&window)?;
-            let step = vault.while_window_closed(&window, || {
-                vault.with_write_txn_grouped(|txn| {
-                    if crate::sync::manager::window_owes_mirror_in_txn(vault, txn, &window)? {
-                        return Ok(None);
-                    }
-                    // The census read before the window closed is not this
-                    // write's: each row is judged again here.
-                    let mut exclusive = Vec::with_capacity(batch.len());
-                    for id in batch {
-                        if content_world_in(&vault.store, txn, *id)?
-                            == ContentWorld::Exclusive(world)
-                        {
-                            exclusive.push(*id);
-                        }
-                    }
-                    let step = remove_local_members_in_txn(
-                        &vault.store,
-                        txn,
-                        &window,
-                        &exclusive,
-                        keep.clone(),
-                    )?;
-                    for id in &step.removed {
-                        mark_discarded_in_txn(&vault.store, txn, *id, world)?;
-                    }
-                    Ok(Some(step))
-                })
-            });
-            let Some(step) = step else {
-                rows.windows_busy += 1;
-                break;
-            };
-            let Some(step) = step? else {
-                rows.windows_busy += 1;
-                break;
-            };
-            // A queued write deferred the call: the outbox holds what only
-            // this install has of the month.
-            if keep.defer_on_queued_writes && step.queued_writes > 0 {
-                rows.windows_busy += 1;
-                break;
+    let mut pending: Vec<(WindowKey, Vec<EntityId>)> = by_window.into_iter().collect();
+    loop {
+        let mut deferred = Vec::new();
+        for (window, ids) in &pending {
+            let held = discard_window_rows(vault, world, window, ids, &keep, &mut rows)?;
+            if !held.is_empty() {
+                deferred.push((window.clone(), held));
             }
-            rows.removed.extend_from_slice(&step.removed);
-            rows.kept += step.kept.len();
         }
+        // A byte carrier kept for a holder a later batch or month took is
+        // judged again once that one went (FIX 14534), while a round removes
+        // one.
+        let left: usize = deferred.iter().map(|(_, ids)| ids.len()).sum();
+        let before: usize = pending.iter().map(|(_, ids)| ids.len()).sum();
+        if left == 0 || left == before {
+            break;
+        }
+        rows.kept -= left;
+        pending = deferred;
     }
     Ok(rows)
+}
+
+/// Takes `ids`, rows of `world` in the BASE `window`, batch by batch, into
+/// `rows`; the byte carriers it kept for a holder outside a batch
+/// ([`KeepReason::SharedBytes`]) are returned for another round. A window a
+/// handle holds open, whose outbox queues a write, or whose local writes a
+/// mirror still owes, waits for the next discard, whole.
+fn discard_window_rows(
+    vault: &Vault,
+    world: EntityId,
+    window: &WindowKey,
+    ids: &[EntityId],
+    keep: &KeepControls,
+    rows: &mut BaseRows,
+) -> Result<Vec<EntityId>> {
+    let mut held = Vec::new();
+    for batch in ids.chunks(BASE_ROW_BATCH) {
+        vault.unload_idle_window(window)?;
+        let step = vault.while_window_closed(window, || {
+            vault.with_write_txn_grouped(|txn| {
+                if crate::sync::manager::window_owes_mirror_in_txn(vault, txn, window)? {
+                    return Ok(None);
+                }
+                // The census read before the window closed is not this
+                // write's: each row is judged again here.
+                let mut exclusive = Vec::with_capacity(batch.len());
+                for id in batch {
+                    if content_world_in(&vault.store, txn, *id)? == ContentWorld::Exclusive(world) {
+                        exclusive.push(*id);
+                    }
+                }
+                let step = remove_local_members_in_txn(
+                    &vault.store,
+                    txn,
+                    window,
+                    &exclusive,
+                    keep.clone(),
+                )?;
+                for id in &step.removed {
+                    mark_discarded_in_txn(&vault.store, txn, *id, world)?;
+                }
+                Ok(Some(step))
+            })
+        });
+        let Some(step) = step else {
+            rows.windows_busy += 1;
+            break;
+        };
+        let Some(step) = step? else {
+            rows.windows_busy += 1;
+            break;
+        };
+        // A queued write deferred the call: the outbox holds what only
+        // this install has of the month.
+        if keep.defer_on_queued_writes && step.queued_writes > 0 {
+            rows.windows_busy += 1;
+            break;
+        }
+        rows.removed.extend_from_slice(&step.removed);
+        rows.kept += step.kept.len();
+        held.extend(
+            step.kept
+                .iter()
+                .filter(|(_, reason)| matches!(reason, KeepReason::SharedBytes))
+                .map(|(id, _)| *id),
+        );
+    }
+    Ok(held)
 }
 
 /// Every stored row of `world` alone whose canonical window is a BASE one,

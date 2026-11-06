@@ -639,11 +639,18 @@ impl Removal {
         report: &mut RemovedReplica,
     ) -> Result<Self> {
         let mut order = batch.to_vec();
+        // A kept carrier can hold another carrier's bytes in turn: to a
+        // fixed point.
         if release {
-            let shared = shared_carriers(store, txn, &order)?;
-            order.retain(|id| !shared.contains(id));
-            for id in shared {
-                report.kept.push((id, KeepReason::SharedBytes));
+            loop {
+                let shared = shared_carriers(store, txn, &order)?;
+                if shared.is_empty() {
+                    break;
+                }
+                order.retain(|id| !shared.contains(id));
+                for id in shared {
+                    report.kept.push((id, KeepReason::SharedBytes));
+                }
             }
         }
         loop {
