@@ -114,7 +114,7 @@ pub fn run_attribution_projector_with_decisions(
         // The rows a model-tier note reads (FIX 7101); the rule tier writes
         // no note, so it reads none.
         let sources = if decisions.is_some() {
-            union_source_rows([evidence_rows(vault, &evidence), floor_rows])
+            union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()])
         } else {
             None
         };
@@ -152,7 +152,13 @@ pub fn run_attribution_projector_with_decisions(
         ));
         if verdict == AttributionVerdict::Unclear {
             // The context the notes were written in, frozen with them (FIX
-            // 7824); the project and task type are read in the writer.
+            // 7824); the project and task type are read in the writer. Its
+            // rows are every row the notes are known to stand on, even where
+            // the request's read set is unknown.
+            let mut known = known_note_rows(vault, &evidence)?;
+            known.extend(floor_rows.iter().flatten().copied());
+            known.sort_unstable();
+            known.dedup();
             let context = UnclearContext {
                 actor: evidence.actor,
                 skill: evidence.skill,
@@ -162,7 +168,7 @@ pub fn run_attribution_projector_with_decisions(
                 attempt_receipt: Some(evidence.receipt_ref.clone()),
                 judge_revision: revision.clone(),
                 judge_model: trace.model.clone(),
-                sources: sources.clone().unwrap_or_default(),
+                sources: known,
             };
             unclear.push((
                 sequence,
@@ -417,6 +423,19 @@ fn still_names_in_txn(
         .is_some_and(|row| {
             row.evidence.skill == Some(subject) || row.evidence.actor == Some(subject)
         }))
+}
+
+/// Every row `evidence`'s terminal pack receipt is known to stand on, for the
+/// unclear notes written about it (FIX 7824); empty with no receipt.
+fn known_note_rows(vault: &Vault, evidence: &OutcomeEvidence) -> Result<Vec<EntityId>> {
+    let receipt = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::receipt::attempt_pack_receipt_in_txn(&vault.store, &rtxn, &evidence.receipt_ref)?
+    };
+    match receipt {
+        Some(receipt) => super::trace::receipt_attribution_known_rows(vault, &receipt),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// The rows `evidence`'s terminal pack receipt stands on, as the receipt

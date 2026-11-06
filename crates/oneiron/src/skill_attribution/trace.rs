@@ -149,6 +149,35 @@ pub fn receipt_attribution_trace_sourced(
     Ok(Some((trace, rows)))
 }
 
+/// Every row `receipt`'s attribution trace is known to stand on (FIX 7824):
+/// its recorded pack read set where it records one, its run, its loaded
+/// skills and its actor. Unlike [`receipt_attribution_trace_sourced`], an
+/// unrecorded read set leaves the rest known rather than the whole set
+/// unknown, so an erase of any of them still reaches a note written from
+/// them. Empty with no trace.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn receipt_attribution_known_rows(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<Vec<EntityId>> {
+    let Some(trace) = receipt_attribution_trace(vault, receipt)? else {
+        return Ok(Vec::new());
+    };
+    let mut rows = receipt.pack_source_rows().unwrap_or_default();
+    rows.extend(
+        receipt_attempt(&receipt.receipt_id)
+            .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok()),
+    );
+    rows.extend(trace.skills.iter().map(|skill| skill.skill));
+    rows.push(trace.actor);
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(rows)
+}
+
 /// The SKILL record each wire names, at most one per wire. A wire the load
 /// pinned resolves to the exact revision it read, even after an in-place
 /// update (FIX 10110); only the others are matched against today's records.
