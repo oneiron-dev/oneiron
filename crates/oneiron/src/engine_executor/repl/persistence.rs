@@ -170,6 +170,8 @@ impl EngineNativeExecutor<'_> {
                 .cloned()
             {
                 bind_published_output(record, &mut bindings, &output);
+                // FIX 18924: its console may print the run's fold answers.
+                self.record_step_fold_dependents(record, &[&output])?;
             }
         }
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);

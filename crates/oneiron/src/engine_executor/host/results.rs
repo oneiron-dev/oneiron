@@ -79,6 +79,21 @@ impl RecordingJsHost<'_, '_> {
             .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
     }
 
+    /// The records whose words the run's recorded and this step's fold
+    /// answers copy, each once (FIX 18924): known dependencies of what the
+    /// run stores, apart from its input rows.
+    fn fold_sources(&self) -> Vec<EntityId> {
+        let step = crate::code_run::recorded_fold_words(&self.bridge_calls);
+        let mut sources: Vec<EntityId> = step
+            .into_iter()
+            .flat_map(|word| word.sources)
+            .chain(self.recorded_fold_sources.iter().copied())
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        sources
+    }
+
     /// The rows the run's recorded and this step's verb answers were served
     /// from, or none known when one answer kept no set.
     pub(super) fn verb_rows(&self) -> Option<Vec<EntityId>> {
@@ -261,6 +276,8 @@ impl RecordingJsHost<'_, '_> {
         let path = store_result_output_path(&digest, ordinal);
         let output =
             storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
+        // FIX 18924: a stored value may copy the run's fold answers.
+        storage.record_code_run_fold_sources(self.run_id, &output, &self.fold_sources())?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;
         }

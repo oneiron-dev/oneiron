@@ -41,8 +41,9 @@ impl ExecutorStorage<'_> {
     /// of `sources`, the records whose words it copies (FIX 18924); `Err`
     /// holds the typed unavailable content that stands in for an answer
     /// with a secret the side-row wall cannot place, of which nothing is
-    /// stored. A session's body is published as before; its run's replay
-    /// reads withhold a withdrawn fold's answer.
+    /// stored. A session's body is published as before; on record it then
+    /// depends on `sources` in base as the vault's does, and its run's
+    /// replay reads withhold a withdrawn fold's answer.
     pub(crate) fn publish_code_run_reply(
         &self,
         path: String,
@@ -63,12 +64,83 @@ impl ExecutorStorage<'_> {
                     } => Err(unplaced_answer(bytes, text, reason)),
                 })
             }
-            Self::Session(binding) => binding.publish_output(path, spool, true, owner).map(Ok),
+            Self::Session(binding) => {
+                let output = binding.publish_output(path, spool, true, owner)?;
+                binding.record_reply_sources(owner, &output, sources)?;
+                Ok(Ok(output))
+            }
+        }
+    }
+
+    /// Records run `owner`'s output occurrence `output`, which may copy the
+    /// words of records `sources`, as a dependent of each of them (FIX
+    /// 18924): a stored value or a step's observation, after its own
+    /// publication. A withdrawal of one walks to it, and a source already
+    /// withdrawn leaves it born withdrawn. Known dependency edges only: its
+    /// input rows stay as its publication wrote them.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn record_code_run_fold_sources(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        sources: &[EntityId],
+    ) -> Result<()> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+        match self {
+            Self::Canonical(vault) => {
+                let occurrence = ResultOccurrence::of(Some(owner), output)?.id();
+                vault.with_write_txn_grouped(|wtxn| {
+                    super::super::fold_answers::record_reply_sources_in_txn(
+                        &vault.store,
+                        wtxn,
+                        &occurrence,
+                        sources,
+                    )
+                })
+            }
+            Self::Session(binding) => binding.record_reply_sources(owner, output, sources),
         }
     }
 }
 
 impl SessionBinding<'_> {
+    /// Records run `owner`'s reply body occurrence `output`, which copies the
+    /// words of records `sources`, as a dependent of each of them (FIX
+    /// 18924): on record, in a base writer of the run's route, as the
+    /// vault's publication does in its own. An off-record room's body is
+    /// its own: base keeps no row of it, and its run's replay reads take the
+    /// fold-answer fence through the room's composed view.
+    fn record_reply_sources(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        sources: &[EntityId],
+    ) -> Result<()> {
+        if sources.is_empty() || self.route.target() != RouteTarget::Base {
+            return Ok(());
+        }
+        let occurrence = ResultOccurrence::owned(owner, &output.path)?.id();
+        self.answered(|| {
+            self.session
+                .routed_side_txn(&self.route, |wtxn, _, write| match write {
+                    RoutedDbs::Base(vault) => {
+                        super::super::fold_answers::record_reply_sources_in_txn(
+                            &vault.store,
+                            wtxn,
+                            &occurrence,
+                            sources,
+                        )
+                    }
+                    RoutedDbs::Session(_) => Ok(()),
+                })
+        })
+    }
+
     /// A writer for one result body: into the session's own body directory
     /// while the room is off record, the vault's `bodies/` once on record.
     /// Each value custody knows is replaced by its handle as it streams
