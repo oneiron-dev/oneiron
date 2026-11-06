@@ -296,3 +296,25 @@ This is optional producer data, not a paid fact, exact aggregate coverage or
 complete error-prefix accounting. The native payment primitive stays uncalled;
 new funding, aggregate subtraction, automatic payment and the generated-only
 opening policy remain unchanged.
+
+### Captured House post-settlement meter intervals
+
+A successful pre-byte input registration also binds a set-once weak reference to
+that original vault on the shared admission handle. Runtime receipt clones share
+this reference; it does not keep a vault alive, serialize a pointer, or create a
+new registry or funding reservation.
+
+The original permit's settlement capture samples that exact issuing guard and
+opaque lease after its guard settlement, before keeping receipt clones. It runs
+independently of ModelCallRecord evidence, observer attribution and captured-receipt
+subscribers. An absent writer, closed vault, different boot, panic unwind or
+unknown lease interval records nothing. A known settled empty interval stays
+known and empty; it is not a zero NET invoice.
+
+The snapshot releases the guard lock before the existing private native-call
+writer begins. No capture-target lock is held over that writer. Failure is logged
+without changing the original settlement or receipt forwarding. The hook runs
+before any later durable allocation commit and host publication, so this native
+meter observation proves neither of those operations succeeded. It records no
+extra settlement, charge, NET payment, aggregate credit or fabricated terminal
+claim. Reads that never retain an input do not gain invented meter provenance.
