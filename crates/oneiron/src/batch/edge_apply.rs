@@ -170,7 +170,7 @@ pub(super) fn apply_set_edge_vad(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "decomposing would obscure direct LMDB write logic"
+    reason = "the native edge entry retains its explicit image fields"
 )]
 // UNGATED by design — this is the replicated/replay shape. A
 // bare-over-provenanced LWW edge is a legitimate remote winner; gating here
@@ -188,17 +188,59 @@ pub(super) fn apply_edge_with_created_at(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> Result<()> {
+    prepare_edge_put(src, kind, tgt, weight, created_at, vad, provenance)?.apply(store, wtxn)
+}
+
+/// The native edge image after validation and encoding, before either direction
+/// is staged. It is consumed immediately by the same edge write.
+struct PreparedEdgePut {
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    value: Vec<u8>,
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the native edge image retains its endpoints, timestamp and provenance"
+)]
+fn prepare_edge_put(
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    weight: f32,
+    created_at: u64,
+    vad: Vad,
+    provenance: Option<EdgeProvenanceFlags>,
+) -> Result<PreparedEdgePut> {
     validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
 
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
-    stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
-    if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
-        crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
+    Ok(PreparedEdgePut {
+        src,
+        kind,
+        tgt,
+        value,
+    })
+}
+
+impl PreparedEdgePut {
+    fn apply(self, store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let Self {
+            src,
+            kind,
+            tgt,
+            value,
+        } = self;
+        stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
+        if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
+            crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
+        }
+        crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)
     }
-    crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)
 }
 
 /// Applies one edge removal (`BatchOp::DeleteEdge`), clearing both LMDB
