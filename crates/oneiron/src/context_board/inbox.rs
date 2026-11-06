@@ -136,6 +136,7 @@ pub fn assemble_inbox_section(
     if later > 0 {
         counts.push(format!("later: {later}"));
     }
+    let summary = super::layout::FoldSummary::total(items.len() + later).count("later", later);
     BoardSection::new(
         "INBOX",
         Vec::new(),
@@ -146,5 +147,5 @@ pub fn assemble_inbox_section(
             shed_rank: Some(ShedRank::TasksToCounts),
         },
     )
-    .map(Some)
+    .map(|section| Some(section.with_fold_summary(summary)))
 }
