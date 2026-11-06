@@ -863,6 +863,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.origin.publish.approve" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.publish.execute" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.publish.cancel" => a.spec.clone().ok_or_else(invalid),
+        "vault.devices.predecessor.name" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.set" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.publications" => a.spec.clone().ok_or_else(invalid),
@@ -3724,6 +3725,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.origin.publish.cancel" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.devices.predecessor.name" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.origin.authority.get" => {
@@ -18017,6 +18021,24 @@ async fn execute_agent_verb_row_on(
                 crate::api::facade::host_doors::vault_code_origin_publish_cancel(
                     server, auth, input,
                 ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.devices.predecessor.name" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.devices.predecessor.name", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::device_succession::DevicePredecessor =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_devices_predecessor_name(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

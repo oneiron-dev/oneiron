@@ -718,6 +718,7 @@ pub enum AgentVerb {
     VaultCodeOriginPublishApprove,
     VaultCodeOriginPublishExecute,
     VaultCodeOriginPublishCancel,
+    VaultDevicesPredecessorName,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
@@ -2006,6 +2007,7 @@ impl AgentVerb {
         Self::VaultCodeOriginPublishApprove,
         Self::VaultCodeOriginPublishExecute,
         Self::VaultCodeOriginPublishCancel,
+        Self::VaultDevicesPredecessorName,
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
@@ -3321,6 +3323,7 @@ impl AgentVerb {
             Self::VaultCodeOriginPublishApprove => "vault.code.origin.publish.approve",
             Self::VaultCodeOriginPublishExecute => "vault.code.origin.publish.execute",
             Self::VaultCodeOriginPublishCancel => "vault.code.origin.publish.cancel",
+            Self::VaultDevicesPredecessorName => "vault.devices.predecessor.name",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
@@ -4621,6 +4624,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -5938,6 +5942,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -7391,6 +7396,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -8327,6 +8333,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -9423,6 +9430,7 @@ impl AgentVerb {
             Self::VaultCodeOriginPublishApprove => &["spec"],
             Self::VaultCodeOriginPublishExecute => &["spec"],
             Self::VaultCodeOriginPublishCancel => &["spec"],
+            Self::VaultDevicesPredecessorName => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -10712,6 +10720,7 @@ impl AgentVerb {
             Self::VaultCodeOriginPublishApprove => &["spec"],
             Self::VaultCodeOriginPublishExecute => &["spec"],
             Self::VaultCodeOriginPublishCancel => &["spec"],
+            Self::VaultDevicesPredecessorName => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -13399,6 +13408,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginPublishCancel => {
                 "Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is."
+            }
+            Self::VaultDevicesPredecessorName => {
+                "Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."
             }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."
