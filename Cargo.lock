@@ -8796,6 +8796,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "loro",
+ "mime",
  "objc2",
  "objc2-core-ml",
  "objc2-foundation",

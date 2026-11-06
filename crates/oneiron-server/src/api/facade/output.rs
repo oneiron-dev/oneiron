@@ -7,14 +7,18 @@ use super::*;
 /// Decodes a facade request body, reporting a malformed one in the FACADE
 /// error vocabulary rather than the server's closed one.
 pub(super) fn facade_json<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, FacadeApiError> {
-    payload.map(|Json(payload)| payload).map_err(|_| {
-        FacadeApiError::new(
-            StatusCode::BAD_REQUEST,
-            MEMORY_CODE_BAD_REQUEST,
-            "invalid JSON request body",
-            ["Send a JSON body matching this verb's documented input."],
-        )
-    })
+    payload
+        .map(|Json(payload)| payload)
+        .map_err(|_| invalid_json())
+}
+
+pub(super) fn invalid_json() -> FacadeApiError {
+    FacadeApiError::new(
+        StatusCode::BAD_REQUEST,
+        MEMORY_CODE_BAD_REQUEST,
+        "invalid JSON request body",
+        ["Send a JSON body matching this verb's documented input."],
+    )
 }
 
 /// Decodes a request `validate_input` already admitted into the verb's typed

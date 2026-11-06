@@ -95,6 +95,7 @@ oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 oneiron-remote = { path = "../oneiron-remote", optional = true }
 loro = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
+mime = "0.3"
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
 # it can set the header deadline and hold a permit inside each socket. Both
 # are already in the graph through axum.
