@@ -46,3 +46,27 @@ reason names. The organ's request schemas and degradation wire codes do not chan
 No storage ABI, dependency, config, numerical default, migration, or backward
 compatibility path is added. This is reporting carriage, not a runtime seal,
 memory-closure, or cryptographic-correctness result.
+
+## Unresolved DSS evidence
+
+DSS verification distinguishes invalid evidence from an unresolved revocation
+check. Bound certificate-only material without enough revocation coverage records
+`validation_material` as `not_run` with `validation_material_unavailable`.
+An authenticated OCSP `unknown` records `not_run` with `revocation_status_unknown`.
+These typed findings appear in `checks`; the existing `reasons` list still holds
+failed-check reasons only. A `not_run` check rolls up to an indeterminate verdict,
+never a passed B-LT/B-LTA validation-material check.
+
+Malformed material, bad signatures, bad binding, unauthorized or stale responses,
+and proven revocation remain failures. Unknown status is reported only after the
+whole response's binding, authorization, freshness and signature checks pass;
+invalid evidence takes precedence. Seal-time OCSP gathering still accepts only
+all-good responses covering the requested certificate.
+
+An optional `/VRI` index does not preempt validation of the existing global DSS
+certificate and revocation arrays. The verifier does not parse that index or add
+an old-format reader. Invalid global material still fails, and an index without
+any global arrays does not establish validation material.
+
+Rebuild and hash-pin the native seal organ to publish these two finding codes.
+No report shape, SDK type, configuration or numerical policy changes.
