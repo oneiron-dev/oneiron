@@ -1592,8 +1592,15 @@ impl OfferLadder {
                 Ok(mut response) => {
                     warmth.answered(&self.rests);
                     self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
+                    let run_call = serde_json::json!({
+                        "instance": permit.instance().to_hex(),
+                        "lease": permit.lease().id(),
+                    });
                     permit.settle(CallOutcome::Answered(&response.usage))?;
                     response.usage = self.answered(index, walk, response.usage);
+                    if let Some(served) = response.usage.raw_provider.as_object_mut() {
+                        served.insert("run_call".to_owned(), run_call);
+                    }
                     if prompt.noted() {
                         rung.note_answered(call.request);
                     }

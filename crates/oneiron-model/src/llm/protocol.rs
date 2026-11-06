@@ -332,6 +332,22 @@ impl LlmUsage {
         }
     }
 
+    /// The successful physical permit the host ladder stamped beside its
+    /// served usage. Provider payloads remain nested under `usage` and cannot
+    /// supply this identity. This names a call, not payment or permission.
+    #[must_use]
+    pub fn served_run_call(&self) -> Option<(&str, &str)> {
+        let served = self.raw_provider.as_object()?;
+        if !served.get("rung").is_some_and(JsonValue::is_u64) || !served.contains_key("usage") {
+            return None;
+        }
+        let call = served.get("run_call")?.as_object()?;
+        Some((
+            call.get("instance")?.as_str()?,
+            call.get("lease")?.as_str()?,
+        ))
+    }
+
     /// The provider a host's model ladder says answered this call: the
     /// served receipt's [`Self::SERVED_PROVIDER_KEY`]. A served receipt names
     /// its rung and holds the provider's own usage under `usage`, so a

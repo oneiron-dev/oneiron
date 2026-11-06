@@ -11,16 +11,20 @@ impl UsageLedger {
     pub(crate) fn eval_call_price(
         raw: &[u8],
         binding: &OfferBinding,
+        instance: &str,
+        lease: &str,
     ) -> Result<Option<EvalCallPrice>, UsageError> {
         let stored = decode_entry(raw)?;
         let event = &stored.event;
         let Some(call) = &event.run else {
             return Ok(None);
         };
-        if event.unpriced.is_some()
+        if call.instance != instance
+            || call.lease != lease
+            || event.unpriced.is_some()
             || event.model.as_deref() != Some(binding.model.as_str())
             || call.offer != binding.offer
-            || call.route != binding.route.key()
+            || call.route != format!("{}@{}", binding.route.adapter(), binding.route.origin())
             || call.catalog_revision != binding.catalog_revision
             || call.payer != binding.payer
             || !call.usage_reported

@@ -317,7 +317,8 @@ impl Arms {
         let call_price = prices.and_then(|capture| {
             let rows = capture.finish();
             let [raw] = rows.as_slice() else { return None };
-            crate::usage::UsageLedger::eval_call_price(raw, binding.as_ref()?)
+            let (instance, lease) = answered.as_ref().ok()?.usage.served_run_call()?;
+            crate::usage::UsageLedger::eval_call_price(raw, binding.as_ref()?, instance, lease)
                 .ok()
                 .flatten()
         });
