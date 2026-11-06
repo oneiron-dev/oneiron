@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{CarriedHead, RefinementOriginParts, decode, encode};
 use crate::EntityId;
-use crate::entity_doc::{RefinementOriginSource, join_entity_doc_loro, split_entity_doc_loro};
+use crate::entity_doc::RefinementOriginSource;
+use crate::entity_doc::checkpoint::{join_entity_doc_loro, split_entity_doc_loro};
 use crate::error::Result;
 use crate::ports::checkpoint::{EntityRowPlacement, entity_row_placement};
 use crate::store::checkpoint_payload::loro::{Atom, OpenedRow};
