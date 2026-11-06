@@ -44,8 +44,8 @@ holder binding, retirement and the canonical format are unchanged.
 This is only the encoded preparation slice of FIX 11180. Source values and
 receipt decoding can still be held whole. A single archive is still
 materialized for its inline put, and ordinary batch staging has its own copies.
-File-backed receipt custody/readback and pre-writer instance preparation remain
-separate work. This change does not claim bounded total import memory or a
+Persistent-file production, caller pin lifetimes and pre-writer instance
+preparation remain separate work. This change does not claim bounded total import memory or a
 fully streaming receipt import.
 
 ## Canonical reader seam
@@ -65,10 +65,12 @@ second time. Credential nulling, attempt identity and body validation still run.
 
 The restore path uses these readers on its frozen temporary file for identity
 and existing-row comparison. These reader seams do not enable archive
-manifests. Current persisted custody continues to read inline rows. A real file-backed path still needs the original batch
-file-admission facts, file-aware custody and retirement readers, checked file
-lifetimes and the real importer's pre-writer reservation. Neither a manifest's
-bytes nor an unminted temporary body supplies those facts.
+manifests. Current persisted archives remain inline. The native file-custody source seam
+below carries original batch file-admission facts and joins file-aware custody
+and retirement readers. Persistent-file production still needs every caller's
+checked file lifetime, the real importer's pre-writer reservation and the
+owning export/sync joins. Neither a manifest's bytes nor an unminted temporary
+body supplies those facts.
 
 ## Native file custody source seam
 
