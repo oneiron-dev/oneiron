@@ -72,10 +72,8 @@ pub(crate) fn erase_item_caches_in_txn(
         return Ok(());
     }
     let hexes: Vec<String> = items.iter().map(EntityId::to_hex).collect();
-    for hex in &hexes {
-        for family in ["ri:b:", "ri:c:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
-            store.sync_state.delete(txn, &format!("{family}{hex}"))?;
-        }
+    for item in items {
+        clear_thin_item_cache_in_txn(store, txn, *item)?;
     }
     // A thin index row is keyed `ri:w:{window}:{item}`, in whichever window
     // listed the item.
@@ -92,6 +90,21 @@ pub(crate) fn erase_item_caches_in_txn(
         .collect();
     for key in &listed {
         store.sync_state.delete(txn, key)?;
+    }
+    Ok(())
+}
+
+/// Drops `item`'s fetched copy: its cached body, text document,
+/// content-world witness, opened marker and touch row. Its thin index rows
+/// stay; absent-ok key deletes only.
+pub(crate) fn clear_thin_item_cache_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    item: EntityId,
+) -> Result<()> {
+    let hex = item.to_hex();
+    for family in ["ri:b:", "ri:c:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
+        store.sync_state.delete(txn, &format!("{family}{hex}"))?;
     }
     Ok(())
 }
