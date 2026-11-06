@@ -129,6 +129,12 @@ pub(super) async fn handle_connection(
     // A proven machine's socket carries custody carrier leaf keys while it
     // lives (FIX 11785).
     let _leaf_key_socket = LeafKeySocket::register(&server, conn_id, machine, &direct_tx);
+    // A machine of the owner's whose hello listed sealed world updates is
+    // offered the home's queue of them (DEC-0005 fix 8).
+    conn_state.sealed_world_updates = transport.peer_codecs().decodes_sealed_world_updates();
+    if let Some(offer) = super::super::sealed_updates::offer(&server, conn_id, &conn_state) {
+        let _ = direct_tx.send(offer);
+    }
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -270,6 +276,17 @@ pub(super) async fn handle_connection(
                             data.first().copied(),
                             Some(protocol::TAG_RPC | protocol::TAG_SUB)
                         ) {
+                            continue;
+                        }
+                        // A stored sealed world update goes only to the
+                        // sockets that asked for them (DEC-0005 fix 8).
+                        if data.first() == Some(&oneiron::sync::transport::TAG_SEALED_UPDATE) {
+                            if let Some(frame) =
+                                super::super::sealed_updates::release(&server, &conn_state, data)
+                                && !transport.send_binary(frame).await
+                            {
+                                break;
+                            }
                             continue;
                         }
                         if matches!(

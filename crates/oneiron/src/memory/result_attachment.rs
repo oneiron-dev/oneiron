@@ -5,6 +5,10 @@
 //! field. It names a body and grants nothing: every read of the body behind
 //! it is admitted again for its reader, under the taint it has now.
 
+mod restore;
+
+pub(crate) use restore::{retire_message_result_in_row, retire_message_results_in_rows};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,7 +50,10 @@ pub struct MessageResultAttachment {
     pub lines: u64,
     /// Whether the producer finished the body.
     pub complete: bool,
-    /// A bounded preview of the body's head, withheld while it is not clean.
+    /// Whether an erase retired this result's content.
+    pub erased: bool,
+    /// A bounded preview of the body's head, erased with its content and
+    /// withheld while it is not clean.
     pub preview: String,
     pub preview_truncated: bool,
     /// The facets that read the rest of the body.
@@ -77,6 +84,7 @@ impl MessageResultAttachment {
             .to_owned(),
             lines: output.lines,
             complete: output.complete,
+            erased: false,
             preview,
             preview_truncated,
             more: ResultFacet::ALL.to_vec(),
@@ -102,6 +110,12 @@ impl MessageResultAttachment {
             Ok(occurrence) if occurrence.id() == self.source.occurrence => None,
             _ => Some("result occurrence is not its run's occurrence of its path"),
         }
+    }
+
+    pub(crate) fn retire_content(&mut self) {
+        self.erased = true;
+        self.preview = crate::code_run::CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
+        self.preview_truncated = true;
     }
 
     /// The manifest of the body this attachment names, at its producer's
