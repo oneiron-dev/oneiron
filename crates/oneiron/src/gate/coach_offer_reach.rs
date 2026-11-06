@@ -33,7 +33,7 @@ use super::constants::{
 };
 use super::grants::PolicyScopedGrant;
 use super::resolution::PolicyManifestResolution;
-use super::witness_message::{WITNESS_AUTHOR_SYSTEM, WitnessMessageEnvelope};
+use super::witness_message::{WITNESS_AUTHOR_COMPANION, WitnessMessageEnvelope};
 use crate::claim::consult_payload_ref::ConsultPayloadRef;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -268,9 +268,9 @@ fn coach_swap_ask_ceiling_in(
     )?))
 }
 
-/// The Coach's leave to write one `system` question row about a pending
+/// The Coach's leave to write one companion question row about a pending
 /// offer, bound to the writer and the row's exact canonical bytes. Only the
-/// witness door's System-author floor reads it.
+/// witness door's question floor reads it.
 pub(crate) struct OfferQuestionPermit {
     actor: WriteActor,
     body: Vec<u8>,
@@ -305,7 +305,7 @@ pub(crate) fn coach_offer_question_permit_in_txn(
         let ids = (conversation, turn, message);
         return coach_swap_question_permit_in(vault, txn, actor, ids, envelope, policy);
     }
-    if envelope.author != WITNESS_AUTHOR_SYSTEM
+    if envelope.author != WITNESS_AUTHOR_COMPANION
         || envelope.message_type != crate::gate::training_ask_kind::OFFER_QUESTION_TYPE
         || !envelope.is_visible
         || envelope.order != 0
@@ -357,7 +357,7 @@ fn coach_swap_question_permit_in(
     envelope: &WitnessMessageEnvelope<'_>,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<OfferQuestionPermit>> {
-    if envelope.author != WITNESS_AUTHOR_SYSTEM
+    if envelope.author != WITNESS_AUTHOR_COMPANION
         || !envelope.is_visible
         || envelope.order != 0
         || !is_coach(actor.entity_ref(), actor.actor_class())?
@@ -386,7 +386,7 @@ fn coach_swap_question_permit_in(
     }))
 }
 
-/// Whether `permit` lets `actor` write the `system` row `body` past the
+/// Whether `permit` lets `actor` write the question row `body` past the
 /// floor: it binds both, the reach still holds under `policy`, and neither an
 /// AGENT_DEF self-limit nor a row bound to this writer clamps it to Proposed.
 pub(super) fn offer_question_authorized(
