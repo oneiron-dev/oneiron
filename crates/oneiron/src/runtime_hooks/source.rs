@@ -329,6 +329,31 @@ pub(super) fn read_after(
     }
 }
 
+/// [`read_after`] in the caller's snapshot.
+pub(super) fn read_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    after: Option<FactPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
+    match (source, after) {
+        (FactSource::ClaimChangelog, None) => {
+            claim_changes_after_in_txn(vault, txn, None, max_entries)
+        }
+        (FactSource::ClaimChangelog, Some(FactPosition::ClaimChangelog(position))) => {
+            claim_changes_after_in_txn(vault, txn, Some(position), max_entries)
+        }
+        (FactSource::Settlement, None) => settlements_after_in_txn(vault, txn, None, max_entries),
+        (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
+            settlements_after_in_txn(vault, txn, Some(position), max_entries)
+        }
+        _ => Err(Error::InvariantViolation(
+            "hook cursor names another source",
+        )),
+    }
+}
+
 /// Claim writes after `after`: Create and Update land a claim, Supersede
 /// closes one. Other entity kinds and other ops are scanned past.
 fn claim_changes_after(
@@ -337,11 +362,20 @@ fn claim_changes_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
+    claim_changes_after_in_txn(vault, &rtxn, after, max_entries)
+}
+
+fn claim_changes_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<ClaimChangelogPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
     let budget = max_entries.saturating_mul(SCAN_PER_ENTRY).max(1);
     let mut batch = SourceBatch::default();
     for (scanned, row) in vault
         .store
-        .port_changelog_after(&rtxn, after.map(|position| position.0))?
+        .port_changelog_after(txn, after.map(|position| position.0))?
         .enumerate()
     {
         if scanned >= budget || batch.entries.len() >= max_entries {
@@ -360,7 +394,7 @@ fn claim_changes_after(
             ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
             _ => continue,
         };
-        let Some(record) = vault.store.port_entity_record(&rtxn, &change.entity)? else {
+        let Some(record) = vault.store.port_entity_record(txn, &change.entity)? else {
             continue;
         };
         if record.entity_type != ENTITY_TYPE_CLAIM {
@@ -368,14 +402,14 @@ fn claim_changes_after(
         }
         let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
             vault,
-            &rtxn,
+            txn,
             &change.entity,
             &change.input_hash,
         )?;
         let historical = match revision {
             Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
                 vault,
-                &rtxn,
+                txn,
                 &change.entity,
                 crate::vault::ReadMode::Pinned(revision),
             )?,
@@ -410,11 +444,20 @@ fn settlements_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
+    settlements_after_in_txn(vault, &rtxn, after, max_entries)
+}
+
+fn settlements_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<SettlementPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
     let start = after
         .as_ref()
         .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
     let mut batch = SourceBatch::default();
-    for row in SETTLED.iter_range(&vault.store, &rtxn, start, Bound::Unbounded)? {
+    for row in SETTLED.iter_range(&vault.store, txn, start, Bound::Unbounded)? {
         if batch.entries.len() >= max_entries {
             batch.more = true;
             break;
@@ -425,7 +468,7 @@ fn settlements_after(
         let revision = match settled.body_hash.as_ref() {
             Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
                 vault,
-                &rtxn,
+                txn,
                 &settled.proposal,
                 body_hash,
             )?,
