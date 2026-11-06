@@ -39,6 +39,8 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
 /// attributes only when it contributes to exactly one retained head/tail piece;
+/// with one sole direct text element, that piece instead keeps the original run
+/// XML with only its text edited. Unsupported text shapes keep the static path;
 /// a run split across both keeps the existing static wrappers.
 pub(super) fn rebuilt(
     bytes: &[u8],
@@ -250,17 +252,24 @@ pub(super) fn rebuilt(
                             && node.is(DML, "r")
                             && !(position < prefix && position + text.len() > old.len() - suffix)
                         {
-                            let attributes: String = node
-                                .attr_spans
-                                .iter()
-                                .filter(|(name, _)| {
-                                    name.as_str() != "xmlns" && !name.starts_with("xmlns:")
-                                })
-                                .map(|(_, span)| {
-                                    format!(" {}", String::from_utf8_lossy(&bytes[span.clone()]))
-                                })
-                                .collect();
-                            run.insert_str(1 + node.qualified.len(), &attributes);
+                            if let Some(original) = partial_run(bytes, tree, *at, &part) {
+                                run = original;
+                            } else {
+                                let attributes: String = node
+                                    .attr_spans
+                                    .iter()
+                                    .filter(|(name, _)| {
+                                        name.as_str() != "xmlns" && !name.starts_with("xmlns:")
+                                    })
+                                    .map(|(_, span)| {
+                                        format!(
+                                            " {}",
+                                            String::from_utf8_lossy(&bytes[span.clone()])
+                                        )
+                                    })
+                                    .collect();
+                                run.insert_str(1 + node.qualified.len(), &attributes);
+                            }
                         }
                         runs.push_str(&run);
                     } else {
@@ -439,4 +448,23 @@ pub(super) fn rebuilt(
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
     Ok(out)
+}
+
+/// Edit the sole direct text of one retained run without rebuilding its XML.
+fn partial_run(bytes: &[u8], tree: &XmlTree, run: usize, text: &str) -> Option<String> {
+    let (at, node) = tree.child(run, DML, "t").ok()??;
+    if within(tree, run).any(|(other, node)| node.is(DML, "t") && other != at) {
+        return None;
+    }
+    let original = &tree.nodes[run];
+    let edits = crate::edit::xml::replace_text(bytes, node, text)?
+        .into_iter()
+        .map(|(range, value)| {
+            (
+                range.start - original.span.start..range.end - original.span.start,
+                value,
+            )
+        })
+        .collect();
+    String::from_utf8(crate::edit::xml::splice(&bytes[original.span.clone()], edits).ok()?).ok()
 }
