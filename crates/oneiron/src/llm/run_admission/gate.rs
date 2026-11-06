@@ -9,7 +9,7 @@ use futures_core::Stream;
 use super::super::{
     BrokerIsolation, BudgetLease, DispatchBinding, FatalLlmError, LlmBackend, LlmCapability,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
-    LlmUsage, ModelId, SingleRouteBackend, WorkContext,
+    LlmUsage, ModelId, RetryableLlmError, SingleRouteBackend, TransportFaultKind, WorkContext,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -71,10 +71,10 @@ impl GatedBackend {
             self.run.refuse(Some(model), Some(lease), reason);
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        let admitted = self.run.guard.admitted_request_digest(lease);
         let bound = self
             .inner
-            .preflight(request, stream)
-            .and_then(|()| self.inner.request_digest(request, stream));
+            .dispatch_digest(request, stream, admitted.as_deref());
         let bound = match bound {
             Ok(bound) => bound,
             Err(error) => {
@@ -127,6 +127,22 @@ struct Pending<'a> {
 }
 
 impl Pending<'_> {
+    fn failed(&mut self, error: &LlmError) {
+        let unsent = matches!(
+            error,
+            LlmError::Retryable(RetryableLlmError::TransportFault(fault))
+                if fault.kind == TransportFaultKind::NotSent
+        ) && self.gate.inner.fallback(error).is_some();
+        if unsent
+            && let Some(dispatch) = self.dispatch.as_ref()
+            && self.gate.run.guard.mark_unsent(&dispatch.lease).is_ok()
+        {
+            self.dispatch = None;
+            return;
+        }
+        self.finish(None, false);
+    }
+
     fn finish(&mut self, served_model: Option<String>, answered: bool) {
         if let Some(dispatch) = self.dispatch.take() {
             self.gate
@@ -165,11 +181,11 @@ impl LlmBackend for GatedBackend {
         Box::pin(async move {
             let digest = self.open(&request, lease, false)?;
             lease.attach_work_context(self.work_context.clone());
-            let mut pending = self.pending(&request, lease, digest);
-            let result = self.inner.generate(request, lease).await;
+            let mut pending = self.pending(&request, lease, digest.clone());
+            let result = self.inner.generate_bound(request, lease, &digest).await;
             match &result {
                 Ok(response) => pending.finish(served_model(&response.usage), true),
-                Err(_) => pending.finish(None, false),
+                Err(error) => pending.failed(error),
             }
             result
         })
@@ -178,8 +194,14 @@ impl LlmBackend for GatedBackend {
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let digest = self.open(&request, lease, true)?;
         lease.attach_work_context(self.work_context.clone());
-        let pending = self.pending(&request, lease, digest);
-        let inner = self.inner.stream(request, lease)?;
+        let mut pending = self.pending(&request, lease, digest.clone());
+        let inner = match self.inner.stream_bound(request, lease, &digest) {
+            Ok(inner) => inner,
+            Err(error) => {
+                pending.failed(&error);
+                return Err(error);
+            }
+        };
         Ok(LlmStream::new(GatedStream { inner, pending }))
     }
 }
@@ -201,7 +223,8 @@ impl Stream for GatedStream<'_> {
             Poll::Ready(Some(Ok(LlmStreamEvent::Done { usage, .. }))) => {
                 this.pending.finish(served_model(usage), true);
             }
-            Poll::Ready(Some(Err(_)) | None) => this.pending.finish(None, false),
+            Poll::Ready(Some(Err(error))) => this.pending.failed(error),
+            Poll::Ready(None) => this.pending.finish(None, false),
             Poll::Ready(Some(Ok(_))) | Poll::Pending => {}
         }
         polled

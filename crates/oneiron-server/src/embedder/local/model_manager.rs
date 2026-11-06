@@ -947,6 +947,31 @@ pub(crate) fn hub_url(repo: &str, revision: &str, file: &str) -> String {
     format!("{HUGGINGFACE_BASE_URL}/{repo}/resolve/{revision}/{file}")
 }
 
+/// A [`std::io::Write`] adapter that reports what is actually in the file as
+/// it lands: each successful inner write adds its bytes and calls
+/// `on_progress` with the total written (the retained start included) and
+/// the pinned total. A failed write reports nothing; `flush` is the inner
+/// file's own.
+struct ProgressWriter<'a, W> {
+    inner: W,
+    written: u64,
+    expected: u64,
+    on_progress: &'a mut dyn FnMut(u64, u64),
+}
+
+impl<W: std::io::Write> std::io::Write for ProgressWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.written += written as u64;
+        (self.on_progress)(self.written, self.expected);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Fetches `url` into `partial`, resuming from the bytes already in it.
 ///
 /// A partial with bytes in it asks for the rest (`Range: bytes=<len>-`): a
@@ -972,6 +997,23 @@ pub(crate) fn fetch_resumable(
     authorization: Option<&HeaderValue>,
     tool: &'static str,
 ) -> oneiron::Result<ResumableFetch> {
+    fetch_resumable_with_progress(url, partial, artifact, authorization, tool, &mut |_, _| {})
+}
+
+/// Fetches `url` into `partial` exactly as [`fetch_resumable`] does, and
+/// reports what is actually in the file as it lands: the retained start
+/// first, then each write's total, against the pinned size. Byte reports
+/// only — reaching the pinned size is no verdict on the bytes, which the
+/// caller still checks. The callback is sync and infallible, and never
+/// changes the fetch's outcome.
+pub(crate) fn fetch_resumable_with_progress(
+    url: &str,
+    partial: &Path,
+    artifact: &PinnedArtifact,
+    authorization: Option<&HeaderValue>,
+    tool: &'static str,
+    on_progress: &mut dyn FnMut(u64, u64),
+) -> oneiron::Result<ResumableFetch> {
     let failed = |reason: &str| oneiron::Error::UpstreamToolFailure {
         tool,
         code: format!("{}: {reason}", artifact.file),
@@ -986,6 +1028,7 @@ pub(crate) fn fetch_resumable(
         .map_err(oneiron::Error::Io)?;
     let kept = file.metadata().map_err(oneiron::Error::Io)?.len();
     if kept >= cap {
+        on_progress(kept, cap);
         return Ok(ResumableFetch::Written { kept, fetched: 0 });
     }
     let response = match send_following(url, kept, authorization) {
@@ -1029,7 +1072,16 @@ pub(crate) fn fetch_resumable(
     file.set_len(start).map_err(oneiron::Error::Io)?;
     file.seek(SeekFrom::Start(start))
         .map_err(oneiron::Error::Io)?;
-    let copied = std::io::copy(&mut response.take(cap + 1 - start), &mut file);
+    on_progress(start, cap);
+    let copied = {
+        let mut out = ProgressWriter {
+            inner: &mut file,
+            written: start,
+            expected: cap,
+            on_progress,
+        };
+        std::io::copy(&mut response.take(cap + 1 - start), &mut out)
+    };
     let synced = file.sync_all();
     match copied {
         Ok(fetched) => {

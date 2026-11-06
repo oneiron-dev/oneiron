@@ -35,7 +35,7 @@ use oneiron::llm::{
     CallSchedule, INFERENCE_CALLS_KEY, InferenceCallReceipt, ScheduleAck, ScheduleUpdate,
     SchedulingReceipt, SessionOp,
 };
-use oneiron_driver::{DeviceGrant, WorkerLease};
+use oneiron_driver::{DeviceGrant, InferenceWorker, WorkerLease};
 use oneiron_llm_openai::OpenAiCompatTransportError;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
@@ -49,7 +49,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
 use super::wire::{self, Incoming, Outgoing};
-use super::worker_host;
+use super::worker_host::{self, NativeLaunch};
 
 /// A send to a worker that has gone fails with EPIPE rather than raising
 /// SIGPIPE; macOS has no such flag, and this process ignores the signal.
@@ -89,6 +89,8 @@ pub(super) struct Channel {
     /// next `next` resumes it instead of rereading its header, so dropping
     /// a read future never misaligns the stream.
     pending: Option<PartialFrame>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    peer_pid: Option<u32>,
 }
 
 /// A frame partly read when its read future was dropped: the header bytes
@@ -113,12 +115,40 @@ impl Channel {
                 "the worker's socket answers as another user",
             ));
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let peer_pid = peer.pid().and_then(|pid| u32::try_from(pid).ok());
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),
             writer: Arc::new(AsyncMutex::new(writer)),
             pending: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            peer_pid,
         })
+    }
+
+    /// Checks the connected peer, then reads this launch's hello on the
+    /// same connection before any request body or descriptor can leave it.
+    pub(super) async fn connect_launch(
+        launch: &NativeLaunch,
+        epoch: Option<&str>,
+    ) -> io::Result<(Self, JsonValue)> {
+        let mut channel = Self::connect(launch.socket()).await?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if !launch.peer_matches(channel.peer_pid) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the native peer is not this launch's supervised child",
+            ));
+        }
+        let hello = channel.ask("hello", json!({})).await?;
+        if !launch.hello_agrees(&hello, epoch) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the native hello names another launch, model or epoch",
+            ));
+        }
+        Ok((channel, hello))
     }
 
     fn frame(
@@ -467,7 +497,12 @@ impl Channel {
     /// deadline: the worker releases at its next pass. False when the
     /// terminal says the worker could not release the call's Job, which it
     /// still charges.
-    async fn cancel(mut self, request_id: u64, worker_id: Option<&str>, epoch: &str) -> bool {
+    async fn cancel(
+        mut self,
+        request_id: u64,
+        worker: Option<&InferenceWorker>,
+        epoch: &str,
+    ) -> bool {
         if self
             .send("cancel", request_id, None, json!({}))
             .await
@@ -483,7 +518,7 @@ impl Channel {
                         // The call already settled without this body; its
                         // partial receipt and cheap stats go to the device
                         // ledger and supervisor only (FIX 9297).
-                        report_released(worker_id, epoch, &frame.body);
+                        report_released(worker, epoch, &frame.body);
                         return true;
                     }
                     "refused" => return true,
@@ -650,20 +685,20 @@ fn logged(error: OpenAiCompatTransportError) -> OpenAiCompatTransportError {
 /// ledger and supervisor (FIX 9297). The call already settled without
 /// them, so they never reach the settlement sink; `physical` stays absent
 /// (host-stamped custody the cancel task cannot re-derive, and worker
-/// JSON is never its source).
-fn report_released(worker_id: Option<&str>, epoch: &str, body: &JsonValue) {
-    let Some(worker_id) = worker_id else {
+/// JSON is never its source). The worker is the call's actual origin
+/// instance, never a re-resolved id (FIX 13845).
+fn report_released(worker: Option<&InferenceWorker>, epoch: &str, body: &JsonValue) {
+    let Some(worker) = worker else {
         return;
     };
+    let worker_id = worker.spec().worker_id.as_str();
     if let Some(stats) = body.get("stats") {
-        worker_host::report_device_stats(worker_id, stats);
+        worker_host::report_device_stats(worker, stats);
         // Released stats feed the same supervisor path as finals (FIX 9297):
         // without it the queue, open calls and residency go stale until a
         // later poll.
-        if let Some(worker) = worker_host::hosted_worker(worker_id)
-            && let Some(activity) = super::activity_of(stats)
-        {
-            worker_host::report_device_activity(&worker, activity);
+        if let Some(activity) = super::activity_of(stats) {
+            worker_host::report_device_activity(worker, activity);
         }
     }
     let receipt = body
@@ -688,8 +723,9 @@ pub(super) struct Call {
     channel: Option<Channel>,
     request_id: u64,
     /// The worker the call went to, for released-body ledger reports; none
-    /// on a worker-less qualification probe (FIX 9297).
-    worker_id: Option<String>,
+    /// on a worker-less qualification probe (FIX 9297). The actual origin
+    /// instance, never a re-resolved id (FIX 13845).
+    worker: Option<InferenceWorker>,
     /// The incarnation the call went to, which its updates name.
     epoch: String,
     /// The lease on the incarnation the call went to, held until the call
@@ -701,7 +737,7 @@ pub(super) struct Call {
 }
 
 impl Call {
-    /// Connects to `path`, sends the call with `conversation` as its input
+    /// Connects to `launch`, sends the call with `conversation` as its input
     /// region and `schedule`'s fields at its body's top level, and waits
     /// for the worker to accept or refuse it. A call that names a `session`
     /// working branch goes as `session.generate`, its body otherwise a
@@ -711,7 +747,7 @@ impl Call {
         reason = "each argument is one fact of the call being started"
     )]
     pub(super) async fn start(
-        path: &Path,
+        launch: &NativeLaunch,
         epoch: &str,
         conversation: &JsonValue,
         params: JsonValue,
@@ -719,11 +755,11 @@ impl Call {
         lease: Option<WorkerLease>,
         session: Option<JsonValue>,
         schedule: Option<&CallSchedule>,
-        worker_id: Option<&str>,
+        worker: Option<&InferenceWorker>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
-        let mut channel = Channel::connect(path)
+        let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
             .await
             .map_err(|e| not_sent("connect", e))?;
         let request_id = next_request_id();
@@ -743,7 +779,7 @@ impl Call {
         let mut call = Self {
             channel: Some(channel),
             request_id,
-            worker_id: worker_id.map(str::to_owned),
+            worker: worker.cloned(),
             epoch: epoch.to_owned(),
             lease,
             grant: None,
@@ -869,7 +905,7 @@ impl Call {
                     // here, not in the cancel task, so its partial receipt
                     // and cheap stats go to the device ledger and supervisor
                     // from this branch; never the settlement sink (FIX 9297).
-                    report_released(self.worker_id.as_deref(), &self.epoch, &frame.body);
+                    report_released(self.worker.as_ref(), &self.epoch, &frame.body);
                     return Err(Cut(unexpected("released", "before `final`")));
                 }
                 _ => {}
@@ -889,15 +925,13 @@ impl Drop for Call {
         let lease = self.lease.take();
         let grant = self.grant.take();
         let request_id = self.request_id;
-        let worker_id = self.worker_id.clone();
+        let worker = self.worker.clone();
         let epoch = self.epoch.clone();
         // Outside a runtime the connection's close is the cancel: the worker
         // cancels every call of a connection that goes.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                if !channel
-                    .cancel(request_id, worker_id.as_deref(), &epoch)
-                    .await
+                if !channel.cancel(request_id, worker.as_ref(), &epoch).await
                     && let Some(lease) = &lease
                 {
                     // The worker still charges the call: so does the lease.

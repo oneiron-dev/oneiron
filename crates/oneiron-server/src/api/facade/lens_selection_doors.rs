@@ -13,7 +13,7 @@ use oneiron::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::action_routes::execute_result_set_action;
+use super::action_routes::{execute_result_set_action, take_action_rows};
 use super::host_doors::support::{Listed, credential_listing, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -130,9 +130,11 @@ pub(crate) async fn vault_lenses_result_set_action(
     )
     .await;
     let validated = validated?;
-    let dispatch = execute_result_set_action(server, auth, &held, validated, input.idempotency_key)
-        .await
-        .map_err(super::FacadeApiError::into_memory_error)?;
+    let mut dispatch =
+        execute_result_set_action(server, auth, &held, validated, input.idempotency_key)
+            .await
+            .map_err(super::FacadeApiError::into_memory_error)?;
+    let _ = take_action_rows(&mut dispatch);
     let outcome = dispatch
         .outcome_value()
         .map_err(|_| internal("vault.lenses.result_set.action"))?;

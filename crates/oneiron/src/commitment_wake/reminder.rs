@@ -61,7 +61,7 @@ const MAX_QUOTED_PROMISE_CHARS: usize = 400;
 /// `voice`, when set, has the host's model word each reminder, the owner's
 /// own and a third party's nudge alike (FIX 12000); unset, reminders keep
 /// the fixed wording.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentReminderRoute {
     pub channel: String,
@@ -139,21 +139,24 @@ impl CommitmentReminderRoute {
 
 /// The UTC offset, in whole minutes, the IANA `zone` observes at `at`; `None`
 /// for a zone the embedded database does not know.
-fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
-    let wall = crate::calendar::tz::utc_to_wall(at, zone).ok()?;
-    let local = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
-        .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?
-        .and_utc()
-        .timestamp();
-    let seconds = local.checked_sub(i64::try_from(at).ok()?)?;
-    i16::try_from(seconds / 60).ok()
+pub(crate) fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
+    crate::calendar::tz::ResolvedTimeZone::new(zone)
+        .ok()?
+        .offset_minutes_at(at)
 }
 
 impl Vault {
     /// The owner's reminder route, when one is set.
     pub fn commitment_reminder_route(&self) -> Result<Option<CommitmentReminderRoute>> {
         let txn = self.store.env.read_txn()?;
-        REMINDER_ROUTE.get(&self.store, &txn, &())
+        self.commitment_reminder_route_in_txn(&txn)
+    }
+
+    pub(crate) fn commitment_reminder_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<CommitmentReminderRoute>> {
+        REMINDER_ROUTE.get(&self.store, txn, &())
     }
 
     /// Sets (or, with `None`, clears) where the owner's reminders go. Only the

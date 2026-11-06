@@ -256,7 +256,7 @@ impl Known {
             let store = &vault.store;
             known
                 .parties
-                .extend(crate::comm::comm_party_keys_in_txn(store, &txn)?);
+                .extend(store.record_hooks.comm_party_keys_in_txn(store, &txn)?);
             // Claims-first, as the send gate reads contacts. One whose heads do
             // not rebuild fails every send closed alike.
             for contact in counterparty_contacts_in_claims_in_txn(store, &txn)?

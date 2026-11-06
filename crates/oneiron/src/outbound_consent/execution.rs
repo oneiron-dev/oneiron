@@ -208,7 +208,12 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         scoped_decision_after_effect(vault, grant_id, principal_ref, &prepared_call, &effect)?;
     let freeze_events = observed_freeze_events_since(freeze_event_baseline);
     let held_ask =
-        super::approval::HeldConnectorAsk::of(effect.approval_digest.clone(), &prepared_call);
+        super::approval::HeldConnectorAsk::of(effect.approval_digest.clone(), &prepared_call).map(
+            |mut ask| {
+                ask.ask_consent = effect.ask_consent.clone();
+                ask
+            },
+        );
     let mut result = dispatch_result(effect, decision, transport, freeze_events);
     result.held_ask = held_ask;
     Ok(result)

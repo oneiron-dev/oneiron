@@ -17,8 +17,8 @@
 //! turn texts become plain text; no MessagePack reaches a prompt.
 //!
 //! Nothing here refuses and nothing is cut: a row that no longer reads, one
-//! of another kind, one whose body does not decode and a turn with no text
-//! of its own are each counted left out, and a read that fails leaves every
+//! of another kind, one whose body does not decode and a turn with no
+//! readable text are each counted left out, and a read that fails leaves every
 //! selected row counted so. No row is truncated or capped.
 
 use std::collections::HashSet;
@@ -27,16 +27,20 @@ use crate::Vault;
 use crate::agent_dispatch::AgentDispatcher;
 use crate::agent_dispatch::codec::record_dispatch_input;
 use crate::agent_dispatch::workflow_record::is_wrapper;
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ScopedRead, ScopedReadActorKey, decode_claim_body};
 use crate::context_projection::ResolvedContextProjection;
-use crate::dreamer_runner::decode_dreamer_attempt_payload;
-use crate::edge::EdgeActorClass;
+use crate::dreamer_runner::{DreamerTurnRole, decode_dreamer_attempt_payload, dreamer_turn_role};
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_USER};
+use crate::ports::EdgeDirection;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::write_envelope::WriteActor;
+
+mod current_readers;
 
 /// The keys a turn body names its speaker under, first non-empty one wins:
 /// the vocabulary the chat projection admits a turn by.
@@ -54,6 +58,8 @@ pub struct RenderedWorkflowStepContext {
     omitted_memory: usize,
     omitted_chat: usize,
     rows: Vec<EntityId>,
+    /// Body digests captured beside `rows`, before their read snapshot ends.
+    revisions: Vec<String>,
 }
 
 impl std::fmt::Debug for RenderedWorkflowStepContext {
@@ -118,6 +124,128 @@ impl RenderedWorkflowStepContext {
     #[must_use]
     pub fn source_rows(&self) -> &[EntityId] {
         &self.rows
+    }
+
+    /// Stamps the exact selected row bodies this context rendered, including
+    /// witnessed MESSAGE children, on the same leased try's pack manifest.
+    /// The versions are BLAKE3 digests of the admitted bodies, not a later
+    /// lookup of their current revisions. Repeated exposures of the same
+    /// body stamp once; a changed body adds another entry.
+    ///
+    /// # Errors
+    ///
+    /// A missing or superseded lease, and storage errors. Callers may keep
+    /// running after a capture error; this door admits no model call.
+    pub fn record_manifest(&self, vault: &Vault, leased: &AttemptRecord, at: u64) -> Result<usize> {
+        if self.rows.is_empty() {
+            return Ok(0);
+        }
+        let owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvariantViolation(
+                "workflow context exposure requires a live attempt lease",
+            ))?;
+        vault.with_write_txn_grouped(|txn| {
+            let queue = AttemptQueue::new(vault);
+            queue.require_skill_load_lease_in_txn(txn, leased.id, owner, leased.attempt_count)?;
+            let record = queue
+                .get_in_txn(txn, leased.id)?
+                .ok_or(Error::EntityNotFound)?;
+            let mut held: HashSet<_> = record
+                .manifest
+                .into_iter()
+                .filter(|entry| entry.kind == ManifestKind::WorkflowContextRow)
+                .map(|entry| (entry.reference, entry.version))
+                .collect();
+            let mut stamped = 0;
+            for (id, revision) in self.rows.iter().zip(&self.revisions) {
+                let reference = id.to_hex();
+                if held.insert((reference.clone(), revision.clone())) {
+                    queue.append_manifest_entry_in_txn(
+                        txn,
+                        leased.id,
+                        ManifestEntry::new(
+                            ManifestKind::WorkflowContextRow,
+                            reference,
+                            revision,
+                            at,
+                        ),
+                    )?;
+                    stamped += 1;
+                }
+            }
+            Ok(stamped)
+        })
+    }
+
+    fn capture_row(&mut self, id: EntityId, body: &[u8]) {
+        self.rows.push(id);
+        self.revisions.push(blake3::hash(body).to_hex().to_string());
+    }
+
+    /// Own-text TURNs keep their existing projection. A witnessed container
+    /// instead projects each readable, visible, same-speaker MESSAGE. One
+    /// unreadable child never withholds its independently readable siblings.
+    fn render_turn(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        lanes: &[ScopedRead<'_>],
+        id: EntityId,
+        body: &[u8],
+    ) -> Result<bool> {
+        if let Some(line) = turn_line(ENTITY_TYPE_TURN, body) {
+            self.chat.push(line);
+            self.capture_row(id, body);
+            return Ok(true);
+        }
+        let Some(entries) = turn_fields(ENTITY_TYPE_TURN, body) else {
+            return Ok(false);
+        };
+        let Some(speaker) = turn_field(&entries, TURN_SPEAKER_KEYS) else {
+            return Ok(false);
+        };
+        let bucket = match dreamer_turn_role(Some(speaker), &vault.config.assistant_display_names) {
+            DreamerTurnRole::User => WITNESS_AUTHOR_USER,
+            DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+            _ => return Ok(false),
+        };
+        let ids = vault.filtered_edge_peers(
+            txn,
+            EdgeDirection::In,
+            &id,
+            EdgeKind::PartOf,
+            Some(ENTITY_TYPE_MESSAGE),
+        )?;
+        let children = read_on_all_lanes(txn, lanes, &ids)?;
+        let mut visible = Vec::new();
+        for (child, parts) in ids.into_iter().zip(children) {
+            let Some((ENTITY_TYPE_MESSAGE, _, bytes)) = parts else {
+                continue;
+            };
+            let Some(message) = decode_message(&bytes) else {
+                continue;
+            };
+            if message.is_visible && message.author == bucket {
+                visible.push((message.order, child, message.content, bytes));
+            }
+        }
+        if visible.is_empty() {
+            return Ok(false);
+        }
+        visible.sort_unstable_by_key(|(order, child, _, _)| (*order, *child));
+        let text = visible
+            .iter()
+            .map(|(_, _, text, _)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.chat.push(format!("- {speaker}: {text}"));
+        self.capture_row(id, body);
+        for (_, child, _, bytes) in visible {
+            self.capture_row(child, &bytes);
+        }
+        Ok(true)
     }
 }
 
@@ -317,9 +445,45 @@ fn hydrate(
         lane.persist_grant_clock()?;
     }
     let txn = vault.store.env.read_txn()?;
-    let mut bodies: Vec<Option<(u8, u64, Vec<u8>)>> = Vec::new();
+    let mut bodies = read_on_all_lanes(&txn, lanes, &ids)?.into_iter();
+    let mut rendered = RenderedWorkflowStepContext::default();
+    for row in &memory_rows {
+        let body = row.and_then(|_| bodies.next().flatten());
+        if let (Some(id), Some((entity_type, _, body))) = (row, body)
+            && let Some(line) = claim_line(entity_type, &body)
+        {
+            rendered.memory.push(line);
+            rendered.capture_row(*id, &body);
+        } else {
+            rendered.omitted_memory += 1;
+        }
+    }
+    for row in &chat_rows {
+        let body = row.and_then(|_| bodies.next().flatten());
+        let kept = match (row, body) {
+            (Some(id), Some((ENTITY_TYPE_TURN, _, body))) => {
+                rendered.render_turn(vault, &txn, lanes, *id, &body)?
+            }
+            _ => false,
+        };
+        if !kept {
+            rendered.omitted_chat += 1;
+        }
+    }
+    Ok(rendered)
+}
+
+type ContextRowBody = (u8, u64, Vec<u8>);
+
+/// Every lane must read each row in this same policy/body snapshot.
+fn read_on_all_lanes(
+    txn: &heed::RoTxn<'_>,
+    lanes: &[ScopedRead<'_>],
+    ids: &[EntityId],
+) -> Result<Vec<Option<ContextRowBody>>> {
+    let mut bodies = Vec::new();
     for (index, lane) in lanes.iter().enumerate() {
-        let read = lane.get_entities_parts_in_txn(&txn, &ids)?;
+        let read = lane.get_entities_parts_in_txn(txn, ids)?;
         if index == 0 {
             bodies = read;
         } else {
@@ -330,34 +494,7 @@ fn hydrate(
             }
         }
     }
-    drop(txn);
-    let mut bodies = bodies.into_iter();
-    let mut rendered = RenderedWorkflowStepContext::default();
-    for row in &memory_rows {
-        let body = row.and_then(|_| bodies.next().flatten());
-        match body.and_then(|(entity_type, _, body)| claim_line(entity_type, &body)) {
-            Some(line) => {
-                rendered.memory.push(line);
-                if let Some(id) = row {
-                    rendered.rows.push(*id);
-                }
-            }
-            None => rendered.omitted_memory += 1,
-        }
-    }
-    for row in &chat_rows {
-        let body = row.and_then(|_| bodies.next().flatten());
-        match body.and_then(|(entity_type, _, body)| turn_line(entity_type, &body)) {
-            Some(line) => {
-                rendered.chat.push(line);
-                if let Some(id) = row {
-                    rendered.rows.push(*id);
-                }
-            }
-            None => rendered.omitted_chat += 1,
-        }
-    }
-    Ok(rendered)
+    Ok(bodies)
 }
 
 /// The claim a memory section names: `<domain>:cl_<hex>`.
@@ -390,6 +527,15 @@ fn claim_line(entity_type: u8, body: &[u8]) -> Option<String> {
 /// body that is not a map, or one with no text of its own (a witnessed
 /// conversation's container keeps its words in its messages).
 fn turn_line(entity_type: u8, body: &[u8]) -> Option<String> {
+    let entries = turn_fields(entity_type, body)?;
+    let text = turn_field(&entries, TURN_TEXT_KEYS)?;
+    Some(match turn_field(&entries, TURN_SPEAKER_KEYS) {
+        Some(speaker) => format!("- {speaker}: {text}"),
+        None => format!("- {text}"),
+    })
+}
+
+fn turn_fields(entity_type: u8, body: &[u8]) -> Option<Vec<(rmpv::Value, rmpv::Value)>> {
     if entity_type != ENTITY_TYPE_TURN {
         return None;
     }
@@ -397,18 +543,53 @@ fn turn_line(entity_type: u8, body: &[u8]) -> Option<String> {
     let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut cursor).ok()? else {
         return None;
     };
-    let field = |keys: &[&str]| {
-        keys.iter().find_map(|key| {
-            entries
-                .iter()
-                .find(|(candidate, _)| candidate.as_str() == Some(*key))
-                .and_then(|(_, value)| value.as_str())
-                .filter(|value| !value.trim().is_empty())
-        })
+    Some(entries)
+}
+
+fn turn_field<'a>(entries: &'a [(rmpv::Value, rmpv::Value)], keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| {
+        entries
+            .iter()
+            .find(|(candidate, _)| candidate.as_str() == Some(*key))
+            .and_then(|(_, value)| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
+struct MessageText {
+    author: String,
+    content: String,
+    is_visible: bool,
+    order: u64,
+}
+
+/// The canonical MESSAGE projection fields; malformed or duplicate fields
+/// do not supply words. `order` accepts the full native u32 domain.
+fn decode_message(body: &[u8]) -> Option<MessageText> {
+    let mut cursor = body;
+    let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
     };
-    let text = field(TURN_TEXT_KEYS)?;
-    Some(match field(TURN_SPEAKER_KEYS) {
-        Some(speaker) => format!("- {speaker}: {text}"),
-        None => format!("- {text}"),
+    if !cursor.is_empty() {
+        return None;
+    }
+    let (mut author, mut content, mut is_visible, mut order) = (None, None, None, None);
+    for (key, value) in entries {
+        let fresh = match key.as_str() {
+            Some("author") => author.replace(value.as_str()?.to_owned()).is_none(),
+            Some("content") => content.replace(value.as_str()?.to_owned()).is_none(),
+            Some("is_visible") => is_visible.replace(value.as_bool()?).is_none(),
+            Some("order") => order.replace(value.as_u64()?).is_none(),
+            _ => true,
+        };
+        if !fresh {
+            return None;
+        }
+    }
+    Some(MessageText {
+        author: author?,
+        content: content?,
+        is_visible: is_visible?,
+        order: order?,
     })
 }

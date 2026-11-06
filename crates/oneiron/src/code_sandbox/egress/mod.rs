@@ -5,6 +5,7 @@ mod dns;
 mod fixture;
 mod http;
 mod name_gate;
+mod quic;
 mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
@@ -16,6 +17,7 @@ use oneiron_container::{
     EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, UnmeteredFloor,
 };
 use oneiron_sandbox_contract::network::global_address;
+pub use quic::EgressDatagramNameRefusal;
 pub use receipt::EgressReceipt;
 use std::collections::HashMap;
 use std::io;
@@ -99,7 +101,8 @@ enum RawAuthority {
     /// the guest's bytes go on unread.
     Open,
     /// A name of the allowlist bound to the address now: a stream's opening
-    /// bytes must carry a name bound to it.
+    /// bytes, and a QUIC Initial's ClientHello (FIX 8991), must carry a
+    /// name bound to it.
     Named,
 }
 
@@ -163,6 +166,9 @@ pub struct OpenEgressProxy {
     /// The fixture origin's one upstream (FIX 8061), none unless the host
     /// set one through [`OpenEgressProxy::with_fixture_forward`].
     fixture_forward: Option<FixtureForward>,
+    /// The QUIC flows whose opening ClientHello the datagram name gate
+    /// holds or judged (FIX 8991).
+    quic_flows: Arc<quic::FlowTable>,
 }
 impl OpenEgressProxy {
     #[must_use]
@@ -170,6 +176,7 @@ impl OpenEgressProxy {
         Self {
             vault,
             run_id,
+            quic_flows: Arc::new(quic::FlowTable::new(config.request_timeout)),
             config,
             bindings: Mutex::new(HashMap::new()),
             fixture: None,
@@ -387,6 +394,77 @@ impl OpenEgressProxy {
                 | PolicyClassifyDecision::Skipped(_)
         )
     }
+    /// Sends the datagrams `release` held, then `bytes`, to `target` through
+    /// one connected socket with no receive between them, and answers the
+    /// one reply. Each goes past the policy plane and is receipted first; a
+    /// block of any refuses them all. `release`, a QUIC flow its name
+    /// admitted (FIX 8991), settles once they are sent, so no later
+    /// datagram of the flow goes ahead of them.
+    fn relay_datagrams(
+        &self,
+        target: SocketAddr,
+        url: &str,
+        bytes: &[u8],
+        release: Option<quic::Release<'_>>,
+    ) -> io::Result<Vec<u8>> {
+        let held = release.as_ref().map_or(&[][..], quic::Release::held);
+        let mut permitted = true;
+        for datagram in held {
+            let (decision, category, policy_receipt) = self.policy(url, datagram)?;
+            self.record(
+                "datagram_request",
+                url,
+                datagram,
+                decision,
+                category,
+                policy_receipt,
+            )?;
+            permitted &= Self::permits(decision);
+        }
+        let (decision, category, policy_receipt) = self.policy(url, bytes)?;
+        self.record(
+            "datagram_request",
+            url,
+            bytes,
+            decision,
+            category.clone(),
+            policy_receipt.clone(),
+        )?;
+        if !permitted || !Self::permits(decision) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "egress policy",
+            ));
+        }
+        let socket = UdpSocket::bind(if target.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        })?;
+        socket.set_read_timeout(Some(self.config.request_timeout))?;
+        socket.connect(target)?;
+        for datagram in held {
+            socket.send(datagram)?;
+        }
+        socket.send(bytes)?;
+        drop(release);
+        let mut response = vec![0; 65536];
+        let result = socket.recv(&mut response);
+        if let Ok(n) = result {
+            response.truncate(n);
+        } else {
+            response.clear();
+        }
+        self.record(
+            "datagram_response",
+            url,
+            &response,
+            decision,
+            category,
+            policy_receipt,
+        )?;
+        result.map(|_| response)
+    }
 }
 /// The floor the vault's host lent ([`Vault::lend_host_net_floor`]), looked
 /// up at each charge, so a run opened before the lend is charged once it
@@ -435,6 +513,17 @@ impl EgressRelay for OpenEgressProxy {
             None,
         )
     }
+    /// One credential forwarding/resolution decision, through the SAME vault
+    /// and run id as every other receipt this proxy writes.
+    fn record_credential(
+        &self,
+        record: &oneiron_container::CredentialEgressRecord,
+    ) -> io::Result<()> {
+        self.vault
+            .append_credential_egress_receipt(self.run_id, record)
+            .map(|_| ())
+            .map_err(io::Error::other)
+    }
     fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()> {
         let allowed = target.port() == 53 || self.raw_authority(target, RawProtocol::Udp).is_some();
         self.record(
@@ -475,12 +564,18 @@ impl EgressRelay for OpenEgressProxy {
     ) -> io::Result<Vec<u8>> {
         name_gate::open_upload(self, target, guest, alive)
     }
+    /// One datagram to `target` and its one reply. A datagram to an address
+    /// a name of the allowlist admits is read first for a QUIC Initial's
+    /// name (FIX 8991). One its flow holds fails with `EAGAIN` at once: it
+    /// is no refusal, no request is receipted and the guest gets no reply.
+    /// The reply from such an address teaches the gate the server's QUIC
+    /// connection IDs.
     fn datagram(&self, target: SocketAddr, bytes: &[u8]) -> io::Result<Vec<u8>> {
         if target.port() == 53 {
             return dns::answer(self, bytes);
         }
         let url = format!("udp://{target}");
-        if self.raw_authority(target, RawProtocol::Udp).is_none() {
+        let Some(authority) = self.raw_authority(target, RawProtocol::Udp) else {
             self.record(
                 "datagram",
                 &url,
@@ -493,46 +588,20 @@ impl EgressRelay for OpenEgressProxy {
                 io::ErrorKind::PermissionDenied,
                 "non-public or ungranted destination",
             ));
+        };
+        let release = match authority {
+            RawAuthority::Open => None,
+            RawAuthority::Named => match quic::gate(self, target, bytes)? {
+                quic::Gated::Forward => None,
+                quic::Gated::Held => return Err(io::Error::from_raw_os_error(libc::EAGAIN)),
+                quic::Gated::Release(release) => Some(release),
+            },
+        };
+        let reply = self.relay_datagrams(target, &url, bytes, release)?;
+        if authority == RawAuthority::Named {
+            quic::observe_reply(self, target, &reply);
         }
-        let (decision, category, policy_receipt) = self.policy(&url, bytes)?;
-        self.record(
-            "datagram_request",
-            &url,
-            bytes,
-            decision,
-            category.clone(),
-            policy_receipt.clone(),
-        )?;
-        if !Self::permits(decision) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "egress policy",
-            ));
-        }
-        let socket = UdpSocket::bind(if target.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        })?;
-        socket.set_read_timeout(Some(self.config.request_timeout))?;
-        socket.connect(target)?;
-        socket.send(bytes)?;
-        let mut response = vec![0; 65536];
-        let result = socket.recv(&mut response);
-        if let Ok(n) = result {
-            response.truncate(n);
-        } else {
-            response.clear();
-        }
-        self.record(
-            "datagram_response",
-            &url,
-            &response,
-            decision,
-            category,
-            policy_receipt,
-        )?;
-        result.map(|_| response)
+        Ok(reply)
     }
     fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse> {
         if let Some(answer) = fixture::fetch(self, &request) {

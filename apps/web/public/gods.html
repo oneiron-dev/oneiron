@@ -1,0 +1,148 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the gods · style bench</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap">
+<style>
+  :root { color-scheme: light dark; --serif: "Source Serif 4", Georgia, serif; }
+  body { margin: 0; font-family: var(--serif); background: #131110; color: #DDD6C9; }
+  .picks { position: sticky; top: 0; z-index: 3; background: #211D18; color: #DDD6C9; padding: 12px 40px; display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; font-size: 14px; }
+  .picks label { display: flex; gap: 7px; align-items: center; opacity: .9; }
+  .picks select, .picks input, .picks button { font: inherit; color: #DDD6C9; background: #322D27; border: 0; border-radius: 6px; padding: 5px 9px; }
+  .picks input { min-width: 260px; }
+  .picks button { cursor: pointer; }
+  .picks :focus-visible { outline: 1.5px solid #8F887A; outline-offset: 2px; }
+  .picks .ok { opacity: .7; font-size: 13px; }
+  .rooms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 900px) { .rooms { grid-template-columns: 1fr; } }
+  .room { min-width: 0; padding: 34px 40px 60px; }
+  .paper { background: #EBE7DF; color: #26221E; --ink-eiri: #2E6E96; --ink-tory: #8E3B4A; --ink-antevon: #4E4488; --sheet: #F3F0E9; --hover: rgba(120,104,72,.10); }
+  .film  { background: #131110; color: #DDD6C9; --ink-eiri: #6FA3C7; --ink-tory: #BE687A; --ink-antevon: #857BB8; --sheet: #1B1815; --hover: rgba(255,255,255,.06); }
+  h1 { font-size: 20px; font-weight: 550; margin: 0 0 6px; }
+  h2 { font-size: 15px; font-weight: 550; margin: 0 0 10px; }
+  .lead { font-size: 13.5px; opacity: .72; max-width: 56ch; line-height: 1.5; margin: 0 0 24px; }
+  .sheet { background: var(--sheet); border-radius: 8px; padding: 18px 22px 14px; margin-bottom: 22px; }
+  .row { display: grid; grid-template-columns: 44px 84px 1fr; align-items: center; gap: 12px; padding: 7px 8px; border-radius: 5px; }
+  .row:hover { background: var(--hover); }
+  .row img, .row .face { display: block; margin: 0 auto; }
+  .row .name { font-size: 14.5px; }
+  .row .what { font-size: 13px; opacity: .7; }
+  .name.eiri { color: var(--ink-eiri); } .name.tory { color: var(--ink-tory); } .name.antevon { color: var(--ink-antevon); }
+  .sizes { display: flex; flex-wrap: wrap; gap: 18px; row-gap: 10px; align-items: flex-end; padding: 10px 8px 2px; }
+  .sizes img, .sizes .face { display: inline-block; flex: none; margin: 0; }
+  .sizes .z { font-size: 11px; opacity: .55; align-self: flex-end; }
+  .face { background: var(--ink); -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat; }
+  .read { font-size: 13.5px; line-height: 1.5; opacity: .82; max-width: 62ch; margin: 10px 8px 0; }
+  .line { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; margin-right: 22px; }
+  .line .doing { opacity: .7; font-size: 13px; }
+  .notes p { font-size: 13.5px; line-height: 1.5; max-width: 62ch; margin: 0 0 10px; opacity: .85; }
+  .picks input[size] { min-width: 0; width: 9em; }
+  .grid9 { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 12px 8px; margin: 6px 0 16px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .cell .line { margin: 0; gap: 6px; }
+  .cell .z { font-size: 11px; opacity: .6; text-align: center; }
+</style>
+
+<div class="picks" id="picks">
+  <label>style <select id="p-style"><option value="">—</option><option>base</option><option>trink</option><option>vase</option><option>cut</option><option>dream</option><option>engrave, rerun it</option></select></label>
+  <label>Eiri mark <input type="text" id="p-eiri" size="10" placeholder="1c, wings2 …"></label>
+  <label>Tory mark <input type="text" id="p-tory" size="10" placeholder="1g, crest2 …"></label>
+  <label>Antevon mark <input type="text" id="p-antevon" size="10" placeholder="2c, 8g …"></label>
+  <label>note <input type="text" id="p-note" placeholder="cast swaps, anything else"></label>
+  <button id="copy">copy the sheet</button><span class="ok" id="ok"></span>
+</div>
+<div class="rooms">
+  <section class="room paper" id="paper"></section>
+  <section class="room film" id="film"></section>
+</div>
+<script>
+  const AGENTS = [
+    ['eiri', 'Eiri', 'Iris · outbound, writes and sends'],
+    ['tory', 'Tory', 'Athena · research, reads filings'],
+    ['antevon', 'Antevon', 'Mnemosyne · the house mind'],
+  ]
+  const STYLES = [
+    ['G',  'base · the 08-18 reference',   true,  'Riso grain, one ink, the drawing every set shares. Keys to a mask with a little edge noise. The control.'],
+    ['GT', 'trink · two inks',             true,  'The same drawing with vermillion on the lips and the attribute. The red mouth turns a statue into a person with lipstick. Red already has one job on the desk, the seal. The ink row below loses the red, a mask is one ink.'],
+    ['GV', 'vase · red-figure',            false, 'Figure reserved in the paper on a solid ink field, the true Greek convention. It is a plate, not a stamp, so it can never sit in the agent\'s ink. At 24 it is a blue square. The nameplate under the meander is fake text.'],
+    ['GC', 'cut · linocut',                true,  'Solid ink, hard edges, no grain. The silhouette holds at 24, the mask keys clean, day and night are the same drawing. This one fits the face atom as built.'],
+    ['GD', 'dream · dissolving print',     true,  'Edges evaporate into grain, the face stays. It reads at 96 and up. Below 48 the fuzz eats the silhouette. A marketing plate, not a roster face.'],
+  ]
+  const MARKS = { eiri: ['wings1', 'wings2'], tory: ['crest1', 'crest2'], antevon: ['veil1', 'veil2'] }
+  const face = (k, m, z) => `<span class="face" style="--m:url(/art/faces/${k}-${m}.png);--ink:var(--ink-${k});width:${z}px;height:${z}px" role="img" aria-label="${k}"></span>`
+  const img = (k, fam, r, z) => `<img src="/art/faces/${k}-${fam}-${r}.png" width="${z}" height="${z}" alt="">`
+  function room(id, day) {
+    const el = document.getElementById(id)
+    const r = day ? 'day' : 'night'
+    const rows = (src) => AGENTS.map(([k, n, w]) => `
+      <div class="row">${src(k)}<span class="name ${k}">${n}</span><span class="what">${w}</span></div>`).join('')
+    const styles = STYLES.map(([fam, title, maskable, read]) => `
+      <div class="sheet">
+        <h2>${title}</h2>
+        ${rows((k) => img(k, fam, r, 32))}
+        <div class="sizes">${[96, 72, 48, 32, 24].map((z) => AGENTS.map(([k]) => img(k, fam, r, z)).join('') + `<span class="z">${z}</span>`).join('')}</div>
+        ${maskable ? `<div class="sizes">${[48, 32, 24].map((z) => AGENTS.map(([k]) => face(k, fam + '-mask-' + r, z)).join('') + `<span class="z">${z} in ink</span>`).join('')}</div>` : ''}
+        <p class="read">${read}</p>
+      </div>`).join('')
+    const marks = `
+      <div class="sheet">
+        <h2>marks · the attribute glyph in the row</h2>
+        ${AGENTS.map(([k, n]) => MARKS[k].map((m) => `
+          <div class="sizes">${[16, 20, 24].map((z) => `<span class="line">${face(k, 'GM-' + m, z)}<span class="name ${k}">${n}</span><span class="doing">reading the filings</span></span>`).join('')}<span class="z">${m}</span></div>`).join('')).join('')}
+        <p class="read">wings1 reads at 16, wings2 blurs to a moth. Both crests read as a helmet at 16, and a side-on Spartan helmet is the most used logo mark alive. veil1 reads as a hooded bell. veil2 reads as an eye.</p>
+      </div>`
+    const ATTR = {
+      eiri: ['wings', 'wing', 'staff', 'sandal', 'feather', 'rainbow', 'letter', 'cap', 'trumpet'],
+      tory: ['helmet side', 'helmet front', 'olive', 'spear + shield', 'shield', 'scroll', 'open scroll', 'lamp', 'capital'],
+      antevon: ['hearth', 'flame', 'wreath', 'veil', 'tablet', 'scroll', 'spring', 'key', 'temple'],
+    }
+    const svgface = (k, id, z) => `<span class="face" style="--m:url(/art/faces/svg/${k}-${id}.svg);--ink:var(--ink-${k});width:${z}px;height:${z}px" role="img" aria-label="${k} ${id}"></span>`
+    const marks2 = `
+      <div class="sheet">
+        <h2>marks · batch 2 — nine attributes per agent, two hands (g geometric · c calligraphic), gpt-image-2 on Flora, traced to SVG</h2>
+        ${AGENTS.map(([k, n]) => ['g', 'c'].map((h) => `
+          <div class="grid9">${ATTR[k].map((label, i) => `
+            <div class="cell">
+              ${face(k, 'GM2-' + (i + 1) + h, 48)}
+              <span class="line">${[16, 20, 24].map((z) => face(k, 'GM2-' + (i + 1) + h, z)).join('')}</span>
+              <span class="line">${[16, 20, 24].map((z) => svgface(k, (i + 1) + h, z)).join('')}</span>
+              <span class="line">${[16, 20, 24].map((z) => face(k, 'GM2k-' + (i + 1) + h, z)).join('')}</span>
+              <span class="z">${i + 1}${h} · ${label}</span>
+            </div>`).join('')}
+          </div>`).join('')).join('')}
+        <p class="read">Under each mark, three rows at 16 · 20 · 24: the PNG mask as cut, the traced SVG, then the same mark refitted to its keyline box on the 24-unit grid (round Ø20 · square 18 · wide 20×16 · tall 16×20, the standard in docs/marks-standard.md). The third row is the one to judge: it is how the set would sit in the roster.</p>
+      </div>`
+    const notes = `
+      <div class="sheet notes">
+        <h2>what the sheet does not show</h2>
+        <p>engrave never generated. Codex's image model was down on 08-19 and the job stopped to ask for a key. Hatching turns to noise at 24 by nature, so it is the weakest candidate for the roster even if rerun.</p>
+        <p>Mnemosyne, veiled with eyes lowered, reads as the Madonna to a stranger on a phone. Hestia is the hearth, which is the house mind by definition, and a flame glyph reads at 16. You floated this swap on 08-18.</p>
+        <p>Iris or Hermes changes the face, not the mark. Both carry the wings.</p>
+        <p>The app still wears the pigeon, fox and moth masks. A style pick here becomes three lines in safelight.css per agent.</p>
+        <p>Standards applied 09-07: a mark in ink clears 3:1 on its sheet, a name in ink clears 4.5:1, shape never hue alone tells the agents apart, and every size is its own drawing. Tory's night ink was 2.76:1 and is now #BE687A at 4.6:1. Eiri and Antevon pass in both rooms.</p>
+      </div>`
+    el.innerHTML = `
+      <h1>The gods · style bench</h1>
+      <p class="lead">Gods were ratified on 08-19: Iris for Eiri, Athena for Tory, Mnemosyne for Antevon. Open: the print style and the attribute glyph that carries the row. Each block: the roster at 32, then 96 · 72 · 48 · 32 · 24 as printed, then keyed into the agent's ink as the face atom wears it.</p>
+      ${styles}${marks}${marks2}${notes}`
+  }
+  room('paper', true)
+  room('film', false)
+
+  const KEY = 'gods-picks'
+  const ids = ['p-style', 'p-eiri', 'p-tory', 'p-antevon', 'p-note']
+  let st = {}
+  try { st = JSON.parse(localStorage.getItem(KEY) || '{}') } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)) } catch (e) {} }
+  ids.forEach((id) => {
+    const el = document.getElementById(id)
+    if (st[id] != null) el.value = st[id]
+    el.addEventListener('input', () => { st[id] = el.value; save() })
+  })
+  document.getElementById('copy').addEventListener('click', async () => {
+    const t = `gods bench picks\nstyle: ${st['p-style'] || '—'}\nEiri mark: ${st['p-eiri'] || '—'}\nTory mark: ${st['p-tory'] || '—'}\nAntevon mark: ${st['p-antevon'] || '—'}\nnote: ${st['p-note'] || ''}`
+    const ok = document.getElementById('ok')
+    try { await navigator.clipboard.writeText(t); ok.textContent = 'copied' } catch (e) { window.prompt('copy this', t) }
+    setTimeout(() => { ok.textContent = '' }, 1800)
+  })
+</script>

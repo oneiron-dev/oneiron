@@ -220,6 +220,7 @@ pub(crate) use preflight::{
 pub(crate) use project_goal::{
     project_axes, project_goal_revision_proposals_in_txn, project_rules_for_record,
 };
+pub(crate) use tradeoff::{settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;

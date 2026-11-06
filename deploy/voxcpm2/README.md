@@ -59,6 +59,15 @@ when that makes it smaller. A codec the worker cannot read is answered 415;
 the engine then sends that upload again, plain, and sends plain until it
 restarts. `VoxCpm2HttpQueue` sends plain.
 
+Beside its warm target, `/ready` names whether the worker reads the framed
+wire: its answer is the worker's target pins plus `transcript_frame`, and
+`target()` itself is unchanged. A `/render` upload is a 4-byte big-endian
+JSON length, the JSON header, then — only when the header names
+`transcript_bytes` — exactly that many UTF-8 bytes of reference transcript
+ahead of the WAV; a header without the field keeps the inline transcript.
+Readiness capabilities are not warm identity: each render still matches and
+echoes the request's target against the exact pins `/ready` named.
+
 The CPU-only harness uses an injected fake model to prove request framing,
 ref forwarding, PCM conversion, and target metadata. It is **not** a GPU
 latency/quality or owner-ear verdict. Run: `uv run --with numpy python3 -m unittest

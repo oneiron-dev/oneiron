@@ -64,6 +64,7 @@ mod jobs;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
+mod run_replay;
 // FIX 780, 6083: a program's media jobs on its run's line.
 mod run_line;
 // FIX 1816: a video job charged by its length.
@@ -117,6 +118,11 @@ pub(super) struct HeldJob {
     /// Its end was paid already, by a permit a restart ended before the
     /// vault kept that end (FIX 2963): its end settles with no charge.
     pub(super) paid: bool,
+    /// Its submit was never kept, neither durable nor held (FIX 11517): no
+    /// recovery row takes it up again, so its permit pays its reservation
+    /// when the runtime stops. An intent row without its provider job is no
+    /// recovery row.
+    pub(super) unkept: bool,
     /// The clip length its call asked for, charged when its clips state
     /// none (FIX 1816).
     pub(super) requested_video_ms: Option<u64>,
@@ -305,6 +311,8 @@ pub struct MediaRuntime {
     host: Option<Arc<HostAccount>>,
     /// The jobs held here: running, or ended and not kept yet.
     jobs: Mutex<BTreeMap<String, Held>>,
+    /// Keyed non-job calls still in flight, shared before any second admission.
+    replay_runs: run_replay::ReplayRuns,
     /// Where the jobs are kept, so a restart loses none (FIX-LIST 465).
     store: Option<JobStore>,
     /// Each job seat's rungs, by engine id: the rung a kept job is taken up
@@ -533,6 +541,7 @@ impl MediaRuntime {
             operation: row.operation,
             caps: media.caps.clone(),
             paid: row.paid,
+            unkept: false,
             requested_video_ms: requested_video_ms(&row.request),
         })
     }
@@ -629,11 +638,14 @@ fn media_backends(
             // OpenAI-compatible wire below.
             ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
-                Arc::new(OpenAiMediaBackend::new(
-                    MediaHttp { http },
-                    wire_models,
-                    provider.base_url.clone(),
-                )) as Arc<dyn MediaBackend>
+                Arc::new(
+                    OpenAiMediaBackend::new(
+                        MediaHttp { http },
+                        wire_models,
+                        provider.base_url.clone(),
+                    )
+                    .with_embed_shape(provider.embed_shape),
+                ) as Arc<dyn MediaBackend>
             }),
         };
         match built {
@@ -649,7 +661,7 @@ fn media_backends(
 }
 
 /// `provider` as Cartesia takes it: every call names its API version.
-fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
+pub(super) fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
     let mut provider = provider.clone();
     if !provider
         .headers

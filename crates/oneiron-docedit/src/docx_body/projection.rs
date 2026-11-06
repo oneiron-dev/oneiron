@@ -4,7 +4,7 @@ use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use stemma::edit::EditTransaction;
-use stemma::view::{BlockView, DocumentView, TrackStatus};
+use stemma::view::{BlockRole, BlockView, DocumentView, SegmentView, TrackStatus};
 
 use super::{
     DocxAnchor, DocxChange, DocxParagraph, DocxRevision, inherited, kept_marks, marked_paragraph,
@@ -88,7 +88,12 @@ pub(super) fn group_ops<'v>(
             }
             DocxChange::Delete { block } => {
                 let block = find(block)?;
-                ops.push(json!({"op": "delete", "target": block.id.to_string(), "guard": block.guard}));
+                ops.push(json!({
+                    "op": "delete",
+                    "target": block.id.to_string(),
+                    "guard": block.guard,
+                    "expect": block.text,
+                }));
             }
         }
     }
@@ -222,13 +227,119 @@ impl DocxProjection {
                 .blocks
                 .iter()
                 .filter(|block| {
-                    matches!(
+                    let survives = matches!(
                         block.block_status,
                         TrackStatus::Normal | TrackStatus::Inserted(_)
-                    )
+                    );
+                    let authored_delete = matches!(
+                        &block.paragraph_mark_status,
+                        TrackStatus::Deleted(revision) if revision.apply_op_id.is_some()
+                    );
+                    survives
+                        && !(matches!(block.block_status, TrackStatus::Normal)
+                            && authored_delete
+                            && paragraph_has_no_accepted_segments(block))
                 })
                 .map(|block| block.id.to_string())
                 .collect()
+        })
+    }
+
+    /// Whether a requested delete left the untracked physical final-mark
+    /// carrier. It still has an id, but no longer names a logical paragraph.
+    pub fn deleted_final_mark_survives(&self, changes: &[DocxChange]) -> bool {
+        crate::within(self.limits, || {
+            self.doc.read().blocks.iter().any(|block| {
+                matches!(block.block_status, TrackStatus::Normal)
+                    && matches!(block.paragraph_mark_status, TrackStatus::Normal)
+                    && paragraph_has_no_accepted_segments(block)
+                    && changes.iter().any(|change| matches!(change,
+                        DocxChange::Delete { block: deleted } if *deleted == block.id.to_string()
+                    ))
+            })
+        })
+    }
+
+    /// Match the final carrier of a single delete against the live body.
+    /// The caller must also require this to be the terminal actor group.
+    pub fn terminal_final_delete_matches(
+        &self,
+        changes: &[DocxChange],
+        accepted_order: &[String],
+        expected: &[(String, &str)],
+    ) -> bool {
+        crate::within(self.limits, || {
+            let [DocxChange::Delete { block: deleted }] = changes else {
+                return false;
+            };
+            let Some((last_id, preceding_ids)) = accepted_order.split_last() else {
+                return false;
+            };
+            if last_id != deleted || !preceding_ids.iter().eq(expected.iter().map(|(id, _)| id)) {
+                return false;
+            }
+            let view = self.doc.read();
+            let Some((carrier, preceding)) = view.blocks.split_last() else {
+                return false;
+            };
+            if preceding.is_empty()
+                || preceding.len() != expected.len()
+                || carrier.id.to_string() != *deleted
+                || !matches!(carrier.paragraph_mark_status, TrackStatus::Normal)
+                || !paragraph_has_no_accepted_segments(carrier)
+                || carrier
+                    .segments
+                    .iter()
+                    .any(|segment| !matches!(segment, SegmentView::Text { .. }))
+            {
+                return false;
+            }
+            let canonical = &self.doc.snapshot().canonical;
+            if canonical.blocks.len() != view.blocks.len() {
+                return false;
+            }
+            for (block, tracked) in view.blocks.iter().zip(&canonical.blocks) {
+                let stemma::domain::BlockNode::Paragraph(paragraph) = &tracked.block else {
+                    return false;
+                };
+                if !matches!(block.block_status, TrackStatus::Normal)
+                    || tracked.move_id.is_some()
+                    || block.literal_prefix.is_some()
+                    || paragraph.literal_prefix.is_some()
+                    || paragraph.para_split
+                {
+                    return false;
+                }
+            }
+            for (at, (block, (id, text))) in preceding.iter().zip(expected).enumerate() {
+                if block.id.to_string() != *id
+                    || if at + 1 == preceding.len() {
+                        !matches!(block.paragraph_mark_status, TrackStatus::Deleted(_))
+                    } else {
+                        !matches!(block.paragraph_mark_status, TrackStatus::Normal)
+                    }
+                {
+                    return false;
+                }
+                let mut remaining = *text;
+                for segment in &block.segments {
+                    match segment {
+                        SegmentView::Text { text, status, .. } => {
+                            if matches!(status, TrackStatus::Normal | TrackStatus::Inserted(_)) {
+                                let Some(rest) = remaining.strip_prefix(text.as_str()) else {
+                                    return false;
+                                };
+                                remaining = rest;
+                            }
+                        }
+                        SegmentView::Opaque { .. } => return false,
+                    }
+                }
+                if !remaining.is_empty() {
+                    return false;
+                }
+            }
+            true
         })
     }
 
@@ -242,6 +353,15 @@ impl DocxProjection {
             crate::export_redline(&self.doc, self.limits)
         })
     }
+}
+
+fn paragraph_has_no_accepted_segments(block: &BlockView) -> bool {
+    matches!(block.role, BlockRole::Paragraph | BlockRole::Heading { .. })
+        && block.segments.iter().all(|segment| match segment {
+            SegmentView::Text { status, .. } | SegmentView::Opaque { status, .. } => {
+                !matches!(status, TrackStatus::Normal | TrackStatus::Inserted(_))
+            }
+        })
 }
 
 /// Resolve what one applied group placed: each `Insert` op's paragraph ids

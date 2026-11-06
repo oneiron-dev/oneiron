@@ -1,16 +1,16 @@
 //! What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03). A
-//! standing host order the owner may see names its bound, the law, and what
-//! self-hosting changes. A customer hold refuses as it always has, with no
-//! hosted-law bound. While only secret orders hold, nothing is said. A
-//! record a hosted privacy erasure kept serves only the purpose of the holds
-//! that keep it, for as long as one stands (C6, FIX 8849).
+//! customer hold refuses as it always has, with no hosted-law bound. A host
+//! order refuses nothing: what it covers is in its clone, in the host's
+//! separate legal-hold store (LEGAL-HOLD-USE = B as a clone, owner
+//! 2026-11-05). A record a hosted privacy erasure kept serves only the
+//! purpose of the customer holds that keep it, for as long as one stands
+//! (C6, FIX 8849).
 
 use heed::RoTxn;
 
 use super::{USE_LIMITS, holds_on_in_txn};
 use crate::deletion::{
-    LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE, LegalHold, LegalHoldKind,
-    LegalHoldTarget,
+    LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE, LegalHold, LegalHoldKind, LegalHoldTarget,
 };
 use crate::entity_id::EntityId;
 use crate::error::{
@@ -49,28 +49,19 @@ pub(crate) fn law_notice(
     })
 }
 
-/// The refusal a destroying path meets on what the standing `holds` hold at
-/// `now`: an order the owner may see is `retained_for_law` with its bound;
-/// otherwise the named refusal, or the deferral when only secret orders
-/// hold, which says nothing of them.
-pub(super) fn held_refusal(holds: &[LegalHold], now: u64) -> Error {
-    if let Some(notice) = law_notice(holds, now, LegalHoldState::RetainedForLaw) {
-        return Error::LegalHold(Box::new(notice));
-    }
-    let refusal = if holds.iter().all(|hold| hold.secret_at(now)) {
-        LEGAL_HOLD_DEFERRAL
-    } else {
-        LEGAL_HOLD_REFUSAL
-    };
-    Error::InvalidConfig(refusal.to_owned())
+/// The refusal a destroying path meets on what standing customer holds keep:
+/// the named refusal. Only customer holds keep records in the vault, so no
+/// refusal names an order's law or defers in an order's silence.
+pub(super) fn held_refusal() -> Error {
+    Error::InvalidConfig(LEGAL_HOLD_REFUSAL.to_owned())
 }
 
 /// Whether `hold` keeps a record a hosted privacy erasure kept for its own
-/// legal purpose only (C6, FIX 8849): every standing hold, a customer hold
-/// or a host order, whether or not the order's own terms forbid use. Those
-/// terms stay the order's data, never what makes the limit.
+/// purpose only (C6, FIX 8849): every hold that keeps vault data, a standing
+/// customer hold. A host order keeps none, whatever its own terms say: those
+/// terms stay the order's data and bind its clone.
 pub(super) fn restricts_use(hold: &LegalHold) -> bool {
-    hold.stands()
+    hold.keeps_vault_data()
 }
 
 /// The standing holds on `record` that keep it for their purpose only: its
@@ -90,27 +81,32 @@ pub(super) fn retaining_holds_in_txn(
 
 impl Store {
     /// The refusal a named write of `record` meets while it is kept from use
-    /// (C6, WILL-PLAN L01 row 03): `use_restricted` with the bound of a host
-    /// order the owner may see, or absence while only customer holds or
-    /// orders whose silence runs keep it. `None` once no standing hold keeps
-    /// it, whatever its marker says.
+    /// (C6, WILL-PLAN L01 row 03): absence while a customer hold keeps it.
+    /// `None` once no standing customer hold keeps it, whatever its marker
+    /// says.
     pub(crate) fn use_restricted_in_txn(
         &self,
         txn: &RoTxn<'_>,
         record: &EntityId,
     ) -> Result<Option<Error>> {
         if !USE_LIMITS.contains(self, txn, record)? {
-            return Ok(None);
+            return cooperative_refusal_in_txn(self, txn, record);
         }
         let holds = retaining_holds_in_txn(self, txn, record)?;
         if holds.is_empty() {
-            return Ok(None);
+            return cooperative_refusal_in_txn(self, txn, record);
         }
-        let now = self.clock.now_recorded_at();
-        let refusal = match law_notice(&holds, now, LegalHoldState::UseRestricted) {
-            Some(notice) => Error::LegalHold(Box::new(notice)),
-            None => Error::EntityNotFound,
-        };
-        Ok(Some(refusal))
+        Ok(Some(Error::EntityNotFound))
     }
+}
+
+fn cooperative_refusal_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Option<Error>> {
+    Ok(
+        super::cooperative_restriction_active_in_txn(store, txn, record)?
+            .then_some(Error::EntityNotFound),
+    )
 }

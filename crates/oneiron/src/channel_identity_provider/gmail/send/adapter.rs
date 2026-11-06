@@ -246,13 +246,13 @@ fn record_sent_thread(
     }
     vault.record_thread_passport(input)?;
     if let Some(party) = fields.get("counterparty_ref") {
-        crate::comm::record_comm_send_receipt(
-            vault,
-            party,
-            EMAIL_CHANNEL,
-            result.receipt.occurred_at,
-        )
-        .map_err(|err| Error::InvalidConfig(format!("gmail send comm projection failed: {err}")))?;
+        vault
+            .store
+            .record_hooks
+            .record_comm_send_receipt(vault, party, EMAIL_CHANNEL, result.receipt.occurred_at)
+            .map_err(|err| {
+                Error::InvalidConfig(format!("gmail send comm projection failed: {err}"))
+            })?;
     }
     Ok(())
 }

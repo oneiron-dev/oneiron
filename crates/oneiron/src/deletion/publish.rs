@@ -416,6 +416,12 @@ impl Vault {
         // FIX 10466: the host's live snapshot copies that may depend on an
         // erased id go too, whatever the build's features.
         self.inference_snapshots_erased(ids);
+        // FIX 14976: an erase that reached a drafter returned its binding to
+        // stock in its own transaction; the serving host now drops the
+        // plaintext and restarts its worker with stock.
+        if !ids.is_empty() {
+            self.notify_drafter_serving();
+        }
         #[cfg(feature = "sync")]
         {
             let manager = self
@@ -546,7 +552,9 @@ impl Vault {
                         .delete_guards
                         .reject_ruling_delete(&self.store, &wtxn, id)
                 })
-                .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
+                .and_then(|()| {
+                    crate::store::task_authority_guard::reject_fact_delete(&self.store, &wtxn, id)
+                })
                 .and_then(|()| {
                     self.store
                         .delete_guards
@@ -793,6 +801,8 @@ impl Vault {
                 decision,
                 id.as_bytes(),
                 value.reason.wire_byte(),
+                gate.and_then(GatedDeletion::claimed_authority_act)
+                    .map(|act| *act.as_bytes()),
             )
         })?;
         // The staging txn has COMMITTED and dropped its snapshot here — the
@@ -829,7 +839,9 @@ impl Vault {
             persistence.version_vector,
         )?;
         if persistence.owes_compaction {
-            crate::sweep::owed::owe_window_compaction_in_txn(self, wtxn, window_key)?;
+            crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
+                self, wtxn, window_key,
+            )?;
         }
         if is_hard {
             // ARCH-0038 carrier 15: pending `q:` rows for this window

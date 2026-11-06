@@ -36,4 +36,9 @@ pub struct StoreHooks {
     /// The attempt queue operations the store layer's erase and cooperative
     /// delivery paths run.
     pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The voice bank response operations the store layer's response paths run.
+    #[cfg(unix)]
+    pub(crate) voice_bank_response: &'static dyn crate::store::StoreVoiceBankResponse,
+    /// The conversation and owner operations the core write doors run.
+    pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
 }

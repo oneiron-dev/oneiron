@@ -1,9 +1,15 @@
 //! Conditional writes plus durable outbox and remote-object cursor store.
 
+mod archived;
+
+pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::inbound::{admit_screened, reconcile_remote_object};
+use super::door::CalendarConnectorOperation;
+use super::inbound::{admit_screened_in_txn, reconcile_remote_object};
+use super::literal::{self, LiteralCarrier, LiteralKind, LiteralValues};
 use super::remote::{
     CalendarRemoteTransport, RemoteWriteReceipt, RemoteWriteRequest, ics_content_hash, local_uid,
     render_owner_vevent, shared_uid,
@@ -17,8 +23,8 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use crate::calendar::passport::{
-    admitted_passports_for_event_in_txn, carries_admitted_uid, encode_passport_value,
-    index_passport_uid, live_passport_for, supersede_calendar_passport,
+    admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
+    index_passport_uid_in_txn, live_passport_for_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::entity_id::EntityId;
@@ -42,6 +48,12 @@ pub(super) const OUTBOX: SideTable<OutboxKey, StoredOutboxRow, LegacyJson> =
 /// own tag and row type. Key: `obj:` ‖ `sha256(system, calendar_ref, uid)`.
 const REMOTE_OBJECT: SideTable<RemoteObjectKey, StoredRemoteObjectRow, LegacyJson> =
     SideTable::new(&side_table::CALENDAR_CONNECTOR_WRITE);
+
+/// The declaration carries both current typed rows, under distinct key tags.
+pub(crate) fn calendar_connector_write_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<StoredOutboxRow, LegacyJson>(bytes)
+        || crate::side_table::decodes::<StoredRemoteObjectRow, LegacyJson>(bytes)
+}
 
 pub(super) struct OutboxKey(pub(super) [u8; 32]);
 
@@ -168,6 +180,7 @@ pub struct CalendarWriteOutboxRow {
     pub staged_at: u64,
     /// When the row last moved.
     pub updated_at: u64,
+    pub(super) carrier: Option<LiteralCarrier>,
 }
 
 /// Node-local href/ETag cursor for one `(system, calendar_ref, uid)`.
@@ -195,6 +208,7 @@ pub struct CalendarRemoteObjectRow {
     pub last_seen_at: u64,
     /// The archived copy (`hex#vN`) of the ICS this seat last pulled.
     pub source_blob_ref: Option<String>,
+    pub(super) carrier: Option<LiteralCarrier>,
 }
 
 /// Writes one local EVENT to the seat's remote calendar.
@@ -215,15 +229,17 @@ pub struct CalendarRemoteObjectRow {
 /// seat, store, parse, and transport variants.
 pub fn write_calendar_event(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     event_ref: EntityId,
     now: u64,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
     seat.validate()?;
     if seat.kill_switch_engaged() {
         return Err(CalendarConnectorError::KillSwitchEngaged);
     }
+    operation.revalidate(vault)?;
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Err(ingest_error("write target is not an EVENT"));
     }
@@ -247,14 +263,18 @@ pub fn write_calendar_event(
     let calendar_ref = seat.config.calendar_ref.as_str();
     let source = super::resource::archived_source(vault, system, calendar_ref, &uid, event_ref)?;
     let outbox_id = derive_outbox_id(
+        &operation.literal_scope()?,
         system,
         &seat.config.calendar_ref,
         &uid,
         CalendarWriteAction::Upsert,
     );
 
+    let mut prior_instance = None;
     if let Some(mut row) = read_outbox_row(vault, &outbox_id)? {
         ensure_outbox_matches(&row, seat, transport, event_ref, &uid)?;
+        open_outbox(vault, operation, transport, &uid, &mut row)?;
+        prior_instance = row.carrier.as_ref().map(|carrier| carrier.instance);
         match row.state {
             CalendarWriteOutboxState::Prepared => {
                 let ics = render_owner_vevent(
@@ -280,15 +300,16 @@ pub fn write_calendar_event(
                     sequence: row.sequence,
                     ics,
                 };
-                let receipt =
-                    issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
+                let receipt = issue_prepared_upsert(
+                    vault, operation, transport, &uid, now, &mut row, &request,
+                )?;
                 return finish_remote_applied_write(
-                    vault, seat, transport, event_ref, &mut row, receipt, now,
+                    vault, operation, transport, event_ref, &mut row, receipt, now,
                 );
             }
             CalendarWriteOutboxState::ReconcileRequired => {
                 return Err(reconcile_required_error(
-                    vault, seat, transport, &row, &uid, now,
+                    vault, operation, transport, &row, &uid, now,
                 )?);
             }
             CalendarWriteOutboxState::RemoteApplied => {
@@ -300,7 +321,7 @@ pub fn write_calendar_event(
                             detail: "remote-applied row carries no provider receipt".to_owned(),
                         })?;
                 return finish_remote_applied_write(
-                    vault, seat, transport, event_ref, &mut row, receipt, now,
+                    vault, operation, transport, event_ref, &mut row, receipt, now,
                 );
             }
             CalendarWriteOutboxState::Committed => {
@@ -312,7 +333,7 @@ pub fn write_calendar_event(
 
     // The seat's own remote copy is provider truth, not a proposal: the next
     // write must exceed the SEQUENCE it already holds.
-    let object = read_remote_object(vault, system, calendar_ref, &uid)?;
+    let object = read_remote_object_for_operation(vault, operation, &uid)?;
     let floor = super::resource::sequence_floor(vault, event_ref, &uid)?
         .max(object.as_ref().map_or(0, |row| row.last_sequence));
     let sequence = if own.is_some() || object.is_some() {
@@ -344,8 +365,9 @@ pub fn write_calendar_event(
         receipt: None,
         staged_at: now,
         updated_at: now,
+        carrier: None,
     };
-    write_outbox_row(vault, &row)?;
+    write_outbox_row(vault, operation, &mut row, prior_instance)?;
 
     let request = RemoteWriteRequest {
         href,
@@ -354,8 +376,11 @@ pub fn write_calendar_event(
         sequence,
         ics,
     };
-    let receipt = issue_prepared_upsert(vault, seat, transport, &uid, now, &mut row, &request)?;
-    finish_remote_applied_write(vault, seat, transport, event_ref, &mut row, receipt, now)
+    let receipt =
+        issue_prepared_upsert(vault, operation, transport, &uid, now, &mut row, &request)?;
+    finish_remote_applied_write(
+        vault, operation, transport, event_ref, &mut row, receipt, now,
+    )
 }
 
 fn ensure_outbox_matches(
@@ -389,13 +414,15 @@ fn ensure_outbox_matches(
 
 fn issue_prepared_upsert(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     uid: &str,
     now: u64,
     row: &mut CalendarWriteOutboxRow,
     request: &RemoteWriteRequest,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
+    operation.revalidate(vault)?;
     let receipt =
         match transport.upsert(&seat.config.secret_ref, &seat.config.calendar_ref, request) {
             Ok(receipt) => receipt,
@@ -406,10 +433,10 @@ fn issue_prepared_upsert(
             }) => {
                 row.state = CalendarWriteOutboxState::ReconcileRequired;
                 row.updated_at = now;
-                write_outbox_row(vault, row)?;
+                write_outbox_row(vault, operation, row, None)?;
                 // Reconciliation reads the current remote state so a caller can
                 // intentionally rebase. Blind retries remain blocked on this row.
-                reconcile_remote_object(vault, seat, transport, uid, now);
+                reconcile_remote_object(vault, operation, transport, uid, now);
                 return Err(CalendarConnectorError::EtagMismatch {
                     href,
                     expected,
@@ -424,24 +451,24 @@ fn issue_prepared_upsert(
     row.href = Some(receipt.href.clone());
     row.receipt = Some(receipt.clone());
     row.updated_at = now;
-    write_outbox_row(vault, row)?;
+    write_outbox_row(vault, operation, row, None)?;
     Ok(receipt)
 }
 
 fn reconcile_required_error(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     row: &CalendarWriteOutboxRow,
     uid: &str,
     now: u64,
 ) -> Result<CalendarConnectorError, CalendarConnectorError> {
-    let mut object = read_remote_object(vault, &row.system, &row.calendar_ref, uid)?;
+    let mut object = read_remote_object_for_operation(vault, operation, uid)?;
     let still_stale =
         object.as_ref().and_then(|current| current.etag.as_ref()) == row.expected_etag.as_ref();
     if object.is_none() || still_stale {
-        reconcile_remote_object(vault, seat, transport, uid, now);
-        object = read_remote_object(vault, &row.system, &row.calendar_ref, uid)?;
+        reconcile_remote_object(vault, operation, transport, uid, now);
+        object = read_remote_object_for_operation(vault, operation, uid)?;
     }
     Ok(CalendarConnectorError::EtagMismatch {
         href: row
@@ -456,7 +483,7 @@ fn reconcile_required_error(
 
 fn finish_remote_applied_write(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     event_ref: EntityId,
     row: &mut CalendarWriteOutboxRow,
@@ -475,12 +502,59 @@ fn finish_remote_applied_write(
         });
     }
 
-    // The write kept every unowned field of the archived source, so that
-    // source stays the base the next write renders over.
-    let source_blob_ref = read_remote_object(vault, &row.system, &row.calendar_ref, &row.uid)?
-        .and_then(|prior| prior.source_blob_ref);
-    write_remote_object(
+    enum CompletionError {
+        Stale,
+        Failed(CalendarConnectorError),
+    }
+
+    impl From<crate::Error> for CompletionError {
+        fn from(error: crate::Error) -> Self {
+            Self::Failed(error.into())
+        }
+    }
+
+    // FIX 4797: the completion can turn an inbound passport two-way and
+    // supersede its head, so it runs in the vault's one calendar admission
+    // turn, taken before its writer.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
+    let carrier = match vault.try_with_write_txn_grouped(|txn| {
+        finish_remote_applied_write_in_txn(
+            vault, txn, operation, transport, event_ref, row, &receipt, now,
+        )
+        .map_err(CompletionError::Failed)?
+        // A stale final CAS discards this member's earlier staged rows too.
+        .ok_or(CompletionError::Stale)
+    }) {
+        Ok(carrier) => carrier,
+        Err(CompletionError::Stale) => return Ok(receipt),
+        Err(CompletionError::Failed(error)) => return Err(error),
+    };
+    row.state = CalendarWriteOutboxState::Committed;
+    row.updated_at = now;
+    row.carrier = Some(carrier);
+    vault.finish_connector_resume_retirements_after_commit();
+    Ok(receipt)
+}
+
+fn finish_remote_applied_write_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    event_ref: EntityId,
+    row: &CalendarWriteOutboxRow,
+    receipt: &RemoteWriteReceipt,
+    now: u64,
+) -> Result<Option<LiteralCarrier>, CalendarConnectorError> {
+    // The exact RemoteApplied carrier guards every publication below. Cursor,
+    // claims, index and final outbox CAS share this writer or all roll back.
+    let source_blob_ref =
+        read_remote_object_in_txn(vault, txn, &row.system, &row.calendar_ref, &row.uid)?
+            .and_then(|prior| prior.source_blob_ref);
+    if !write_remote_object_in_txn(
         vault,
+        txn,
+        operation,
         &CalendarRemoteObjectRow {
             system: row.system.clone(),
             calendar_ref: row.calendar_ref.clone(),
@@ -491,12 +565,14 @@ fn finish_remote_applied_write(
             content_hash: row.content_hash,
             last_seen_at: now,
             source_blob_ref,
+            carrier: None,
         },
-    )?;
+        Some(row),
+    )? {
+        return Ok(None);
+    }
 
-    // A receipt settles what was staged, not the EVENTs as they look after
-    // transport I/O. Re-rendering here can strand RemoteApplied forever or
-    // misattribute a newer local edit to the older provider snapshot.
+    // A receipt settles the staged members, not newer local EVENT contents.
     if row.component_hashes.first().map(|(member, _)| *member) != Some(event_ref) {
         return Err(CalendarConnectorError::Outbox {
             outbox_id: row.outbox_id,
@@ -504,13 +580,18 @@ fn finish_remote_applied_write(
         });
     }
     for (member, _) in &row.component_hashes {
-        crate::calendar::claims::require_event_subject(vault, member)?;
+        crate::calendar::claims::require_event_subject_in_txn(vault, txn, member)?;
     }
+    let source_record_id = write_source_record_id(
+        transport.provider_key(),
+        &operation.registration().seat,
+        &row.uid,
+    );
     for &(member, content_hash) in &row.component_hashes {
-        // Direction is a routing fact: a seat that also reads this UID is two-way,
-        // a seat that only writes it is outbound. Neither is an approval gate.
-        let own = live_passport_for(vault, &member, &row.system, &row.uid)?;
-        let direction = if own
+        // Direction remains approval-blind, while the UID-index gate below
+        // still requires an admitted passport for a non-local UID.
+        let current = live_passport_for_in_txn(vault, txn, &member, &row.system, &row.uid)?;
+        let direction = if current
             .as_ref()
             .is_some_and(|(_, value)| value.direction.is_inbound_bearing())
         {
@@ -527,7 +608,6 @@ fn finish_remote_applied_write(
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
         };
-        let current = live_passport_for(vault, &member, &row.system, &row.uid)?;
         let already_applied = current.as_ref().is_some_and(|(_, value)| {
             value.last_sequence == next.last_sequence
                 && value.content_hash == next.content_hash
@@ -535,9 +615,9 @@ fn finish_remote_applied_write(
                 && value.presence == next.presence
         });
         if !already_applied {
-            let source_record_id = write_source_record_id(transport.provider_key(), seat, &row.uid);
-            let new_id = admit_screened(
+            let new_id = admit_screened_in_txn(
                 vault,
+                txn,
                 member,
                 &CalendarInboundBody::default(),
                 &source_record_id,
@@ -545,25 +625,23 @@ fn finish_remote_applied_write(
                 encode_passport_value(&next),
                 now,
             )?;
-            if current.is_some() {
-                supersede_calendar_passport(vault, member, &row.system, &row.uid, &new_id, now)?;
+            if let Some((old_id, _)) = current {
+                vault.supersede_claim_in_txn(txn, &new_id, &old_id, now)?;
             }
         }
     }
-    // The index moves only for a UID this connector mints or an admitted
-    // passport carries. The first outbound invite falls back to it, so a UID
-    // taken from a pending passport never re-points it.
-    if row.uid == local_uid(&event_ref) || carries_admitted_uid(vault, &event_ref, &row.uid)? {
-        index_passport_uid(vault, &row.uid, &event_ref)?;
+    if row.uid == local_uid(&event_ref)
+        || carries_admitted_uid_in_txn(vault, txn, &event_ref, &row.uid)?
+    {
+        index_passport_uid_in_txn(vault, txn, &row.uid, &event_ref)?;
     }
 
-    // The outbox closes before the next poll can run, so the echo the poll sees
-    // is already known to be ours.
-    row.state = CalendarWriteOutboxState::Committed;
-    row.updated_at = now;
-    write_outbox_row(vault, row)?;
-
-    Ok(receipt)
+    let mut committed = row.clone();
+    committed.state = CalendarWriteOutboxState::Committed;
+    committed.updated_at = now;
+    Ok(write_outbox_row_in_txn(
+        vault, txn, operation, &committed, None,
+    )?)
 }
 
 /// The stored form of a write-outbox row. `EntityId` and `[u8; 32]` travel as
@@ -581,19 +659,17 @@ pub(super) struct StoredOutboxRow {
     sequence: u32,
     content_hash: [u8; 32],
     component_hashes: Vec<([u8; 16], [u8; 32])>,
-    #[serde(default)]
     expected_etag: Option<String>,
-    #[serde(default)]
     href: Option<String>,
-    #[serde(default)]
     receipt: Option<RemoteWriteReceipt>,
     staged_at: u64,
     updated_at: u64,
+    carrier: LiteralCarrier,
 }
 
 impl StoredOutboxRow {
-    fn from_row(row: &CalendarWriteOutboxRow) -> Self {
-        Self {
+    fn from_row(row: &CalendarWriteOutboxRow, carrier: LiteralCarrier) -> crate::Result<Self> {
+        Ok(Self {
             outbox_id: row.outbox_id,
             state: row.state,
             action: row.action,
@@ -609,12 +685,13 @@ impl StoredOutboxRow {
                 .iter()
                 .map(|(member, hash)| (*member.as_bytes(), *hash))
                 .collect(),
-            expected_etag: row.expected_etag.clone(),
-            href: row.href.clone(),
-            receipt: row.receipt.clone(),
+            expected_etag: literal::projection(&row.expected_etag)?,
+            href: literal::projection(&row.href)?,
+            receipt: literal::projection(&row.receipt)?,
             staged_at: row.staged_at,
             updated_at: row.updated_at,
-        }
+            carrier,
+        })
     }
 
     pub(super) fn into_row(self) -> Result<CalendarWriteOutboxRow, CalendarConnectorError> {
@@ -646,6 +723,7 @@ impl StoredOutboxRow {
             receipt: self.receipt,
             staged_at: self.staged_at,
             updated_at: self.updated_at,
+            carrier: Some(self.carrier),
         })
     }
 }
@@ -656,18 +734,18 @@ struct StoredRemoteObjectRow {
     system: String,
     calendar_ref: String,
     uid: String,
-    #[serde(default)]
     href: Option<String>,
-    #[serde(default)]
     etag: Option<String>,
     last_sequence: u32,
     content_hash: [u8; 32],
     last_seen_at: u64,
     source_blob_ref: Option<String>,
+    carrier: LiteralCarrier,
 }
 
-fn remote_object_digest(system: &str, calendar_ref: &str, uid: &str) -> [u8; 32] {
+fn remote_object_digest(scope: &[u8; 32], system: &str, calendar_ref: &str, uid: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
+    hasher.update(scope);
     for part in [system, calendar_ref, uid] {
         hasher.update(part.len().to_le_bytes());
         hasher.update(part.as_bytes());
@@ -686,30 +764,131 @@ pub(super) fn read_outbox_row(
     Ok(Some(stored.into_row()?))
 }
 
-fn write_outbox_row(
+fn outbox_digest(row: &CalendarWriteOutboxRow) -> crate::Result<[u8; 32]> {
+    literal::digest(&(
+        row.action,
+        row.event_ref,
+        row.sequence,
+        row.content_hash,
+        &row.component_hashes,
+        row.staged_at,
+    ))
+}
+
+fn open_outbox(
     vault: &Vault,
-    row: &CalendarWriteOutboxRow,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    uid: &str,
+    row: &mut CalendarWriteOutboxRow,
 ) -> Result<(), CalendarConnectorError> {
-    let stored = StoredOutboxRow::from_row(row);
-    vault.try_with_write_txn_grouped(|wtxn| {
-        OUTBOX.put(&vault.store, wtxn, &OutboxKey(row.outbox_id), &stored)?;
-        Ok::<_, crate::Error>(())
-    })?;
+    let carrier = row.carrier.as_ref().ok_or_else(literal::invalid)?;
+    let (held_uid, values) = carrier.open(
+        vault,
+        operation,
+        LiteralKind::Outbox,
+        row.outbox_id,
+        outbox_digest(row)?,
+    )?;
+    let seat = &operation.registration().seat;
+    if held_uid != uid
+        || row.outbox_id
+            != derive_outbox_id(
+                &operation.literal_scope()?,
+                &seat.config.system,
+                &seat.config.calendar_ref,
+                uid,
+                row.action,
+            )
+    {
+        return Err(literal::invalid().into());
+    }
+    row.provider = transport.provider_key().into();
+    row.system = seat.config.system.clone();
+    row.calendar_ref = seat.config.calendar_ref.clone();
+    row.uid = held_uid;
+    row.href = values.href;
+    row.expected_etag = values.etag;
+    row.receipt = values.receipt;
     Ok(())
 }
 
-pub(super) fn read_remote_object(
+fn write_outbox_row(
     vault: &Vault,
-    system: &str,
-    calendar_ref: &str,
-    uid: &str,
-) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
-    let digest = remote_object_digest(system, calendar_ref, uid);
-    let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let Some(stored) = REMOTE_OBJECT.get(&vault.store, &rtxn, &RemoteObjectKey(digest))? else {
-        return Ok(None);
+    operation: &CalendarConnectorOperation,
+    row: &mut CalendarWriteOutboxRow,
+    expected_prior: Option<[u8; 16]>,
+) -> Result<bool, CalendarConnectorError> {
+    let carrier = vault.try_with_write_txn_grouped(|txn| {
+        write_outbox_row_in_txn(vault, txn, operation, row, expected_prior)
+    })?;
+    let Some(carrier) = carrier else {
+        return Ok(false);
     };
-    Ok(Some(CalendarRemoteObjectRow {
+    row.carrier = Some(carrier);
+    vault.finish_connector_resume_retirements_after_commit();
+    Ok(true)
+}
+
+fn write_outbox_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    operation: &CalendarConnectorOperation,
+    row: &CalendarWriteOutboxRow,
+    expected_prior: Option<[u8; 16]>,
+) -> crate::Result<Option<LiteralCarrier>> {
+    let digest = outbox_digest(row)?;
+    if row.carrier.is_none() {
+        operation.revalidate_in_txn(vault, txn)?;
+    }
+    let prior = OUTBOX.get(&vault.store, txn, &OutboxKey(row.outbox_id))?;
+    let actual_prior = prior.as_ref().map(|old| old.carrier.instance);
+    let expected = row
+        .carrier
+        .as_ref()
+        .map(|held| held.instance)
+        .or(expected_prior);
+    if let Some(held) = row.carrier.as_ref() {
+        if prior.as_ref().is_none_or(|old| old.carrier != *held) {
+            // The admitted effect is already truthful; never resurrect its
+            // retired reference over a deleted or newer stable-key row.
+            return Ok(None);
+        }
+    } else if actual_prior != expected {
+        return Err(literal::invalid());
+    }
+    let instance = match row.carrier.as_ref() {
+        Some(held) => held.instance,
+        None => vault.store.clock.ulid()?,
+    };
+    let carrier = LiteralCarrier::seal(
+        vault,
+        txn,
+        operation,
+        LiteralKind::Outbox,
+        instance,
+        row.outbox_id,
+        digest,
+        &row.uid,
+        LiteralValues {
+            href: row.href.clone(),
+            etag: row.expected_etag.clone(),
+            receipt: row.receipt.clone(),
+        },
+    )?;
+    let stored = StoredOutboxRow::from_row(row, carrier.clone())?;
+    crate::ports::persist_id_floor_in_txn(&vault.store, txn)?;
+    OUTBOX.put(vault, txn, &OutboxKey(row.outbox_id), &stored)?;
+    if let Some(prior) = prior
+        && prior.carrier.instance != instance
+    {
+        prior.carrier.retire(vault, txn, LiteralKind::Outbox)?;
+    }
+    Ok(Some(carrier))
+}
+
+fn remote_projection(stored: StoredRemoteObjectRow) -> CalendarRemoteObjectRow {
+    CalendarRemoteObjectRow {
         system: stored.system,
         calendar_ref: stored.calendar_ref,
         uid: stored.uid,
@@ -719,30 +898,218 @@ pub(super) fn read_remote_object(
         content_hash: stored.content_hash,
         last_seen_at: stored.last_seen_at,
         source_blob_ref: stored.source_blob_ref,
-    }))
+        carrier: Some(stored.carrier),
+    }
+}
+
+pub(super) fn read_remote_object(
+    vault: &Vault,
+    system: &str,
+    calendar_ref: &str,
+    uid: &str,
+) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    read_remote_object_in_txn(vault, &txn, system, calendar_ref, uid)
+}
+
+fn read_remote_object_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+    calendar_ref: &str,
+    uid: &str,
+) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
+    let latest = REMOTE_OBJECT
+        .scan_from(&vault.store, txn, REMOTE_OBJECT_TAG)?
+        .into_iter()
+        .filter(|(key, row)| {
+            key.0 == remote_object_digest(&row.carrier.seat, system, calendar_ref, uid)
+        })
+        .map(|(_, row)| row)
+        // Instances are minted by StoreClock inside each serialized cursor writer.
+        // They retain the former shared row's last-write order even when timestamps tie or regress.
+        .max_by_key(|row| row.carrier.instance);
+    Ok(latest.map(remote_projection))
+}
+
+fn cursor_digest(row: &CalendarRemoteObjectRow) -> crate::Result<[u8; 32]> {
+    literal::digest(&(
+        row.last_sequence,
+        row.content_hash,
+        row.last_seen_at,
+        &row.source_blob_ref,
+    ))
+}
+
+fn open_cursor(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    key: [u8; 32],
+    row: &mut CalendarRemoteObjectRow,
+) -> Result<(), CalendarConnectorError> {
+    let carrier = row.carrier.as_ref().ok_or_else(literal::invalid)?;
+    let (uid, values) = carrier.open(
+        vault,
+        operation,
+        LiteralKind::Cursor,
+        key,
+        cursor_digest(row)?,
+    )?;
+    let seat = &operation.registration().seat;
+    if key
+        != remote_object_digest(
+            &operation.literal_scope()?,
+            &seat.config.system,
+            &seat.config.calendar_ref,
+            &uid,
+        )
+    {
+        return Err(literal::invalid().into());
+    }
+    row.system = seat.config.system.clone();
+    row.calendar_ref = seat.config.calendar_ref.clone();
+    row.uid = uid;
+    row.href = values.href;
+    row.etag = values.etag;
+    Ok(())
+}
+
+fn read_remote_object_for_operation(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    uid: &str,
+) -> Result<Option<CalendarRemoteObjectRow>, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
+    let key = remote_object_digest(
+        &operation.literal_scope()?,
+        &seat.config.system,
+        &seat.config.calendar_ref,
+        uid,
+    );
+    let stored = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        REMOTE_OBJECT.get(&vault.store, &txn, &RemoteObjectKey(key))?
+    };
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let mut row = remote_projection(stored);
+    open_cursor(vault, operation, key, &mut row)?;
+    if row.uid != uid {
+        return Err(literal::invalid().into());
+    }
+    Ok(Some(row))
 }
 
 pub(super) fn write_remote_object(
     vault: &Vault,
+    operation: &CalendarConnectorOperation,
     row: &CalendarRemoteObjectRow,
-) -> Result<(), CalendarConnectorError> {
+    settlement: Option<&CalendarWriteOutboxRow>,
+) -> Result<bool, CalendarConnectorError> {
+    let written = vault.try_with_write_txn_grouped(|txn| {
+        write_remote_object_in_txn(vault, txn, operation, row, settlement)
+    })?;
+    vault.finish_connector_resume_retirements_after_commit();
+    Ok(written)
+}
+
+fn write_remote_object_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    operation: &CalendarConnectorOperation,
+    row: &CalendarRemoteObjectRow,
+    settlement: Option<&CalendarWriteOutboxRow>,
+) -> crate::Result<bool> {
+    let key = remote_object_digest(
+        &operation.literal_scope()?,
+        &row.system,
+        &row.calendar_ref,
+        &row.uid,
+    );
+    let row_digest = cursor_digest(row)?;
+    if let Some(outbox) = settlement {
+        let current = OUTBOX.get(&vault.store, txn, &OutboxKey(outbox.outbox_id))?;
+        let held = outbox.carrier.as_ref().ok_or_else(literal::invalid)?;
+        if current.as_ref().is_none_or(|current| {
+            current.state != CalendarWriteOutboxState::RemoteApplied || current.carrier != *held
+        }) {
+            return Ok(false);
+        }
+    }
+    let prior = REMOTE_OBJECT.get(&vault.store, txn, &RemoteObjectKey(key))?;
+    let instance = vault.store.clock.ulid()?;
+    let carrier = LiteralCarrier::seal(
+        vault,
+        txn,
+        operation,
+        LiteralKind::Cursor,
+        instance,
+        key,
+        row_digest,
+        &row.uid,
+        LiteralValues {
+            href: row.href.clone(),
+            etag: row.etag.clone(),
+            receipt: None,
+        },
+    )?;
     let stored = StoredRemoteObjectRow {
         system: row.system.clone(),
         calendar_ref: row.calendar_ref.clone(),
         uid: row.uid.clone(),
-        href: row.href.clone(),
-        etag: row.etag.clone(),
+        href: literal::projection(&row.href)?,
+        etag: literal::projection(&row.etag)?,
         last_sequence: row.last_sequence,
         content_hash: row.content_hash,
         last_seen_at: row.last_seen_at,
         source_blob_ref: row.source_blob_ref.clone(),
+        carrier,
     };
-    let digest = remote_object_digest(&row.system, &row.calendar_ref, &row.uid);
-    vault.try_with_write_txn_grouped(|wtxn| {
-        REMOTE_OBJECT.put(&vault.store, wtxn, &RemoteObjectKey(digest), &stored)?;
-        Ok::<_, crate::Error>(())
-    })?;
-    Ok(())
+    crate::ports::persist_id_floor_in_txn(&vault.store, txn)?;
+    REMOTE_OBJECT.put(vault, txn, &RemoteObjectKey(key), &stored)?;
+    if let Some(prior) = prior {
+        prior.carrier.retire(vault, txn, LiteralKind::Cursor)?;
+    }
+    Ok(true)
+}
+
+/// Matches a provider removal only within this authenticated installed seat.
+/// The opened values never leave this comparison; only the existing UID does.
+pub fn calendar_remote_uid_for_href_for_operation(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    href: &str,
+) -> Result<Option<String>, CalendarConnectorError> {
+    operation.revalidate(vault)?;
+    let scope = operation.literal_scope()?;
+    // Drop the table reader before any custody snapshot is acquired.
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        REMOTE_OBJECT.scan_from(&vault.store, &txn, REMOTE_OBJECT_TAG)?
+    };
+    for (key, stored) in rows {
+        if stored.carrier.seat != scope {
+            continue;
+        }
+        let mut row = CalendarRemoteObjectRow {
+            system: stored.system,
+            calendar_ref: stored.calendar_ref,
+            uid: stored.uid,
+            href: stored.href,
+            etag: stored.etag,
+            last_sequence: stored.last_sequence,
+            content_hash: stored.content_hash,
+            last_seen_at: stored.last_seen_at,
+            source_blob_ref: stored.source_blob_ref,
+            carrier: Some(stored.carrier),
+        };
+        open_cursor(vault, operation, key.0, &mut row)?;
+        if row.href.as_deref() == Some(href) {
+            return Ok(Some(row.uid));
+        }
+    }
+    Ok(None)
 }
 
 /// Resolves a provider deletion against our retained href cursor, not a
@@ -775,6 +1142,7 @@ fn write_source_record_id(provider: &str, seat: &CalendarConnectorSeatState, uid
 
 /// The deterministic outbox row id: the same intent resumes the same row.
 pub(super) fn derive_outbox_id(
+    scope: &[u8; 32],
     system: &str,
     calendar_ref: &str,
     uid: &str,
@@ -782,6 +1150,7 @@ pub(super) fn derive_outbox_id(
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(OUTBOX_ID_DOMAIN);
+    hasher.update(scope);
     for part in [system, calendar_ref, uid, action.as_str()] {
         hasher.update(part.len().to_le_bytes());
         hasher.update(part.as_bytes());

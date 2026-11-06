@@ -4,12 +4,11 @@
 use serde::{Deserialize, Serialize};
 
 use super::claims::{CommError, CommResult, KEY_PARTY_KEY};
-use super::parties::resolve_or_create_party_in_txn;
+use super::parties::{resolve_or_create_party_in_txn, validate_party_key};
 use super::projector::storage_failure;
 use super::records::{
     CommEventKind, CommRecord, decode_comm_record, next_event_sequence_in_txn,
-    put_comm_record_in_txn, required_string, validate_channel_class, validate_key_string,
-    value_map,
+    put_comm_record_in_txn, required_string, validate_channel_class, value_map,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -162,7 +161,7 @@ fn delivered_send(
         return Ok(None);
     };
     validate_channel_class(channel).map_err(|_| CommError::InvalidRecord)?;
-    validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+    validate_party_key(party)?;
     let receipt_task = EntityId::from_hex(
         receipt
             .fields

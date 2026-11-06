@@ -19,7 +19,7 @@ use oneiron::code_run::shadow_runner::{
 use oneiron::compaction::output::OutputRef;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixShadowHost, PublisherCandidate};
 
-use crate::ai_host::shadow_runner::{ServerShadowRunner, ShadowRuntimes};
+use crate::ai_host::shadow_runner::{ServerShadowRunner, checked_in_runtimes};
 use crate::server::SyncServer;
 
 /// The shadow runner one code-fix run's engine candidates run on.
@@ -93,48 +93,4 @@ impl CodeFixShadowHost for CoachShadow {
     fn arm_meter(&self) -> ShadowMeterContext {
         self.meter.clone()
     }
-}
-
-/// Each arm step's runtime: a fresh one of the checked-in QuickJS component,
-/// which is compiled and readiness-probed once, on the first step's
-/// blocking worker.
-#[cfg(feature = "code-sandbox-wasmtime")]
-fn checked_in_runtimes() -> ShadowRuntimes {
-    use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
-    use oneiron::engine_executor::JsCodeModeRuntime;
-
-    let component: Arc<std::sync::OnceLock<Option<QuickJsRuntimeFactory>>> = Arc::default();
-    Arc::new(
-        move || -> oneiron::Result<Box<dyn JsCodeModeRuntime + Send>> {
-            let factory = component
-                .get_or_init(|| match crate::mcp::checked_in_quickjs_runtime() {
-                    Ok(factory) => Some(factory),
-                    Err(error) => {
-                        tracing::error!(%error, "the checked-in QuickJS component did not load");
-                        None
-                    }
-                })
-                .as_ref()
-                .ok_or_else(|| {
-                    oneiron::Error::InvalidConfig(
-                        "the checked-in QuickJS component did not load".to_owned(),
-                    )
-                })?;
-            let runtime: Box<dyn JsCodeModeRuntime + Send> = Box::new(factory.runtime()?);
-            Ok(runtime)
-        },
-    )
-}
-
-/// A server built without the code sandbox runs no arm's step: each says
-/// so.
-#[cfg(not(feature = "code-sandbox-wasmtime"))]
-fn checked_in_runtimes() -> ShadowRuntimes {
-    use oneiron::engine_executor::JsCodeModeRuntime;
-
-    Arc::new(|| -> oneiron::Result<Box<dyn JsCodeModeRuntime + Send>> {
-        Err(oneiron::Error::InvalidConfig(
-            "this server has no code sandbox".to_owned(),
-        ))
-    })
 }

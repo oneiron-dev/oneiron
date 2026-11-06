@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, HostActionIdentity};
 use crate::claim::CallerLocality;
 use crate::error::ClaimError;
 use crate::memory::{
@@ -50,7 +50,7 @@ pub(crate) struct PlainRowResume {
     /// surface is the same call ([`Self::same_caller`]).
     surface: ActSurface,
     /// The host action the call came through, if any.
-    host_action: Option<PlainHostAction>,
+    host_action: Option<HostActionIdentity>,
     /// The authority the ask's write read for the call; `None` until an ask
     /// saves it.
     authority: Option<PlainAuthority>,
@@ -94,16 +94,6 @@ impl From<ReadPlacement> for CallerLocality {
             ReadPlacement::OffDevice => Self::OffDevice,
         }
     }
-}
-
-/// The guard of the host action (FIX 2222) an owner's call came through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PlainHostAction {
-    /// The explicit local dev mode.
-    Dev,
-    /// A self-hosted host root, by its slip's id.
-    Root { slip: [u8; 32] },
 }
 
 /// The authority a plain call was asked under.
@@ -191,6 +181,7 @@ impl PlainRowResume {
     /// the host action it came through and the owner surface it records. Its
     /// authority is read when an ask saves it.
     pub(crate) fn of(
+        vault: &Vault,
         session: Option<SessionKey>,
         room: Option<EntityId>,
         locality: CallerLocality,
@@ -208,10 +199,8 @@ impl PlainRowResume {
                 origin_conversation,
             },
             surface,
-            host_action: host_action.map(|action| match action.guard().root_slip_id() {
-                Some(slip) => PlainHostAction::Root { slip },
-                None => PlainHostAction::Dev,
-            }),
+            // Metadata only until retain_in_txn proves this identity in the ask's writer.
+            host_action: host_action.map(|action| action.guard().durable_identity(vault)),
             authority: None,
         }
     }
@@ -239,7 +228,7 @@ pub(super) fn retain_in_txn(
         other => return other,
     };
     let class = super::super::filter::edge_class(call.class);
-    match authority_in_txn(vault, txn, call.actor, class, plain.host_action.is_some()) {
+    match authority_in_txn(vault, txn, call.actor, class, plain.host_action.as_ref()) {
         Ok(authority) => {
             plain.authority = authority;
             plain.authority.is_some().then_some(VerbResume::Row(plain))
@@ -275,7 +264,7 @@ pub(super) fn run(
         let txn = vault.store.env.read_txn()?;
         match &plain.authority {
             Some(authority) => {
-                authority.refusal_in_txn(vault, &txn, actor, class, plain.host_action)?
+                authority.refusal_in_txn(vault, &txn, actor, class, plain.host_action.as_ref())?
             }
             None => Some(PlainRefusal::ContextUnavailable),
         }
@@ -323,14 +312,19 @@ fn authority_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     class: EdgeActorClass,
-    host_action: bool,
+    host_action: Option<&HostActionIdentity>,
 ) -> Result<Option<PlainAuthority>> {
     if class == EdgeActorClass::Human
         && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
     {
+        if let Some(action) = host_action
+            && host_action_refusal_in_txn(vault, txn, actor, action)?.is_some()
+        {
+            return Ok(None);
+        }
         return Ok(Some(PlainAuthority::Owner { person: actor }));
     }
-    if host_action {
+    if host_action.is_some() {
         return Ok(None);
     }
     Ok(Some(PlainAuthority::Delegated {
@@ -348,7 +342,7 @@ impl PlainAuthority {
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
         class: EdgeActorClass,
-        host_action: Option<PlainHostAction>,
+        host_action: Option<&HostActionIdentity>,
     ) -> Result<Option<PlainRefusal>> {
         match self {
             Self::Owner { person } => {
@@ -359,7 +353,7 @@ impl PlainAuthority {
                     return Ok(Some(PlainRefusal::OwnerNotLive));
                 }
                 match host_action {
-                    Some(action) => action.refusal_in_txn(vault, txn, *person),
+                    Some(action) => host_action_refusal_in_txn(vault, txn, *person, action),
                     None => Ok(None),
                 }
             }
@@ -379,33 +373,23 @@ impl PlainAuthority {
     }
 }
 
-impl PlainHostAction {
-    /// Why this guard no longer stands for `person` in `txn`, or `None`
-    /// when it does: the one host-action owner rule (a self-hosted vault,
-    /// the owner-verb rule, a live PERSON) still names them, and a host
-    /// root's slip is still live (revocation, lifetime and its signers,
-    /// checked by its id as a session's later frames are).
-    fn refusal_in_txn(
-        self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        person: EntityId,
-    ) -> Result<Option<PlainRefusal>> {
-        let owner = match vault.host_action_owner_in_txn(txn, None) {
-            Ok(owner) => owner,
-            Err(Error::HostActionRequiresSupportGrant) => {
-                return Ok(Some(PlainRefusal::HostActionHosted));
-            }
-            Err(Error::Claim(ClaimError::ScopedReadOwnerNotLive(_))) => {
-                return Ok(Some(PlainRefusal::HostActionLapsed));
-            }
-            Err(error) => return Err(error),
-        };
-        let root_live = match self {
-            Self::Dev => true,
-            Self::Root { slip } => vault.capability_slip_id_is_live_in_txn(txn, &slip)?,
-        };
-        Ok((owner != person || !root_live).then_some(PlainRefusal::HostActionLapsed))
+/// The exact recorded host action still binds this person in this snapshot.
+fn host_action_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    action: &HostActionIdentity,
+) -> Result<Option<PlainRefusal>> {
+    if action.owner() != person {
+        return Ok(Some(PlainRefusal::ContextUnavailable));
+    }
+    match action.holds_in(vault, txn) {
+        Ok(()) => Ok(None),
+        Err(Error::HostActionRequiresSupportGrant) => Ok(Some(PlainRefusal::HostActionHosted)),
+        Err(Error::Claim(ClaimError::ScopedReadOwnerNotLive(_))) => {
+            Ok(Some(PlainRefusal::HostActionLapsed))
+        }
+        Err(error) => Err(error),
     }
 }
 
