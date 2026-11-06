@@ -422,11 +422,16 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the call's
         // outcome.
-        for (_, usage, binding) in &spent {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
             if let Some(binding) = binding {
                 if let Err(error) =
                     charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
                 {
+                    for (_, usage, _, memoized) in &spent[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
                     return super::residency::spent_or_deferred(error, ctx, charges)
                         .map(ControlFlow::Break);
                 }

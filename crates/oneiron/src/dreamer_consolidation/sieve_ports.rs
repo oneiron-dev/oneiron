@@ -94,10 +94,10 @@ pub enum SieveRungOutcome {
 }
 
 /// A rung read's outcome, and each generation that finished (its request
-/// hash, usage and optional durable binding) whatever the outcome.
+/// hash, usage and optional durable binding and memoized flag) whatever the outcome.
 pub struct SieveRungRead {
     pub outcome: DurableStepResult<SieveRungOutcome>,
-    pub steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>)>,
+    pub steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
 }
 
 /// One child's extraction, as the child hands it to its port.
