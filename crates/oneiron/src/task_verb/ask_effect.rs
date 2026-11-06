@@ -9,6 +9,7 @@
 use std::collections::BTreeSet;
 
 use super::TaskAskDefault;
+use super::contribution_pair::ContributionPairRoute;
 use super::highway_block::BlockContinuation;
 use super::project_tradeoff::ProjectTradeoffRoute;
 use crate::entity_id::EntityId;
@@ -35,6 +36,8 @@ pub(super) enum AskEffect {
         continuation: BlockContinuation,
         label: String,
     },
+    /// A contribution pair's ask binds the pair to itself (FIX 3609).
+    ContributionPair(ContributionPairRoute),
 }
 
 /// The route a cross-project widening ask was addressed by: rechecked, with
@@ -89,6 +92,9 @@ impl Memory<'_> {
             } => {
                 self.put_block_question_in_txn(txn, group, continuation, label)?;
                 Ok(())
+            }
+            AskEffect::ContributionPair(route) => {
+                super::contribution_pair::route_pair_in(self.vault(), txn, group, route)
             }
         }
     }

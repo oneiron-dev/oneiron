@@ -18,6 +18,13 @@ dependency is added. The other loro crates (`loro-common` 1.16.0,
 `loro-delta` 1.13.0, `loro_fractional_index` 1.13.0, `loro-kv-store` 1.16.0,
 `loro-rle` 1.6.0, `loro-thunderdome` 0.6.2) stay on the registry.
 
+A maturin sdist collects path dependencies, not registry dependencies a patch
+redirects (the oneiron-py sdist, ONE-1441). So, as for heed, the root manifest
+also declares loro's local path edge in `[workspace.dependencies]`, the member
+crates take loro from the workspace, and the vendored loro's `loro-internal`
+edge names the sibling vendor's path: the sdist carries both vendors (FIX
+6519). Both declarations select the same tree as the patch.
+
 ## Why this vendor exists
 
 KS-7 erase must reach mixed sync carriers (window snapshots and updates,
@@ -63,6 +70,8 @@ unmodified trees.
 - `loro-1.16.2/src/lib.rs` — a `loro::checkpoint` module re-exporting the new
   types, the two `LoroDoc` methods below delegating to the internal ones, and
   the `loro::snapshot_at_exports` re-export.
+- `loro-1.16.2/Cargo.toml` — the `loro-internal` dependency names
+  `path = "../loro-internal-1.16.2"` beside its unchanged version (FIX 6519).
 
 **Added by this vendor:**
 
@@ -175,7 +184,7 @@ workspace `[lints]` do not apply to them.
 ## Re-vendoring
 
 Unpack the new `.crate` archives over both vendor directories, then re-apply
-the five changed files and the added module above, and update this file. The
+the six changed files and the added module above, and update this file. The
 join relies on the fast-snapshot layout, `ChangeStore::encode_from`, map-state
 encoding, and the shallow-root store; any upstream move must re-run the KS7-3
 fleet probe before landing.

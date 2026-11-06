@@ -48,6 +48,7 @@ def artifacts():
         "MODEL_PIN_UNAVAILABLE": "The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin.",
         "WRONG_ROOT": "The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries.",
         "PENDING_ASK": "A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation.",
+        "PACED_HOLD": "A count-bound budget window paced the call, and the engine holds it in its caller's fair line until its turn; nothing was refused. `resetsAt` names the earliest it runs and the message its deadline, after which it ends unrun. Send nothing again: a retry with the same invocation reads what the call came to. HTTP answers 202; over MCP the kind is `paced_hold` (-32020).",
         "WORLD_RECIPIENT_LIMIT": "The owner's read setting for a row's world keeps it from where this answer goes; the message names his choice, never the world. Read it where his choice admits, or ask him to change that setting. The row is there: do not treat this as not found.",
         "WORLD_PLACEMENT_UNVERIFIABLE": "A row's world placement, the rows a result came from or the vault root cannot be verified now, so nothing was released. No change to the request helps; retry once the vault has settled it.",
         "SANDBOX_PROPOSAL_DISK_FLOOR": "A foreign program's proposed file would cross the host disk's free-space floor, so the run failed and proposed nothing. The message names the bytes needed and free. No change to the request helps; run again once the host has room.",
@@ -58,12 +59,14 @@ def artifacts():
     # (FIX 5325, 6547, 8242): each read from its own source, so the table
     # names only codes that exist, never a copy.
     server_sources = [
+        ("crates/oneiron-server/src/error/mod.rs", r'Self::DeadlineExceeded => "([A-Z_]+)",'),
         ("crates/oneiron/src/workspace_roster/rooms/audience_doors.rs", r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";'),
         ("crates/oneiron-vault-contract/src/lib/ctl.rs", r'Self::WritesFrozen => "([a-z_]+)",'),
         ("crates/oneiron-server/src/slide_render.rs", r'pub\(crate\) const RENDER_\w+: &str = "([a-z_]+)";'),
     ]
     server_codes = [code for path, pattern in server_sources for code in re.findall(pattern, (ROOT / path).read_text())]
     server_remedies = {
+        "DEADLINE_EXCEEDED": "The caller's signals_deadline_ms expired. HTTP answers 408 and publishes no partial signal page or advanced cursor. Retry from the previous successful cursor with a larger budget, or omit the explicit deadline.",
         "AGENT_THREAD_WALK_IN_FORBIDDEN": "An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020).",
         "writes_frozen": "This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020).",
         "render_deadline": "The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020).",

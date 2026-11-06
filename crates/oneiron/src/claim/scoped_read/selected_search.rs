@@ -66,15 +66,20 @@ impl ScopedRead<'_> {
             Some(worlds) => self.within_worlds(worlds),
             None => self,
         };
-        let (filter, policy) = read.resolve_retrieval_filter(None)?;
-        if filter.deny_all {
+        // The key's own rows and those its own live Grants add (FIX 7528).
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = read.search_plan(None)?;
+        if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: read.receipt_for(None, &policy, &filter, 0),
+                receipt: read.receipt_for(None, &policy, &candidates, 0),
             });
         }
         let excluded = read.request_exclusions(&policy, None)?;
-        let plan = read.plan_admits(&filter, &policy, &excluded);
+        let plan = read.plan_admits(&filter, &policy, &excluded, None);
         let conversations = scope.conversation_ids.as_ref().map(|ids| {
             ids.iter()
                 .copied()
@@ -99,7 +104,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .reading(read.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(read.actor_key.clone())
             .filter_candidates(&admitted)
             .search_text(query, limit)
@@ -117,7 +122,7 @@ impl ScopedRead<'_> {
             None,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            excluded.count()?,
             &results.revisions,
         )
     }
