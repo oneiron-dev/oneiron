@@ -60,6 +60,12 @@ pub(crate) fn private_threads_readable_with_read_in(
     viewers: &[EntityId],
     current: bool,
 ) -> Result<bool> {
+    // A row a mail source's audience binds, or whose words came from one,
+    // reads only to that source's people, the owner's read included
+    // (FIX 12559, owner MAIL-SHARE = A). A vault with no source binds none.
+    if !crate::source_audience::readable_with_read_in(vault, dbs, txn, id, raw, viewers)? {
+        return Ok(false);
+    }
     if crate::store::ManifestDbs::is_union(dbs) {
         let base = vault.store.read();
         let Some(walk) = thread_walk_kept(vault, &base, txn, id, raw)? else {
@@ -341,6 +347,17 @@ fn thread_walk_seen_in(
                 conversation_summary_covers(&claim),
                 reaction_covers(&claim),
             ]);
+            if claim.predicate == crate::claim::PREDICATE_CONFLICT_OPEN
+                && matches!(&claim.value, rmpv::Value::String(_))
+            {
+                match crate::scope_summary::word_sources_through_in(vault, dbs, txn, &id, &bytes) {
+                    Ok(crate::scope_summary::WordSources::From(sources)) => {
+                        pending.extend(sources.into_iter().map(|id| (id, None, source)));
+                    }
+                    Ok(crate::scope_summary::WordSources::Unresolved) | Err(_) => return Ok(None),
+                    Ok(crate::scope_summary::WordSources::Own) => {}
+                }
+            }
         }
         // FIX 6409: an epoch summary's words are its `DerivedFrom` sources',
         // each walked as a scope summary's covers are; one whose sources do

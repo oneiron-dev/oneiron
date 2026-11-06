@@ -31,10 +31,14 @@ pub(super) async fn execute(
                 (seeds.capacity() as u64)
                     .saturating_mul(std::mem::size_of::<EmbeddedMediaSeed>() as u64),
                 |bytes, seed| {
-                    bytes.saturating_add(seed.space.capacity() as u64).saturating_add(
-                        (seed.kinds.capacity() as u64)
-                            .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64),
-                    )
+                    let vector_bytes = (seed.vector.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<f32>() as u64);
+                    let kind_bytes = (seed.kinds.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64);
+                    bytes
+                        .saturating_add(seed.space.capacity() as u64)
+                        .saturating_add(vector_bytes)
+                        .saturating_add(kind_bytes)
                 },
             )
         }),
@@ -149,6 +153,7 @@ fn execute_read(
     let reader = mcp_scoped_read(&server.vault, actor)?;
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
+        .with_media_query_memory(&server.memory)
         .listing_producers(&producers);
     let adapter = match media {
         Some(seeds) => adapter.with_media_seeds(seeds),

@@ -28,4 +28,3 @@ pub enum EsignSealTrail {
         error: MemoryError,
     },
 }
-

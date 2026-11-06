@@ -57,4 +57,3 @@ pub fn denied(reason: &'static str) -> Error {
         reason_codes: vec!["gate.secret_scan.detected", reason],
     })
 }
-

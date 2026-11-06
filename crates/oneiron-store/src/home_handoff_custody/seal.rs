@@ -68,4 +68,3 @@ pub fn transit_aad(
     aad.extend_from_slice(key_ref);
     aad
 }
-

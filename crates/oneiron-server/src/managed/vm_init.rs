@@ -36,7 +36,7 @@
 //! they plan a network, the bootstrap sets up the NIC the host attached
 //! while it is still root, before the key and before any engine or companion
 //! (FIX 6808, [`network`]); a setup that fails refuses the provisioning.
-//! The managed profile's five files on the drive ([`profile`], FIX 6809)
+//! The managed profile's seven files on the drive ([`profile`], FIX 6809)
 //! become the engine's own managed-profile flags, the same for an open and a
 //! cold restore.
 //!
