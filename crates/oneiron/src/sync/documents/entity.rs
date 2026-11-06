@@ -127,10 +127,18 @@ impl EntityDocument {
 
     /// STATE replaces, never merges a shallow copy: the state, with each
     /// pending local update replayed on it, must cover the durable text, or
-    /// nothing changes.
+    /// nothing changes. A canonical restore's successor of the text held
+    /// here takes its place instead, and a copy of the history a restore of
+    /// it replaced changes nothing (FIX 3553): the pending updates are of
+    /// the replaced history, and go once a peer acknowledges the successor.
     fn replace_in_txn(&self, txn: &mut RwTxn<'_>, bytes: &[u8]) -> Result<()> {
         let staged = LoroDoc::new();
         storage::import_complete(&staged, bytes)?;
+        if crate::entity_doc::take_sync_successor_in_txn(&self.vault, txn, &self.id, &staged)?
+            .is_some()
+        {
+            return Ok(());
+        }
         for frame in journal_in(&self.vault, txn, self.id)? {
             let frame = decode_document(&frame[1..])
                 .map_err(|_| Error::sync_protocol(SyncProtocolValidation::InvalidDocumentKey))?;
