@@ -27,7 +27,8 @@ use crate::temporal::TimeRange;
 /// `ids` it removes, before their rows go (FIX 14534, Engine 11-06 08:34
 /// call 4 = A): each one's entity document and typed body, a NOTE's text,
 /// pending slots, review workflow (proposal snapshots, waiting forks) and
-/// kept deck outline, a BLOB_ARTIFACT's deck creation record, retained edit
+/// kept deck outline, the born-with prose a copy carried and its own derived
+/// index copy, a BLOB_ARTIFACT's deck creation record, retained edit
 /// proposals, version chain and byte holds, an ASSET's hold on the blob it
 /// names, a CLAIM's Gate decisions (left as their retention skeletons) and
 /// pending Gate tray row, the bodies each one owns (a last holder's file goes
@@ -66,6 +67,10 @@ pub(super) fn discard_owned_payload(
     crate::note::discard_workflow_in_txn(store, txn, &notes)?;
     for id in ids {
         crate::typed_body::discard_local_payload_in_txn(store, txn, id)?;
+        // The born-with prose a copy carried for it, and its own derived
+        // index copy (the copies derived from it stay with their owners).
+        crate::sync::selector::erase_carried_born_with_in_txn(store, txn, id)?;
+        crate::embed::discard_repo_derived_index_copy_in_txn(store, txn, id)?;
     }
     for id in notes.iter().chain(&artifacts) {
         crate::edit_roundtrip::deck_create::discard_payload_in_txn(store, txn, id)?;
