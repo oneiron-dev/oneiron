@@ -30,14 +30,16 @@ const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v2";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
-/// `connector.call`; a browser click, click at a point or batch binds the
-/// act its grant's press held (FIX 10423), as do a library run's steps and
+/// `connector.call`, including one through `self.use`; a browser click,
+/// click at a point or batch binds the act its grant's press held (FIX 10423),
+/// as do a library run's steps and
 /// every desktop verb that can press (FIX 11499). Every other verb keeps
 /// its own wait.
 pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
     matches!(
         verb,
         AgentVerb::ConnectorCall
+            | AgentVerb::SelfUse
             | AgentVerb::SelfBrowserClick
             | AgentVerb::SelfBrowserClickAt
             | AgentVerb::SelfBrowserBatch

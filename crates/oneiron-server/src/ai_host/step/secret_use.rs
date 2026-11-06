@@ -176,6 +176,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
+        capture: impl FnOnce(&LlmRequest) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
         continuation: Option<(WorkflowToolCursor, Option<WorkflowToolWait>)>,
         mut save: impl FnMut(
             &LlmRequest,
@@ -202,6 +203,7 @@ impl<'a> StepSecretUse<'a> {
             None,
         ));
         let mut rounds = retained;
+        let mut capture = Some(capture);
         let mut refreshed_sources = Vec::new();
         loop {
             if !retained {
@@ -213,6 +215,11 @@ impl<'a> StepSecretUse<'a> {
                         refreshed_sources.push(source);
                     }
                 }
+                let staged = if cursor.capture_completed {
+                    None
+                } else {
+                    capture.take().and_then(|capture| capture(&request))
+                };
                 let generated = runtime.block_on(ladder.generate_recorded_while(
                     run,
                     request.clone(),
@@ -229,7 +236,9 @@ impl<'a> StepSecretUse<'a> {
                     }
                 };
                 if !cursor.capture_completed {
-                    oneiron::code_run::finalize_step_captures(self.vault);
+                    if let Some(staged) = staged {
+                        staged.finalize(self.vault, binding.rung.clone(), binding.route.clone());
+                    }
                     cursor.capture_completed = true;
                 }
                 if !response

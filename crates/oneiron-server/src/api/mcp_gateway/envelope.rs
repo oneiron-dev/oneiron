@@ -100,6 +100,8 @@ pub(crate) struct McpGatewayError {
     /// A verb hook's stop (ARCH-0080 §3), surfaced as `error.data.hook`; a
     /// code-mode door hands it back to the run as the typed stop.
     pub(super) hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
+    /// A successful row's target-rewrite notice, retained beside a post-hook error.
+    pub(super) hook_notice: Option<String>,
     /// When a model call no provider answered may be sent again, in seconds
     /// (FIX 3194), surfaced as `error.data.retry_after`; a code-mode door
     /// hands it back to the run as the typed outage.
@@ -135,6 +137,7 @@ impl McpGatewayError {
             call_receipt: None,
             row_receipt: None,
             hook: None,
+            hook_notice: None,
             retry_after: None,
             resets_at: None,
             program_steps: None,
@@ -158,6 +161,11 @@ impl McpGatewayError {
         .with_field(field);
         error.byte_bound = Some(Box::new((max_bytes, received_bytes)));
         error
+    }
+
+    pub(super) fn with_hook_notice(mut self, notice: Option<String>) -> Self {
+        self.hook_notice = notice;
+        self
     }
 
     pub(super) fn with_field(mut self, field: impl Into<String>) -> Self {
@@ -231,6 +239,8 @@ pub(crate) struct McpCallContext {
     /// `None` lowers for the whole atom kit. It selects a rendering and
     /// grants nothing.
     pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
+    /// The current request's actual transport, for signing audit only.
+    pub(crate) signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 }
 
 impl std::ops::Deref for McpCallContext {
