@@ -330,7 +330,7 @@ pub(crate) fn execute_callable_skill_cancellable(
         .and_then(|files| files.iter().find(|file| file.path == call.reference))
         .ok_or(invalid("call reference is absent from stored skill source"))?;
     let source = std::str::from_utf8(&file.content)
-        .map_err(|_| invalid("call reference must contain UTF-8 JavaScript"))?;
+        .map_err(|_| invalid("call reference must contain UTF-8 source"))?;
     let script = callable_script(args, source)?;
     // Prepared once (FIX 8276): a TypeScript skill runs as the JavaScript Oxc
     // prints for it. The arguments line is the host's prelude, so a failed
