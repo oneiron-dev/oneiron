@@ -136,7 +136,7 @@
         "revision": "hooks03-rewrite-ask-v1"
       },
       "licence": "Apache-2.0",
-      "sha256": "da5e24e223a96e385ec520153d0ac26864e2caf5cafb42b60b2b5d44d066184e",
+      "sha256": "4f048dd88d392994c15262ecb6fafc7a0a7a789564da1ab854121059e79608a6",
       "expectedFacts": {
         "carriers": [
           "HTTP",
@@ -149,12 +149,17 @@
         "runsPerHookPerLogicalInvocation": 1,
         "validEffects": 1,
         "escapeEffects": 0,
-        "invalidAsks": 0,
         "taskAnswerIsAuthority": false,
         "currentAuthorityReduction": "revoke same grant; not attenuation or a different credential",
         "revokedEffects": 0,
         "samePendingAcrossRestart": true,
-        "sameResultOnRepeat": true
+        "sameResultOnRepeat": true,
+        "invalidRewrite": {
+          "hookOutcome": "refused",
+          "keepsOriginalArgs": true,
+          "asks": 1,
+          "effects": 1
+        }
       },
       "scenarios": [
         "HOOKS-03"
