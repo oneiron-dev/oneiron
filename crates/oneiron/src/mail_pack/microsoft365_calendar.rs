@@ -349,7 +349,8 @@ const HOUR_SECS: i64 = 3600;
 /// UTC), so the zone's offset is read back from the start's UTC time of day
 /// ([`midnight_offset`]). Each instant is taken to the nearest midnight, so
 /// a daylight-saving change inside a multi-day event moves no day. `None`
-/// for an event that is not all-day.
+/// for an event that is not all-day, and for one whose zone the start does
+/// not tell; that event lands as its exact UTC span, never a guessed day.
 fn all_day_dates(event: &Value) -> Option<(String, String)> {
     if event.get("isAllDay").and_then(Value::as_bool) != Some(true) {
         return None;
@@ -367,7 +368,13 @@ fn all_day_dates(event: &Value) -> Option<(String, String)> {
         .get("originalStartTimeZone")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let offset = midnight_offset(start.rem_euclid(DAY_SECS), zone);
+    let Some(offset) = midnight_offset(start.rem_euclid(DAY_SECS), zone) else {
+        tracing::debug!(
+            zone,
+            "mail pack: an all-day Graph event whose zone the start does not tell lands as its UTC span"
+        );
+        return None;
+    };
     let day = |instant: i64| (instant + offset + DAY_SECS / 2).div_euclid(DAY_SECS);
     let first = day(start);
     let last = day(end).max(first + 1);
@@ -382,24 +389,39 @@ fn all_day_dates(event: &Value) -> Option<(String, String)> {
 /// `time_of_day` seconds after a UTC midnight. A time of day after 12:00 is
 /// a zone east of UTC (its midnight falls on the UTC day before), one before
 /// 10:00 a zone west of it. From 10:00 to 12:00 it is a zone 10 to 12 hours
-/// west or 12 to 14 hours east: the event's own zone name tells which where
-/// it names one of them, else 10:00 is read as west (Hawaii) and the rest as
-/// east (New Zealand, Fiji, Tonga).
-fn midnight_offset(time_of_day: i64, zone: &str) -> i64 {
+/// west or 12 to 14 hours east: only the event's own zone name tells which.
+/// `None` when the name names neither side or both (a custom zone such as
+/// `tzone://Microsoft/Custom`, or a name this list does not know).
+fn midnight_offset(time_of_day: i64, zone: &str) -> Option<i64> {
     if time_of_day == 0 {
-        return 0;
+        return Some(0);
     }
     if time_of_day > 12 * HOUR_SECS {
-        return DAY_SECS - time_of_day;
+        return Some(DAY_SECS - time_of_day);
     }
     if time_of_day < 10 * HOUR_SECS {
-        return -time_of_day;
+        return Some(-time_of_day);
     }
     let zone = zone.to_ascii_lowercase();
     let names = |hints: &[&str]| hints.iter().any(|hint| zone.contains(hint));
     let west = names(&[
-        "hawai", "honolulu", "aleutian", "adak", "tahiti", "utc-10", "utc-11", "utc-12", "pago",
-        "niue", "midway", "dateline", "gmt+10", "gmt+11", "gmt+12",
+        "hawai",
+        "honolulu",
+        "aleutian",
+        "adak",
+        "tahiti",
+        "rarotonga",
+        "cook islands",
+        "utc-10",
+        "utc-11",
+        "utc-12",
+        "pago",
+        "niue",
+        "midway",
+        "dateline",
+        "etc/gmt+10",
+        "etc/gmt+11",
+        "etc/gmt+12",
     ]);
     let east = names(&[
         "line islands",
@@ -412,17 +434,31 @@ fn midnight_offset(time_of_day: i64, zone: &str) -> i64 {
         "apia",
         "chatham",
         "kamchatka",
+        "anadyr",
+        "russia time zone 11",
+        "norfolk",
+        "majuro",
+        "kwajalein",
+        "tarawa",
+        "funafuti",
+        "wake",
+        "wallis",
+        "nauru",
+        "fakaofo",
+        "tokelau",
+        "kanton",
+        "enderbury",
         "utc+12",
         "utc+13",
         "utc+14",
-        "gmt-12",
-        "gmt-13",
-        "gmt-14",
+        "etc/gmt-12",
+        "etc/gmt-13",
+        "etc/gmt-14",
     ]);
-    if west || (!east && time_of_day == 10 * HOUR_SECS) {
-        -time_of_day
-    } else {
-        DAY_SECS - time_of_day
+    match (west, east) {
+        (true, false) => Some(-time_of_day),
+        (false, true) => Some(DAY_SECS - time_of_day),
+        _ => None,
     }
 }
 
