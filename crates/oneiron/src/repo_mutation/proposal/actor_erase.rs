@@ -1,7 +1,8 @@
 //! Whose act a repo proposal records, and the erase that forgets it
 //! (FIX 3520): its proposer, the critics whose evidence judged it (FIX 4477),
 //! the journal claims it wrote (FIX 4479) and the owner who decided its
-//! removed-name review, with that decision's receipt claim (FIX 4365).
+//! removed-name review, with each settlement receipt claim that names that
+//! owner (FIX 4365).
 
 use std::collections::BTreeSet;
 
@@ -246,6 +247,31 @@ fn erase_settlement_receipt_in_txn(
     Ok(())
 }
 
+/// Rewrites each settlement receipt claim that still names `actor`, found by
+/// the predicate's posting list (FIX 4365). A receipt outlives its proposal
+/// row: an earlier erase of the proposer can delete the row that pointed at
+/// it. Each keeps its decision, its answered verdicts and its times. The row
+/// sweep already rewrote each receipt in `scrubbed`, so none is rewritten
+/// twice.
+fn erase_actor_settlement_receipts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    scrubbed: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let receipts = crate::claim::claim_ids_for_predicate_in_txn(
+        &vault.store,
+        wtxn,
+        "repo.proposal_settlement",
+    )?;
+    for receipt in receipts {
+        if !scrubbed.contains(&receipt) {
+            erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
+        }
+    }
+    Ok(())
+}
+
 /// What an actor's erase does with a proposal it opened that has not run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingRepoProposalErase {
@@ -271,8 +297,9 @@ pub const ACTOR_ERASE_PENDING_REPO_PROPOSAL: PendingRepoProposalErase =
 /// 4479). Each proposal it judged as a critic keeps that evidence under an
 /// opaque ref (FIX 4477). Each removed-name review it decided keeps its
 /// decision and names no one, in its row and in its receipt claim (FIX
-/// 4365). One-way, in the erase's own transaction. An id whose entity is no
-/// actor scans nothing.
+/// 4365). Each settlement receipt claim that names it names no one too, even
+/// when no proposal row points at it any more (FIX 4365). One-way, in the
+/// erase's own transaction. An id whose entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -299,12 +326,14 @@ pub(crate) fn erase_proposal_actor_in_txn(
         }
     }
     let mut gone = BTreeSet::new();
+    let mut scrubbed = BTreeSet::new();
     for (id, proposal, proposer, receipts) in named {
         if proposer {
             erase_journal_in_txn(vault, wtxn, &proposal, actor)?;
         }
         for receipt in receipts {
             erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
+            scrubbed.insert(receipt);
         }
         let pending = proposer
             && proposal.operation_seq.is_none()
@@ -319,6 +348,7 @@ pub(crate) fn erase_proposal_actor_in_txn(
             PROPOSAL.put(&vault.store, wtxn, &id, &proposal)?;
         }
     }
+    erase_actor_settlement_receipts_in_txn(vault, wtxn, actor, &scrubbed)?;
     if gone.is_empty() {
         return Ok(());
     }
