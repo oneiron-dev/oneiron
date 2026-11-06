@@ -438,6 +438,9 @@ pub(crate) use body_envelope::{
     erase_bodies_for_owner_in_txn, governed_body_instances_in_txn, note_settled_inline_in_txn,
     settle_inline_asset_in_txn,
 };
+// The erase debts a kept body carries through a leave's purge (FIX 3679).
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use body_envelope::owed_erase_side_keys_in_txn;
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
