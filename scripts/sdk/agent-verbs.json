@@ -11098,6 +11098,51 @@
       "openapi": true
     },
     {
+      "name": "vault.code.secrets.purge.request",
+      "description": "Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves.",
+      "input": "crate::memory::origin_doors::RepoSecretPurgeRequest",
+      "output": "crate::memory::origin_doors::RepoSecretPurgePlan",
+      "call": "memory.code_secrets_purge_request_as(&memory.embedded_owner(\"vault.code.secrets.purge.request\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.purge.get",
+      "description": "Read one of the owner's secret purge plans and, once executed, its receipt.",
+      "input": "crate::memory::origin_doors::RepoSecretPurgeIdRequest",
+      "output": "crate::memory::origin_doors::RepoSecretPurgeView",
+      "call": "memory.code_secrets_purge_get_as(&memory.embedded_owner(\"vault.code.secrets.purge.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.purge.execute",
+      "description": "Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed.",
+      "input": "crate::memory::origin_doors::RepoSecretPurgeIdRequest",
+      "output": "crate::memory::origin_doors::RepoSecretPurgeReceipt",
+      "call": "memory.code_secrets_purge_execute_as(&memory.embedded_owner(\"vault.code.secrets.purge.execute\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.checkout.bind",
       "description": "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential.",
       "input": "crate::memory::origin_doors::CheckoutDoorBindRequest",

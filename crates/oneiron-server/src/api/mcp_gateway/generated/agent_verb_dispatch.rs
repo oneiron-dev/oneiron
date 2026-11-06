@@ -865,6 +865,9 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.origin.authority.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.set" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.publications" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.secrets.purge.request" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.secrets.purge.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.secrets.purge.execute" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checkout.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checkout.claim" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checkout.get" => a.spec.clone().ok_or_else(invalid),
@@ -3729,6 +3732,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.origin.publications" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.secrets.purge.request" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.secrets.purge.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.secrets.purge.execute" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.checkout.bind" => {
@@ -18045,6 +18057,64 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_publications(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.secrets.purge.request" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.secrets.purge.request", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::origin_doors::RepoSecretPurgeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_secrets_purge_request(
+                    server, auth, input,
+                ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.secrets.purge.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.secrets.purge.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::origin_doors::RepoSecretPurgeIdRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_secrets_purge_get(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.secrets.purge.execute" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.secrets.purge.execute", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::origin_doors::RepoSecretPurgeIdRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_secrets_purge_execute(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

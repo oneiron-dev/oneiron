@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4637 declarations.
-// Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4647 declarations.
+// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2713,6 +2713,16 @@ declare namespace Sdk {
   type OriginAuthoritySetRequest = { repo: string; expected_epoch?: number | null; residence: OriginResidence; writer?: string | null; mirror?: boolean };
   type OriginPublicationsRequest = { repo: string; ref_name: string; git_commit: string };
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
+  type RepoSecretPurgeRequest = { repo: string; marks?: EntityId[] | null };
+  type RepoSecretPurgeRefMove = { ref_name: string; old_oid: string; new_oid: string };
+  type RepoSecretPurgeKeepRoot = { kind: string; owner: string; oid: string; releases: boolean };
+  type RepoSecretPurgeOutstanding = "backups_and_checkpoints" | "outside_copies" | "repo_snapshots" | "code_documents" | "lfs_objects";
+  type RepoSecretPurgePlan = { plan: EntityId; owner: EntityId; repo: string; store: EntityId; marks: EntityId[]; moves: RepoSecretPurgeRefMove[]; purged_blobs: string[]; rewritten_objects: number; signatures_dropped: number; keep_roots: RepoSecretPurgeKeepRoot[]; outstanding: RepoSecretPurgeOutstanding[]; planned_at: number };
+  type RepoSecretPurgeIdRequest = { plan: EntityId };
+  type RepoSecretPurgeState = "complete_local" | "partial" | "stale";
+  type RepoSecretPurgeRefOutcome = { ref_name: string; old_oid: string; new_oid: string; moved: boolean; failure?: string | null };
+  type RepoSecretPurgeReceipt = { receipt: EntityId; plan: EntityId; state: RepoSecretPurgeState; refs: RepoSecretPurgeRefOutcome[]; released: RepoSecretPurgeKeepRoot[]; still_present: string[]; outstanding: RepoSecretPurgeOutstanding[]; executed_at: number };
+  type RepoSecretPurgeView = { plan: RepoSecretPurgePlan; receipt?: RepoSecretPurgeReceipt | null };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
   type CheckoutClass = "edit" | "build" | "verify" | "effect";
@@ -5859,6 +5869,16 @@ declare const vault: Sdk.VaultHost & {
     repos: {
       /** Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work. */
       get(input: Sdk.CodeRepoGetRequest): Promise<Sdk.CodeRepoView | null | StoredResult>;
+    };
+    secrets: {
+      purge: {
+        /** Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed. */
+        execute(input: Sdk.RepoSecretPurgeIdRequest): Promise<Sdk.RepoSecretPurgeReceipt | StoredResult>;
+        /** Read one of the owner's secret purge plans and, once executed, its receipt. */
+        get(input: Sdk.RepoSecretPurgeIdRequest): Promise<Sdk.RepoSecretPurgeView | StoredResult>;
+        /** Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves. */
+        request(input: Sdk.RepoSecretPurgeRequest): Promise<Sdk.RepoSecretPurgePlan | StoredResult>;
+      };
     };
     snapshots: {
       /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */

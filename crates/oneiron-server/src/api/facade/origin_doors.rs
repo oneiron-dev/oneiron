@@ -80,6 +80,48 @@ pub(crate) async fn vault_code_origin_publications(
     .await
 }
 
+pub(crate) async fn vault_code_secrets_purge_request(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RepoSecretPurgeRequest,
+) -> Listed<RepoSecretPurgePlan> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.secrets.purge.request",
+        move |memory, owner| memory.code_secrets_purge_request_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_secrets_purge_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RepoSecretPurgeIdRequest,
+) -> Listed<RepoSecretPurgeView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.secrets.purge.get",
+        move |memory, owner| memory.code_secrets_purge_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_secrets_purge_execute(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RepoSecretPurgeIdRequest,
+) -> Listed<RepoSecretPurgeReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.secrets.purge.execute",
+        move |memory, owner| memory.code_secrets_purge_execute_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_checkout_bind(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
