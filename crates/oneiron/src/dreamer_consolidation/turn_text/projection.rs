@@ -135,7 +135,12 @@ fn cited_words_in(
     let message = decode_message(&body)
         .ok_or_else(|| invalid_consolidation("witnessed message body is malformed"))?;
     let out = |kind| peers(vault, txn, id, EdgeDirection::Out, kind, None);
-    let bylines = usize::from(message.author != WITNESS_AUTHOR_SYSTEM && !frame.imported);
+    let bylines = usize::from(
+        !matches!(
+            message.author.as_str(),
+            WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
+        ) && !frame.imported,
+    );
     if entity_type != ENTITY_TYPE_MESSAGE
         || out(EdgeKind::PartOf)? != [frame.turn]
         || out(EdgeKind::BelongsTo)? != [frame.conversation]
