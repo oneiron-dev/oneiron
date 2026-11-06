@@ -54,3 +54,15 @@ Filter and matcher tags, term order, explicit nulls, lifecycle fields, and
 the read result's `found` and `record` fields keep their existing encoding.
 Membership results and host-only evaluation are unchanged. These result
 adapters do not change storage, query admission, input decoding, or hooks.
+
+## Core claim-review results
+
+The core `vault.claims.review` and `vault.claims.vetting` result adapter
+moves the returned claim's JSON value and optional scope out before the
+existing record codec runs. It restores both original payloads at their
+existing fields without serializing them again. Required null values stay
+present; absent and null optional scopes still encode as a present null key.
+The review handle, claim metadata, provenance, labels, and finite numeric
+fields keep their original encoding. Native reads, owner checks, input
+decoding, verb hooks, and public result types are unchanged. This selected
+result conversion does not prove end-to-end depth or memory bounds.
