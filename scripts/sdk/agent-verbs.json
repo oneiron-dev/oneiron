@@ -7091,6 +7091,22 @@
       "openapi": true
     },
     {
+      "name": "vault.evals.measurements.request",
+      "description": "The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response.",
+      "input": "crate::skill_optimize::EvalMeasurementRequest",
+      "output": "crate::skill_optimize::EvalMeasurementRef",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.measurements.request\", &input)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.evals.cohorts.setup",
       "description": "The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance.",
       "input": "crate::skill_optimize::EvalCohortSetup",

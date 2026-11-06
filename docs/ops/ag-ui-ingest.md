@@ -237,3 +237,41 @@ assignment and exact-task reuse; native release/grading and source-aware
 owner setup do not activate those remaining consumers. The file
 path adds no table, family ledger, migration, old-format reader, default cap
 or timer.
+
+### Queuing a measurement with its source reader
+
+`vault.evals.measurements.request` takes the existing `EvalMeasurementRequest`
+and returns only its canonical digest, never sealed membership or stored answer
+references. The owner proof admits the request write before
+hooks and is checked again in the writing transaction. The server captures the
+caller's original `Memory` after its host origin, locality and destination have
+been bound. It does not read sealed task text while asking.
+
+The canonical request and digest do not change. The existing measurement row
+keeps the private source context beside the question, with no second table or
+source-grant index. A Pending question with no source binds the first explicit
+source request. Repeating a request does not swap a bound source, and a Claimed
+or settled question never changes its source. Helper remeasurement carries the
+same source. The older in-process `Vault` request paths still bind none.
+
+`Vault::coach_eval_measurement_source` opens a question-bound reader from the
+leased Coach attempt. The reader accepts case IDs, not another measurement's
+digest, and exposes no restored general-purpose `Memory`. It rebuilds source
+authority only when a released case actually has a Repair recipe. Receipt and
+Synthetic cases keep their existing hydration without acquiring a room, root or
+source-read requirement. An unbound Repair request keeps the existing unsupported
+hydration result; Coach identity never substitutes for a source grant.
+
+A Repair read restores the captured effective credential facts, or the exact
+recorded host action, and uses the normal live actor-key checks. It retains the
+original room/thread terms as an upper bound, meets the current terms into them,
+and rebuilds the current audience and peer reads. It stores no live room ceiling
+or peer read key. Locality and every proved recipient machine/key are retained,
+including proved peers on a currently on-device destination. Each normal source
+read still checks current standing, grants, source fingerprints and body custody.
+
+The core request and leased-reader interfaces do not by themselves connect the
+server measuring job to Repair. That job still uses its older `Vault` hydration;
+its source-reader adoption, source-read receipt persistence and dedicated scorer
+selection remain separate work. A source context is not proof of a completed
+measurement, a passed case or a sealed-family exposure.

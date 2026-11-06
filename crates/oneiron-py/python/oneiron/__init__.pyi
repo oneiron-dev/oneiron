@@ -2088,6 +2088,8 @@ class Oneiron:
         def inventory(self, spec: Facade.EvalInventoryWire) -> Facade.EvalAuthoringInventory:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
         @property
+        def measurements(self) -> "Oneiron._VaultEvalsMeasurementsVerbs": ...
+        @property
         def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs": ...
         def author_now(self, spec: Facade.EvalAuthorNowRequest) -> Facade.EvalAuthoringRef:
             """Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease."""
@@ -2103,6 +2105,9 @@ class Oneiron:
             """Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys."""
         @property
         def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs": ...
+    class _VaultEvalsMeasurementsVerbs:
+        def request(self, spec: Facade.EvalMeasurementRequest) -> Facade.EvalMeasurementRef:
+            """The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response."""
     class _VaultEvalsCohortsVerbs:
         def __call__(self, spec: Facade.EvalSeatRequest) -> list[Facade.EvalCohortView]:
             """Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only."""

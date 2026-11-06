@@ -1744,6 +1744,10 @@ export class Oneiron {
     evals: {
       /** The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup. */
       inventory: (input: Facade.EvalInventoryWire): Facade.EvalAuthoringInventory => this.#call(() => this.#client.vaultEvalsInventory(input) as Facade.EvalAuthoringInventory),
+      measurements: {
+        /** The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response. */
+        request: (input: Facade.EvalMeasurementRequest): Facade.EvalMeasurementRef => this.#call(() => this.#client.vaultEvalsMeasurementsRequest(input) as Facade.EvalMeasurementRef),
+      },
       /** Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only. */
       cohorts: Object.assign((input: Facade.EvalSeatRequest): Facade.EvalCohortView[] => this.#call(() => this.#client.vaultEvalsCohorts(input) as Facade.EvalCohortView[]), {
         /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */

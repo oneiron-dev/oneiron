@@ -42,7 +42,7 @@ pub struct HostActionAuthority {
 
 impl HostActionAuthority {
     fn new(owner: EntityId, root: Option<&VerifiedSlip>) -> Self {
-        let guard = HostActionGuard {
+        let guard = HostActionGuard::Presented {
             root: root.cloned(),
             owner,
         };
@@ -81,15 +81,38 @@ impl HostActionAuthority {
     }
 }
 
+impl HostActionAuthority {
+    /// Rebuilds a saved host action only after its exact recorded identity
+    /// passes the same live owner rule in the caller's snapshot.
+    pub(crate) fn from_recorded_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        identity: &HostActionIdentity,
+    ) -> Result<Self> {
+        identity.holds_in(vault, txn)?;
+        let guard = HostActionGuard::Recorded(identity.clone());
+        Ok(Self {
+            actor: identity.owner(),
+            class: EdgeActorClass::Human,
+            read_key: ScopedReadActorKey::vault_owner(identity.owner())
+                .guarded_by_host_action(guard.clone()),
+            guard,
+        })
+    }
+}
+
 /// What a host action proves again on every read (`ScopedRead`'s liveness
 /// checks) and every owner act (`AuthenticatedOwner`'s revalidation). A key
 /// or a proof that outlives a revoked root, a withdrawn binding or a deleted
 /// owner reads and acts as no one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HostActionGuard {
-    /// The host root acted under; `None` is the explicit local dev mode.
-    root: Option<VerifiedSlip>,
-    owner: EntityId,
+pub(crate) enum HostActionGuard {
+    Presented {
+        /// The host root acted under; `None` is the explicit local dev mode.
+        root: Option<VerifiedSlip>,
+        owner: EntityId,
+    },
+    Recorded(HostActionIdentity),
 }
 
 impl HostActionGuard {
@@ -97,19 +120,30 @@ impl HostActionGuard {
     /// is the typed refusal; a lapse is the owner refusal
     /// ([`host_action_refused`] tells both from a failure to judge).
     pub(crate) fn holds_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        vault.host_action_still_holds_in_txn(txn, self.root.as_ref(), self.owner)
+        match self {
+            Self::Presented { root, owner } => {
+                vault.host_action_still_holds_in_txn(txn, root.as_ref(), *owner)
+            }
+            Self::Recorded(identity) => identity.holds_in(vault, txn),
+        }
     }
 
     /// The host root this action acts under, by slip id; `None` for the
     /// dev mode. An offer refuses an answer from the lineage that opened it
     /// or a fork of it (FIX 5064).
     pub(crate) fn root_slip_id(&self) -> Option<[u8; 32]> {
-        self.root.as_ref().map(|root| root.claims().slip_id)
+        match self {
+            Self::Presented { root, .. } => root.as_ref().map(|root| root.claims().slip_id),
+            Self::Recorded(identity) => identity.root.as_ref().map(|root| root.slip_id),
+        }
     }
 
     /// The owner this action acts as, for the actor-key fingerprint.
     pub(crate) fn owner(&self) -> EntityId {
-        self.owner
+        match self {
+            Self::Presented { owner, .. } => *owner,
+            Self::Recorded(identity) => identity.owner,
+        }
     }
 
     /// The durable identity of this action on `vault`, for a record that
@@ -118,17 +152,20 @@ impl HostActionGuard {
     /// not proof: before committing it, prove the guard or the identity
     /// again in that same writing snapshot.
     pub(crate) fn durable_identity(&self, vault: &Vault) -> HostActionIdentity {
-        HostActionIdentity {
-            posture: vault.privacy_posture(),
-            owner: self.owner,
-            root: self.root.as_ref().map(|root| {
-                let claims = root.claims();
-                HostRootIdentity {
-                    slip_id: claims.slip_id,
-                    vault_id: claims.vault_id,
-                    binding_key: claims.binding_key,
-                }
-            }),
+        match self {
+            Self::Presented { root, owner } => HostActionIdentity {
+                posture: vault.privacy_posture(),
+                owner: *owner,
+                root: root.as_ref().map(|root| {
+                    let claims = root.claims();
+                    HostRootIdentity {
+                        slip_id: claims.slip_id,
+                        vault_id: claims.vault_id,
+                        binding_key: claims.binding_key,
+                    }
+                }),
+            },
+            Self::Recorded(identity) => identity.clone(),
         }
     }
 }

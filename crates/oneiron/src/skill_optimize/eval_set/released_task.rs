@@ -48,7 +48,9 @@ pub struct EvalTaskRead {
     pub receipt: Option<ScopedReadReceipt>,
 }
 
-fn attempt_read(task: std::result::Result<EvalTaskInput, MeasurementUnavailable>) -> EvalTaskRead {
+pub(super) fn attempt_read(
+    task: std::result::Result<EvalTaskInput, MeasurementUnavailable>,
+) -> EvalTaskRead {
     EvalTaskRead {
         task: task.map(|input| EvalReleasedTask {
             input,

@@ -2261,6 +2261,11 @@ export_facade! {
     let output = client.vault_evals_inventory(&input)?;
     crate::codec::lift_record("vault.evals.inventory", &output)
 };
+"vault.evals.measurements.request" => fn vault_evals_measurements_request(&self, input: EvalMeasurementRequest) -> EvalMeasurementRef = |client| {
+    let input: oneiron::skill_optimize::EvalMeasurementRequest = crate::codec::lower_record("vault.evals.measurements.request", input)?;
+    let output = client.vault_evals_measurements_request(&input)?;
+    crate::codec::lift_record("vault.evals.measurements.request", &output)
+};
 "vault.evals.cohorts.setup" => fn vault_evals_cohorts_setup(&self, input: EvalCohortSetup) -> EvalAuthoringReport = |client| {
     let input: oneiron::skill_optimize::EvalCohortSetup = crate::codec::lower_record("vault.evals.cohorts.setup", input)?;
     let output = client.vault_evals_cohorts_setup(&input)?;

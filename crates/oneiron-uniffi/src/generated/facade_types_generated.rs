@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4573 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
+// UniFFI census: 1263 facade rows, 4580 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -27529,6 +27529,123 @@ pub struct EvalAuthoringInventory {
     pub candidates: Vec<EvalCandidate>,
     #[serde(rename = "seats")]
     pub seats: Vec<SeatInventory>,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::EvalArmPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalArmPin {
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(
+        rename = "skill_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub skill_digest: Option<String>,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::ScoreDirection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ScoreDirection {
+    #[serde(rename = "higher_is_better")]
+    HigherIsBetter,
+    #[serde(rename = "lower_is_better")]
+    LowerIsBetter,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::EvalAxisPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalAxisPin {
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "direction")]
+    pub direction: ScoreDirection,
+    #[serde(rename = "units")]
+    pub units: String,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::FloorSlicePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FloorSlicePolicy {
+    #[serde(rename = "required")]
+    pub required: Vec<String>,
+    #[serde(rename = "min_families_per_slice")]
+    pub min_families_per_slice: u32,
+    #[serde(rename = "min_families")]
+    pub min_families: u32,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::statistics::MeasurementMethodPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeasurementMethodPin {
+    #[serde(rename = "revision")]
+    pub revision: u32,
+    #[serde(rename = "within_family")]
+    pub within_family: String,
+    #[serde(rename = "across_families")]
+    pub across_families: String,
+    #[serde(rename = "resamples")]
+    pub resamples: u32,
+    #[serde(rename = "ci_level")]
+    pub ci_level: f64,
+    #[serde(rename = "quantile")]
+    pub quantile: String,
+    #[serde(rename = "sampler")]
+    pub sampler: String,
+    #[serde(rename = "seed_domain")]
+    pub seed_domain: String,
+    #[serde(rename = "detectable_z_alpha")]
+    pub detectable_z_alpha: f64,
+    #[serde(rename = "detectable_z_power")]
+    pub detectable_z_power: f64,
+    #[serde(rename = "min_interval_families")]
+    pub min_interval_families: u32,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::EvalMeasurementRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalMeasurementRequest {
+    #[serde(rename = "decision")]
+    pub decision: String,
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+    #[serde(rename = "incumbent")]
+    pub incumbent: EvalArmPin,
+    #[serde(rename = "candidate")]
+    pub candidate: EvalArmPin,
+    #[serde(rename = "cohort")]
+    pub cohort: String,
+    #[serde(rename = "membership_digest")]
+    pub membership_digest: String,
+    #[serde(rename = "rubric_revision")]
+    pub rubric_revision: String,
+    #[serde(rename = "scorer")]
+    pub scorer: String,
+    #[serde(rename = "axis")]
+    pub axis: EvalAxisPin,
+    #[serde(rename = "floor_slices")]
+    pub floor_slices: FloorSlicePolicy,
+    #[serde(rename = "canary", default, skip_serializing_if = "Option::is_none")]
+    pub canary: Option<String>,
+    #[serde(rename = "method")]
+    pub method: MeasurementMethodPin,
+    #[serde(rename = "retry")]
+    pub retry: u32,
+}
+
+/// `oneiron::skill_optimize::eval_set::measurement::source::EvalMeasurementRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalMeasurementRef {
+    #[serde(rename = "digest")]
+    pub digest: String,
 }
 
 /// `oneiron::skill_optimize::eval_set::authoring::apply::FamilyDecision`.
