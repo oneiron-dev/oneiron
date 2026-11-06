@@ -1230,3 +1230,4 @@ both bindings and their export-census tests in one change.
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
 - `vault.mail.compliance.search`
+- `vault.files.sources.convert`

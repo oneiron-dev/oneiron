@@ -6121,6 +6121,11 @@ export_facade! {
     let output = client.vault_mail_compliance_search(&input)?;
     crate::codec::lift_record("vault.mail.compliance.search", &output)
 };
+"vault.files.sources.convert" => fn vault_files_sources_convert(&self, input: FilesSourceConvertRequest) -> FilesSourceAttachAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceConvertRequest = crate::codec::lower_record("vault.files.sources.convert", input)?;
+    let output = client.vault_files_sources_convert(&input)?;
+    crate::codec::lift_record("vault.files.sources.convert", &output)
+};
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
     let output = client.connector_answer(&input)?;

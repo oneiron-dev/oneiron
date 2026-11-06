@@ -1250,6 +1250,7 @@ pub enum AgentVerb {
     VaultMailInbox,
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
+    VaultFilesSourcesConvert,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2537,6 +2538,7 @@ impl AgentVerb {
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
+        Self::VaultFilesSourcesConvert,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3861,6 +3863,7 @@ impl AgentVerb {
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
+            Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -5128,6 +5131,7 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6444,6 +6448,7 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7854,6 +7859,7 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8622,6 +8628,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -9949,6 +9956,7 @@ impl AgentVerb {
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
+            Self::VaultFilesSourcesConvert => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11237,6 +11245,7 @@ impl AgentVerb {
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
+            Self::VaultFilesSourcesConvert => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -14933,6 +14942,9 @@ impl AgentVerb {
             }
             Self::VaultMailComplianceSearch => {
                 "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."
+            }
+            Self::VaultFilesSourcesConvert => {
+                "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

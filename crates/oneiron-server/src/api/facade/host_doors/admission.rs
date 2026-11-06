@@ -482,6 +482,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSupportGrantsList
         | Row::VaultSupportGrantsRevoke
         | Row::VaultFilesSourcesAttach
+        | Row::VaultFilesSourcesConvert
         | Row::VaultFilesSourcesRescan
         | Row::VaultFilesSourcesDetach
         | Row::VaultFilesSourcesList

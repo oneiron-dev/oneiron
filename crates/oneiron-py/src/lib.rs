@@ -11172,6 +11172,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_files_sources_convert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.convert")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.convert", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn connector_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "connector.answer")?;
         let output = py

@@ -2947,6 +2947,9 @@ class Oneiron:
         def files(self, spec):
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
+        def convert(self, spec):
+            """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_convert(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

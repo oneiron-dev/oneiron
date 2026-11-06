@@ -1614,6 +1614,8 @@ export class Oneiron {
         list: (input: Facade.FilesSourceListRequest): Facade.FilesSourceList => this.#call(() => this.#client.vaultFilesSourcesList(input) as Facade.FilesSourceList),
         /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
         files: (input: Facade.FilesSourceFilesRequest): Facade.FilesSourceFiles => this.#call(() => this.#client.vaultFilesSourcesFiles(input) as Facade.FilesSourceFiles),
+        /** The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report. */
+        convert: (input: Facade.FilesSourceConvertRequest): Facade.FilesSourceAttachAnswer => this.#call(() => this.#client.vaultFilesSourcesConvert(input) as Facade.FilesSourceAttachAnswer),
       },
     },
     residence: {
