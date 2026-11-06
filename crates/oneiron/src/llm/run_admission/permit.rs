@@ -28,6 +28,7 @@ pub struct RunPermit {
     pub(super) lease: BudgetLease,
     pub(super) metered: bool,
     pub(super) allocation: Option<AllocationHold>,
+    pub(super) persistent_allocation: Option<super::allocation::DurableAllocationHold>,
     /// The unit a call's own usage comes in: tokens for a model, the pack
     /// row's unit for a paid connector.
     pub(super) native: LeaseUnit,
@@ -66,6 +67,11 @@ pub(super) struct AllocationHold {
 }
 
 impl RunPermit {
+    pub(super) fn discard_unadmitted(&mut self) {
+        self.settled = true;
+        self.run.guard.abort(&self.lease).ok();
+    }
+
     /// The issuing run instance stamped on this call's receipts.
     #[must_use]
     pub fn instance(&self) -> crate::EntityId {
@@ -101,6 +107,14 @@ impl RunPermit {
     #[must_use]
     pub fn facts(&self) -> &PermitFacts {
         &self.facts
+    }
+
+    /// The original native backend, only when this call owns a durable hold.
+    /// A selected run's free or memory-work call has no such backend.
+    #[must_use]
+    pub fn persistent_allocation(&self) -> Option<Arc<super::allocation::PersistentAllocation>> {
+        self.persistent_allocation.as_ref()?;
+        self.run.persistent_allocation.clone()
     }
 
     /// The declaration revision the call was admitted under.
@@ -322,6 +336,7 @@ impl RunInner {
             lease,
             metered,
             allocation: allocation.map(|(_, hold)| hold),
+            persistent_allocation: None,
             native: tokens,
             unit_cost: 1,
             reserve_native: u128::from(line.reserve_units),
@@ -427,6 +442,7 @@ impl RunInner {
             lease,
             metered,
             allocation: allocation.map(|(_, hold)| hold),
+            persistent_allocation: None,
             native: connector.cost_unit.clone(),
             unit_cost: connector.unit_cost,
             reserve_native: native,
@@ -470,7 +486,7 @@ impl RunInner {
         rates: &[UnitRate],
         resident: Option<crate::EntityId>,
     ) -> Result<Option<(AllocationRef, AllocationHold)>, RunDenied> {
-        if payer != Payer::Host || self.memory_work() {
+        if payer != Payer::Host || self.memory_work() || self.persistent_allocation.is_some() {
             return Ok(None);
         }
         let Some(host) = self.host.as_ref() else {

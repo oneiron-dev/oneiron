@@ -35,9 +35,9 @@ struct NativeCallLease {
     lease: BudgetLease,
 }
 
-/// Selected native tokens and the registered guard's meter, read together.
+/// Selected native tokens and their producer's meter, read together.
 /// This is aggregate-inclusion evidence, not a native NET payment.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct NativeMeterSnapshot {
     original_line: AdmittedBudgetLine,
     start_used_units: u64,

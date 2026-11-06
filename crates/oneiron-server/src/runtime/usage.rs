@@ -24,9 +24,11 @@ use crate::usage::{
 };
 use crate::wire_telemetry::LimitQuestions;
 
+mod native;
 mod pricing;
 mod redelivery;
 mod settlement;
+pub(crate) use native::NativeUsageProducer;
 
 /// One host-resolved owner and authority-log vault id. Runs cannot supply or
 /// replace either. Settlements go straight to the durable idempotent ledger,
@@ -46,6 +48,7 @@ pub struct VaultUsage {
     settlement_cursor: Mutex<Option<String>>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct AdmittedCall {
     facts: PermitFacts,
     /// `None` too for a call on the owner's own key to a custom endpoint,

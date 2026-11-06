@@ -213,11 +213,24 @@ fact. A missing reservation records no coverage. An evidence failure rolls back
 only its nested savepoint; a parent failure rolls back the charge and evidence.
 The original charge, owed-unit SUM, receipts, status and error fallback stand.
 
-This is park/error GROSS inclusion evidence only. Successful executor result
-settlement, native NET tally coverage, native House admission/invoice hooks and
-late-call reconciliation still need their actual joins. No durable guard pointer
-is serialized. Automatic native invoice payment and aggregate charge subtraction
-remain off; a known empty GROSS interval is not a zero NET invoice.
+The private turn program also captures its actual result meter's absolute total
+and selected tokens together at the original result producer. That same total
+still repays the shared loan once and supplies its original result. The driver
+retains this owned snapshot for the program's Completed, Failed and ParkWithSpend
+settlements; it does not resample a current guard to infer what an earlier result
+included. The checkpoint writer records coverage only after its original charge,
+receipts and lease-fenced park succeed together. Ordinary callers without this
+producer capture keep their existing settlement path.
+
+The program's result uses its existing absolute total, while error settlement
+uses the registered baseline delta. A result-total equality check only pairs the
+capture with its reported result; native membership comes from the producer's
+actual selected tokens. The program has no Deferred or Landed result producer,
+so those paths gain no invented coverage. Native NET tally coverage, complete House producer coverage,
+paid-fact checks and late-call reconciliation remain separate
+work. No durable guard pointer is serialized. Automatic native invoice payment
+and aggregate charge subtraction remain off; a known empty GROSS interval is not
+a zero NET invoice.
 
 ### Captured House native input and NET quantities
 

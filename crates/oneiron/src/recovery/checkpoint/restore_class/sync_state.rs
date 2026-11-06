@@ -153,6 +153,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_U_W, CONTENT),
     (&t::USAGE_EVENT, LIVE),
     (&t::USAGE_SETTLEMENT_PENDING, LIVE),
+    (&t::USAGE_ADMITTED_CALL, LIVE),
     (&t::USAGE_METER_ROLLUP, LIVE),
     (&t::USAGE_METER, LIVE),
     (&t::USAGE_REPAIR_RECEIPT, LIVE),
