@@ -58,6 +58,7 @@ pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
 mod dependency_registration;
+mod epoch_reads;
 mod integrity;
 mod stale_reads;
 pub(crate) use dependency_registration::{

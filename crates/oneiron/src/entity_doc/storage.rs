@@ -651,10 +651,16 @@ pub(crate) fn pointer_field_in(
     txn: &RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<TextField>> {
-    Ok(ENTITY_DOC_HEAD
-        .get(dbs, txn, &HexId(*entity))?
-        .filter(|h| h.entity == entity.to_hex())
-        .map(|h| h.field))
+    read_sources::pointer_field_in(dbs, txn, entity, None)
+}
+
+pub(crate) fn pointer_field_in_observed(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    observe: Option<&mut crate::ports::DocumentReadObserver<'_>>,
+) -> Result<Option<TextField>> {
+    read_sources::pointer_field_in(dbs, txn, entity, observe)
 }
 
 /// Read the exact durable document head after the live body was admitted.
