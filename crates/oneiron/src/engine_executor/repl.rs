@@ -568,7 +568,10 @@ impl EngineNativeExecutor<'_> {
                     .saturating_add(completed_steps),
             )?
             .ending_at(end.bridge_end);
-            record.step_checkpoints.push(checkpoint);
+            let bridge_end = record.bridge_calls.len();
+            record
+                .step_checkpoints
+                .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
