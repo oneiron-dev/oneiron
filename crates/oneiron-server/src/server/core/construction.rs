@@ -3,12 +3,12 @@
 //! The server definition, fields, and shared helpers stay in the parent module.
 
 use super::{
-    Arc, AtomicU32, BTreeMap, DreamerAttemptProgressProducer, EphemeralStore, HashSet, LoroDoc,
-    Materializer, McpConnectorActorRegistry, McpCredentialHashKey, Mutex,
-    NEXT_LIFECYCLE_SESSION_ID, Ordering, ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext,
-    SyncServer, SyncServerConfig, UsageLedger, WindowManager, add_window_to_root, broadcast,
-    host_root_secret, init_window_list, insert_root_schema_version, live_rows,
-    mcp_registry_hash_key, read_window_list, server_state, spawn_local_change_producer,
+    Arc, AtomicU32, DreamerAttemptProgressProducer, EphemeralStore, HashSet, LoroDoc, Materializer,
+    McpConnectorActorRegistry, McpCredentialHashKey, Mutex, NEXT_LIFECYCLE_SESSION_ID, Ordering,
+    ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext, SyncServer, SyncServerConfig, UsageLedger,
+    WindowManager, add_window_to_root, broadcast, host_root_secret, init_window_list,
+    insert_root_schema_version, live_rows, mcp_registry_hash_key, read_window_list, server_state,
+    spawn_local_change_producer,
 };
 
 impl SyncServer {
@@ -336,7 +336,7 @@ impl SyncServer {
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
             memories_cursors,
-            self_brief_sessions: Mutex::new(BTreeMap::new()),
+            self_brief_sessions: crate::server::self_brief_custody::SelfBriefCustody::default(),
             deep_retrieval: None,
             model_slots: Arc::new(Default::default()),
             model_setup: None,

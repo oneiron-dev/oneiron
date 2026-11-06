@@ -458,12 +458,26 @@ impl SelfBriefSession {
         people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
         let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
-        self.resident_people = brief.resident_people();
-        self.cached_prefix = Some(brief.render());
-        Ok(PlacedSelfBrief {
-            prefix: self.cached_prefix.clone(),
-            tail: None,
-        })
+        Ok(self.replace_prefix(&brief))
+    }
+
+    /// [`Self::turn_one`], beside the rows its prefix is derived from
+    /// ([`SelfBrief::sources`]), which a host keeps with the prefix it
+    /// delivers.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::turn_one`].
+    pub fn turn_one_listing(
+        &mut self,
+        vault: &Vault,
+        state: &SelfBriefState,
+        read_set: &SessionReadSet,
+        people: Option<&People>,
+    ) -> Result<(PlacedSelfBrief, Vec<EntityId>)> {
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
+        let sources = brief.sources(vault, people)?;
+        Ok((self.replace_prefix(&brief), sources))
     }
 
     pub fn fold(
@@ -473,18 +487,50 @@ impl SelfBriefSession {
         read_set: &SessionReadSet,
         people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
+        self.require_turn_one()?;
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
+        Ok(self.replace_prefix(&brief))
+    }
+
+    /// [`Self::fold`], beside the rows its prefix is derived from
+    /// ([`SelfBrief::sources`]), which a host keeps with the prefix it
+    /// delivers.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::fold`].
+    pub fn fold_listing(
+        &mut self,
+        vault: &Vault,
+        state: &SelfBriefState,
+        read_set: &SessionReadSet,
+        people: Option<&People>,
+    ) -> Result<(PlacedSelfBrief, Vec<EntityId>)> {
+        self.require_turn_one()?;
+        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
+        let sources = brief.sources(vault, people)?;
+        Ok((self.replace_prefix(&brief), sources))
+    }
+
+    /// A fold replaces a prefix turn one already cached, never a missing one.
+    fn require_turn_one(&self) -> Result<()> {
         if self.cached_prefix.is_none() {
             return Err(crate::Error::InvariantViolation(
                 "self brief fold before turn one",
             ));
         }
-        let brief = state.describe_within(vault, read_set, people, self.people_budget_tok)?;
+        Ok(())
+    }
+
+    /// Replaces the cached prefix and the persons its roster holds with
+    /// `brief`'s, and returns the prefix as placed.
+    fn replace_prefix(&mut self, brief: &SelfBrief) -> PlacedSelfBrief {
         self.resident_people = brief.resident_people();
         self.cached_prefix = Some(brief.render());
-        Ok(PlacedSelfBrief {
+        PlacedSelfBrief {
             prefix: self.cached_prefix.clone(),
             tail: None,
-        })
+        }
     }
 
     pub fn describe_self(
