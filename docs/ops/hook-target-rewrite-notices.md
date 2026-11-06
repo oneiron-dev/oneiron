@@ -15,6 +15,13 @@ post-chain transport errors carry `error.data.hook_notice`. The original stop
 or error is unchanged. A row that failed before its post chain keeps its
 existing error behavior.
 
+A native saved pre-hook completion that supplied a positive notice also sends
+the existing content-free notice in `error.data.hook_notice`, beside its original
+typed stop. The adapter reads the notice already retained in that same stop.
+Absent metadata is unknown. A fresh detailed notice takes precedence, and an
+absent fresh notice does not erase a supplied saved notice. This does not rerun
+the call or turn a completed stop into a successful response.
+
 Embedded short refs in a notice are resolved before its detail is released.
 Allowed detail adds those dependencies to the final reply's replay provenance,
 after the action's own result narrowing. Unresolved refs or a held notice use

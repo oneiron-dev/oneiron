@@ -164,7 +164,7 @@ impl McpGatewayError {
     }
 
     pub(super) fn with_hook_notice(mut self, notice: Option<String>) -> Self {
-        self.hook_notice = notice;
+        self.hook_notice = notice.or(self.hook_notice);
         self
     }
 
