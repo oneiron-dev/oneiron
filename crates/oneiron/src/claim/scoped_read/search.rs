@@ -38,14 +38,49 @@ impl RequestExclusions {
     }
 }
 
+/// One search's authority, resolved in one snapshot (FIX 7528).
+pub(crate) struct SearchPlan {
+    /// The key's own filter (B), resolved from the search's request: every
+    /// row gate judges a candidate under it first, then under each of the
+    /// reader's own live Grants alone (A).
+    pub(crate) filter: ResolvedRetrievalFilter,
+    /// The rows the search's pipeline may rank: `filter`'s and those each of
+    /// the reader's own live Grants reads under the same request
+    /// (`candidate_filter_in`). A prefilter, never an authorization; a
+    /// search whose candidates deny every row reads nothing.
+    pub(crate) candidates: ResolvedRetrievalFilter,
+    pub(crate) policy: PolicyManifestResolution,
+}
+
 impl ScopedRead<'_> {
-    /// Resolve a bounded query's actor/proof ceiling once. The terminal read
-    /// checks fresh authority again, so this snapshot can never widen it.
-    pub(crate) fn recall_plan(
+    /// [`SearchPlan`] for a search under `requested`, in a fresh snapshot.
+    pub(super) fn search_plan(&self, requested: Option<&RetrievalFilter>) -> Result<SearchPlan> {
+        let txn = self.grant_read_txn()?;
+        self.search_plan_in(&txn, requested)
+    }
+
+    /// [`SearchPlan`] for a search under `requested`, in `txn`.
+    pub(super) fn search_plan_in(
         &self,
-    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        txn: &heed::RoTxn<'_>,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<SearchPlan> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
+        let candidates = self.candidate_filter_in(txn, &policy, &filter, requested);
+        Ok(SearchPlan {
+            filter,
+            candidates,
+            policy,
+        })
+    }
+
+    /// Resolve a bounded query's actor/proof ceiling once, with no request,
+    /// and the candidates its pipeline may rank ([`SearchPlan`]). The
+    /// terminal read checks fresh authority again, so this snapshot can never
+    /// widen it.
+    pub(crate) fn recall_plan(&self) -> Result<SearchPlan> {
         let txn = self.vault.store.env.read_txn()?;
-        let plan = self.resolve_retrieval_filter_in(&txn, None)?;
+        let plan = self.search_plan_in(&txn, None)?;
         let fold = self.vault.authority_fold_readonly_in_txn(&txn)?;
         *self
             .recall_authority
@@ -81,12 +116,15 @@ impl ScopedRead<'_> {
     /// The plan admission a bounded search runs inside its retrieval: a
     /// candidate the plan's authority refuses takes no place in any channel,
     /// so the search needs no fetch past what it was asked for. A refused
-    /// row the key's own ceiling admits lands in `excluded`.
+    /// row the key's own ceiling admits lands in `excluded`. `filter` is the
+    /// one resolved from `requested`: a row it refuses is judged under each of
+    /// the reader's own live Grants with that same request (A, FIX 7528).
     pub(super) fn plan_admits<'p>(
         &'p self,
         filter: &'p ResolvedRetrievalFilter,
         policy: &'p PolicyManifestResolution,
         excluded: &'p RequestExclusions,
+        requested: Option<&'p RetrievalFilter>,
     ) -> impl Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> Result<bool>
     + Send
     + Sync
@@ -95,11 +133,18 @@ impl ScopedRead<'_> {
             if !plan_row_decodes(store, txn, id)? {
                 return Ok(false);
             }
-            if self.recall_candidate_in(txn, policy, filter, id)? {
+            let held = HeldAuthority::for_request(requested);
+            if self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)? {
                 return Ok(true);
             }
             if let Some(ceiling) = &excluded.ceiling
-                && self.recall_candidate_in(txn, policy, ceiling, id)?
+                && self.is_entity_retrievable_held_in(
+                    txn,
+                    policy,
+                    ceiling,
+                    id,
+                    &HeldAuthority::for_request(None),
+                )?
             {
                 excluded
                     .ids
@@ -111,17 +156,6 @@ impl ScopedRead<'_> {
         }
     }
 
-    /// Admit one candidate in the retrieval transaction under the query plan.
-    pub(crate) fn recall_candidate_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        filter: &ResolvedRetrievalFilter,
-        id: &EntityId,
-    ) -> Result<bool> {
-        self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
-    }
-
     /// Searches within this actor's resolved read authority. Unset means the floor.
     pub fn search(
         &self,
@@ -130,20 +164,24 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        let SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let admitted = self.plan_gate(&filter, &policy, &excluded);
+        let admitted = self.plan_gate(&filter, &policy, &excluded, requested);
         let results = self
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted)
@@ -184,20 +222,24 @@ impl ScopedRead<'_> {
         query_affect: Option<oneiron_contracts::affect::Vad>,
         media_memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        let SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(ScopedReadResult {
                 value: Vec::new(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let admitted = self.plan_gate(&filter, &policy, &excluded);
+        let admitted = self.plan_gate(&filter, &policy, &excluded, requested);
         let mut pipeline = self
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted);
@@ -427,11 +469,17 @@ impl ScopedRead<'_> {
                 })
                 .count(),
         };
-        let mut receipt = self.receipt_for(requested, policy, filter, previously_suppressed);
+        // A search's receipt reports the candidates it ranked: the key's own
+        // filter's rows and its own live Grants' (FIX 7528), so a later page
+        // asked under it never refuses a row this search admitted.
+        let candidates = self.candidate_filter_in(&txn, policy, filter, requested);
+        let fresh_candidates =
+            self.candidate_filter_in(&txn, &fresh_policy, &fresh_filter, requested);
+        let mut receipt = self.receipt_for(requested, policy, &candidates, previously_suppressed);
         receipt.restrict_with(&self.receipt_for(
             requested,
             &fresh_policy,
-            &fresh_filter,
+            &fresh_candidates,
             suppressed,
         ));
         Ok(ScopedReadResult { value, receipt })
@@ -583,23 +631,26 @@ fn plan_row_decodes(
 }
 
 impl<'v> ScopedRead<'v> {
-    /// [`Self::recall_candidate_in`] for the candidates of one read in
-    /// `txn`, under one relationship authority for them all (FIX 11648).
+    /// The candidates of one read in `txn`, each through the row gate under
+    /// `filter` (resolved from `requested`, which A asks again under each of
+    /// the reader's own live Grants, FIX 7528), under one relationship
+    /// authority for them all (FIX 11648).
     pub(crate) fn recall_candidates_in<'t>(
         &'t self,
         txn: &'t heed::RoTxn<'t>,
         policy: &'t PolicyManifestResolution,
         filter: &'t ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
     ) -> impl Fn(&EntityId) -> Result<bool> + 't {
-        let held = HeldAuthority::default();
+        let held = HeldAuthority::for_request(requested);
         move |id| self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)
     }
 
-    /// [`Self::recall_candidate_in`] for a candidate of the retrieval
-    /// snapshot read in `snapshot`, under the relationship authority `held`
-    /// holds for it (FIX 11648); a candidate checked in any other
-    /// transaction loads its own. The caller borrows `snapshot` for as long
-    /// as `held`, so no other transaction stands at its address.
+    /// The row gate for a candidate of the retrieval snapshot read in
+    /// `snapshot`, under the relationship authority `held` holds for it (FIX
+    /// 11648); a candidate checked in any other transaction loads its own,
+    /// asking what `held` asks (FIX 7528). The caller borrows `snapshot` for
+    /// as long as `held`, so no other transaction stands at its address.
     fn snapshot_candidate_in(
         &self,
         snapshot: &heed::RoTxn<'_>,
@@ -612,12 +663,13 @@ impl<'v> ScopedRead<'v> {
         if std::ptr::eq(txn, snapshot) {
             return self.is_entity_retrievable_held_in(txn, policy, filter, id, held);
         }
-        self.recall_candidate_in(txn, policy, filter, id)
+        self.is_entity_retrievable_held_in(txn, policy, filter, id, &held.for_another_txn())
     }
 
-    /// A recall's candidate admission under its query plan: the predicate of
-    /// [`Self::recall_candidate_in`], under one relationship authority for
-    /// each retrieval snapshot (FIX 11648).
+    /// A recall's candidate admission under its query plan ([`Self::recall_plan`],
+    /// resolved with no request): the row gate, B and then A under each of the
+    /// reader's own live Grants (FIX 7528), under one relationship authority
+    /// for each retrieval snapshot (FIX 11648).
     pub(crate) fn recall_candidate_gate<'p>(
         &'p self,
         policy: &'p PolicyManifestResolution,
@@ -632,18 +684,21 @@ impl<'v> ScopedRead<'v> {
 
     /// [`Self::plan_admits`] past its decode check (`plan_row_decodes`, the
     /// search's candidate filter), under one relationship authority for each
-    /// retrieval snapshot (FIX 11648).
+    /// retrieval snapshot (FIX 11648). `filter` is the one resolved from
+    /// `requested`, which A asks again under each Grant (FIX 7528).
     pub(super) fn plan_gate<'p>(
         &'p self,
         filter: &'p ResolvedRetrievalFilter,
         policy: &'p PolicyManifestResolution,
         excluded: &'p RequestExclusions,
+        requested: Option<&'p RetrievalFilter>,
     ) -> PlanGate<'p, 'v> {
         PlanGate {
             read: self,
             policy,
             filter,
             excluded,
+            requested,
         }
     }
 }
@@ -660,7 +715,8 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         &'t self,
         txn: &'t heed::RoTxn<'t>,
     ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
-        let held = HeldAuthority::default();
+        // A recall plan resolves its filter with no request.
+        let held = HeldAuthority::for_request(None);
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
                 self.read
@@ -676,6 +732,7 @@ pub(super) struct PlanGate<'p, 'v> {
     policy: &'p PolicyManifestResolution,
     filter: &'p ResolvedRetrievalFilter,
     excluded: &'p RequestExclusions,
+    requested: Option<&'p RetrievalFilter>,
 }
 
 impl crate::store::retrieval_values::CandidateGate for PlanGate<'_, '_> {
@@ -683,7 +740,9 @@ impl crate::store::retrieval_values::CandidateGate for PlanGate<'_, '_> {
         &'t self,
         txn: &'t heed::RoTxn<'t>,
     ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
-        let held = HeldAuthority::default();
+        let held = HeldAuthority::for_request(self.requested);
+        // The key's own ceiling resolves with no request.
+        let ceiling_held = HeldAuthority::for_request(None);
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
                 let read = self.read;
@@ -691,7 +750,14 @@ impl crate::store::retrieval_values::CandidateGate for PlanGate<'_, '_> {
                     return Ok(true);
                 }
                 if let Some(ceiling) = &self.excluded.ceiling
-                    && read.snapshot_candidate_in(txn, &held, rtxn, self.policy, ceiling, id)?
+                    && read.snapshot_candidate_in(
+                        txn,
+                        &ceiling_held,
+                        rtxn,
+                        self.policy,
+                        ceiling,
+                        id,
+                    )?
                 {
                     self.excluded
                         .ids
