@@ -31927,7 +31927,7 @@
      "path": "src/dreamer_wake/observation.rs",
      "purpose": "The wake observation (DOOR-144): what one wake pass recorded of itself",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 10
      }
     },
@@ -60676,7 +60676,7 @@
      "path": "src/recovery/canonical/capture.rs",
      "purpose": "One coordinated capture of a quiescent canonical window",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -61944,7 +61944,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/work.rs",
