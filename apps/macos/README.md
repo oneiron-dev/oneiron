@@ -5,10 +5,25 @@ playing, cuts it into one-minute segments, and lands each segment in a local
 Oneiron vault as ASSET bytes plus one `voice.segment` claim.
 
 The engine is embedded **in-process** (path dependency on `crates/oneiron`):
-this Mac is a vault device node, not a client of one. It registers no home-node
-candidacy, so the election can never land on a laptop that walks out of the
-building; replication rides the existing device-sync path and puts nothing new
-on the wire.
+this Mac is a vault device node, not a client of one. The recorder declares no
+home-node candidacy and starts no home workers. It leaves any declaration from
+another serving lifecycle unchanged. Replication rides the existing device-sync
+path and puts nothing new on the wire.
+
+The app shares its already-open device vault with the server's ordinary
+paired-device sync connection. It reads the same resolved `[device_sync]`
+configuration and enrollment files as `oneiron serve`, and dials the home at
+its configured URL (`wss`, or loopback `ws`). It starts no HTTP server, mesh
+listener, model worker or Dreamer. The section's `always_on` and `primary`
+flags remain serving-host settings; this recorder never declares its own
+home candidacy. With no configured or enrolled home it keeps recording locally;
+a sync configuration or connection failure is logged without blocking capture. The device vault's preset, platform keystore and
+host-root profile selection are unchanged.
+
+On every final app exit, capture stops and flushes its last local segment
+before the sync connection, credential renewal and removal-archive receiver
+are stopped and joined. This guarantees local landing, not remote delivery
+before exit: the normal durable sync path carries pending writes on reconnect.
 
 ## Shape
 

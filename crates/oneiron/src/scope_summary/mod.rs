@@ -10,7 +10,7 @@ mod arc_sources;
 mod arc_validation;
 mod arc_work;
 mod arc_work_store;
-mod codec;
+use oneiron_store::scope_summary::codec;
 mod derivation;
 mod doors;
 mod producer;

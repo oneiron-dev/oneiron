@@ -192,7 +192,7 @@ impl Vault {
         let at = self.store.clock.now_recorded_at();
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
-                self.stage_calendar_event(txn, input, occurred, actor, event, at)?;
+                self.stage_calendar_event(txn, input, None, occurred, actor, event, at)?;
                 Ok(event)
             })
     }
@@ -201,6 +201,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         input: &CalendarEventInput,
+        readable_evidence: Option<&[EntityId]>,
         occurred: TimeRange,
         actor: WriteActor,
         event: EntityId,
@@ -215,6 +216,19 @@ impl Vault {
         for evidence in &input.evidence_turn_ids {
             if self.get_entity_type_in_txn(txn, evidence)? != Some(ENTITY_TYPE_TURN) {
                 return Err(invalid("calendar evidence must be a live TURN"));
+            }
+        }
+        let mut frontier_observations = Vec::new();
+        if let Some(evidence) = readable_evidence {
+            for turn in evidence {
+                let frontier = crate::entity_doc::source_frontier_in_txn(&self.store, txn, turn)?;
+                frontier_observations.push(Value::Map(vec![
+                    (Value::from("turn"), Value::from(turn.to_hex())),
+                    (
+                        Value::from("frontier"),
+                        frontier.map(Value::Binary).unwrap_or(Value::Nil),
+                    ),
+                ]));
             }
         }
         let stub = encode(&Value::Map(vec![(
@@ -233,14 +247,21 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         // Recorded projector fact, not a user-authored assertion about origin.
-        claim.evidence = Some(Value::Map(vec![
+        let mut evidence = vec![
             (Value::from("kind"), Value::from("calendar_projector")),
             (Value::from("write_class"), Value::from("recorded")),
             (
                 Value::from("actor"),
                 Value::from(actor.entity_ref().to_hex()),
             ),
-        ]));
+        ];
+        if !frontier_observations.is_empty() {
+            evidence.push((
+                Value::from("source_frontier_observations"),
+                Value::Array(frontier_observations),
+            ));
+        }
+        claim.evidence = Some(Value::Map(evidence));
         // Blind-review P1a (REVIEW-4389): the constructor's scope_facet is
         // the EVENT's substrate id — a derived id, not a stored FACET — so
         // the CLAIM birth edge the put stamps would fail InvalidFacet. The

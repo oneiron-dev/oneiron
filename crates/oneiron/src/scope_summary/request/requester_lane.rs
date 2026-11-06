@@ -205,3 +205,34 @@ pub(super) fn declared_read_basis(
         relationship_grants: flag(REQUESTER_RELATIONSHIP_GRANTS_KEY)?,
     })
 }
+
+/// Preserve the producer's exact narrowing on a NOTE re-declaration. These
+/// are bounds, not new read authority; the native planner checks them again.
+pub(in crate::scope_summary) fn inherit_note_requester_lane(
+    original: &Value,
+    declaration: &mut Value,
+) -> Result<()> {
+    let lane = declared_lane(original)?;
+    if lane.is_principal() {
+        return Ok(());
+    }
+    declared_read_basis(original, &lane)?;
+    let originals = original
+        .as_map()
+        .ok_or_else(|| invalid("summary request must be a map"))?;
+    let Value::Map(fields) = declaration else {
+        return Err(invalid("summary request must be a map"));
+    };
+    for name in [
+        REQUESTER_LANE_KEY,
+        REQUESTER_OWNER_EXEMPTION_KEY,
+        REQUESTER_RELATIONSHIP_GRANTS_KEY,
+    ] {
+        let field = originals
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .ok_or_else(|| invalid("summary requester read basis missing or invalid"))?;
+        fields.push(field.clone());
+    }
+    Ok(())
+}

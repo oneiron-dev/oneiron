@@ -132,6 +132,10 @@ pub enum ReceivePackRefStatus {
     /// certified. Terminal: the move is consumed, so no publication of it can
     /// certify more, and retrying it would only refuse again.
     Uncertified,
+    /// The backend applied this ref's move, but an erase took the push's
+    /// pusher or admitting host before it was published: recovery observed
+    /// the move and publishes nothing under them (FIX 5022). Terminal.
+    AppliedUnpublished,
 }
 
 /// One ref's result. A multi-ref operation can contain different results.
@@ -490,6 +494,7 @@ impl Vault {
         let mut after: Option<ReceivePackIntentKey> = None;
         loop {
             let mut settled = Vec::new();
+            let mut inert = Vec::new();
             {
                 let rtxn = self.store.env.read_txn()?;
                 let rows: IntentRows<'_> = match &after {
@@ -512,10 +517,13 @@ impl Vault {
                     }
                     count.row();
                     fold_receive_pack_progress(&self.store, &rtxn, &key, &mut intent)?;
-                    // An intent an erase took is neither pending nor pruned (FIX 3877).
+                    // An intent an erase took is never pending (FIX 3877): it is
+                    // observed below, and pruned once it settles (FIX 5022).
                     if !intent.is_settled() {
                         if intent.resumes() {
                             pending.push((key, intent));
+                        } else {
+                            inert.push((key, intent));
                         }
                         continue;
                     }
@@ -524,6 +532,9 @@ impl Vault {
                         break;
                     }
                 }
+            }
+            for (key, mut intent) in inert {
+                self.settle_inert_receive_pack_intent(repo_root, &key, &mut intent)?;
             }
             if !settled.is_empty() {
                 self.with_write_txn_grouped(|wtxn| {
