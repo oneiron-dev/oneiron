@@ -18,6 +18,7 @@
 //! refuses a flag it does not parse. Consumers pin this crate at an exact
 //! revision and run cross-repo conformance before moving the pin.
 
+pub mod allocation;
 pub mod artifact_origin;
 /// The backup handoff: a label's retention pin and the supervisor's
 /// root-stage ack (LC backup shipper).

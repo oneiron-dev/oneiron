@@ -2,7 +2,7 @@
 //! of a bound claim-authoring campaign (OF-366) on one split. The config is
 //! the one bound at the campaign's root; the caller brings the split's OF-360
 //! gold, the arm's parsed run output, what the run cost, its smoke outcome and
-//! the blind input the taste pack reads. [`build_campaign_split_report`]
+//! the blind input the taste pack reads. The vault-bound report builder
 //! checks them against the config and asks the taste questions through the
 //! decisions the host lends. The report is returned, not stored.
 
@@ -14,7 +14,7 @@ use crate::autoreason_campaign::authoring::authoring_campaign;
 use crate::autoreason_campaign::{
     BlindCampaignJudgeInput, CampaignCost, CampaignError, CampaignEvaluationSplit,
     CampaignExecutableArm, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteDecisions,
-    build_campaign_split_report,
+    build_campaign_split_report_in_vault,
 };
 use crate::entity_id::EntityId;
 use crate::extraction_eval::{Of360ExtractionRun, Of360GoldDataset};
@@ -68,7 +68,8 @@ pub fn evaluate_campaign_split(
             &["Bind the campaign first: a split is scored under its bound config."],
         )
     })?;
-    build_campaign_split_report(
+    build_campaign_split_report_in_vault(
+        vault,
         &campaign.config,
         input.arm,
         input.split,

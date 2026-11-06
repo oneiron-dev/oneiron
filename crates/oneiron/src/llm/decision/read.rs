@@ -111,11 +111,13 @@ pub enum DecisionReadOutcome<'a> {
 /// Gates that return an error after a terminal do not reach this observer.
 pub trait DecisionReadObserver: Send + Sync {
     /// `gate_run` is present only when the gate returned its own settled run.
+    /// `native_admission` is the source borrowed from this read's actual gate permit.
     fn observe(
         &self,
         request: &LabelReadRequest<'_>,
         outcome: DecisionReadOutcome<'_>,
         gate_run: Option<&RunAdmission>,
+        native_admission: Option<&crate::dreamer_wake::DecisionCallAdmission>,
     );
 }
 
@@ -218,9 +220,10 @@ impl<'a> DecisionReadProvider<'a> {
         request: Option<&LabelReadRequest<'_>>,
         outcome: DecisionReadOutcome<'_>,
         gate_run: Option<&RunAdmission>,
+        native_admission: Option<&crate::dreamer_wake::DecisionCallAdmission>,
     ) {
         if let (Some(observer), Some(request)) = (self.observer, request) {
-            observer.observe(request, outcome, gate_run);
+            observer.observe(request, outcome, gate_run, native_admission);
         }
     }
 }
@@ -413,6 +416,7 @@ impl DecisionReadProvider<'_> {
             return Ok(interrupted(false));
         }
         let mut sent_request = None;
+        let mut native_admission = None;
         let gated = self
             .gate
             .read_with_native_admission(deadline, &mut |lease, admission| {
@@ -427,6 +431,9 @@ impl DecisionReadProvider<'_> {
                     work_until: Some(Instant::now() + deadline.decision_time_left()),
                 };
                 sent_request = Some(request);
+                if self.observer.is_some() {
+                    native_admission = admission.cloned();
+                }
                 if let Some(prepared) = &prepared {
                     let admit_next = || native.is_none_or(|(_, generation)| generation.admit());
                     return match prepared.read_with_native_admission(
@@ -481,6 +488,7 @@ impl DecisionReadProvider<'_> {
                     sent_request.as_ref(),
                     DecisionReadOutcome::Failed(&error),
                     gate_run.as_ref(),
+                    native_admission.as_ref(),
                 );
                 let message = format!("decision read failed: {error}");
                 return Err(match error {
@@ -504,6 +512,7 @@ impl DecisionReadProvider<'_> {
                 sent_request.as_ref(),
                 DecisionReadOutcome::Malformed(&read),
                 gate_run.as_ref(),
+                native_admission.as_ref(),
             );
             return Err(invalid("malformed decision read"));
         }
@@ -511,6 +520,7 @@ impl DecisionReadProvider<'_> {
             sent_request.as_ref(),
             DecisionReadOutcome::Completed(&read),
             gate_run.as_ref(),
+            native_admission.as_ref(),
         );
         let decisions: Vec<ProviderDecision> = questions
             .iter()

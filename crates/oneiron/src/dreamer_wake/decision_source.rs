@@ -109,6 +109,25 @@ pub struct DecisionCallInvoice<'a> {
     origin: AdmittedCallId,
 }
 
+impl DecisionCompletionObservation {
+    /// Complete native input/output totals under the House forward-pass policy.
+    /// Cache, timing and inference-receipt details are not reconstructed.
+    pub(crate) fn terminal_usage(completions: &[Self]) -> Option<oneiron_model::llm::LlmUsage> {
+        completed_units(completions)?;
+        let mut usage = oneiron_model::llm::LlmUsage::zero();
+        for completion in completions {
+            for answer in completion.response.as_ref()?.answers.as_ref()? {
+                usage.input.total = usage.input.total.checked_add(answer.tokens_evaluated?)?;
+                usage.output.total = usage
+                    .output
+                    .total
+                    .checked_add(answer.tokens_predicted?.max(1))?;
+            }
+        }
+        Some(usage)
+    }
+}
+
 impl DecisionCallInvoice<'_> {
     /// Retains observed response counters separately from the immutable invoice,
     /// including unknown responses after a known prefix. This never pays a call.
@@ -147,6 +166,18 @@ impl DecisionCallInvoice<'_> {
                 completions,
             )?;
             crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, self.origin, units)
+        })
+    }
+
+    /// Retains the successful System One response's aggregate counters and
+    /// invoice together. No House prompt split or minimum output is inferred.
+    pub fn record_systemone_usage(
+        &self,
+        usage: &oneiron_model::llm::LlmUsage,
+    ) -> crate::Result<()> {
+        self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                .record_native_systemone_usage_in_txn(wtxn, self.origin, usage)
         })
     }
 
@@ -229,6 +260,26 @@ impl DecisionCallAdmission {
             vault,
             origin: self.origin,
         })
+    }
+
+    /// Reads only this original admission's retained, fully observed native invoice.
+    /// Unknown response quantities stay absent; this neither settles nor pays a call.
+    pub fn terminal_usage(&self) -> crate::Result<Option<oneiron_model::llm::LlmUsage>> {
+        let Some(vault) = self.meter_vault.get().and_then(Weak::upgrade) else {
+            return Ok(None);
+        };
+        if vault.active_wakes.boot() != self.boot {
+            return Ok(None);
+        }
+        let Some(line) = self.line.as_deref() else {
+            return Ok(None);
+        };
+        crate::dreamer_runner::DreamerRunnerStore::new(&vault).native_terminal_usage(
+            self.origin,
+            self.boot,
+            line,
+            self.lease.id(),
+        )
     }
 
     /// The original settlement calls this before forwarding its unchanged receipt.

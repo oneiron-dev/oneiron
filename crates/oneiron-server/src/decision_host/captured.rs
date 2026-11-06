@@ -9,6 +9,8 @@ use oneiron::llm::decision::{
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron_llm_systemone::PreparedSystemOneRead;
 
+mod native_quantity;
+
 use crate::decision_verdict::{ModelCallCaller, model_call_context};
 use crate::models::native_call_capture::{NativeReadCapture, native_read_failure};
 
@@ -17,27 +19,324 @@ use super::{
     SeatPhase, SeatRequest, SystemOneRung,
 };
 
+enum SystemOnePackReadRequest<'seat> {
+    Prepared(oneiron_llm_systemone::PreparedSystemOnePackRead<'seat>),
+    Logical(oneiron_llm_systemone::SystemOnePackRequest),
+}
+
 impl SystemOneRung {
     pub(super) fn decide_pack_with_context(
         &self,
         pack: &DecisionPack<'_>,
         context: Option<&DecisionCallContext<'_>>,
     ) -> oneiron::Result<Vec<DecisionReadOutcome<ProviderDecision>>> {
-        let mut decisions = Vec::new();
-        let mut stopped = false;
-        for call in (0..pack.questions.len()).filter_map(|index| pack.call(index)) {
-            let outcome = if stopped {
-                DecisionReadOutcome::NotStarted
-            } else {
-                self.decide_with_context(&call, context)?
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let abstain = || ProviderDecision {
+            answer: DecisionAnswer::Abstain,
+            probability: None,
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        };
+        let mut decisions = (0..pack.questions.len())
+            .map(|_| DecisionReadOutcome::Answered(abstain()))
+            .collect::<Vec<_>>();
+        let mut indices = Vec::new();
+        let mut questions = Vec::new();
+        for (index, call) in
+            (0..pack.questions.len()).filter_map(|index| pack.call(index).map(|call| (index, call)))
+        {
+            let score_levels = call.score_levels().unwrap_or_default();
+            if matches!(call.question.contract, AnswerContract::Score { .. })
+                && score_levels.is_empty()
+            {
+                continue;
+            }
+            let mut question = call.question.clone();
+            question.text = call.question_text().into_owned();
+            let request = SeatRequest {
+                question,
+                state: call.state.clone(),
+                images: call.images.to_vec(),
+                audio: call.audio.to_vec(),
+                score_levels,
+                posture: self.posture,
+                remote_opt_in: self.remote_opt_in,
+                phase: SeatPhase::Background,
             };
-            stopped = matches!(
-                &outcome,
-                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped
-            );
-            decisions.push(outcome);
+            if !RemoteDecisionCapability::default().takes(&request) {
+                continue;
+            }
+            indices.push(index);
+            questions.push(oneiron_llm_systemone::SystemOnePackQuestion {
+                question: request.question,
+                score_levels: request.score_levels,
+            });
+        }
+        if questions.is_empty() {
+            return Ok(decisions);
+        }
+        let request = oneiron_llm_systemone::SystemOnePackRequest {
+            questions,
+            state: pack.state.clone(),
+            images: pack.images.to_vec(),
+            audio: pack.audio.to_vec(),
+            posture: self.posture,
+            remote_opt_in: self.remote_opt_in,
+            phase: SeatPhase::Background,
+        };
+        if !request
+            .has_valid_questions()
+            .map_err(|_| failed("the posture or the request keeps this call local"))?
+        {
+            return Ok(decisions);
+        }
+        self.seat
+            .preflight()
+            .map_err(|_| failed("its credential broker or vault-secret key is not there"))?;
+        if context.is_some_and(|context| !context.admit_generation()) {
+            for index in indices {
+                decisions[index] = DecisionReadOutcome::NotStarted;
+            }
+            return Ok(decisions);
+        }
+        let request = match (context, self.native_catalog.clone()) {
+            (Some(context), Some(catalog))
+                if *oneiron::inference_context::admitted_as(context.purpose)
+                    == oneiron::llm::CallPurpose::Extraction =>
+            {
+                let prepared = self
+                    .runtime
+                    .block_on(
+                        self.seat
+                            .prepare_pack_read(request, pack.deadline.decision_time_left()),
+                    )
+                    .map_err(|_| failed("the native request failed to build"))?;
+                let admission =
+                    extraction_admission_request(prepared.request(), context, &catalog)?;
+                self.vault
+                    .authorize_raw_inference(
+                        admission,
+                        &oneiron::llm::HostInferenceContext {
+                            binding: oneiron::llm::HostInferenceBinding::Advertised {
+                                model: catalog,
+                                locality: oneiron::ModelLocality::ThirdParty,
+                                keyless: false,
+                            },
+                            extraction_egress: context.extraction_egress,
+                        },
+                    )
+                    .map_err(|_| failed("refused by native catalog admission"))?;
+                SystemOnePackReadRequest::Prepared(prepared)
+            }
+            _ => SystemOnePackReadRequest::Logical(request),
+        };
+        // Both branches retain the original payer, meter and sourced run.
+        let (run, reserve) = match pack.run {
+            Some(run) => {
+                let run = run.sourced(Some(pack.evidence.to_vec()));
+                let run = if context.is_some() {
+                    run.capturing_settlements()
+                } else {
+                    run
+                };
+                let reserve = run.declaration().budget().reserve_units;
+                (run, reserve)
+            }
+            None => {
+                let guard = crate::decision_verdict::rung_meter(&self.guard);
+                let run = self
+                    .models
+                    .funded_run(
+                        self.connector.connector.clone(),
+                        guard.clone(),
+                        crate::decision_verdict::rung_payer(),
+                    )
+                    .sourced(Some(pack.evidence.to_vec()));
+                (run, guard.reserve_units())
+            }
+        };
+        let run = if context
+            .and_then(|context| context.native_source.as_ref())
+            .is_some()
+        {
+            run.capturing_settlements()
+        } else {
+            run
+        };
+        let mut permit = run
+            .admit_paid(&self.connector, reserve)
+            .map_err(|_| failed("refused by the budget"))?;
+        run.dispatch_paid(permit.lease(), &self.connector)
+            .map_err(|_| failed("refused at dispatch"))?;
+        if let Some(source) = context.and_then(|context| context.native_source.as_ref())
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
+        if pack.deadline.decision_time_left().is_zero() {
+            if pack.run.is_none() {
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+            }
+            return Err(failed("admitted after the work time"));
+        }
+        let native_admission = permit.native_decision_admission().cloned();
+        let caller = (pack.run.is_some() && !run.is_unrecorded())
+            .then(model_call_context)
+            .flatten();
+        let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
+            self.vault
+                .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
+        });
+        let asked = if pack.run.is_some() {
+            super::run_native_read(&run, || {
+                self.runtime.block_on(async {
+                    let cancel = pack.deadline.work_cancel();
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                        read = async {
+                            match run.send_guard() {
+                                Some(guard) => {
+                                    let release = || {
+                                        if guard() {
+                                            Ok(())
+                                        } else {
+                                            Err(oneiron::llm::FatalLlmError::Auth.into())
+                                        }
+                                    };
+                                    self.ask_pack_request(
+                                        request,
+                                        permit.lease(),
+                                        pack.deadline.decision_time_left(),
+                                        Some(&release),
+                                        native_admission.as_ref(),
+                                    ).await
+                                }
+                                None => self.ask_pack_request(
+                                    request,
+                                    permit.lease(),
+                                    pack.deadline.decision_time_left(),
+                                    None,
+                                    native_admission.as_ref(),
+                                ).await,
+                            }
+                        } => Ok(read),
+                    }
+                })
+            })
+        } else {
+            self.runtime.block_on(async {
+                let cancel = pack.deadline.work_cancel();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                    read = self.ask_pack_request(
+                        request, permit.lease(), pack.deadline.decision_time_left(), None,
+                        native_admission.as_ref(),
+                    ) => Ok(read),
+                }
+            })
+        };
+        let asked = match asked {
+            Ok(read) => read,
+            Err(error) => {
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+                return Err(error);
+            }
+        };
+        let settled = match &asked.result {
+            Ok(answer) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            Err(_) => permit.settle(CallOutcome::Failed),
+        };
+        self.record_seat_pack_read(
+            &run,
+            caller.as_ref(),
+            no_record_at_arrival,
+            &asked,
+            native_admission.as_ref(),
+        );
+        settled.map_err(|_| failed("settlement refused"))?;
+        let answer = asked
+            .result
+            .map_err(|error| failed(&format!("the seat failed: {error}")))?;
+        for (index, answer) in indices.into_iter().zip(answer.answers) {
+            let mut decision = match answer {
+                Ok(answer) => {
+                    let abstained = answer.answer == DecisionAnswer::Abstain;
+                    ProviderDecision {
+                        answer: answer.answer,
+                        probability: (!abstained).then_some(answer.probability),
+                        paired: None,
+                        person: None,
+                        served: None,
+                        cost_per_thousand: Some(None),
+                    }
+                }
+                Err(_) => abstain(),
+            };
+            // A per-answer share is unknown, not the provider's rate or zero.
+            decision.cost_per_thousand = Some(None);
+            decisions[index] = DecisionReadOutcome::Answered(decision);
         }
         Ok(decisions)
+    }
+
+    fn record_seat_pack_read(
+        &self,
+        run: &RunAdmission,
+        caller: Option<&ModelCallCaller>,
+        no_record_at_arrival: bool,
+        read: &oneiron_llm_systemone::SystemOnePackRead,
+        native_admission: Option<&oneiron::llm::decision::DecisionCallAdmission>,
+    ) {
+        let Some(caller) = caller else {
+            return;
+        };
+        let outcome = match &read.result {
+            Ok(answer) if answer.answers.iter().any(|answer| answer.is_err()) => {
+                NativeReadOutcome::Failed {
+                    failure: oneiron::code_run::model_call::NativeReadFailure::InvalidRequest,
+                    usage: Some(answer.usage.clone()),
+                }
+            }
+            Ok(answer) => NativeReadOutcome::Completed {
+                usage: answer.usage.clone(),
+            },
+            Err(error) => {
+                let Some(failure) = native_read_failure(error) else {
+                    tracing::warn!("native-seat evidence skipped: unmapped terminal failure");
+                    return;
+                };
+                NativeReadOutcome::Failed {
+                    failure,
+                    usage: native_quantity::retained_native_usage(native_admission),
+                }
+            }
+        };
+        let Some(capture) = NativeReadCapture::from_seat(
+            self.vault.as_ref(),
+            read.request.clone(),
+            caller.principal,
+            caller.session.clone(),
+            no_record_at_arrival,
+        ) else {
+            return;
+        };
+        let pin = self.seat.pin();
+        capture.record(
+            run,
+            || run.next_model_call_index(),
+            &pin.model,
+            &pin.version,
+            self.connector.locality,
+            outcome,
+        );
     }
 
     pub(super) fn decide_with_context(
@@ -101,7 +400,8 @@ impl SystemOneRung {
                             .prepare_read(request.clone(), call.deadline.decision_time_left()),
                     )
                     .map_err(|_| failed("the native request failed to build"))?;
-                let admission = extraction_admission_request(&prepared, context, &catalog)?;
+                let admission =
+                    extraction_admission_request(prepared.request(), context, &catalog)?;
                 self.vault
                     .authorize_raw_inference(
                         admission,
@@ -122,7 +422,7 @@ impl SystemOneRung {
         // A call that carries its caller's run measures on it (FIX 10443).
         if let Some(run) = call.run {
             return self
-                .decide_on_run(call, request, run, context.is_some(), prepared)
+                .decide_on_run(call, request, run, context, prepared)
                 .map(DecisionReadOutcome::Answered);
         }
         // Inside a verdict, use the caller's own line and room payer (FIX 1123,
@@ -136,11 +436,24 @@ impl SystemOneRung {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(Some(call.evidence.to_vec()));
-        let permit = run
+        let run = if context
+            .and_then(|context| context.native_source.as_ref())
+            .is_some()
+        {
+            run.capturing_settlements()
+        } else {
+            run
+        };
+        let mut permit = run
             .admit_paid(&self.connector, guard.reserve_units())
             .map_err(|_| failed("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| failed("refused at dispatch"))?;
+        if let Some(source) = context.and_then(|context| context.native_source.as_ref())
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
         // A measurement admitted after the work time is spent never starts.
         if call.deadline.decision_time_left().is_zero() {
             permit
@@ -148,7 +461,25 @@ impl SystemOneRung {
                 .map_err(|_| failed("settlement refused"))?;
             return Err(failed("admitted after the work time"));
         }
-        let asked = match prepared {
+        let native_admission = permit.native_decision_admission().cloned();
+        let asked = if let Some(admission) = native_admission.as_ref() {
+            self.runtime.block_on(async {
+                let cancel = call.deadline.work_cancel();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                    read = self.ask_single_request(
+                        request,
+                        prepared,
+                        permit.lease(),
+                        call.deadline.decision_time_left(),
+                        None,
+                        Some(admission),
+                    ) => read.result.map_err(|error| failed(&format!("the seat failed: {error}"))),
+                }
+            })
+        } else {
+            match prepared {
             Some(prepared) => self.runtime.block_on(async {
                 let cancel = call.deadline.work_cancel();
                 tokio::select! {
@@ -173,6 +504,7 @@ impl SystemOneRung {
                     ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
                 }
             }),
+            }
         };
         let answer = match asked {
             Ok(answer) => {
@@ -209,21 +541,26 @@ impl SystemOneRung {
         call: &DecisionCall<'_>,
         request: SeatRequest,
         run: &RunAdmission,
-        capturing: bool,
+        context: Option<&DecisionCallContext<'_>>,
         prepared: Option<PreparedSystemOneRead<'_>>,
     ) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
         let run = run.sourced(Some(call.evidence.to_vec()));
-        let run = if capturing {
+        let run = if context.is_some() {
             run.capturing_settlements()
         } else {
             run
         };
-        let permit = run
+        let mut permit = run
             .admit_paid(&self.connector, run.declaration().budget().reserve_units)
             .map_err(|_| failed("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| failed("refused at dispatch"))?;
+        if let Some(source) = context.and_then(|context| context.native_source.as_ref())
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
         // A measurement admitted after the work time is spent never starts; the
         // dispatched permit's drop keeps its reservation as spend, as the own-meter
         // path's settlement does.
@@ -235,50 +572,54 @@ impl SystemOneRung {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
-        let asked = match prepared {
-            Some(prepared) => super::run_native_read(&run, || match run.send_guard() {
-                Some(guard) => {
-                    let release = || {
-                        if guard() {
-                            Ok(())
-                        } else {
-                            Err(oneiron::llm::FatalLlmError::Auth.into())
+        let native_admission = permit.native_decision_admission().cloned();
+        let asked = super::run_native_read(&run, || {
+            self.runtime.block_on(async {
+                let cancel = call.deadline.work_cancel();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                    read = async {
+                        match run.send_guard() {
+                            Some(guard) => {
+                                let release = || {
+                                    if guard() {
+                                        Ok(())
+                                    } else {
+                                        Err(oneiron::llm::FatalLlmError::Auth.into())
+                                    }
+                                };
+                                self.ask_single_request(
+                                    request,
+                                    prepared,
+                                    permit.lease(),
+                                    call.deadline.decision_time_left(),
+                                    Some(&release),
+                                    native_admission.as_ref(),
+                                ).await
+                            }
+                            None => self.ask_single_request(
+                                request,
+                                prepared,
+                                permit.lease(),
+                                call.deadline.decision_time_left(),
+                                None,
+                                native_admission.as_ref(),
+                            ).await,
                         }
-                    };
-                    self.runtime.block_on(prepared.ask_recorded(
-                        permit.lease(),
-                        call.deadline.decision_time_left(),
-                        Some(&release),
-                    ))
+                    } => Ok(read),
                 }
-                None => self.runtime.block_on(prepared.ask_recorded(
-                    permit.lease(),
-                    call.deadline.decision_time_left(),
-                    None,
-                )),
-            }),
-            None => super::run_native_read(&run, || match run.send_guard() {
-                Some(guard) => {
-                    let release = || {
-                        if guard() {
-                            Ok(())
-                        } else {
-                            Err(oneiron::llm::FatalLlmError::Auth.into())
-                        }
-                    };
-                    self.runtime.block_on(self.seat.ask_recorded_released(
-                        request,
-                        permit.lease(),
-                        call.deadline.decision_time_left(),
-                        &release,
-                    ))
-                }
-                None => self.runtime.block_on(self.seat.ask_recorded(
-                    request,
-                    permit.lease(),
-                    call.deadline.decision_time_left(),
-                )),
-            }),
+            })
+        });
+        let asked = match asked {
+            Ok(read) => read,
+            Err(error) => {
+                // The seat may still bill a failed or cancelled call.
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+                return Err(error);
+            }
         };
         // Observe only after the original settlement attempt. Its failure
         // still wins over the provider result exactly as before.
@@ -287,7 +628,13 @@ impl SystemOneRung {
             // The seat may still bill a failed call.
             Err(_) => permit.settle(CallOutcome::Failed),
         };
-        self.record_seat_read(&run, caller.as_ref(), no_record_at_arrival, &asked);
+        self.record_seat_read(
+            &run,
+            caller.as_ref(),
+            no_record_at_arrival,
+            &asked,
+            native_admission.as_ref(),
+        );
         settled.map_err(|_| failed("settlement refused"))?;
         let answer = match asked.result {
             Ok(answer) => answer,
@@ -310,6 +657,7 @@ impl SystemOneRung {
         caller: Option<&ModelCallCaller>,
         no_record_at_arrival: bool,
         read: &SeatRead,
+        native_admission: Option<&oneiron::llm::decision::DecisionCallAdmission>,
     ) {
         let Some(caller) = caller else {
             return;
@@ -326,7 +674,7 @@ impl SystemOneRung {
                 // Keep the class only, never the provider error's contents.
                 NativeReadOutcome::Failed {
                     failure,
-                    usage: None,
+                    usage: native_quantity::retained_native_usage(native_admission),
                 }
             }
         };
@@ -356,12 +704,11 @@ impl SystemOneRung {
 /// endpoint, non-credential headers and wire model inside `provider_options`.
 /// Internal admission only; the physical request remains the prepared bytes.
 fn extraction_admission_request(
-    prepared: &PreparedSystemOneRead<'_>,
+    sent: &oneiron_llm_systemone::SystemOneHttpRequest,
     context: &DecisionCallContext<'_>,
     catalog: &oneiron::llm::ModelId,
 ) -> oneiron::Result<oneiron::LlmRequest> {
     let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
-    let sent = prepared.request();
     let text = std::str::from_utf8(&sent.body)
         .map_err(|_| failed("the prepared native body is not UTF-8"))?;
     let mut provider_options = BTreeMap::new();

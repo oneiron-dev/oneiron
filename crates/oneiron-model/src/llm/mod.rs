@@ -76,7 +76,10 @@ pub use budget::{
     BudgetSteeringSignal, BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding,
     DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
 };
-pub use budget::{BudgetAccountingSnapshot, BudgetCheckpoint, BudgetGuardId, BudgetMeterRange};
+pub use budget::{
+    BudgetAccountingSnapshot, BudgetCheckpoint, BudgetGuardId, BudgetMeterRange,
+    BudgetReservationSource,
+};
 // Public so `oneiron`'s policy-manifest decoder and frontier hash (the only callers outside
 // this module) build and hash the policy rows a guard enforces. Rows are values; a guard
 // built from them still issues every lease itself.

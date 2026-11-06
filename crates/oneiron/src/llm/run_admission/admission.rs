@@ -73,6 +73,9 @@ pub struct RunAdmission {
     /// The idempotency key a job submitted through this handle goes out
     /// with ([`Self::submit_keyed`], FIX 2248); `None` on the run itself.
     submit_key: Option<String>,
+    /// The caller's durable intent for calls admitted through this handle,
+    /// retained with the original usage producer in the native reserve writer.
+    allocation_intent: Option<Arc<dyn super::allocation::AllocationCallIntent>>,
     /// Host scheduling and physical-custody context for this handle (R4).
     work_context: Option<WorkContext>,
     /// Call-owned credential liveness; never shared with other run handles.
@@ -273,6 +276,7 @@ impl RunAdmission {
             sources: None,
             initiator: None,
             submit_key: None,
+            allocation_intent: None,
             work_context: None,
             send_guard: None,
             capture: SettlementCapture::default(),
@@ -410,6 +414,20 @@ impl RunAdmission {
         self.initiator.or_else(|| self.inner.guard.actor())
     }
 
+    /// This handle with the caller's original durable intent. Only a native
+    /// allocation reserve invokes it, in the same writer as the hold and its
+    /// admitted usage. Other backends keep their ordinary admission path.
+    #[must_use]
+    pub fn with_allocation_intent(
+        &self,
+        intent: Arc<dyn super::allocation::AllocationCallIntent>,
+    ) -> Self {
+        Self {
+            allocation_intent: Some(intent),
+            ..self.clone()
+        }
+    }
+
     /// This run, for a job whose submit goes out under `key` (FIX 2248):
     /// every media gate built through the handle sends it with the job's
     /// submit, so a provider that dedupes by it starts the job once however
@@ -532,6 +550,7 @@ impl RunAdmission {
             admitted,
             Some(call.request.model.clone()),
             &self.capture,
+            self.allocation_intent.as_deref(),
         )
     }
 
@@ -553,6 +572,7 @@ impl RunAdmission {
             admitted,
             None,
             &self.capture,
+            self.allocation_intent.as_deref(),
         )
     }
 

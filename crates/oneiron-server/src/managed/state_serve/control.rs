@@ -246,6 +246,17 @@ impl ManagedState {
                 self.ledger.pulled(&request).await?;
                 Ok(CtlResponse::Ok { ok: true })
             }
+            CtlRequest::AllocationInstall { delivery } => {
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
+                let revision =
+                    crate::managed::allocation::install(&self.server, &self.vault_name, delivery)
+                        .map_err(|error| ManagedError::CtlRequestRefused {
+                        reason: error.to_string(),
+                    })?;
+                Ok(CtlResponse::AllocationInstalled {
+                    allocation_installed: revision,
+                })
+            }
         }
     }
 }

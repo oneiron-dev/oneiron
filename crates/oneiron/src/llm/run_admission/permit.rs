@@ -110,6 +110,13 @@ impl RunPermit {
         &self.facts
     }
 
+    /// The original native call key, fixed by the same reserve writer that
+    /// retained its admitted producer. Ordinary calls have no native hold.
+    #[must_use]
+    pub fn allocation_call_key(&self) -> Option<&super::allocation::AllocationCallKey> {
+        self.persistent_allocation.as_ref().map(|hold| &hold.key)
+    }
+
     /// The original native backend, only when this call owns a durable hold.
     /// A selected run's free or memory-work call has no such backend.
     #[must_use]

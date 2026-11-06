@@ -229,7 +229,7 @@ pub fn judge_amendment_hunks(
     };
     // The floor where the amended attempt ran, when one is named (FIX 2957).
     let (floor, _) = unclear_floor_sourced(vault, evidence.attempt_receipt.as_deref())?;
-    let (split, trace) = classify_amendment_traced(&evidence, decisions, hunks, floor)?;
+    let (split, trace) = classify_amendment_traced(Some(vault), &evidence, decisions, hunks, floor)?;
     let Some(split) = split else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
