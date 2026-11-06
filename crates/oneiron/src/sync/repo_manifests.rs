@@ -387,6 +387,19 @@ pub(super) struct RepoManifestBatch {
 }
 
 impl RepoManifestBatch {
+    pub(super) fn prepare_full(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Option<Self> {
+        if !holds_repo_manifest_map(doc) {
+            return None;
+        }
+        let map = doc.get_map(REPO_MANIFESTS_MAP);
+        Some(Self::prepare(
+            vault,
+            &map,
+            key.as_str(),
+            head_rows(&map, |_| true),
+        ))
+    }
+
     /// Collects every bare head in `rows` under `window`: decode, portable
     /// check and part join are the live bodies ([`checked_head`],
     /// [`join_parts`], [`RepoManifest::decode`]); malformed heads, heads
