@@ -25,7 +25,7 @@
 
 mod facts;
 mod occurrences;
-pub(in crate::calendar) use occurrences::occurrences;
+pub(in crate::calendar) use occurrences::{SeriesCursors, occurrences};
 mod pages;
 pub(in crate::calendar) use pages::Slices;
 pub use pages::{
