@@ -2,16 +2,52 @@
 
 use super::{
     CapturedDecisionPack, DecisionCallContext, DecisionPack, DecisionProvider, DecisionReadOutcome,
-    PairedAnswer, ProviderDecision, ProviderPin, Read, Readings, StopCause, asked, joined,
+    PairedAnswer, ProviderDecision, ProviderPin, Read, Readings, StopCause, ask, asked, joined,
     record_attempted_provider, take,
 };
 use crate::llm::decision::{DecisionAnswer, DecisionQuestion};
 use crate::llm::run_admission::RunReceipt;
 use crate::{Result, llm::decision::types::invalid};
 
+/// The caller's native capture context and the inventory it retains even on error.
+pub(super) struct Capture<'call, 'context> {
+    pub context: &'call DecisionCallContext<'context>,
+    pub receipts: &'call mut Vec<RunReceipt>,
+}
+
+/// The ordinary and captured modes share every native request boundary.
+pub(super) fn read(
+    provider: &dyn DecisionProvider,
+    pin: &ProviderPin,
+    pack: &DecisionPack<'_>,
+    person: Option<&DecisionQuestion>,
+    capture: Option<&mut Capture<'_, '_>>,
+    readings: &mut [Readings],
+) -> Result<Vec<Read>> {
+    let Some(capture) = capture else {
+        return take(pin, pack, ask(provider, pack, person), readings);
+    };
+    captured_read(
+        provider,
+        pin,
+        pack,
+        person,
+        capture.context,
+        &mut *capture.receipts,
+        readings,
+    )
+    .unwrap_or_else(|| {
+        Ok(pack
+            .questions
+            .iter()
+            .map(|_| Read::NotStarted(StopCause::CaptureUnsupported))
+            .collect())
+    })
+}
+
 /// Keeps the ordinary single, native pack and appended-person request shapes. Unsupported
 /// applies only to this request; the caller still owns any earlier reads and settlements.
-pub(super) fn read(
+fn captured_read(
     provider: &dyn DecisionProvider,
     pin: &ProviderPin,
     pack: &DecisionPack<'_>,

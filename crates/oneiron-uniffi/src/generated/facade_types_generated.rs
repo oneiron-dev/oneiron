@@ -29725,6 +29725,8 @@ pub enum StopCause {
     Deadline,
     #[serde(rename = "generation_allowance")]
     GenerationAllowance,
+    #[serde(rename = "capture_unsupported")]
+    CaptureUnsupported,
     #[serde(rename = "provider_failure")]
     ProviderFailure,
 }
@@ -32526,6 +32528,8 @@ pub enum HumanAskReason {
     Deadline,
     #[serde(rename = "generation_allowance")]
     GenerationAllowance,
+    #[serde(rename = "capture_unsupported")]
+    CaptureUnsupported,
     #[serde(rename = "exploration_budget")]
     ExplorationBudget,
 }
