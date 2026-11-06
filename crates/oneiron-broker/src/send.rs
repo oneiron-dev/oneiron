@@ -96,6 +96,12 @@ impl Sender {
         CallDeadline::start(self.timeout)
     }
 
+    /// The verified client a git exchange sends through, and its idle
+    /// bound: [`SendPolicy::timeout`] without progress.
+    pub(crate) fn git_client(&self) -> (&Client, Duration) {
+        (&self.client, self.timeout)
+    }
+
     /// Sends `body` to `url` once with the key in the shape's auth header,
     /// then strips the key from what came back. `call` has passed
     /// [`CallHeader::check`] on `body`. The send ends by `deadline`'s send
@@ -208,6 +214,11 @@ impl Sender {
         let mut watch = KeyWatch::new(secret);
         let mut cleared = Zeroizing::new(Vec::new());
         let mut read = 0_usize;
+        // Relayed events go on as soon as the watch clears them, a frame at
+        // most at a time; other streamed bodies go in whole frames (FIX
+        // 15702). The watch still holds back any bytes that could begin a
+        // form of the key.
+        let eager = call.shape.relays_events();
         let cut = loop {
             let (passed, last) = match response.chunk().await {
                 Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
@@ -225,7 +236,8 @@ impl Sender {
             }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
-            while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
+            while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len())
+            {
                 let end = cleared.len().min(sent + STREAM_CHUNK);
                 within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
                 sent = end;
@@ -488,11 +500,17 @@ const GZIP_ORIGIN: &str = "https://api.anthropic.com";
 /// The smallest request body worth compressing.
 const MIN_COMPRESSED_BODY: usize = 16 << 10;
 
+/// Whether `secret` is a key the strip rule is sure to find in a reply:
+/// long enough, short enough, ASCII in the rule's own alphabet.
+pub(crate) fn watchable(secret: &[u8]) -> bool {
+    secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
+}
+
 /// The shape's key header value for `secret`, marked sensitive.
 pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
     // byte hides inside a multibyte one, in the rule's own alphabet.
-    if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
+    if !watchable(secret) {
         return Err(Refusal::Secret);
     }
     let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
@@ -505,7 +523,7 @@ pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue
 /// Whether the body arrives under a coding the HTTP stack did not undo, so
 /// the strip would read encoded bytes: any content coding but `identity`, or
 /// any transfer coding but `chunked`, in any value of either header.
-fn encoded(headers: &HeaderMap) -> bool {
+pub(crate) fn encoded(headers: &HeaderMap) -> bool {
     let other = |name: reqwest::header::HeaderName, plain: &[&str]| {
         headers.get_all(name).iter().any(|value| {
             !value.to_str().is_ok_and(|codings| {
