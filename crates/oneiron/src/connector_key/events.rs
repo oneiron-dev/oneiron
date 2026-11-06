@@ -98,6 +98,9 @@ pub enum ConnectorWakeStatus {
     /// A full count-bound budget window paces the wake (FIX 8686): the
     /// event waits, uncharged, and is admitted again once the window opens.
     Deferred,
+    /// A paced wake reached its deadline before its window let it in
+    /// (FIX 8753): nothing was charged and no agent woke.
+    Expired,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -450,6 +453,7 @@ impl Vault {
                 event,
                 &frozen,
                 &event_hash,
+                None,
                 now,
             )?);
         }
@@ -461,7 +465,9 @@ impl Vault {
     /// writer: the budget charge, the Dreamer wake or the paced admission
     /// item, the gate receipt, the stored decision and the notification. A
     /// paced wake admitted again when its window opens overwrites its
-    /// decision (FIX 8686).
+    /// decision (FIX 8686). `deadline` is the one a paced wake's first
+    /// deferral fixed, `None` for a wake not deferred before; at or past
+    /// it the wake is `Expired` and nothing is admitted (FIX 8753).
     #[expect(clippy::too_many_arguments)]
     fn wake_subscription_in_txn(
         &self,
@@ -471,6 +477,7 @@ impl Vault {
         event: &ConnectorEvent,
         frozen: &[u8],
         event_hash: &str,
+        deadline: Option<u64>,
         now: u64,
     ) -> Result<ConnectorWakeDecision> {
         let identity = wake_decision_identity(&id, &event.event_id);
@@ -479,11 +486,21 @@ impl Vault {
             status,
             budget_steering,
             paced_until,
-        } = self.admit_connector_event_wake(txn, row, now)?;
+        } = if deadline.is_some_and(|deadline| now >= deadline) {
+            WakeAdmission {
+                status: ConnectorWakeStatus::Expired,
+                budget_steering: Vec::new(),
+                paced_until: None,
+            }
+        } else {
+            self.admit_connector_event_wake(txn, row, now)?
+        };
         // A wake a full count-bound window paces waits as an admission item
-        // due when the window opens, and is admitted again then (FIX 8686).
+        // due when the window opens, and is admitted again then (FIX 8686),
+        // until the deadline its first deferral fixed (FIX 8753).
         if let Some(due) = paced_until {
-            self.defer_connector_wake_in_txn(txn, id, event, due, now)?;
+            let deadline = deadline.unwrap_or_else(|| paced::paced_connector_wake_deadline(now));
+            self.defer_connector_wake_in_txn(txn, id, event, due, deadline, now)?;
         }
         let attempt_id = if status == ConnectorWakeStatus::Enqueued {
             let mut input = vec![
@@ -538,6 +555,7 @@ impl Vault {
             ConnectorWakeStatus::KeyInactive => "gate.connector_wake.key_inactive",
             ConnectorWakeStatus::BudgetExhausted => "gate.connector_wake.budget_exhausted",
             ConnectorWakeStatus::Deferred => "gate.connector_wake.paced",
+            ConnectorWakeStatus::Expired => "gate.connector_wake.expired",
         };
         let receipt = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
