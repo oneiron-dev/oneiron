@@ -481,7 +481,13 @@ impl ScopedRead<'_> {
             // (L02 04:25).
             true
         } else {
-            self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
+            // Another revision the room serves is placed as its live row is
+            // (FIX 5161, Sol R22).
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            self.room_row_placed_in(txn, id, header.entity_type, body)?
+                && self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
         };
         Ok(admitted.then_some(raw))
     }
