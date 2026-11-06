@@ -572,14 +572,45 @@ and other wrapper attributes.
 Only the actual index-zero fallback and the first actual same-index fallback for
 later paragraphs carry those original attribute spans. Each original paragraph
 maps to that one output line. The later-paragraph retry using the first/global
-template, all count-changing template fallbacks and added lines keep the existing
-namespace-only wrapper. They never copy another paragraph's identity. The same
+template and added lines keep the namespace-only wrapper. Count-changing
+original wrappers are handled by the following extension. They never copy another paragraph's identity. The same
 private renderer still selects paragraph properties, run style and end properties
 and stages fresh-copy reservations in the same order; its errors and retries stay
 unchanged. Attribute-only wrapper preservation does not record a full original
 paragraph source interval or claim the opaque child survived.
 
-This changes no styled success, field conversion or removal receipt, text mapping,
-run retention, gap selection, count-changing behavior or added-line template.
+This same-count preservation changes no styled success, field conversion or
+removal receipt, text mapping, run retention, gap selection or added-line template.
 It is source-only preservation in the existing 17480/18510 pack, not full native
 fallback, OF-509/OF-510, compiler, runtime or Office fidelity proof.
+
+
+## Actual count-changing paragraph wrappers under the global style
+
+A count-changing fallback now keeps each mapped original paragraph's own qualified
+name and attribute spans even when styled retention declines. This applies to the
+matched outer paragraphs and paired middle paragraphs, using their existing
+one-to-one mapping. Added lines and the same-count global retry remain
+namespace-only template copies; they never borrow an original wrapper's identity.
+One source case is an opaque child holding `ABCD` changed to `ABQD`, paired with
+a partial field edit in another paragraph and an added line. Retained mapping,
+field-aware cutting and styled retention decline the partial opaque coverage,
+so successful fallback must preserve the wrapper independently of that child.
+
+The fallback still takes paragraph and end properties from the first paragraph,
+and run style from the same global source. Under a different original wrapper,
+each moved property carries its own effective source namespace bindings locally,
+so the wrapper's declarations cannot change property names or QName-valued content.
+An absent source default namespace is explicitly kept absent when the destination
+would otherwise introduce one; the same applies to generated runs and breaks
+using a selected source. With no selected run, generated child names follow the
+actual wrapper's DrawingML spelling. The actual wrapper remains in its original
+body scope, including all its own attributes and namespace bindings.
+
+Property identities still use the same original/fresh-copy ledger and reservation
+order. Attribute-only wrapper preservation records no whole paragraph source.
+Text, retained styled output, fields and removal receipts, gap mapping, errors,
+retries and added-line style stay on their existing paths. No identities are
+minted and no original paragraph is mapped twice. This is source-only work in the
+existing 17480/18510 pack, not full native fallback, OF-509/OF-510, compiler,
+runtime, Office or global identity proof.
