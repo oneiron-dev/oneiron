@@ -142,6 +142,11 @@ pub struct WorldEviction {
     /// Sealed updates this install made of the worlds and the home had not
     /// stored, which the owner's discard took.
     pub sealed_sends_discarded: usize,
+    /// BASE windows whose persisted copy an owner's discard projected, the
+    /// rows it took gone from their history too (FIX 14534 part E).
+    pub base_windows_projected: usize,
+    /// BASE windows whose projection waits for a later pass.
+    pub base_windows_waiting: usize,
 }
 
 /// The home's version vector of world window `window_key`, as this device
@@ -164,6 +169,22 @@ pub(crate) fn put_home_window_vv(
     home: &VersionVector,
 ) -> Result<()> {
     vault.sync_state_put(&home_window_vv_key(window_key), &home.encode())
+}
+
+/// The home's version vector of window `window_key`, as this device last
+/// exchanged it and kept it ([`put_home_window_vv`]), read in `txn`.
+///
+/// # Errors
+/// Store errors.
+pub(crate) fn home_window_vv_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    window_key: &str,
+) -> Result<Option<VersionVector>> {
+    Ok(store
+        .sync_state
+        .get(txn, &home_window_vv_key(window_key))?
+        .and_then(|home| VersionVector::decode(&home).ok()))
 }
 
 /// Evicts this install's local copy of every world its fold keeps on one
@@ -234,6 +255,7 @@ fn evict(
         ..WorldEviction::default()
     };
     if worlds.is_empty() {
+        project_base_windows(vault, &mut report)?;
         return Ok(report);
     }
     let (removed, held) = evict_cached_items(vault, worlds)?;
@@ -307,7 +329,17 @@ fn evict(
             Ok(discarded)
         })?;
     }
+    project_base_windows(vault, &mut report)?;
     Ok(report)
+}
+
+/// Projects every BASE window an owner's discard took rows from and whose
+/// projection is still owed, into `report` (FIX 14534 part E).
+fn project_base_windows(vault: &Vault, report: &mut WorldEviction) -> Result<()> {
+    let pass = super::base_projection::project_owed_windows(vault)?;
+    report.base_windows_projected += pass.installed;
+    report.base_windows_waiting += pass.waiting;
+    Ok(())
 }
 
 /// Whether the home's version vector for `window`, as this device last
