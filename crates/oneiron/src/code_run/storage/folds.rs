@@ -2,7 +2,9 @@
 //! base, or its off-record room's overlay, through the route it captured at
 //! entry. Node-local like the run's coverage rows: a fold is the run's own
 //! view of its log, never a synced record. No read or write of it keeps the
-//! words of a fold a withdrawn record reached (Docs Q23).
+//! words of a fold a withdrawn record reached (Docs Q23). A continuation's
+//! child begins with its source's ledger at the cut, landed again as its own
+//! (FIX 4198, [`seed_code_run_folds_in_txn`]).
 
 use crate::code_run::ExecutorStorage;
 use crate::compaction::{
@@ -151,6 +153,34 @@ pub(super) fn base_code_run_folds_in_txn(
     let mut ledger = FOLDS.get(store, txn, &run_id)?.unwrap_or_default();
     fence_withdrawn_folds_in(store, txn, run_id, &mut ledger)?;
     Ok(ledger)
+}
+
+/// Seeds `child`'s base ledger, a continuation's, from `inherited`, its
+/// source `source`'s ledger at the cut, in `txn` (FIX 4198). Handles,
+/// `last`, marks, unfolds and the compact ask stay as they stood. Each fold
+/// lands again through [`land_folds_in_base`]: one that keeps its words
+/// becomes a dependent of each of its sources as `child`'s fold. Words a
+/// withdrawn record reached, at the source or since, stay withdrawn. No
+/// Dreamer check is declared: an inherited fold carries no receipt. A
+/// ledger `child` holds already refuses, so the seed never writes over the
+/// child's own folds.
+pub(super) fn seed_code_run_folds_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    source: EntityId,
+    child: EntityId,
+    mut inherited: FoldLedger,
+) -> Result<()> {
+    if FOLDS.contains(store, txn, &child)? {
+        return Err(Error::ConcurrentWrite("code-run continuation fold seed"));
+    }
+    fence_withdrawn_folds_in(store, txn, source, &mut inherited)?;
+    let folds = std::mem::take(&mut inherited.folds);
+    land_folds_in_base(store, txn, child, &mut inherited, folds, &[])?;
+    if inherited == FoldLedger::default() {
+        return Ok(());
+    }
+    FOLDS.put(store, txn, &child, &inherited)
 }
 
 /// The folds of `landed` this write adds that a self writer wrote.

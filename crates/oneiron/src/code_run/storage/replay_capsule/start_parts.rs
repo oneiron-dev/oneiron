@@ -158,7 +158,8 @@ fn kept_start_in_txn(
 /// Who owns a kept start's rest (CALLS "step start rest owners"): the actor
 /// whose step it is and its run, whose erases retire the whole start body
 /// today, and every owner its prefix row's replies name, as a replay row's
-/// reply.
+/// reply. The fold words the start captured name their byline and every
+/// record they came from too (FIX 4198).
 ///
 /// # Errors
 ///
@@ -171,6 +172,7 @@ pub(crate) fn step_start_owners_in_txn(
     let mut owners = vec![kept.actor, kept.run];
     if let Ok(body) = rmp_serde::from_slice::<StepStartBody>(&kept.bytes) {
         owners.extend(replay_owners(store, txn, &body.record)?);
+        owners.extend(body.compaction.word_owners());
     }
     owners.sort_unstable();
     owners.dedup();
