@@ -58,6 +58,53 @@ fn forget_pending(
     }
 }
 
+/// The existing split sink holds the native evidence, not a serialized grant,
+/// until its underlying socket is ready to accept this particular batch.
+pub(super) struct PreparedNodeBatch {
+    raw_batch: Vec<u8>,
+    frames: Vec<Vec<u8>>,
+    size: usize,
+    copy_releases: Vec<(usize, WindowClaimCopyRelease)>,
+}
+
+impl PreparedNodeBatch {
+    pub(super) fn into_frame(
+        mut self,
+        vault: &crate::Vault,
+        peer: crate::authority::PeerMachine,
+    ) -> Vec<u8> {
+        for (_, release) in &self.copy_releases {
+            release.recheck(vault, peer);
+        }
+        let (mut added_bytes, mut added_members) = (0usize, 0usize);
+        for (_, release) in &self.copy_releases {
+            if release.retained() {
+                added_bytes = added_bytes.saturating_add(release.added_bytes());
+                added_members += usize::from(release.adds_member());
+            }
+        }
+        if self.size.saturating_add(added_bytes) > transport::MAX_DECODED_PAYLOAD_BYTES
+            || self.frames.len().saturating_add(added_members) > transport::MAX_NODE_BATCH_MEMBERS
+        {
+            for (_, release) in &self.copy_releases {
+                release.abandon();
+            }
+            return self.raw_batch;
+        }
+        if added_bytes == 0 {
+            return self.raw_batch;
+        }
+        // Reverse insertion preserves original member indices and part order.
+        for (index, release) in self.copy_releases.iter_mut().rev() {
+            release.append(*index, &mut self.frames);
+        }
+        // An optional materialization fault cannot refuse a prevalidated raw batch.
+        transport::encode_node_batch(&self.frames)
+            .into_result()
+            .unwrap_or(self.raw_batch)
+    }
+}
+
 impl SyncConnection {
     pub(super) async fn flush_node_batch(
         &self,
@@ -96,34 +143,18 @@ impl SyncConnection {
             }
             Ok(())
         })();
-        for (_, release) in &copy_releases {
-            release.recheck(client);
-        }
-        let (mut added_bytes, mut added_members) = (0usize, 0usize);
-        for (_, release) in &copy_releases {
-            if release.retained() {
-                added_bytes = added_bytes.saturating_add(release.added_bytes());
-                added_members += usize::from(release.adds_member());
-            }
-        }
-        if size.saturating_add(added_bytes) > transport::MAX_DECODED_PAYLOAD_BYTES
-            || frames.len().saturating_add(added_members) > transport::MAX_NODE_BATCH_MEMBERS
-        {
-            for (_, release) in &copy_releases {
-                release.abandon();
-            }
-        }
-        // Copies use only room left by the original raw selection. Reverse
-        // insertion preserves each envelope's native part order and offsets.
-        for (index, release) in copy_releases.iter_mut().rev() {
-            release.append(*index, &mut frames);
-        }
         let sent = match prepared {
             Err(error) => Err(error),
             Ok(()) if frames.is_empty() => Ok(()),
             Ok(()) => match transport::encode_node_batch(&frames).into_result() {
                 Err(error) => Err(error.to_string()),
-                Ok(batch) => {
+                Ok(raw_batch) => {
+                    let batch = PreparedNodeBatch {
+                        raw_batch,
+                        frames,
+                        size,
+                        copy_releases,
+                    };
                     let mut left = self.left.subscribe();
                     tokio::select! {
                         biased;
@@ -131,7 +162,7 @@ impl SyncConnection {
                             self.publish_leave_unqueued(&mut full_updates);
                             return Err(LoopExit::Shutdown);
                         }
-                        sent = write.send(Message::Binary(batch.into())) => {
+                        sent = write.send_node_batch(batch) => {
                             sent.map_err(|error| error.to_string())
                         }
                     }

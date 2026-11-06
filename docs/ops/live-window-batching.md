@@ -43,9 +43,11 @@ settled default cloud-route vector whose complete source matches that occurrence
 The signed, recipient-sealed bytes remain separate from the raw window's authority.
 
 Non-serializable source tokens stay with the selected members, including a
-buffered multipart head. Before the batch write, the client rechecks the complete
-current vector, every original release row, the actual home peer and its current
-keys. A miss abandons only the optional copies. It does not disconnect, requeue
+buffered multipart head. The existing split sink holds a typed native batch,
+not its finalized optional-copy bytes. After the underlying socket becomes ready,
+its send door rechecks the complete current vector, every original release row,
+the machine proved by this socket's upgrade and its current keys, then finishes
+the optional suffix synchronously before accepting the write. A miss abandons only the optional copies. It does not disconnect, requeue
 or delay the required window bytes.
 
 The original copy-free frames determine raw selection, batch order, multipart
