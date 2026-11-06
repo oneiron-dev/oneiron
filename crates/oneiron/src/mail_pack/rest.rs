@@ -31,6 +31,10 @@ const RAW_DECODE_PIECE_CHARS: usize = 4 * 1024;
 /// starts (`{"raw":"` and the JSON whitespace around its tokens): an answer
 /// that pads its front without end is refused, never read for ever.
 const MAX_RAW_PREFIX_BYTES: usize = 4 * 1024;
+/// How long a raw message read may take, from its first byte to its header
+/// block's end: an answer that trickles in without end is refused, as each
+/// network read starts a timeout of its own.
+const RAW_READ_DEADLINE: Duration = Duration::from_secs(120);
 /// HTML elements whose text is not the message's.
 const HTML_IGNORED: [&str; 6] = ["head", "script", "style", "template", "noscript", "title"];
 /// HTML elements that start a new line of text.
@@ -148,11 +152,15 @@ fn error_code(body: Option<&Value>) -> Option<String> {
 /// the value's end (a message of headers alone). `=` padding ends the value.
 fn raw_header_block(body: impl Read) -> Result<Vec<u8>> {
     let mut body = BufReader::with_capacity(RAW_READ_BUFFER_BYTES, body);
+    let deadline = std::time::Instant::now() + RAW_READ_DEADLINE;
     let mut prefix_budget = MAX_RAW_PREFIX_BYTES;
     raw_value_start(&mut body, &mut prefix_budget)?;
     let mut block = HeaderBlock::new();
     let mut pending: Vec<u8> = Vec::with_capacity(RAW_DECODE_PIECE_CHARS + RAW_READ_BUFFER_BYTES);
     loop {
+        if std::time::Instant::now() > deadline {
+            return Err(refused("mail_wire_raw_read_too_slow"));
+        }
         let (taken, value_ended) = {
             let chunk = body.fill_buf().map_err(|_| cut_short())?;
             if chunk.is_empty() {
