@@ -7,7 +7,9 @@ use oneiron_xlsx_formula::{DocumentLocation, RecalcClock};
 
 use crate::blob_artifact::CalcEngineStamp;
 use crate::edit_roundtrip::{AppliedEdit, EditOp, EditPlan, EditSession, OfficeDoc, RecalcPolicy};
-use crate::error::Result;
+use crate::error::{Error, Result};
+
+use super::{clone_plan_cell, clone_plan_text};
 
 pub(super) struct BatchedSheetSession<'a, S> {
     pub session: &'a S,
@@ -28,12 +30,40 @@ impl<S: EditSession> EditSession for BatchedSheetSession<'_, S> {
         let mut chunks = plan.ops.chunks(self.batch_size.get()).peekable();
         while let Some(ops) = chunks.next() {
             self.resources.checkpoint().map_err(refused)?;
-            // This hold covers the temporary plan vector, not the retained
-            // result or the strings and native workbook allocations.
+            // The hold covers this temporary batch and its validated cell
+            // payloads, not the retained result or native workbook allocations.
             let mut scratch = self.resources.hold();
             scratch.take_len::<EditOp>(ops.len()).map_err(refused)?;
+            let mut batch_ops = Vec::new();
+            batch_ops.try_reserve_exact(ops.len()).map_err(|error| {
+                Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+            })?;
+            if batch_ops.capacity() > ops.len() {
+                scratch
+                    .take_len::<EditOp>(batch_ops.capacity() - ops.len())
+                    .map_err(refused)?;
+            }
+            for op in ops {
+                batch_ops.push(match op {
+                    EditOp::SetCell {
+                        sheet,
+                        cell,
+                        before,
+                        after,
+                    } => EditOp::SetCell {
+                        sheet: clone_plan_text(sheet, Some(&mut scratch))?,
+                        cell: *cell,
+                        before: before
+                            .as_ref()
+                            .map(|value| clone_plan_cell(value, Some(&mut scratch)))
+                            .transpose()?,
+                        after: clone_plan_cell(after, Some(&mut scratch))?,
+                    },
+                    op => op.clone(),
+                });
+            }
             let batch = EditPlan {
-                ops: ops.to_vec(),
+                ops: batch_ops,
                 request_recalc: plan.request_recalc,
             };
             let applied = self
