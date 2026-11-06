@@ -100,8 +100,18 @@ drop use the captured launch context. A retiring session keeps its original
 context; it does not look up a replacement worker by name. Content-free activity
 and drain controls retain their existing UID check.
 
-This native transport check does not change provider locality, model offers,
-admission, charging or the device-only reranking guard. In particular, the
-existing HTTP fallback remains an OwnServer route. Other Unix targets retain
-their existing transport semantics; the child-PID check described here is for
-Linux and macOS.
+On Linux and macOS this check is what makes a managed EXL3 worker's native
+channel an on-device transport (I2-LOCAL): its models get an on-device offer
+whose backend holds the routes captured when the runtime was built and no HTTP
+sender, so a call it cannot send natively is not sent. The provider's own
+offer is unchanged: native when the current launch has a socket, HTTP
+otherwise, an OwnServer route either way. A call takes the on-device offer
+only when its route is on device; it never falls back to HTTP. The on-device
+offer keeps the provider offer's payer, key custody and rates, so charging is
+unchanged: free work (a local payer, no key) stays free, and a paid
+provider's call is charged to its payer under its run's budget line, as its
+own-server call is. A local-payer keyless provider at locality `third_party`
+gets no on-device offer, because on device its paid calls would turn free.
+The reranker keeps its HTTP route, so the device-only reranking guard still
+sends it a device-only row empty. Other Unix targets retain their existing
+transport semantics: no PID check, no on-device offer.

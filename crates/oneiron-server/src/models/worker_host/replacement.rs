@@ -34,6 +34,7 @@ impl WorkerHost {
             let owned = Arc::clone(&replacement);
             let thread = std::thread::Builder::new()
                 .name("oneiron-worker-replace".to_owned())
+                .stack_size(crate::ENGINE_THREAD_STACK_BYTES)
                 .spawn(move || {
                     match tokio::runtime::Builder::new_current_thread()
                         .enable_all()
