@@ -556,11 +556,14 @@ pub(super) fn settled_in_txn(
     if row.ask != group || row.binding != binding || row.state != VerbAskState::Open {
         return Ok(());
     }
+    let first_settlement = row.settled_at.is_none();
     row.settled_at = Some(now);
     row.proceeds = proceeds(result);
     row.ready = row.resume.is_some() && row.proceeds;
     ASKS.put(&vault.store, txn, &key, &row)?;
-    crate::batch::queue_verb_hook_ask_change(vault, txn);
+    if first_settlement {
+        crate::batch::queue_verb_hook_ask_change(vault, txn);
+    }
     if row.ready {
         // The hook runner wakes on the commit, not only on its tick.
         crate::batch::queue_proactivity_change(vault, txn);
