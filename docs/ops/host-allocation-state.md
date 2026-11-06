@@ -9,8 +9,65 @@ reflected allocation meter for admission. The server's explicit
 `with_native_usage_metering` binding selects this constructor for its
 `undeclared_run` factory. When selected before `AiHost::attach`, the same
 backend and observer are passed into the original model runtime before it is
-shared or starts work. Ordinary startup remains unchanged. No Cloud wallet or
-price conversion is implemented by this backend.
+shared or starts work. Startup without an explicit native selection remains
+unchanged. This backend implements no Cloud wallet or host pricing policy;
+conversion uses only explicitly supplied rates.
+
+## Original host delivery
+
+A managed supervisor can select native custody with `--allocation-fd <fd>`.
+The inherited descriptor carries one
+`oneiron_vault_contract::allocation::AllocationDelivery` JSON object, then EOF.
+Descriptor numbers are checked for aliases before any is consumed. The object
+is read before storage opens, and native usage is bound before AI attachment,
+sharing the server, or starting workers. Without the flag startup stays on its
+ordinary path. Omission does not revoke or replace a stored allocation.
+
+The descriptor contains `vault_id`, an explicit opaque `usage_owner`,
+`allocation: {id, generation}`, `units`, `unit`, the original ordered
+`rates: [{unit, per, cost}]`, and `issued_at`. Integer amounts and clocks are
+`u64`. `vault_id` is the supervisor's routing identity (`--vault-name`), not the
+separate authority-genesis hex used by `VaultUsage`. The owner is the original
+usage producer's input, never inferred from a financial account or vault id.
+The runtime control request is `AllocationInstall { delivery }` on the existing
+authenticated ctl channel. It uses the existing managed write/reap admission
+and can install the first original allocation into an already-running ordinary
+server. The descriptor commits before the shared future-run selection is
+published. Subsequent deliveries use that same native ledger, and their owner
+must match its original producer. If usage metering was already bound, the first
+delivery must match that meter's owner and reuses the same meter. No owner is
+inferred from an account, a reflected balance or the routing id.
+
+Each new run snapshots the current selection. Runs constructed before that
+publication keep their original backend and line, and already-admitted usage
+keeps its original owner and prices. Native holds are never copied or reissued.
+Reading the selection does not acquire the installation mutex or wait for its
+vault writer; calls can continue on the ordinary path until publication.
+
+`VaultAllocationLedger::install_backed` retains the original allocation and
+`AllocationTerms` (owner, ordered rates and issue clock) in the native writer.
+An identical original delivery is a no-op even after depletion, an explicit
+close, or replacement by a newer generation. It changes no balances, pending
+holds, current selection, refusal or account revision. A different descriptor
+at an already recorded generation is an `AllocationConflict`; an unrecorded
+older generation follows the existing `StaleGeneration` result. No restart
+replays a full grant. Manual `grant` retains its existing fresh-generation
+semantics and per-call conversion inputs.
+
+A backed reservation selects its stored original ordered rates in the same
+writer that selects the current allocation, not from an earlier process or
+factory snapshot. Each durable hold captures the effective rates, and only
+that hold's persistent settlement conversion uses them. Its original rates
+survive a newer grant. The run's own budget line and in-memory allocation path
+keep their existing per-offer rates. `allocations()` exposes the original terms
+separately from remaining, pending and used observations.
+
+`AllocationInstalled { allocation_installed: revision }` acknowledges native
+descriptor retention at that account revision. A postcommit error does not undo
+it. The reply does not prove current selection at a later read, financial
+acceptance, an accepted terminal, or backing return. The hosting control plane
+still owns actual spawn/VM transport and original financial receipts; this
+engine interface alone is not a deployment or financial proof.
 
 ## Authority and state
 
@@ -61,8 +118,10 @@ Every mutation returns `AllocationCommit`. Once its `value` is present, the
 allocation write is durable, even if `postcommit_error` reports a later vault
 failure. Do not undo that operation, return its capacity or mint a new identity
 because unrelated postcommit work failed. Before-commit storage or producer
-errors remain errors, not exhausted-budget denials. No host, run, budget or
-resident mutex is held while this backend acquires its writer.
+errors remain errors, not exhausted-budget denials. No `HostAccount`, run, budget or
+resident mutex is held while this backend acquires its writer. First live
+selection serializes installations only; run factories read the once-published
+selection without that installation mutex.
 
 The new row is a LIVE restore family and is not imaged into checkpoint payloads.
 Actor erase removes the stored resident attribution without releasing money or
@@ -101,7 +160,8 @@ host-delivered allocation identity, original unit and ordered conversion rates
 must arrive intact; no `HostAccount`, run meter, maximum historical generation
 or reflected balance supplies them.
 
-This is opt-in source integration, not default startup or hosted activation. `VaultUsage::allocation_producer` now creates
+This is opt-in source integration, not default startup or hosted activation.
+`VaultUsage::allocation_producer` creates
 `NativeUsageProducer` from the original usage ledger and its same vault. Its
 freeze callback stores the one original `AdmittedCall`, not a second field list
 or a fake settled usage event. The separate `USAGE_ADMITTED_CALL` family is LIVE
@@ -151,17 +211,18 @@ still selects its original ordinary path. Configured raw calls and the
 server's injected raw backend carry that same native selection, including
 both owned builder orderings for the injected backend. Existing settlement
 capture, original request/source overlays and chosen observers remain attached.
-The attachment passes these owned bindings before `Arc<ModelRuntime>` exists;
-it neither mutates worker identity nor retargets an already shared runtime.
-Select native metering before attaching the AI host or starting its workers.
+The attachment passes the shared future-run binding before `Arc<ModelRuntime>`
+exists. First live delivery can publish that binding later without changing
+worker identity or any constructed run. An explicit startup selection still
+binds native metering before attaching the AI host or starting its workers.
 
 Media job factories, standalone House gates and direct non-runtime run
 factories still need their original native binding joins. Existing kept media
 jobs retain their current restore path: they are not blindly re-admitted as
 new native holds on restart. Converting that path requires its actual original
 hold/lease and terminal recovery, not another grant or a new refusal. The
-original hosted grant-delivery adapter, durable terminal crash recovery and
-accepted-terminal reconciliation remain open. A false dispatch observation is
+original hosted spawn/VM delivery counterpart, durable terminal crash recovery
+and accepted-terminal reconciliation remain open. A false dispatch observation is
 never permission to release an old hold.
 
 Cloud accepted-terminal identity, serving-retirement reconciliation and backing

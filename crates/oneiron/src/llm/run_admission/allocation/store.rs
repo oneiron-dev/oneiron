@@ -1,7 +1,7 @@
 use super::{
     ACCOUNT, AccountRow, AllocationCallKey, AllocationCommit, AllocationRow,
-    AllocationServingFence, AllocationStoreError, AllocationTerminal, DurableAllocationHold,
-    DurableAllocationRead, VaultAllocationLedger,
+    AllocationServingFence, AllocationStoreError, AllocationTerminal, AllocationTerms,
+    DurableAllocationHold, DurableAllocationRead, VaultAllocationLedger,
 };
 use crate::llm::VaultResidentLedger;
 use crate::llm::run_admission::host::{Unpriced, convert};
@@ -113,24 +113,38 @@ impl VaultAllocationLedger {
             {
                 return Err(AllocationStoreError::StaleGeneration);
             }
-            if let Some(current) = &row.current
-                && let Some(old) = row
-                    .allocations
-                    .iter_mut()
-                    .find(|old| &old.allocation.reference == current)
-            {
-                old.accepting = false;
+            append_allocation(row, allocation, None);
+            Ok(((), true))
+        })
+    }
+
+    /// Installs the original host delivery. Repeating the identical descriptor
+    /// changes no selection, balance, pending hold, refusal or revision, even
+    /// after a newer allocation or an explicit close. No replay replenishes it.
+    pub fn install_backed(
+        &self,
+        allocation: Allocation,
+        terms: AllocationTerms,
+    ) -> Result<AllocationCommit<()>> {
+        self.write(true, |_txn, row| {
+            if let Some(original) = row.allocations.iter().find(|original| {
+                original.allocation.reference.generation == allocation.reference.generation
+            }) {
+                return if original.allocation == allocation
+                    && original.terms.as_ref() == Some(&terms)
+                {
+                    Ok(((), false))
+                } else {
+                    Err(AllocationStoreError::AllocationConflict)
+                };
             }
-            row.newest_generation = Some(allocation.reference.generation);
-            row.current = Some(allocation.reference.clone());
-            row.allocations.push(AllocationRow {
-                remaining_units: allocation.units,
-                allocation,
-                accepting: true,
-                pending_units: 0,
-                used_units: 0,
-                holds: Vec::new(),
-            });
+            if row
+                .newest_generation
+                .is_some_and(|newest| allocation.reference.generation <= newest)
+            {
+                return Err(AllocationStoreError::StaleGeneration);
+            }
+            append_allocation(row, allocation, Some(terms));
             Ok(((), true))
         })
     }
@@ -185,6 +199,10 @@ impl VaultAllocationLedger {
             if !current.accepting {
                 return Err(AllocationStoreError::Closed);
             }
+            let rates = current
+                .terms
+                .as_ref()
+                .map_or(rates, |terms| terms.rates.as_slice());
             let units = convert(native_units, native, &current.allocation.unit, rates).map_err(
                 |error| match error {
                     Unpriced::NoRate => AllocationStoreError::UnitMismatch {
@@ -236,6 +254,7 @@ impl VaultAllocationLedger {
                 key,
                 allocation: current.allocation.reference.clone(),
                 unit: current.allocation.unit.clone(),
+                rates: rates.to_vec(),
                 reserved_units: units,
                 serving_fence: self.fence,
                 resident,
@@ -384,6 +403,7 @@ impl VaultAllocationLedger {
             .into_iter()
             .map(|allocation| DurableAllocationRead {
                 allocation: allocation.allocation,
+                terms: allocation.terms,
                 accepting: allocation.accepting,
                 remaining_units: allocation.remaining_units,
                 pending_units: allocation.pending_units,
@@ -415,6 +435,28 @@ impl VaultAllocationLedger {
             .flat_map(|allocation| allocation.holds)
             .find(|hold| &hold.key == key))
     }
+}
+
+fn append_allocation(row: &mut AccountRow, allocation: Allocation, terms: Option<AllocationTerms>) {
+    if let Some(current) = &row.current
+        && let Some(old) = row
+            .allocations
+            .iter_mut()
+            .find(|old| &old.allocation.reference == current)
+    {
+        old.accepting = false;
+    }
+    row.newest_generation = Some(allocation.reference.generation);
+    row.current = Some(allocation.reference.clone());
+    row.allocations.push(AllocationRow {
+        remaining_units: allocation.units,
+        allocation,
+        terms,
+        accepting: true,
+        pending_units: 0,
+        used_units: 0,
+        holds: Vec::new(),
+    });
 }
 
 fn current_mut(row: &mut AccountRow) -> Result<&mut AllocationRow> {
