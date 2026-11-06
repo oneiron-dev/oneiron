@@ -43,7 +43,7 @@ struct AppActionEgress {
 fn no_engine_egress() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
-        "artifact backend has no engine-action grants",
+        "artifact backend egress is limited to its own engine actions",
     )
 }
 
