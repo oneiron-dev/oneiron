@@ -6,6 +6,7 @@ use crate::error::Result;
 #[derive(Default)]
 pub(crate) struct CanonicalValidation {
     stage: ValidationStage,
+    window_rows: validation::WindowRows,
 }
 
 #[derive(Default)]
@@ -22,16 +23,22 @@ enum ValidationStage {
 }
 
 impl CanonicalValidation {
-    /// Validate one whole group. The caller retains the same immutable snapshot
-    /// until every group passes; nested row walks are not paged here.
-    pub(crate) fn advance(&mut self, snapshot: &CanonicalSnapshot) -> Result<bool> {
+    /// Validate one group or one window-row page over the same immutable snapshot.
+    pub(crate) fn advance(
+        &mut self,
+        snapshot: &CanonicalSnapshot,
+        max_rows: usize,
+    ) -> Result<bool> {
         self.stage = match self.stage {
             ValidationStage::Manifest => {
                 validation::validate_manifest_and_order(snapshot)?;
                 ValidationStage::WindowRows
             }
             ValidationStage::WindowRows => {
-                validation::validate_window_rows(snapshot)?;
+                if !self.window_rows.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.window_rows = validation::WindowRows::default();
                 ValidationStage::AssetBodyRefs
             }
             ValidationStage::AssetBodyRefs => {
@@ -59,7 +66,11 @@ impl CanonicalValidation {
         Ok(matches!(self.stage, ValidationStage::Complete))
     }
 
-    pub(crate) fn position(&self) -> &'static str {
+    pub(crate) fn position(&self) -> String {
+        if matches!(self.stage, ValidationStage::WindowRows) {
+            let (stage, next) = self.window_rows.position();
+            return format!("window rows {stage} {next}");
+        }
         match self.stage {
             ValidationStage::Manifest => "manifest",
             ValidationStage::WindowRows => "window rows",
@@ -70,5 +81,6 @@ impl CanonicalValidation {
             ValidationStage::WithdrawnCutoffs => "withdrawn cutoffs",
             ValidationStage::Complete => "complete",
         }
+        .to_owned()
     }
 }

@@ -22589,7 +22589,7 @@
       "const": 7,
       "crate-vis": 4,
       "enum": 5,
-      "fn": 24,
+      "fn": 25,
       "struct": 13
      }
     },
@@ -22788,6 +22788,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/memory_writers.rs",
+     "purpose": "Who wrote each MEMORIES row (BOARD-LAYOUT add-on 2): the actor a board layout's `who` filter matches a…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -35379,7 +35389,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint.rs",
@@ -52089,7 +52099,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/checkpoint.rs",
@@ -62140,6 +62150,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/recovery/validation/window_rows.rs",
+     "purpose": "Window row validation with owned indexes and a cursor between admitted turns",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/recovery/work.rs",
      "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
      "surface": {
@@ -66836,14 +66856,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentBoardLayoutOverride",
       "BoardLayoutSettings"
      ],
      "path": "src/settings/board_layout.rs",
      "purpose": "The owner's board layout settings (BOARD-LAYOUT = A, owner 2026-11-03 20:25: \"better to just set the cap and…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 5,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -91009,7 +91031,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91723,7 +91745,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92222,7 +92244,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6487,
+   "source_files": 6489,
    "test_files": 895
   },
   "oneiron-android": {
@@ -112410,7 +112432,7 @@
      "path": "src/api/context_board/layout.rs",
      "purpose": "The actor's own board layout on the HTTP, chat and MCP boards (BOARD-LAYOUT = A, owner 2026-11-03 20:25)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
