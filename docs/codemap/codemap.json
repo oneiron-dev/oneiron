@@ -17920,13 +17920,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -27461,7 +27461,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 4,
       "struct": 8
@@ -31078,7 +31078,7 @@
      "path": "src/dreamer_wake/driver/attribution.rs",
      "purpose": "One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -34463,6 +34463,16 @@
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
       "crate-vis": 63
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/store/reply_evidence.rs",
+     "purpose": "PERSON substitution only in the typed text of a model reply's evidence copy",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -72394,7 +72404,7 @@
      "path": "src/store/known_value_index/run.rs",
      "purpose": "Run-local PERSON prints alongside the custody matcher (FIX 4974)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -77967,7 +77977,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection/frames/shallow_tail.rs",
-     "purpose": "Rebuild held retained operations without changing a shallow snapshot's root",
+     "purpose": "Rebuild held retained operations with an unchanged root or exact frontier retarget",
      "surface": {
       "crate-vis": 1
      }
@@ -90093,7 +90103,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91103,7 +91113,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6400,
+   "source_files": 6401,
    "test_files": 895
   },
   "oneiron-android": {
@@ -111982,7 +111992,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -121508,7 +121518,7 @@
      "path": "src/livequery/rpc.rs",
      "purpose": "The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
