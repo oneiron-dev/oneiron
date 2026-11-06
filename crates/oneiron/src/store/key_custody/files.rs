@@ -535,6 +535,7 @@ impl LocalCustody<'_> {
             if let Some(subject) = CustodySubject::from_dir_name(self.binding.vault(), name)
                 && subject.kind() == kind
             {
+                subjects.try_reserve(1).map_err(std::io::Error::from)?;
                 subjects.push(subject);
             }
         }
