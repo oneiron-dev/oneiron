@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use super::{
     INTENTS, RESULTS, SELECTIONS, TopologyAuditCorrection, TopologyAuditDecider,
-    TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditResult, TopologyAuditScope,
-    TopologyAuditSelection,
+    TopologyAuditEvidence, TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditResult,
+    TopologyAuditScope, TopologyAuditSelection,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
@@ -203,11 +203,13 @@ fn count(priors: &[&Prior], keep: fn(&Prior) -> bool) -> usize {
     priors.iter().filter(|prior| keep(prior)).count()
 }
 
-/// A review's outcome and engine code, with what it read when a recipe was
-/// asked: the case, the revision it read and the decision receipt.
+/// A review's outcome, engine code and evidence class, with what it read
+/// when a recipe was asked: the case, the revision it read and the decision
+/// receipt.
 type Reviewed = (
     TopologyAuditOutcome,
     String,
+    TopologyAuditEvidence,
     Option<(TopologyAuditCase, [u8; 32], Option<String>)>,
 );
 
@@ -338,13 +340,12 @@ impl Vault {
             report.skipped += 1;
             return Ok(Step::Done);
         }
-        let Some((outcome, reason, read)) =
+        let Some(reviewed) =
             self.review_topology_audit(intent, history, reviewer, &selection, job)?
         else {
             return Ok(Step::Deferred);
         };
-        let result =
-            self.record_topology_audit_result(intent, &selection, outcome, reason, read, job)?;
+        let result = self.record_topology_audit_result(intent, &selection, reviewed, job)?;
         match result.outcome {
             TopologyAuditOutcome::Pass => report.passed += 1,
             TopologyAuditOutcome::Concern => {
@@ -379,12 +380,18 @@ impl Vault {
             return Ok(Some((
                 TopologyAuditOutcome::Unknown,
                 "recipe_revision_moved".to_owned(),
+                TopologyAuditEvidence::EngineSettled,
                 None,
             )));
         }
         let (case, revision) = match self.read_topology_audit_case(intent, history)? {
             Read::Settled { outcome, reason } => {
-                return Ok(Some((outcome, reason.to_owned(), None)));
+                return Ok(Some((
+                    outcome,
+                    reason.to_owned(),
+                    TopologyAuditEvidence::EngineSettled,
+                    None,
+                )));
             }
             Read::Ready { case, revision } => (case, revision),
         };
@@ -402,12 +409,14 @@ impl Vault {
                 Some((
                     outcome,
                     reason.to_owned(),
+                    TopologyAuditEvidence::ModelJudgment,
                     Some((case, revision, decision_receipt)),
                 ))
             }
             TopologyAuditAnswer::Refused { code } => Some((
                 TopologyAuditOutcome::Unknown,
                 format!("review_refused:{code}"),
+                TopologyAuditEvidence::EngineSettled,
                 Some((case, revision, None)),
             )),
         })
@@ -430,9 +439,11 @@ impl Vault {
         job: Job,
     ) -> Result<Option<TopologyAuditSelection>> {
         let (_, policy_evidence) = history.of(intent);
-        let (selected, reason, decision_receipt) =
+        let judged = TopologyAuditEvidence::ModelJudgment;
+        let settled = TopologyAuditEvidence::EngineSettled;
+        let (selected, reason, evidence, decision_receipt) =
             match self.read_topology_audit_case(intent, history)? {
-                Read::Settled { reason, .. } => (false, reason.to_owned(), None),
+                Read::Settled { reason, .. } => (false, reason.to_owned(), settled, None),
                 Read::Ready { case, .. } => match reviewer.select(&case)? {
                     TopologyAuditAnswer::Deferred => return Ok(None),
                     TopologyAuditAnswer::Answered {
@@ -441,6 +452,7 @@ impl Vault {
                     } => (
                         selected,
                         if selected { "selected" } else { "not_selected" }.to_owned(),
+                        judged,
                         decision_receipt,
                     ),
                     // An undecided recipe reviews: skipping is the claim that
@@ -448,9 +460,14 @@ impl Vault {
                     TopologyAuditAnswer::Answered {
                         yes: None,
                         decision_receipt,
-                    } => (true, "selection_abstained".to_owned(), decision_receipt),
+                    } => (
+                        true,
+                        "selection_abstained".to_owned(),
+                        judged,
+                        decision_receipt,
+                    ),
                     TopologyAuditAnswer::Refused { code } => {
-                        (true, format!("selection_refused:{code}"), None)
+                        (true, format!("selection_refused:{code}"), settled, None)
                     }
                 },
             };
@@ -460,6 +477,7 @@ impl Vault {
             recipe_revision: job.recipe.revision,
             policy_evidence,
             selected,
+            evidence,
             reason,
             decision_receipt,
             selection_attempt: job.attempt,
@@ -554,9 +572,7 @@ impl Vault {
         &self,
         intent: &TopologyAuditIntent,
         selection: &TopologyAuditSelection,
-        outcome: TopologyAuditOutcome,
-        reason: String,
-        read: Option<(TopologyAuditCase, [u8; 32], Option<String>)>,
+        (outcome, reason, evidence, read): Reviewed,
         job: Job,
     ) -> Result<TopologyAuditResult> {
         let selection_digest = selection.digest()?;
@@ -588,6 +604,7 @@ impl Vault {
                 reviewed_revision: revision,
                 evidence_refs,
                 outcome,
+                evidence,
                 reason,
                 correction,
                 completed_at: job.now,

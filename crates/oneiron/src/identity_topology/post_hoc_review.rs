@@ -29,9 +29,18 @@
 //! decision: an owner's own decision is never undone by a review. The
 //! catastrophe floor and every ordinary pre-check stay as they are.
 //!
-//! The three tables are local side tables, never replicated authority: they
-//! restore as content, an erase of any record a candidate names drops it, and
-//! a home move carries them (the `home` submodule).
+//! A recipe's answer is a declared model judgment, its scorer in the
+//! decision receipt and its prompt in the recipe revision (L08-A 20:15).
+//! Nothing here feeds a feedback, attribution or learning lane: a pass
+//! invents no positive, a missing or abstaining review no loss, and an
+//! unknown stays unknown without holding up the drain or the apply. A
+//! correction the Coach made is its own receipted act, never the reviewed
+//! decision's verified failure.
+//!
+//! The three tables are local side tables, never replicated authority, in the
+//! canonical checkpoint tier: they restore as content, an erase of any record
+//! a candidate names drops it, each declares the actor scrub an actor's erase
+//! runs, and a home move carries them (the `home` submodule).
 
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +135,29 @@ pub struct TopologyAuditIntent {
     pub created_at: u64,
 }
 
+/// What an answer is (L08-A 20:15): a recipe's declared model judgment, its
+/// scorer in the decision receipt and its prompt in the recipe revision, or
+/// an outcome the engine settled with no judgment (its own reads, a refused
+/// question, a moved revision). Neither is an owner decision, a human
+/// acceptance or a verified success or failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TopologyAuditEvidence {
+    ModelJudgment,
+    EngineSettled,
+}
+
+impl TopologyAuditEvidence {
+    /// The stable name a receipt carries.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ModelJudgment => "model_judgment",
+            Self::EngineSettled => "engine_settled",
+        }
+    }
+}
+
 /// The first selection of one candidate, kept before any review: the pinned
 /// recipe and revision that selected, the prior decisions of its scope the
 /// selection weighed, and whether it selected.
@@ -138,6 +170,7 @@ pub struct TopologyAuditSelection {
     /// The scope's prior decisions that drew a concern or were undone.
     pub policy_evidence: Vec<EntityId>,
     pub selected: bool,
+    pub evidence: TopologyAuditEvidence,
     /// An engine code: `selected`, `not_selected`, `selection_abstained`,
     /// `selection_refused:<code>`, or the code of a decision that moved
     /// before its selection (`event_undone`, `event_superseded`,
@@ -225,6 +258,7 @@ pub struct TopologyAuditResult {
     /// The records the review read.
     pub evidence_refs: Vec<EntityId>,
     pub outcome: TopologyAuditOutcome,
+    pub evidence: TopologyAuditEvidence,
     /// An engine code, never model text.
     pub reason: String,
     pub correction: Option<TopologyAuditCorrection>,
@@ -371,6 +405,48 @@ pub(crate) fn erase_topology_audit_sources_in_txn(
             INTENTS.delete(store, txn, &audit)?;
             SELECTIONS.delete(store, txn, &audit)?;
             RESULTS.delete(store, txn, &audit)?;
+        }
+    }
+    Ok(())
+}
+
+/// The actor scrub the three tables declare (FIX 3520, FIX 7817), run in
+/// an actor's erase. A candidate whose decision names the erased actor among
+/// its subjects goes with its selection and result, as an entity erase takes
+/// it. A remaining result the actor reviewed keeps its outcome with no
+/// reviewer, and a selection or result whose decision receipt names the
+/// actor (its principal, a provider pin or an evidence version) keeps no
+/// receipt. The scope's opaque handle stays: the handle map forgets the
+/// actor in the same erase (FIX 10189), so it names no one.
+pub(crate) fn erase_topology_audit_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::ports::names_no_actor_in_txn(&vault.store, &*txn, actor)? {
+        return Ok(());
+    }
+    erase_topology_audit_sources_in_txn(&vault.store, txn, actor)?;
+    let named = |receipt: &Option<String>| {
+        receipt
+            .as_deref()
+            .is_some_and(|receipt| receipt.contains(&actor.to_hex()))
+    };
+    for (audit, mut selection) in SELECTIONS.scan(&vault.store, &*txn)? {
+        if named(&selection.decision_receipt) {
+            selection.decision_receipt = None;
+            SELECTIONS.put(&vault.store, txn, &audit, &selection)?;
+        }
+    }
+    for (audit, mut result) in RESULTS.scan(&vault.store, &*txn)? {
+        if result.reviewer == Some(*actor) || named(&result.decision_receipt) {
+            if result.reviewer == Some(*actor) {
+                result.reviewer = None;
+            }
+            if named(&result.decision_receipt) {
+                result.decision_receipt = None;
+            }
+            RESULTS.put(&vault.store, txn, &audit, &result)?;
         }
     }
     Ok(())

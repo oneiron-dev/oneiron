@@ -8,6 +8,13 @@
 //! reviewed event and its disposition, whether the recipe selected it and
 //! under which revision, the attempt that reviewed it, its outcome, its
 //! correction and its decision receipt's question.
+//!
+//! Each answer says its evidence class (L08-A 20:15): a recipe's answer is a
+//! declared model judgment, its scorer in the decision receipt and its
+//! prompt in the recipe revision; an outcome the reads settled is the
+//! engine's. Neither is an owner decision, a human acceptance or a verified
+//! success or failure, and nothing here feeds a feedback or attribution
+//! lane: a pass invents no positive, and an unknown stays unknown.
 
 use std::collections::BTreeMap;
 
@@ -87,6 +94,10 @@ fn selection_fields(selection: &TopologyAuditSelection, fields: &mut BTreeMap<St
     if let Some(question) = decision_question(selection.decision_receipt.as_deref()) {
         fields.insert("selection_decision".to_owned(), question);
     }
+    fields.insert(
+        "selection_evidence_class".to_owned(),
+        selection.evidence.as_str().to_owned(),
+    );
 }
 
 /// A result's fields: the attempt that reviewed, why, its decision's
@@ -100,6 +111,10 @@ fn result_fields(result: &TopologyAuditResult, fields: &mut BTreeMap<String, Str
     if let Some(question) = decision_question(result.decision_receipt.as_deref()) {
         fields.insert("review_decision".to_owned(), question);
     }
+    fields.insert(
+        "review_evidence_class".to_owned(),
+        result.evidence.as_str().to_owned(),
+    );
     match &result.correction {
         Some(TopologyAuditCorrection::Undone { event }) => {
             fields.insert("correction".to_owned(), "undone".to_owned());

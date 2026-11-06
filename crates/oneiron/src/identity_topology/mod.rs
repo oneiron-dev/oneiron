@@ -137,10 +137,13 @@ pub use op_vocabulary::{
 pub(crate) use post_hoc_review::CoachTopologyAuditRows;
 pub use post_hoc_review::{
     TopologyAuditAnswer, TopologyAuditCase, TopologyAuditCorrection, TopologyAuditDecider,
-    TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditRecipe, TopologyAuditReport,
-    TopologyAuditResult, TopologyAuditReviewer, TopologyAuditScope, TopologyAuditSelection,
+    TopologyAuditEvidence, TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditRecipe,
+    TopologyAuditReport, TopologyAuditResult, TopologyAuditReviewer, TopologyAuditScope,
+    TopologyAuditSelection,
 };
-pub(crate) use post_hoc_review::{erase_topology_audit_sources_in_txn, topology_audit_receipts};
+pub(crate) use post_hoc_review::{
+    erase_topology_audit_actor_in_txn, erase_topology_audit_sources_in_txn, topology_audit_receipts,
+};
 pub use proposal_resolution::{decode_identity_op_amendment, encode_identity_op_amendment};
 pub use reassignment_map::{
     ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget,
