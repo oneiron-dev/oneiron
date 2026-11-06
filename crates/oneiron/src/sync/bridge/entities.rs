@@ -79,6 +79,7 @@ pub(super) fn materialize_entities_with_changes(
     // Whether this batch wrote a POLICY_MANIFEST (FIX 5338).
     let mut floor_written = false;
     let mut claims_written = false;
+    let copy_writer = crate::embed::home_vectors::copy_scope::observe_writer(vault, window_key);
     let result = vault.with_write_txn_grouped(|wtxn| {
         // One delta has no row order. AUTHORITY_LOG rows go first, parents
         // before children, so a signer's enrollment lands before the rows it
@@ -297,6 +298,9 @@ pub(super) fn materialize_entities_with_changes(
         }
     }
 
+    if let Some(copy_writer) = copy_writer {
+        copy_writer.finish(&result);
+    }
     let committed = result.is_ok();
     if let Err(e) = result {
         // ONE-1147: the whole batch txn aborted — every applied op's write

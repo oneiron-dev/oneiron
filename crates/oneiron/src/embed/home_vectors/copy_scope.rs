@@ -28,6 +28,48 @@ struct CopyScope {
 pub(crate) struct HomeClaimCopyAttempt {
     pub(crate) entity_id: EntityId,
     pub(crate) result: Result<RetainedHomeClaimResponseState>,
+    /// The actual outer writer's returned result, not proof of rollback on Err.
+    pub(crate) writer_result: Option<std::result::Result<(), crate::error::ErrorKind>>,
+}
+
+/// Associates only the attempts made during this actual writer call.
+/// This holds references and an index, not a transaction or custody guard.
+pub(crate) struct CopyWriterObservation<'a> {
+    vault: &'a Vault,
+    window: &'a str,
+    first: usize,
+}
+
+pub(crate) fn observe_writer<'a>(
+    vault: &'a Vault,
+    window: &'a str,
+) -> Option<CopyWriterObservation<'a>> {
+    COPIES.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .filter(|scope| scope.vault == vault.store.env.path() && scope.window == window)
+            .map(|scope| CopyWriterObservation {
+                vault,
+                window,
+                first: scope.attempts.len(),
+            })
+    })
+}
+
+impl CopyWriterObservation<'_> {
+    /// Observe the native API after it returns, keeping its original result
+    /// and error ownership. A postcommit error does not mean nothing landed.
+    pub(crate) fn finish<T>(self, result: &Result<T>) {
+        COPIES.with(|slot| {
+            if let Some(scope) = slot.borrow_mut().as_mut().filter(|scope| {
+                scope.vault == self.vault.store.env.path() && scope.window == self.window
+            }) {
+                for attempt in &mut scope.attempts[self.first..] {
+                    attempt.writer_result = Some(result.as_ref().map(|_| ()).map_err(|e| e.kind()));
+                }
+            }
+        });
+    }
 }
 
 struct Restore(Option<CopyScope>);
@@ -71,14 +113,15 @@ pub(crate) fn with_copies<T>(
 /// source and native response obligations in the real writer.
 pub(crate) fn copies_for(
     vault: &Vault,
-    window: &WindowKey,
+    window: &str,
     id: &EntityId,
 ) -> Vec<Arc<PreparedHomeClaimResponse>> {
     COPIES.with(|slot| {
         let borrowed = slot.borrow();
-        let Some(scope) = borrowed.as_ref().filter(|scope| {
-            scope.vault == vault.store.env.path() && scope.window == window.as_str()
-        }) else {
+        let Some(scope) = borrowed
+            .as_ref()
+            .filter(|scope| scope.vault == vault.store.env.path() && scope.window == window)
+        else {
             return Vec::new();
         };
         scope
@@ -97,7 +140,7 @@ pub(crate) fn copies_for(
 pub(crate) fn retain_copies_in_txn(
     vault: &Vault,
     parent: &mut RwTxn<'_>,
-    window: &WindowKey,
+    window: &str,
     id: &EntityId,
 ) {
     for copy in copies_for(vault, window, id) {
@@ -112,6 +155,7 @@ pub(crate) fn retain_copies_in_txn(
                 scope.attempts.push(HomeClaimCopyAttempt {
                     entity_id: *id,
                     result,
+                    writer_result: None,
                 });
             }
         });
