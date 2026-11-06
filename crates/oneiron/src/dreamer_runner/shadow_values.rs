@@ -184,6 +184,8 @@ pub enum ShadowUnavailableReason {
     ArtifactDigestMismatch,
     SourceMissing,
     SourceWithheld,
+    /// An erase retired the captured request or start body.
+    SourceErased,
     SourceDigestMismatch,
     RoutePinMissing,
     ModelUnavailable,
@@ -218,6 +220,7 @@ impl ShadowUnavailableReason {
             Self::ArtifactDigestMismatch => "artifact_digest_mismatch",
             Self::SourceMissing => "source_missing",
             Self::SourceWithheld => "source_withheld",
+            Self::SourceErased => "source_erased",
             Self::SourceDigestMismatch => "source_digest_mismatch",
             Self::RoutePinMissing => "route_pin_missing",
             Self::ModelUnavailable => "model_unavailable",

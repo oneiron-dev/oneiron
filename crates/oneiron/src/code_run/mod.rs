@@ -56,12 +56,12 @@ mod tests;
 
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
-pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
+pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_value};
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
@@ -130,12 +130,15 @@ pub(crate) use self::result_read::{
     refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
 pub use self::storage::ReadWorldUnknown;
+pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::retire_replay_bodies_in_rows;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
     erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
-    response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
+    response_erased_error, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+    wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
@@ -165,15 +168,17 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
     code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
-    lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
+    settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
     session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
-    erase_contribution_forks_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    StoredRunContinuation, actor_gone_in_txn, capsule_request, capsule_start_body,
+    continuation_seed_body_in_txn, erase_capsule_actor_in_txn, erase_contribution_forks_in_txn,
+    publish_continuation_output_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
     seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
@@ -257,8 +262,8 @@ pub use self::types::{
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSandboxProposalDiskFloor, SelfSkillCall, SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall,
-    SelfSpeechResult, SelfTaskRefusalResult, SelfTaskRefuseCall, SelfWakePolicyWriteCall,
-    peer_result_wait,
+    SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind, SelfTaskRefusalResult,
+    SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,

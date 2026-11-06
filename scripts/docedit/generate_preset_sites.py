@@ -12,7 +12,7 @@ SOURCE = ROOT / "crates/oneiron-docedit/vendor/drawingml-presets/presetShapeDefi
 OUTPUT = ROOT / "crates/oneiron-docedit/src/live/points/preset_sites/data.rs"
 SOURCE_SHA256 = "2f7c868d857c1e3c4b5a6068759fe0e07d77ad58377a6618d1b02ba3507b6939"
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
-BUILT_IN = set("3cd4 3cd8 5cd8 7cd8 b cd2 cd4 cd8 h hc hd2 hd3 hd4 hd5 hd6 hd8 l ls r ss ssd16 ssd2 ssd32 ssd4 ssd6 ssd8 t vc w wd10 wd2 wd3 wd4 wd5 wd6 wd8".split())
+BUILT_IN = set("3cd4 3cd8 5cd8 7cd8 b cd2 cd4 cd8 h hc hd2 hd3 hd4 hd5 hd6 hd8 l ls r ss ssd16 ssd2 ssd32 ssd4 ssd6 ssd8 t vc w wd10 wd2 wd3 wd32 wd4 wd5 wd6 wd8".split())
 OPS = set("*/ +- +/ ?: abs at2 cat2 cos max min mod pin sat2 sin sqrt tan val".split())
 
 

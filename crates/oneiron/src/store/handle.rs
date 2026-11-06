@@ -358,6 +358,9 @@ pub struct StoreCore {
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// Committed consent answers wake this vault's connector-call settler.
+    /// Content-free and in memory only; the durable answer is re-read.
+    pub(crate) consent_answers: tokio::sync::Notify,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -435,6 +438,9 @@ pub struct StoreOwner {
 /// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
 /// `store.env`/`store.kind_registry` field access is preserved.
 pub struct Store {
+    /// This handle's live carrier leaves, asks and refusals. Kept outside the
+    /// shared core and wiped before the environment's owner drops.
+    pub(crate) custody_leaves: Mutex<crate::secret_custody::CustodyLeafSession>,
     // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
     // reference drops first; `owner` then closes the environment (its
     // `OwnedEnv` holds the last remaining `Env` clone) and finally releases

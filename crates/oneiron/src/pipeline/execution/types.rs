@@ -29,6 +29,8 @@ pub(super) struct RetrievalTxnOutput {
     /// See [`super::super::types::PipelineOutput::words_bound`].
     pub(super) words_bound: HashSet<EntityId>,
     pub(super) diagnostics: RetrievalDiagnostics,
+    /// See [`super::super::types::PipelineOutput::text_exhausted`].
+    pub(super) text_exhausted: bool,
     pub(super) scores: Vec<ScoredEntity>,
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
     /// first (`PipelineBuilder::fold_messages_into_turns`).

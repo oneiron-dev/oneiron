@@ -108,9 +108,9 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
 
 Frames stay bounded to 8 MiB. Snapshot and proposed files stream without a
 whole-file wire size cap; source text and step-result JSON retain their 1 MiB
-bounds. Guest whole-file reads still have a 1 MiB bound, and cumulative
-read/random output retains its 16 MiB step bound. Source and outbound request
-budgets remain 16384; file chunks and source file closes do not spend source
+bounds. Guest workspace files are read to EOF; each random-byte output retains a
+1 MiB bound, without a cumulative read/random-output byte ceiling. Source and outbound
+request budgets remain 16384; file chunks and source file closes do not spend source
 requests. Source bytes are copied through the socket. Host source trees are
 never attached as writable devices. Proposed changes do not touch them.
 Collection is consume-once and only possible after successful completion.

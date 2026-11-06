@@ -45,6 +45,8 @@ pub(super) fn settle(
     };
     let mut retry_at = now;
     let reason = match ran {
+        // The media step already committed its trap and signal park together.
+        Ok(BoundRun::Trapped) => return Ok(()),
         // CUA E4: a bound try whose program met its TASK's goal settles on
         // its receipt, with no model call.
         Ok(BoundRun::Library(receipt)) => {
@@ -243,7 +245,13 @@ fn complete(
     if settled_itself {
         let body =
             serde_json::json!({ "run_id": outcome.replay_record.run_id.to_hex() }).to_string();
-        let entry = OutputContextEntry::capture(vault, body.as_bytes(), now, String::new())?;
+        let entry = OutputContextEntry::capture_for_run(
+            vault,
+            outcome.replay_record.run_id,
+            body.as_bytes(),
+            now,
+            String::new(),
+        )?;
         AttemptQueue::new(vault).set_result(SetAttemptResult {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),

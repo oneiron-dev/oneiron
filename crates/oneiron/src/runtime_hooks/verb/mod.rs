@@ -34,8 +34,8 @@ use crate::work_line::TaskWorkTurn;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
-pub use ask::HOOK_RESULT_NOT_RETAINED;
 pub(crate) use ask::VERB_HOOK_INTENT;
+pub use ask::{HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
@@ -174,9 +174,17 @@ pub struct VerbHookPre {
     /// performed the consume carries its token so a storage failure later
     /// in the run can re-open it. `None` for a fresh call.
     resumed_ask: Option<ask::AskToken>,
+    read_capture: Option<crate::memory::read_capture::ReadCapture>,
 }
 
 impl VerbHookPre {
+    pub(crate) fn with_read_capture(
+        &mut self,
+        capture: Option<crate::memory::read_capture::ReadCapture>,
+    ) {
+        self.read_capture = capture;
+    }
+
     #[must_use]
     pub fn call(&self) -> &VerbCall {
         &self.call
@@ -209,6 +217,27 @@ impl Vault {
     /// Reading the saved calls.
     pub(crate) fn verb_hook_invocation_saved(&self, invocation: InvocationId) -> Result<bool> {
         Ok(self.verb_hook_state.drain_holds(invocation) || ask::saved(self, invocation)?)
+    }
+
+    /// Observes a retained call's hook wait without consuming its answer.
+    /// `Ready` is only a wake hint: the retried boundary still proves the
+    /// caller's authority and decides whether the call may run. No saved
+    /// arguments, answer evidence or hook-author handle leave this method.
+    /// Reading the native ask's status can settle its existing deadline.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call. An unavailable call must not be rerun as a
+    /// fresh invocation merely because its retained checkpoint still exists.
+    pub fn verb_hook_wait_status(
+        &self,
+        invocation: InvocationId,
+        verb: &str,
+        actor: EntityId,
+        class: HookActorClass,
+        ask: EntityId,
+    ) -> Result<VerbHookWaitStatus> {
+        ask::wait_status(self, invocation, verb, actor, class, ask)
     }
 
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in

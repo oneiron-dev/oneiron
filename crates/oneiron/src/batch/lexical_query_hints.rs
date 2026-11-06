@@ -69,18 +69,14 @@ pub(super) fn validate_public_raw_put(
 ) -> Result<()> {
     match entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
-            let body = crate::claim::validate_claim_body_and_decode(data, false)?;
+            // The actual write transaction validates the class descriptor;
+            // this builder-only preflight reads the envelope's source/predicate.
+            let body = crate::claim::decode_claim_body(data, false)?;
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
             }
-            // The family refusal reaches the raw CLAIM door too, and it has to
-            // be its own check rather than a consequence of the two above.
-            // `validate_claim_body_and_decode` shape-validates this family —
-            // subject kind and value vocabulary — without requiring a source,
-            // and the envelope rule only rejects a source that IS present. So
-            // a structurally valid SOURCE-LESS expression preference passed
-            // both and reached the write path, which is the forked chain
-            // F90, F97 and F108 closed on every other door.
+            // The source rule alone does not refuse a source-less expression
+            // preference. Its lifecycle still belongs to the typed door.
             if crate::write_envelope::claim_predicate::is_expression_preference_predicate(
                 &body.predicate,
             ) {
@@ -472,11 +468,12 @@ pub(super) struct DeletedLexicalQueryHints {
 }
 
 pub(super) fn delete_lexical_query_hint_claims_for_target(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
     keep: &HashSet<EntityId>,
 ) -> Result<DeletedLexicalQueryHints> {
+    let store = write.store;
     let mut result = DeletedLexicalQueryHints::default();
     let mut pending_targets = VecDeque::from([*target]);
     let mut visited_targets = HashSet::new();
@@ -493,7 +490,7 @@ pub(super) fn delete_lexical_query_hint_claims_for_target(
                 continue;
             }
             let (existed, had_vector, had_graph_mutation, neighbors) =
-                deindex_entity_without_lexical_query_hint_cascade(store, wtxn, &hint_id)?;
+                deindex_entity_without_lexical_query_hint_cascade(write, wtxn, &hint_id)?;
             if existed {
                 pending_targets.push_back(hint_id);
                 result.deleted.push((hint_id, neighbors));

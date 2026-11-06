@@ -2957,6 +2957,14 @@ export class Oneiron {
       /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
       tree: (input: Facade.ProductivityTreeRequest): Facade.ScopedReadResult<Facade.ProductivityTree | null> => this.#call(() => this.#client.vaultProductivityTree(input) as Facade.ScopedReadResult<Facade.ProductivityTree | null>),
     },
+    ingest: {
+      ag_ui: {
+        /** The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent. */
+        import: (input: Facade.AgUiFileImport): Facade.AgUiFileReceipt => this.#call(() => this.#client.vaultIngestAgUiImport(input) as Facade.AgUiFileReceipt),
+        /** Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission. */
+        read: (input: Facade.AgUiFileReadInput): Facade.AgUiFileRead => this.#call(() => this.#client.vaultIngestAgUiRead(input) as Facade.AgUiFileRead),
+      },
+    },
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
@@ -3223,6 +3231,50 @@ export class Oneiron {
         reenrol: (input: Facade.CustodyMemberReenrolRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersReenrol(input) as Facade.CustodySetRevision),
       },
     },
+    mail: {
+      pack: {
+        /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+        install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
+      },
+      sources: {
+        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+        connect: (input: Facade.MailSourceConnectRequest): Facade.MailSourceConnectReceipt => this.#call(() => this.#client.vaultMailSourcesConnect(input) as Facade.MailSourceConnectReceipt),
+        /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
+        list: (input: Facade.EmptyRequest = {}): Facade.MailSourceView[] => this.#call(() => this.#client.vaultMailSourcesList(input) as Facade.MailSourceView[]),
+        settings: {
+          /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */
+          set: (input: Facade.MailSourceSettingsRequest): Facade.MailSourceView => this.#call(() => this.#client.vaultMailSourcesSettingsSet(input) as Facade.MailSourceView),
+        },
+        members: {
+          /** Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on. */
+          set: (input: Facade.MailSourceMembersRequest): Facade.MailSourceView => this.#call(() => this.#client.vaultMailSourcesMembersSet(input) as Facade.MailSourceView),
+        },
+        /** Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins. */
+        audience_events: (input: Facade.MailSourceRef): Facade.SourceAudienceEventView[] => this.#call(() => this.#client.vaultMailSourcesAudienceEvents(input) as Facade.SourceAudienceEventView[]),
+        /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
+        sync_status: (input: Facade.MailSourceRef): Facade.MailSyncStatusView => this.#call(() => this.#client.vaultMailSourcesSyncStatus(input) as Facade.MailSyncStatusView),
+      },
+      threads: {
+        /** Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox. */
+        share: (input: Facade.MailThreadShareRequest): Facade.MailThreadShareReceipt => this.#call(() => this.#client.vaultMailThreadsShare(input) as Facade.MailThreadShareReceipt),
+        /** Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving. */
+        unshare: (input: Facade.MailThreadShareRequest): Facade.MailThreadShareReceipt => this.#call(() => this.#client.vaultMailThreadsUnshare(input) as Facade.MailThreadShareReceipt),
+        /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
+        read: (input: Facade.MailThreadRequest): Facade.MailThreadView => this.#call(() => this.#client.vaultMailThreadsRead(input) as Facade.MailThreadView),
+      },
+      compliance: {
+        /** Whether org compliance search across mailboxes is on; off by default. */
+        setting: (input: Facade.EmptyRequest = {}): Facade.MailComplianceSettingView => this.#call(() => this.#client.vaultMailComplianceSetting(input) as Facade.MailComplianceSettingView),
+        /** Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log. */
+        set: (input: Facade.MailComplianceSetRequest): Facade.MailComplianceSettingView => this.#call(() => this.#client.vaultMailComplianceSet(input) as Facade.MailComplianceSettingView),
+        /** The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it. */
+        log: (input: Facade.EmptyRequest = {}): Facade.MailComplianceEventView[] => this.#call(() => this.#client.vaultMailComplianceLog(input) as Facade.MailComplianceEventView[]),
+        /** Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers. */
+        search: (input: Facade.MailComplianceSearchRequest): Facade.MailComplianceSearchReply => this.#call(() => this.#client.vaultMailComplianceSearch(input) as Facade.MailComplianceSearchReply),
+      },
+      /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
+      inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }
@@ -3254,6 +3306,20 @@ export class Oneiron {
       subscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusSubscribe(input) as Facade.BoardSubscriptionReply),
       /** Unsubscribes the attached run's board STREAM connection from the named scopes. */
       unsubscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusUnsubscribe(input) as Facade.BoardSubscriptionReply),
+    },
+    board: {
+      /** The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies. */
+      layout: (input: Facade.EmptyRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardLayout(input) as Facade.BoardLayoutState),
+      /** Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn. */
+      fold: (input: Facade.BoardFoldRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardFold(input) as Facade.BoardLayoutState),
+      /** Unfolds one section of the bound actor's context board; applies at the next turn. */
+      unfold: (input: Facade.BoardSectionRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardUnfold(input) as Facade.BoardLayoutState),
+      /** Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn. */
+      size: (input: Facade.BoardSizeRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardSize(input) as Facade.BoardLayoutState),
+      /** Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn. */
+      filter: (input: Facade.BoardFilterRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardFilter(input) as Facade.BoardLayoutState),
+      /** Replaces the whole layout the bound actor's next turn applies to its context board. */
+      replace: (input: Facade.BoardReplaceRequest): Facade.BoardLayoutState => this.#call(() => this.#client.selfBoardReplace(input) as Facade.BoardLayoutState),
     },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */

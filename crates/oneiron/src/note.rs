@@ -66,6 +66,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
+    recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 pub use tombstone_review::NoteTombstoneProposal;
@@ -107,6 +108,27 @@ pub(crate) fn note_body_readable(
         },
         ContextDefault::RelationshipScoped | ContextDefault::VaultReadable => true,
     })
+}
+
+/// Whether a NOTE reads to every reader the vault's other gates admit: its
+/// kind's context, or its override, is vault-readable. An owner-only,
+/// explicit-only or relationship-scoped NOTE carries a read restriction of
+/// its own (its author, importer, consent or relationship scope), which a
+/// record that only copies its scope position cannot hold (FIX 2783).
+pub(crate) fn note_vault_readable_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    // A migrated NOTE keeps its markdown on its document plane: judge the
+    // logical body, as a scoped NOTE read does.
+    let resolved = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
+    let Ok(body) = decode_note_body_using(&resolved, NoteKind::wire) else {
+        return Ok(false);
+    };
+    let context = overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?;
+    Ok(matches!(context, ContextDefault::VaultReadable))
 }
 
 /// Whether `body` came in through an import for `reader`: its author is a

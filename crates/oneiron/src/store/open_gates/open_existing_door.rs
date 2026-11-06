@@ -240,6 +240,7 @@ impl Store {
             proactivity_suspended: Mutex::new(None),
             policy_manifest_updates: tokio::sync::watch::channel(0).0,
             decision_answers: tokio::sync::watch::channel(0).0,
+            consent_answers: Default::default(),
             notification_updates: tokio::sync::watch::channel(0).0,
             credential_revocations: tokio::sync::watch::channel(0).0,
             container_output: Default::default(),
@@ -265,6 +266,7 @@ impl Store {
             opened_with_writer_lease: false,
         };
         Ok(Self {
+            custody_leaves: Default::default(),
             entities: OverlayDb::canonical(core.raw.entities),
             edges_out: OverlayDb::canonical(core.raw.edges_out),
             edges_in: OverlayDb::canonical(core.raw.edges_in),

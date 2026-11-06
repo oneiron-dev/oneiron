@@ -141,6 +141,9 @@ pub(crate) enum ApprovalTarget {
     ChannelIdentityLifecycle(ChannelIdentityLifecycleFacts),
     /// One classified send of a run's browser (FIX 10422).
     Browser(BrowserSendTarget),
+    /// An ordinary communication, calendar or HTTP-bundle dispatch whose
+    /// original target pin is unchanged and whose press is kept for retry.
+    ConnectorSlate(Box<ApprovalTarget>),
 }
 
 /// The facts one browser send pins (FIX 10422): the actor's class, the run,
@@ -392,7 +395,16 @@ impl ApprovalTarget {
                 send_ref,
             },
         };
-        Some(target)
+        if facts.connector != FAILURE_SIGNALS_CONNECTOR
+            && matches!(
+                target,
+                Self::Communication { .. } | Self::Calendar { .. } | Self::HttpBundle { .. }
+            )
+        {
+            Some(Self::ConnectorSlate(Box::new(target)))
+        } else {
+            Some(target)
+        }
     }
 
     /// Whether a send on `connector` has its admitted press recomposed from
@@ -411,7 +423,8 @@ impl ApprovalTarget {
     /// for each of its actors, a campaign leg, and a scoped-MCP call. The
     /// retry reuses the kept press only while its own pinned digest is the
     /// kept one. A lifecycle intent applies in the Gate's writer and keeps
-    /// no Pending row to retry.
+    /// no Pending row to retry. Ordinary communication, calendar and HTTP-bundle
+    /// targets keep their press for the same frozen send as well (FIX 990).
     pub(crate) fn keeps_spent_press(&self) -> bool {
         matches!(
             self,
@@ -419,17 +432,20 @@ impl ApprovalTarget {
                 | Self::LinearMirror(_)
                 | Self::Campaign(_)
                 | Self::ScopedMcp(_)
+                | Self::ConnectorSlate(_)
         )
     }
 
     /// The family a dispatch's kept press is filed under beside its ledger
     /// row, typed by its target, never by its connector: a campaign leg
-    /// rides any channel. `None` for every other target.
+    /// rides any channel. Ordinary communication, calendar and HTTP-bundle
+    /// targets use ConnectorSlate; every other target keeps its existing path.
     pub(crate) fn pinned_family(&self) -> Option<PinnedApprovalFamily> {
         match self {
             Self::LinearDispatch { .. } => Some(PinnedApprovalFamily::LinearDispatch),
             Self::Campaign(_) => Some(PinnedApprovalFamily::CampaignLeg),
             Self::ScopedMcp(_) => Some(PinnedApprovalFamily::ScopedMcp),
+            Self::ConnectorSlate(_) => Some(PinnedApprovalFamily::ConnectorSlate),
             _ => None,
         }
     }
@@ -552,6 +568,7 @@ impl ApprovalTarget {
                 field(&mut hasher, "browser");
                 facts.hash(&mut hasher);
             }
+            Self::ConnectorSlate(target) => return target.digest(),
         }
         hasher.finalize()
     }

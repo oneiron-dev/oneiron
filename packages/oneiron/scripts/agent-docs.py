@@ -58,12 +58,14 @@ def artifacts():
     # (FIX 5325, 6547, 8242): each read from its own source, so the table
     # names only codes that exist, never a copy.
     server_sources = [
+        ("crates/oneiron-server/src/error/mod.rs", r'Self::DeadlineExceeded => "([A-Z_]+)",'),
         ("crates/oneiron/src/workspace_roster/rooms/audience_doors.rs", r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";'),
         ("crates/oneiron-vault-contract/src/lib/ctl.rs", r'Self::WritesFrozen => "([a-z_]+)",'),
         ("crates/oneiron-server/src/slide_render.rs", r'pub\(crate\) const RENDER_\w+: &str = "([a-z_]+)";'),
     ]
     server_codes = [code for path, pattern in server_sources for code in re.findall(pattern, (ROOT / path).read_text())]
     server_remedies = {
+        "DEADLINE_EXCEEDED": "The caller's signals_deadline_ms expired. HTTP answers 408 and publishes no partial signal page or advanced cursor. Retry from the previous successful cursor with a larger budget, or omit the explicit deadline.",
         "AGENT_THREAD_WALK_IN_FORBIDDEN": "An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020).",
         "writes_frozen": "This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020).",
         "render_deadline": "The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020).",

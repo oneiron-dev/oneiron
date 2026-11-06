@@ -158,6 +158,8 @@ pub struct SyncServer {
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
+    /// Each client address's unanswered pairing redemptions (FIX 12477).
+    pub(crate) pairing_backoff: crate::api::PairingRedeemBackoff,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -378,7 +380,8 @@ impl SyncServer {
                 runs,
                 Arc::clone(self.wire_telemetry.limit_questions()),
             )
-            .with_reader_seats(self.reader_runner.seats()),
+            .with_reader_seats(self.reader_runner.seats())
+            .with_git_door_base(self.config.git_door_base.clone()),
         );
         // Reader children run on the same provider and pool.
         self.reader_runner.bind_host(Arc::clone(&host));

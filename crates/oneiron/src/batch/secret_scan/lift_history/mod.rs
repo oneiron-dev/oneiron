@@ -539,7 +539,7 @@ impl Done {
 /// where the next page starts (`None` once the family is done).
 struct Page {
     read: u64,
-    known_reads: Vec<EntityId>,
+    known_reads: Vec<accounting::Source>,
     hits: Vec<Vec<u8>>,
     next: Option<Vec<u8>>,
 }
@@ -638,7 +638,7 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
                 &vault.store,
                 &mut txn,
                 current.run_id,
-                Some(*source),
+                source,
                 LiftCounts {
                     read: 1,
                     ..LiftCounts::new(family)
@@ -651,7 +651,7 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
                 &vault.store,
                 &mut txn,
                 current.run_id,
-                None,
+                &accounting::Source::Unmapped,
                 LiftCounts {
                     read: unmapped,
                     ..LiftCounts::new(family)
@@ -810,11 +810,12 @@ fn settle(
                         current
                             .retry
                             .retain(|(at, held)| !(*at == family && held == key));
+                        let source = accounting::source_in_txn(vault, txn, family, key)?;
                         accounting::add(
                             &vault.store,
                             txn,
                             current.run_id,
-                            accounting::source(family, key),
+                            &source,
                             LiftCounts {
                                 failed: 1,
                                 ..LiftCounts::new(family)
@@ -868,11 +869,12 @@ fn settle(
                 .retain(|(at, held)| !(*at == family && held == key));
         }
         if let Some((masked, filed)) = filed {
+            let source = accounting::source_in_txn(vault, txn, family, key)?;
             accounting::add(
                 &vault.store,
                 txn,
                 current.run_id,
-                accounting::source(family, key),
+                &source,
                 LiftCounts {
                     masked: u64::from(masked),
                     proposals: u64::from(filed),

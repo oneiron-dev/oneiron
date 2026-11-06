@@ -4,15 +4,16 @@ pub use credential_filter::{
     redacted_memory_body, redacted_memory_payload, write_door_refuses_body,
     write_door_refuses_claim,
 };
-pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
-pub(crate) mod agent_knowledge_format;
+pub(crate) use credential_filter::{
+    export_released_record, served_messagepack_json, served_stored_messagepack_json,
+};
+pub(crate) use oneiron_store::batch::export::agent_knowledge_format;
 pub(crate) mod agent_knowledge_selection;
 mod archive_index;
 mod archive_project;
 mod archive_read;
 mod archive_side_tables;
 mod archive_spool;
-mod archive_types;
 pub(crate) use archive_project::project_stored_archive;
 pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
 pub use archive_side_tables::{
@@ -22,6 +23,7 @@ pub use archive_side_tables::{
 pub(crate) use archive_side_tables::{LentSideTable, SideRowBytes, archive_side_rows_in_txn};
 pub(crate) use archive_spool::{FileSpool, RecordSpool};
 pub use archive_types::*;
+use oneiron_store::batch::export::archive_types;
 mod export_authority;
 mod export_diary;
 pub use export_diary::EXPORT_DIARY_READ_REASON;
@@ -68,8 +70,8 @@ pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;
-mod home_room_project;
 pub(crate) use home_room_project::project_room_dependency;
+use oneiron_store::batch::export::home_room_project;
 mod provenance_import;
 mod result_reserve;
 mod secret_supplement;
@@ -95,4 +97,4 @@ pub(crate) use receipt_sources::{receipt_sources_for_body, task_receipt_refs};
 #[cfg(test)]
 mod receipt_source_tests;
 
-pub(crate) mod secret_supplement_record;
+pub(crate) use oneiron_store::batch::export::secret_supplement_record;

@@ -46,8 +46,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CacheDigest, CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind,
-    WorkerMode, WorkerStatus,
+    CacheDigest, CallSchedule, InferenceCallReceipt, SchedulingCapability, VaultRef, WorkClass,
+    WorkerKind, WorkerMode, WorkerStatus,
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
@@ -58,6 +58,8 @@ use oneiron_driver::{
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
 use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
+#[cfg(unix)]
+pub(super) use launch_manifest::NativeLaunch;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 use serde_json::Value as JsonValue;
@@ -123,9 +125,19 @@ pub(super) struct ExternalWorker {
 pub(super) struct NativeRoute {
     pub(super) worker: InferenceWorker,
     slot: Arc<LaunchSlot>,
+    wire_model: String,
 }
 
 impl NativeRoute {
+    #[cfg(unix)]
+    pub(super) fn native_launch(&self) -> Option<NativeLaunch> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()?
+            .native_launch(&self.wire_model)
+    }
+
     /// The current launch's native socket and the digest of its launch
     /// manifest; `None` when it has no socket.
     pub(super) fn launch(&self) -> Option<(PathBuf, String)> {
@@ -386,6 +398,32 @@ fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
     let device = host
         .lock()
         .get(worker_id)?
+        .row
+        .launch
+        .as_ref()?
+        .device
+        .clone()?;
+    host.ledgers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&device)
+        .cloned()
+}
+
+/// The device ledger of the actual managed worker `worker` names
+/// (FIX10370): the hosted row with its id AND its instance, resolved
+/// under the workers lock before any registry lock; `None` where the
+/// row is unknown, replaced, or launches on no device. Never the
+/// latest row for the id, which a replaced config may already own.
+fn session_device_ledger(worker: &InferenceWorker) -> Option<Arc<DeviceLedger>> {
+    let host = HOST.get()?;
+    let device = host
+        .lock()
+        .values()
+        .find(|hosted| {
+            hosted.worker.spec().worker_id == worker.spec().worker_id
+                && hosted.worker.same_instance(worker)
+        })?
         .row
         .launch
         .as_ref()?
@@ -693,6 +731,55 @@ pub(super) fn refresh_devices(statuses: &mut Vec<super::status::DeviceStatus>) {
         .collect();
 }
 
+/// The mounted vault's session ownership facts, aggregated per device and
+/// worker (FIX10370). Reads the cached ledgers' snapshots and filters to
+/// `vault` before aggregating; takes no registry lock and names no
+/// handle, binding, epoch or conversation.
+pub(crate) fn session_allocations_for_vault(
+    vault: &VaultRef,
+) -> Vec<super::status::SessionAllocationStatus> {
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let ledgers = host
+        .ledgers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut rows: BTreeMap<(String, String), super::status::SessionAllocationStatus> =
+        BTreeMap::new();
+    for ledger in ledgers {
+        let snapshot = ledger.snapshot();
+        for allocation in snapshot
+            .session_allocations
+            .iter()
+            .filter(|allocation| allocation.vault == *vault)
+        {
+            let row = rows
+                .entry((snapshot.device.clone(), allocation.worker_id.clone()))
+                .or_insert_with(|| super::status::SessionAllocationStatus {
+                    device: snapshot.device.clone(),
+                    worker_id: allocation.worker_id.clone(),
+                    sessions: 0,
+                    reported_sessions: 0,
+                    reported_unique_bytes: Some(0),
+                });
+            row.sessions += 1;
+            if allocation.report.is_some() {
+                row.reported_sessions += 1;
+            }
+            let measured = allocation.report.and_then(|report| report.unique_bytes);
+            row.reported_unique_bytes = match (row.reported_unique_bytes, measured) {
+                (Some(total), Some(bytes)) => Some(total.saturating_add(bytes)),
+                _ => None,
+            };
+        }
+    }
+    rows.into_values().collect()
+}
+
 /// The managed worker a rung on `provider` calling `wire_model` is bound
 /// to, when this process launches it. `None` leaves the rung as it is today.
 pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<InferenceWorker> {
@@ -713,9 +800,10 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
 
 /// The external chat workers on `provider_name` bound at construction: for
 /// each provided row that still matches its hosted row and provider exactly,
-/// the actual worker and its row's manifest pin, keyed by wire model.
-/// Endpoint-split and media rows are left out. The map holds bound workers
-/// and their pins only, never secrets.
+/// the actual worker and its row's manifest pin, keyed by wire model. A row
+/// whose endpoint names a different target than its provider's base URL
+/// stays out, as do media rows. The map holds bound workers and their pins
+/// only, never secrets.
 pub(super) fn external_workers(
     provider_name: &str,
     provider: &ProviderConfig,
@@ -729,7 +817,10 @@ pub(super) fn external_workers(
     for row in rows {
         if row.binding.provider != provider_name
             || row.mode != WorkerMode::External
-            || row.endpoint.is_some()
+            || row
+                .endpoint
+                .as_deref()
+                .is_some_and(|endpoint| endpoint != provider.base_url.as_str())
             || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
         {
             continue;
@@ -796,6 +887,7 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
         NativeRoute {
             worker: hosted.worker.clone(),
             slot: Arc::clone(hosted.native_slot()?),
+            wire_model: hosted.row.binding.model.clone(),
         }
     };
     route.launch().is_some().then_some(route)

@@ -113,15 +113,17 @@ impl Reader {
 /// The board as the turn placed it (I1 = C turn order).
 pub(super) struct BoardView {
     /// The text and sections of its state part, right before the newest
-    /// user message, or its omission's note, with no section.
-    pub(super) state: (String, Vec<BoardSectionSource>),
+    /// user message, or its omission's note, with no section; `None` when
+    /// nothing stands at the board's place.
+    pub(super) state: Option<(String, Vec<BoardSectionSource>)>,
     /// The message right after the newest user message, when the turn has
     /// one.
     pub(super) tail: Option<TurnTail>,
 }
 
-/// The User message that closes a turn whose board rides: the board's query
-/// part, then the turn's opener.
+/// The User message that closes a turn: the board's query part when the
+/// board rides, then the turn's opener; the opener alone otherwise (FIX
+/// 14676).
 pub(super) struct TurnTail {
     pub(super) text: String,
     /// The query part's sections; none when the tail is the opener alone.
@@ -136,7 +138,8 @@ pub(super) struct Assembled<'a> {
     pub(super) self_chat: Option<&'a SelfChat>,
     /// The messages before the board went in.
     pub(super) messages: &'a [LlmMessage],
-    /// The board, when it rides, or its omission's note.
+    /// The board, when it rides, or its omission's note, and the opener
+    /// that closes the call.
     pub(super) board: Option<&'a BoardView>,
     /// The answering agent, and the craft notes it was shown, when it was.
     pub(super) agent: EntityId,
@@ -232,11 +235,7 @@ fn admitted_with_sources(
         context.fence = TrustFence::Guest;
         segments.push(context);
     }
-    if let Some(BoardView {
-        state: (block, sections),
-        ..
-    }) = assembled.board
-    {
+    if let Some((block, sections)) = assembled.board.and_then(|board| board.state.as_ref()) {
         let at = messages
             .iter()
             .rposition(|message| message.role == LlmMessageRole::User)?;
@@ -366,8 +365,8 @@ impl PathDependencies {
             .flat_map(|board| {
                 board
                     .state
-                    .1
                     .iter()
+                    .flat_map(|(_, sections)| sections)
                     .chain(board.tail.iter().flat_map(|tail| &tail.sections))
             })
             .flat_map(|section| &section.dependencies)

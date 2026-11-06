@@ -126,7 +126,7 @@ pub(super) fn erase_slot_in_txn(
     slot: &EntityId,
 ) -> Result<()> {
     vault.fence_credential_in_txn(wtxn, slot);
-    crate::batch::deindex_entity(&vault.store, wtxn, slot)?;
+    crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, slot)?;
     crate::secret_custody::erase_secret_handle_label_in_txn(&vault.store, wtxn, slot)?;
     crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(vault, wtxn, slot)?;
     let name = slot_name(slot);

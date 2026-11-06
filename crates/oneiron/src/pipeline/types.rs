@@ -247,6 +247,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) embedding_matches: HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// A dense list answered: the text index's or a declared space's.
     pub(crate) vector_completed: bool,
+    /// The primary text scan exhausted its admitted matches without a fold or
+    /// result-window cut. Only a text-only run can use this to finish paging.
+    pub(crate) text_exhausted: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     /// The ids whose words a reranker scored at their pin in `revisions`.
     /// Those words are what the pack serves, never a later projection.

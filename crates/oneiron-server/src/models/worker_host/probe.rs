@@ -25,7 +25,6 @@
 //! A pinned value the answer contradicts is `Failed`; a pin or a piece of
 //! evidence that is missing is `Unverified`; no answer is `Unreachable`.
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::PoisonError;
 
@@ -133,8 +132,8 @@ impl HouseProbe {
         http: &ProviderHttp,
         launch: Option<&LaunchRecord>,
     ) -> Result<(JsonValue, Option<JsonValue>), WorkerReadiness> {
-        match launch.and_then(|launch| launch.native_socket.as_deref()) {
-            Some(socket) => native_answer(socket, &qualification_request(&self.wire_model))
+        match launch.filter(|launch| launch.native_socket.is_some()) {
+            Some(launch) => native_answer(launch, &qualification_request(&self.wire_model))
                 .await
                 .map(|(hello, body)| (body, Some(hello)))
                 .map_err(|failure| failed(failure, None)),
@@ -306,18 +305,25 @@ fn epoch_only(epoch: CacheEpoch) -> WorkerDescriptor {
 /// shape.
 #[cfg(unix)]
 async fn native_answer(
-    socket: &Path,
+    launch: &LaunchRecord,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    super::super::native_exl3::qualify(socket, request).await
+    let wire_model = request
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .ok_or(WorkerFailure::InvalidReply)?;
+    let launch = launch
+        .native_launch(wire_model)
+        .ok_or(WorkerFailure::Unreachable)?;
+    super::super::native_exl3::qualify(&launch, request).await
 }
 
 #[cfg(not(unix))]
 async fn native_answer(
-    socket: &Path,
+    launch: &LaunchRecord,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    let _ = (socket, request);
+    let _ = (launch, request);
     Err(WorkerFailure::Unreachable)
 }
 

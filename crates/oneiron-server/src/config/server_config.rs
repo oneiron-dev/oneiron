@@ -77,6 +77,11 @@ pub struct SyncServerConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// The host's own Git door base (`https://<host>/git`, or loopback
+    /// `http`), as the operator configures it (FIX 7181, ARCH-0068 RC4). When
+    /// set, a run's checkout bind names this base and never the caller's
+    /// endpoint; unset, the caller's explicit endpoint stands as before.
+    pub git_door_base: Option<String>,
     /// Every public URL a kit fetch may be signed for, as for a home behind
     /// several tunnel aliases (FIX 4404). Empty: `oauth_resource_indicator`.
     pub kit_bundle_public_urls: Vec<String>,
@@ -210,6 +215,7 @@ impl Default for SyncServerConfig {
             oauth_issuer: None,
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
+            git_door_base: None,
             kit_bundle_public_urls: Vec::new(),
             cloud_registration_pins: None,
             native_mail: None,
@@ -321,6 +327,9 @@ pub struct ServeConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// `--git-door-base` / `ONEIRON_GIT_DOOR_BASE` / `git_door_base`: the
+    /// host-resolved Git door a run's checkout bind names (FIX 7181).
+    pub git_door_base: Option<String>,
     pub kit_bundle_public_urls: Vec<String>,
     /// `--cloud-registration-pins`, argv only, plain or managed: the public
     /// pins the native cloud registration client trusts (G7). Unset, that
@@ -501,6 +510,7 @@ impl Default for ServeConfig {
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
             oauth_resource_indicator: server.oauth_resource_indicator,
+            git_door_base: server.git_door_base,
             kit_bundle_public_urls: server.kit_bundle_public_urls,
             cloud_registration_pins: server.cloud_registration_pins,
             allow_unauthenticated: server.allow_unauthenticated,
@@ -588,6 +598,7 @@ impl ServeConfig {
             oauth_issuer: self.oauth_issuer.clone(),
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
+            git_door_base: self.git_door_base.clone(),
             kit_bundle_public_urls: self.kit_bundle_public_urls.clone(),
             cloud_registration_pins: self.cloud_registration_pins.clone(),
             native_mail: self.native_mail.clone(),

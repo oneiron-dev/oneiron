@@ -52,6 +52,10 @@ use loro::{CommitOptions, LoroDoc};
 ///
 /// A file-plane ASSET packs as the carrier of its manifest, its body
 /// reference beside it (FIX 5489, `asset_body::references::mirror_ref`).
+///
+/// A row bound to a source audience, or whose words came from one, stays on
+/// this vault: its binding does not travel (FIX 12559,
+/// `source_audience::withheld_from_replication_in`).
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
@@ -60,6 +64,7 @@ pub(super) fn window_packing_excludes_entity(
     let rtxn = vault.store.env.read_txn()?;
     if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
         || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
+        || crate::source_audience::withheld_from_replication_in(vault, &rtxn, id)?
     {
         return Ok(true);
     }

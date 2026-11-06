@@ -393,7 +393,7 @@ pub(super) async fn handle_window_sync(
             // 7107). Pads that did not install leave nothing persisted,
             // imported or relayed: the device is told, and sends the same
             // bytes again as the carrier (KEEP TODAY).
-            let receipt = super::window_pads::admit(server, &key, envelope);
+            let receipt = super::window_pads::admit(server, &key, envelope, &doc);
             if receipt.readiness == oneiron::sync::transport::WindowPadReadiness::NotReady {
                 direct_tx
                     .send(super::window_pads::receipt_frame(

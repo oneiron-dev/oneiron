@@ -10,6 +10,11 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
+/// verb-hook pause from a person's pause and the other engine holds. The
+/// hook invocation is retained on the pause; only that hold can auto-resume.
+/// No old-format reader or migration is provided.
+///
 /// v25 (FIX 7831, ARCH-0058): WORKFLOW moved from byte 18 to byte 43,
 /// inside its declared AgentsAndSurfacing family (40-49); short-id prefix
 /// `wf` is unchanged. ABI 24 vaults fail closed at the ABI gate — there is
@@ -129,7 +134,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 27;
+pub const STORAGE_ABI_VERSION: u16 = 28;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 
@@ -214,7 +219,14 @@ pub(super) static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) static VAULT_ROOT_OPEN_LOCK: Mutex<()> = Mutex::new(());
 
-pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, Option<VaultRootIdentity>>>> =
+/// One open store's place in [`OPEN_STORE_PATHS`]: the root identity it
+/// holds, and the vault handles its leader holds (FIX 12316).
+pub(super) struct OpenStorePath {
+    pub(super) identity: Option<VaultRootIdentity>,
+    pub(super) holds: crate::store::LeaderHolds,
+}
+
+pub(super) static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, OpenStorePath>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(in crate::store) const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] =

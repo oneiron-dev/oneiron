@@ -52,9 +52,14 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<BlobArtifactLifecycleCleanup> {
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
+    crate::edit_settle::purge_artifact_retention_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let hashes = artifact_hashes(store, wtxn, id)?;
     let keys = VERSIONS.scan_keys(store, wtxn, id.as_bytes())?;
@@ -68,7 +73,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     }
     for content_hash in hashes {
         ASSET_REF.delete(store, wtxn, &(content_hash, *id))?;
-        release_unheld_bytes(store, wtxn, &content_hash, id, &mut cleanup)?;
+        release_unheld_bytes(store, wtxn, &content_hash, id, &mut cleanup, deindex)?;
     }
     cleanup.neighbors.sort_unstable();
     cleanup.neighbors.dedup();
@@ -85,6 +90,10 @@ fn release_unheld_bytes(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     artifact: &EntityId,
     cleanup: &mut BlobArtifactLifecycleCleanup,
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let still_referenced = ASSET_REF
         .iter_from(store, wtxn, content_hash)?
@@ -105,8 +114,7 @@ fn release_unheld_bytes(
         None => fence_released_asset(store, wtxn, &asset_id),
         Some(Some(ENTITY_TYPE_ASSET)) => {
             fence_released_asset(store, wtxn, &asset_id)?;
-            let (_existed, had_vector, had_graph_mutation, neighbors) =
-                crate::batch::deindex_entity(store, wtxn, &asset_id)?;
+            let (_existed, had_vector, had_graph_mutation, neighbors) = deindex(wtxn, &asset_id)?;
             ppr::invalidate_ppr_for_delete(store, wtxn, &asset_id, &neighbors)?;
             cleanup.had_vector |= had_vector;
             cleanup.had_graph_mutation |= had_graph_mutation;
@@ -125,9 +133,13 @@ pub(super) fn release_bytes_of_deleted_artifact(
     wtxn: &mut RwTxn<'_>,
     artifact: &EntityId,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
-    release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
+    release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup, deindex)?;
     if cleanup.had_graph_mutation {
         crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
@@ -147,11 +159,15 @@ pub(crate) fn release_asset_reference_in_txn(
     wtxn: &mut RwTxn<'_>,
     reference: &EntityId,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     if !ASSET_REF.delete(store, wtxn, &(*content_hash, *reference))? {
         return Ok(());
     }
-    release_bytes_of_deleted_artifact(store, wtxn, reference, content_hash)
+    release_bytes_of_deleted_artifact(store, wtxn, reference, content_hash, deindex)
 }
 
 /// Holds the bytes under `content_hash` again for the ASSET that just landed
@@ -189,12 +205,13 @@ pub(crate) fn hold_asset_reference_in_txn(
 ///
 /// Storage errors.
 pub(crate) fn release_response_version_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     artifact: &EntityId,
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<()> {
+    let store = write.store;
     let Some(record) = VERSIONS.get(store, wtxn, &(*artifact, version))? else {
         return Ok(());
     };
@@ -226,12 +243,19 @@ pub(crate) fn release_response_version_in_txn(
             }
         }
     }
-    tear_in_txn(store, wtxn, &record.claim_id, &mut cleanup)?;
+    tear_in_txn(write, wtxn, &record.claim_id, &mut cleanup)?;
     crate::artifact_hosting::retire_released_version_in_txn(store, wtxn, artifact, version)?;
     if !chain_holds(store, wtxn, artifact, content_hash)? {
         ASSET_REF.delete(store, wtxn, &(*content_hash, *artifact))?;
         if forget_released_pair_in_txn(store, wtxn, artifact, content_hash)? {
-            release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
+            release_unheld_bytes(
+                store,
+                wtxn,
+                content_hash,
+                artifact,
+                &mut cleanup,
+                &|txn, id| crate::batch::deindex_entity(write, txn, id),
+            )?;
         }
     }
     let emptied = VERSIONS
@@ -242,7 +266,7 @@ pub(crate) fn release_response_version_in_txn(
         && !claimed_hash_rows_exist(store, wtxn, artifact)?
         && !retained_claim_names(store, wtxn, artifact, None)?;
     if emptied {
-        tear_in_txn(store, wtxn, artifact, &mut cleanup)?;
+        tear_in_txn(write, wtxn, artifact, &mut cleanup)?;
     }
     if cleanup.had_graph_mutation {
         crate::store::graph_version::increment_graph_version(store, wtxn)?;
@@ -295,14 +319,15 @@ fn chain_holds(
 /// rode, takes the copies peers hold. Neither id is minted again: a
 /// response artifact's is fresh, and HIGHWATER keeps a version's number.
 fn tear_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     cleanup: &mut BlobArtifactLifecycleCleanup,
 ) -> Result<()> {
+    let store = write.store;
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, &*wtxn, id)?;
     let (_existed, had_vector, had_graph_mutation, neighbors) =
-        crate::batch::deindex_entity_with_machine_history(store, wtxn, id)?;
+        crate::batch::deindex_entity_with_machine_history(write, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     cleanup.had_vector |= had_vector;
     cleanup.had_graph_mutation |= had_graph_mutation;

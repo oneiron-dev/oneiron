@@ -663,7 +663,9 @@ impl<'v> ScopedRead<'v> {
             && let Some(admitted) =
                 self.claim_by_class_in(rtxn, policy, id, raw, &header, filter, authority, grant)?
         {
-            return Ok(admitted);
+            return Ok(
+                admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
+            );
         }
         if !self.row_stands_in(rtxn, id, raw, &header, use_asked)? {
             return Ok(false);
@@ -685,13 +687,13 @@ impl<'v> ScopedRead<'v> {
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             return self.note_readable_under_in(rtxn, id, body, policy, grant);
         }
-        if header.entity_type == ENTITY_TYPE_CLAIM {
+        let admitted = if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(
                 rtxn, policy, id, raw, filter, authority, grant,
-            )
+            )?
         } else if self.actor_key.vault_owner_ref().is_some() {
             // The owner's ceiling is all of the owner's vault, stamped or not.
-            Ok(true)
+            true
         } else {
             let scope = match self.session_view {
                 Some(view) => {
@@ -707,7 +709,7 @@ impl<'v> ScopedRead<'v> {
             let Some(scope) = scope else {
                 return Ok(false);
             };
-            Ok(match grant {
+            match grant {
                 None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
                 Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
                     policy,
@@ -715,8 +717,30 @@ impl<'v> ScopedRead<'v> {
                     &scope,
                     Some(grant),
                 ),
-            })
-        }
+            }
+        };
+        Ok(admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?)
+    }
+
+    /// A row already admitted by every ordinary gate still carries the
+    /// recipient owner's retained-copy choice. This is per row, outside the
+    /// CLAIM access-class cache; an actual owner lane keeps its own read.
+    fn retained_copy_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        entity_type: u8,
+    ) -> Result<bool> {
+        Ok(self.actor_key.reads_as_vault_owner()
+            || crate::disclosure::retained_copy_admits(
+                &self.vault.store,
+                rtxn,
+                id,
+                entity_type,
+                None,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?)
     }
 
     /// Whether the stored row `raw` of `id`, with `header`, still stands as
