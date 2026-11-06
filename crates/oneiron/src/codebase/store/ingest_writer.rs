@@ -383,19 +383,22 @@ impl Vault {
                     .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
             )?;
             // Each source names the file document its symbols are spans on,
-            // as this writer reads it (FIX 7809).
+            // as this writer reads it (FIX 7809), under the repository
+            // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
+            let identity = crate::codebase::resolve_repo_identity_in_txn(self, read, repo_ref)?;
             let symbol_sources = symbol_texts
                 .iter()
                 .map(|(path, text)| {
                     Ok(CodeSymbolSource::new(path, text).with_document(
-                        code_symbol_document_in_txn(&self.store, read, repo_ref, path)?,
+                        code_symbol_document_in_txn(&self.store, read, &identity, path)?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
+                identity,
                 Some(commit_hash.to_owned()),
                 symbol_sources,
             )?;
