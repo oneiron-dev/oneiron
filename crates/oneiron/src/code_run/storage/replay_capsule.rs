@@ -130,6 +130,27 @@ fn kept_in_txn(
         .filter(|capsule| capsule.content.actor().is_some()))
 }
 
+/// What a fork writer kept, or why it kept nothing (FIX 6256). The writer
+/// that meets the fence names the reason, and the runner keeps it as it is.
+type ForkWrite<T> = std::result::Result<T, ContributionReplayUnavailable>;
+
+/// The capsule at `key` and its actor, as a fork writer reads it in `txn`
+/// (FIX 6256). A capsule row that is gone is `Unreadable`. A capsule whose
+/// actor's erase took its content is `Erased`: its custody is retired.
+fn fork_capsule_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, u64, u64),
+) -> Result<ForkWrite<(StepReplayCapsule, EntityId)>> {
+    let Some(capsule) = CAPSULES.get(&vault.store, txn, key)? else {
+        return Ok(Err(ContributionReplayUnavailable::Unreadable));
+    };
+    let Some(actor) = capsule.content.actor() else {
+        return Ok(Err(ContributionReplayUnavailable::Erased));
+    };
+    Ok(Ok((capsule, actor)))
+}
+
 /// The whole body `body` names at `path`, as run `owner` holds it, read in
 /// `rtxn`: `None` when the owner no longer holds that occurrence (an erase
 /// released it, though another holder may keep the same bytes), when the
@@ -357,31 +378,36 @@ pub(crate) fn fork_rows_in_txn(
 
 /// Scores the exact fork still kept at its live pair, or reuses its first
 /// committed score. An erase that moved it, or ran while the scorer
-/// answered, can never recreate its old row.
+/// answered, can never recreate its old row. A fork no longer kept as it
+/// was is `Unreadable`; a subject gone now is the fence's `Unfinished`
+/// (FIX 6256).
 pub(crate) fn put_fork(
     vault: &Vault,
     pair: &[u8; 32],
     receipt: &ContributionForkReceipt,
-) -> Result<Option<ContributionForkReceipt>> {
+) -> Result<ForkWrite<ContributionForkReceipt>> {
     let key = (*pair, fork_row_name(receipt.treatment).to_owned());
     vault.with_write_txn_grouped(|txn| {
         let Some(mut row) = FORKS.get(&vault.store, txn, &key)? else {
-            return Ok(None);
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         let ForkValue::Fork(kept) = &row.value else {
-            return Ok(None);
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         let mut expected = receipt.clone();
         expected.score = kept.score;
-        if *kept != expected || !row.provenance.live_in_txn(vault, txn) {
-            return Ok(None);
+        if *kept != expected {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        }
+        if let Err(reason) = row.provenance.fence_in_txn(vault, txn) {
+            return Ok(Err(reason));
         }
         if kept.score.is_some() {
-            return Ok(Some(kept.clone()));
+            return Ok(Ok(kept.clone()));
         }
         row.value = ForkValue::Fork(receipt.clone());
         FORKS.put(vault, txn, &key, &row)?;
-        Ok(Some(receipt.clone()))
+        Ok(Ok(receipt.clone()))
     })
 }
 

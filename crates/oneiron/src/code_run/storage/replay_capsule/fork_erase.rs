@@ -10,9 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::super::contribution::{FORK_RECEIPT_PREFIX, OwnerPair, OwnerPairRoute};
+use super::super::super::contribution::{
+    ContributionReplayUnavailable, FORK_RECEIPT_PREFIX, OwnerPair, OwnerPairRoute,
+};
 use super::super::super::replay_capsule::StepReplayCapsule;
-use super::{FORKS, ForkRow, ForkValue, actor_gone_in_txn};
+use super::{FORKS, ForkRow, ForkValue, ForkWrite, actor_gone_in_txn};
 use crate::entity_id::{ENTITY_ID_LEN, bytes_to_hex_lower};
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
 use crate::{EntityId, Result, Vault};
@@ -84,6 +86,18 @@ impl ForkProvenance {
         self.subjects
             .iter()
             .all(|id| !actor_gone_in_txn(vault, txn, id))
+    }
+
+    /// The fence a fork writer reads in `txn` (FIX 6256): `Unfinished` while
+    /// a subject is gone. A soft delete, or a deletion marker that does not
+    /// read, may lift, so the stop is never lasting. An erase keeps the
+    /// fence, and the next pass's provenance reads it before any work.
+    pub(super) fn fence_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> ForkWrite<()> {
+        if self.live_in_txn(vault, txn) {
+            Ok(())
+        } else {
+            Err(ContributionReplayUnavailable::Unfinished)
+        }
     }
 }
 

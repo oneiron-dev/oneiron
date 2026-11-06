@@ -8,12 +8,12 @@
 //! ([`super::fork_erase`]).
 
 use super::super::super::contribution::{
-    ContributionForkReceipt, ForkJudge, ForkScore, ForkTreatment, OwnerJudgment, OwnerPair,
-    OwnerPairRoute,
+    ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, ForkJudge, ForkScore,
+    ForkTreatment, OwnerJudgment, OwnerPair, OwnerPairRoute,
 };
 use super::{
-    FORKS, ForkProvenance, ForkRow, ForkValue, body_drifted, fork_row_name, held_body_in_txn,
-    kept_in_txn,
+    FORKS, ForkProvenance, ForkRow, ForkValue, ForkWrite, body_drifted, fork_capsule_in_txn,
+    fork_row_name, held_body_in_txn,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -23,10 +23,11 @@ pub(super) const OWNER_PAIR_ROW: &str = "owner_pair";
 /// A fork row's key: the pair's key and the row's name.
 type ForkKey = ([u8; 32], String);
 
-/// Keeps `owner_pair` for the live pair `pair`, once: `None`, with nothing
-/// written, once its capsule is erased, gone or another request, or a
-/// subject of the pair (its actor and the asked owner among them) is gone.
-/// A pending pair kept first is returned as it is.
+/// Keeps `owner_pair` for the live pair `pair`, once. Nothing is written
+/// once its capsule is gone or another request (`Unreadable`), its actor's
+/// erase took its content (`Erased`), or a subject of the pair, its actor
+/// and the asked owner among them, is gone now: the fence's `Unfinished`,
+/// never lasting (FIX 6256). A pending pair kept first is returned as it is.
 ///
 /// # Errors
 ///
@@ -36,7 +37,7 @@ pub(crate) fn put_owner_pair(
     pair: &[u8; 32],
     provenance: &ForkProvenance,
     owner_pair: &OwnerPair,
-) -> Result<Option<OwnerPair>> {
+) -> Result<ForkWrite<OwnerPair>> {
     let key = (*pair, OWNER_PAIR_ROW.to_owned());
     let capsule_key = (
         owner_pair.attempt,
@@ -46,27 +47,27 @@ pub(crate) fn put_owner_pair(
     vault.with_write_txn_grouped(|txn| {
         if let Some(row) = FORKS.get(&vault.store, txn, &key)? {
             return Ok(match row.value {
-                ForkValue::OwnerPair(kept) => Some(*kept),
-                ForkValue::Fork(_) | ForkValue::Unavailable(_) => None,
+                ForkValue::OwnerPair(kept) => Ok(*kept),
+                ForkValue::Fork(_) | ForkValue::Unavailable(_) => Err(Unavailable::Unreadable),
             });
         }
-        let Some(capsule) = kept_in_txn(vault, txn, &capsule_key)? else {
-            return Ok(None);
+        let (capsule, actor) = match fork_capsule_in_txn(vault, txn, &capsule_key)? {
+            Ok(held) => held,
+            Err(reason) => return Ok(Err(reason)),
         };
-        let Some(actor) = capsule.content.actor() else {
-            return Ok(None);
-        };
+        if capsule.request_hash != owner_pair.capsule_request {
+            return Ok(Err(Unavailable::Unreadable));
+        }
         let provenance = provenance.with_actor(actor).with_actor(owner_pair.owner);
-        if capsule.request_hash != owner_pair.capsule_request || !provenance.live_in_txn(vault, txn)
-        {
-            return Ok(None);
+        if let Err(reason) = provenance.fence_in_txn(vault, txn) {
+            return Ok(Err(reason));
         }
         let row = ForkRow {
             provenance,
             value: ForkValue::OwnerPair(Box::new(owner_pair.clone())),
         };
         FORKS.put(vault, txn, &key, &row)?;
-        Ok(Some(owner_pair.clone()))
+        Ok(Ok(owner_pair.clone()))
     })
 }
 
@@ -170,11 +171,13 @@ pub(crate) fn close_owner_pair_in_txn(
 
 /// Scores both forks of the pending pair at `key` by `judgment`, the fork
 /// with the target `with_passed` and the one without it `without_passed`,
-/// in the pair's one evidence mode, and keeps the pair judged: the judged
-/// pair, or `None`, with nothing written, unless every subject of the pair
-/// is live, its capsule still holds its content at its request, and each
-/// fork is still the unscored fork it showed, its answer still the body the
-/// run holds.
+/// in the pair's one evidence mode, and keeps the pair judged. Nothing is
+/// written unless every subject of the pair is live, its capsule still holds
+/// its content at its request, and each fork is still the unscored fork it
+/// showed, its answer still the body the run holds. The refusal names its
+/// kind as the fork writers do (FIX 6256): a subject gone now is the
+/// fence's `Unfinished`, content or an answer an erase retired is `Erased`,
+/// and anything else no longer kept as shown is `Unreadable`.
 ///
 /// # Errors
 ///
@@ -186,19 +189,22 @@ pub(crate) fn judge_owner_pair_in_txn(
     with_passed: bool,
     without_passed: bool,
     judgment: OwnerJudgment,
-) -> Result<Option<OwnerPair>> {
+) -> Result<ForkWrite<OwnerPair>> {
     let Some(mut row) = FORKS.get(&vault.store, txn, key)? else {
-        return Ok(None);
+        return Ok(Err(Unavailable::Unreadable));
     };
     let ForkValue::OwnerPair(kept) = &row.value else {
-        return Ok(None);
+        return Ok(Err(Unavailable::Unreadable));
     };
     let mut pair = OwnerPair::clone(kept);
     let capsule_key = (pair.attempt, u64::from(pair.lease_generation), pair.step);
-    let capsule_held = kept_in_txn(vault, txn, &capsule_key)?
-        .is_some_and(|capsule| capsule.request_hash == pair.capsule_request);
-    if !row.provenance.live_in_txn(vault, txn) || !capsule_held {
-        return Ok(None);
+    match fork_capsule_in_txn(vault, txn, &capsule_key)? {
+        Ok((capsule, _)) if capsule.request_hash == pair.capsule_request => {}
+        Ok(_) => return Ok(Err(Unavailable::Unreadable)),
+        Err(reason) => return Ok(Err(reason)),
+    }
+    if let Err(reason) = row.provenance.fence_in_txn(vault, txn) {
+        return Ok(Err(reason));
     }
     let mut scored = Vec::with_capacity(2);
     for (treatment, shown, passed) in [
@@ -211,19 +217,23 @@ pub(crate) fn judge_owner_pair_in_txn(
     ] {
         let fork_key = (key.0, fork_row_name(treatment).to_owned());
         let Some(mut fork_row) = FORKS.get(&vault.store, txn, &fork_key)? else {
-            return Ok(None);
+            return Ok(Err(Unavailable::Unreadable));
         };
         let ForkValue::Fork(fork) = &mut fork_row.value else {
-            return Ok(None);
+            return Ok(Err(Unavailable::Unreadable));
         };
         if fork.treatment != treatment
             || fork.receipt != shown.receipt
             || fork.response != shown.response
-            || fork.response_erased
             || fork.score.is_some()
-            || !answer_held_in_txn(vault, txn, pair.run, fork)?
         {
-            return Ok(None);
+            return Ok(Err(Unavailable::Unreadable));
+        }
+        if fork.response_erased {
+            return Ok(Err(Unavailable::Erased));
+        }
+        if !answer_held_in_txn(vault, txn, pair.run, fork)? {
+            return Ok(Err(Unavailable::Unreadable));
         }
         fork.score = Some(ForkScore {
             mode: pair.mode,
@@ -238,7 +248,7 @@ pub(crate) fn judge_owner_pair_in_txn(
     pair.route = OwnerPairRoute::Judged(judgment);
     row.value = ForkValue::OwnerPair(Box::new(pair.clone()));
     FORKS.put(vault, txn, key, &row)?;
-    Ok(Some(pair))
+    Ok(Ok(pair))
 }
 
 /// Whether run `run` still holds `fork`'s answer, read in `txn`: an

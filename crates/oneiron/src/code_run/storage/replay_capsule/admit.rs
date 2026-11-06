@@ -21,7 +21,9 @@ use std::ops::Range;
 
 use heed::RwTxn;
 
-use super::super::super::contribution::{ContributionForkReceipt, ForkTreatment};
+use super::super::super::contribution::{
+    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
+};
 use super::super::super::replay_capsule::{
     CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
     StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
@@ -29,7 +31,10 @@ use super::super::super::replay_capsule::{
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
-use super::{CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, capsule_key, fork_row_name};
+use super::{
+    CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, ForkWrite, capsule_key,
+    fork_capsule_in_txn, fork_row_name,
+};
 use crate::batch::secret_scan::{
     SidePart, TextReplacements, admit_side_parts, admit_tracked_side_parts,
 };
@@ -586,10 +591,13 @@ fn text_part<'r>(request: &'r LlmRequest, slot: &ExposureSlot) -> Option<&'r str
 }
 
 /// Stores a fork's answer as a body the original run owns, admitted as the
-/// capsule's own bodies are, in a writer that reads the capsule again first:
-/// `None`, with nothing written, once the capsule is erased or gone, or its
-/// actor is (FIX 6144). Its receipt and erase provenance land in that SAME
-/// writer, so an erase always discovers a published answer (FIX 9713).
+/// capsule's own bodies are, in a writer that reads the capsule again first.
+/// Nothing is written once the capsule is gone (`Unreadable`), its actor's
+/// erase took its content (`Erased`), or a subject is gone now (FIX 6144).
+/// That last stop is the fence's `Unfinished`, so a restore before a later
+/// writer never makes it lasting (FIX 6256). Its receipt and erase
+/// provenance land in that SAME writer, so an erase always discovers a
+/// published answer (FIX 9713).
 pub(crate) fn store_fork_response(
     vault: &Vault,
     capsule: &StepReplayCapsule,
@@ -599,26 +607,24 @@ pub(crate) fn store_fork_response(
     path: &str,
     response: &LlmResponse,
     receipt: impl Fn(OutputRef) -> ContributionForkReceipt,
-) -> Result<Option<ContributionForkReceipt>> {
+) -> Result<ForkWrite<ContributionForkReceipt>> {
     let sent = serde_json::to_vec(response)
         .map_err(|error| Error::InvalidConfig(format!("fork response: {error}")))?;
     let key = capsule_key(capsule);
     let reserved = spilling(vault.code_result_inline_bytes(), &[sent.len()]);
     with_spill(vault, reserved, |wtxn, spill| {
-        let Some(held) = CAPSULES.get(&vault.store, wtxn, &key)? else {
-            return Ok(None);
-        };
-        let Some(actor) = held.content.actor() else {
-            return Ok(None);
+        let (held, actor) = match fork_capsule_in_txn(vault, wtxn, &key)? {
+            Ok(held) => held,
+            Err(reason) => return Ok(Err(reason)),
         };
         let provenance = provenance.with_actor(actor);
-        if !provenance.live_in_txn(vault, wtxn) {
-            return Ok(None);
+        if let Err(reason) = provenance.fence_in_txn(vault, wtxn) {
+            return Ok(Err(reason));
         }
         let fork_key = (*pair, fork_row_name(treatment).to_owned());
         if let Some(row) = FORKS.get(&vault.store, wtxn, &fork_key)? {
             let ForkValue::Fork(kept) = row.value else {
-                return Ok(None);
+                return Ok(Err(ContributionReplayUnavailable::Unreadable));
             };
             // A concurrent generator already published this side. Keep its
             // actual body discoverable instead of replacing its owner row.
@@ -628,7 +634,11 @@ pub(crate) fn store_fork_response(
             expected.score = kept.score;
             expected.execution.clone_from(&kept.execution);
             expected.generated_at = kept.generated_at;
-            return Ok((expected == kept).then_some(kept));
+            return Ok(if expected == kept {
+                Ok(kept)
+            } else {
+                Err(ContributionReplayUnavailable::Unreadable)
+            });
         }
         let key_bytes = CAPSULES.key_bytes(&key);
         let mut parts = [SidePart::Body(sent.clone())];
@@ -651,7 +661,7 @@ pub(crate) fn store_fork_response(
                 value: ForkValue::Fork(receipt.clone()),
             },
         )?;
-        Ok(Some(receipt))
+        Ok(Ok(receipt))
     })
 }
 
