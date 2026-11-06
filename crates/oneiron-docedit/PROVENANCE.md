@@ -450,13 +450,15 @@ copy without assigning new identities or choosing a different style template.
 
 Fresh paragraph-template copies of `pPr` and `endParaRPr` use that same original
 source check and XML-namespace identity omission. A whole retained paragraph
-already owns both property sources. In a changed field-free paragraph, the
-successful styled path also records its own original property spans, but only
-after the head, middle and tail all succeed. The styled path keeps those original
-property bytes unchanged. Added or fallback lines borrowing that paragraph's
-properties then keep the same style without copying identities still carried
-by the original paragraph. Failed styled attempts and field-containing paragraphs
-do not gain these property-source entries. With no retained original source,
+already owns both property sources. In a changed paragraph, the successful
+styled path also records its own original property spans, but only after the
+head, middle and tail all succeed. This includes field-containing paragraphs:
+their own paragraph properties are still copied as original bytes even though
+their runs and fields use the existing static conversion. The styled path keeps
+those original property bytes unchanged. Added or fallback lines borrowing that
+paragraph's properties then keep the same style without copying identities still
+carried by the original paragraph. Failed styled attempts record no such sources.
+With no retained original source,
 the first successful fresh property copy keeps its identity; later copies of that
 same property source omit only the XML-namespace `id` attributes.
 
@@ -510,3 +512,17 @@ relationship references, errors and field-removal receipts keep their prior path
 No identities are minted and no style source is replaced or dropped. This is
 source-only work in the existing 17480/18510/20096 pack; it is not a global
 identity, compiler, runtime or Office fidelity certificate.
+
+
+## Original table-cell paragraph properties beside converted fields
+
+A successful styled paragraph owns its exact original `pPr` and `endParaRPr`
+subtrees even when it contains fields. Their raw property bytes are emitted
+unchanged; only the successful head/middle/tail completion publishes those spans.
+A later added or fallback line borrowing the same paragraph template then omits
+only XML-namespace identities already carried by that original property source.
+Field-containing paragraphs gain no original run, field, empty-child, opaque or
+gap ownership from this change. Their static conversion, field-removal receipts,
+selection and error paths remain unchanged. Failed styled attempts still publish
+nothing. This is the excluded field cohort of the same source-only identity work,
+not full table-cell, compiler, runtime or Office fidelity proof.
