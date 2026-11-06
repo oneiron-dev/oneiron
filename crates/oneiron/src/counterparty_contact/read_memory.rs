@@ -15,7 +15,9 @@ use crate::counterparty_contact::{
 };
 use crate::entity_id::EntityId;
 pub(super) use crate::write_envelope::claim_body::ClaimValueHead as ContactClaim;
-use crate::write_envelope::claim_body::{ClaimBodyReadError, ClaimScopeReadMemory, ClaimValueRead};
+use crate::write_envelope::claim_body::{
+    ClaimBodyReadError, ClaimScopeReadMemory, ClaimStringRead, ClaimValueRead,
+};
 
 /// Copy-only contact state; string and note backing remains with its reader.
 #[derive(Clone, Copy)]
@@ -69,7 +71,7 @@ impl CounterpartyContactState {
 /// An immutable contact read whose original string and note backing keeps its
 /// canonical value guards. Borrowed access does not materialize a typed notes vector.
 pub struct CounterpartyContactRead {
-    counterparty: ClaimValueRead,
+    counterparty: ClaimStringRead,
     notes: ClaimValueRead,
     pub(super) state: CounterpartyContactState,
 }
@@ -123,7 +125,9 @@ impl CounterpartyContactRead {
         Self {
             counterparty: heads[index(KEY_COUNTERPARTY)]
                 .take()
-                .expect("validated contact head"),
+                .expect("validated contact head")
+                .try_into_string()
+                .unwrap_or_else(|_| unreachable!("validated contact counterparty")),
             notes: heads[index(KEY_NOTES)]
                 .take()
                 .expect("validated contact head"),
@@ -132,7 +136,7 @@ impl CounterpartyContactRead {
     }
 
     pub(crate) fn into_counterparty_value(self) -> ClaimValueRead {
-        self.counterparty
+        self.counterparty.into_value()
     }
 
     pub(super) fn into_unbound_record(self) -> CounterpartyContactRecord {
@@ -140,33 +144,38 @@ impl CounterpartyContactRead {
             !self.counterparty.is_memory_bound() && !self.notes.is_memory_bound(),
             "only an unbound contact read can materialize an unguarded record"
         );
-        self.fields().to_owned()
+        CounterpartyContactRecord {
+            identity_ref: self.state.identity_ref,
+            counterparty: self
+                .counterparty
+                .try_into_unbound_string()
+                .unwrap_or_else(|_| unreachable!("unbound contact counterparty")),
+            first_touch: self.state.first_touch,
+            status: self.state.status,
+            created_at: self.state.created_at,
+            updated_at: self.state.updated_at,
+            revoked_at: self.state.revoked_at,
+            opt_out: self.state.opt_out,
+            promo_consent: self.state.promo_consent,
+            notes: self
+                .notes
+                .as_array()
+                .expect("validated contact notes")
+                .iter()
+                .map(|note| note.as_str().expect("validated contact note").to_owned())
+                .collect(),
+        }
     }
 
     pub(super) fn fold_fields(&mut self) -> (&str, &mut CounterpartyContactState) {
-        (
-            self.counterparty
-                .as_str()
-                .expect("validated contact counterparty"),
-            &mut self.state,
-        )
-    }
-
-    fn fields(&self) -> super::codec::CounterpartyContactFields<'_> {
-        super::codec::CounterpartyContactFields {
-            state: self.state,
-            counterparty: self.counterparty(),
-            notes: self.notes.as_array().expect("validated contact notes"),
-        }
+        (&self.counterparty, &mut self.state)
     }
 
     pub fn identity_ref(&self) -> EntityId {
         self.state.identity_ref
     }
     pub fn counterparty(&self) -> &str {
-        self.counterparty
-            .as_str()
-            .expect("validated contact counterparty")
+        &self.counterparty
     }
     pub fn first_touch(&self) -> CounterpartyFirstTouch {
         self.state.first_touch
