@@ -4,7 +4,9 @@
 //! outputs that hold reply content. A run's reply bodies are the outputs its
 //! record lists and, once that record shows the run can append no more,
 //! each body its own descriptors hold at a code-run output path that holds
-//! reply content, such as a raw put's (FIX 7365).
+//! reply content, such as a raw put's (FIX 7365). A record that is stored
+//! but does not decode can append no more: its reply bodies are those the
+//! run its owner row names holds at such a path.
 //!
 //! The actor scrub only releases: each record keeps what its run did and
 //! loses what it was answered ([`super::replay_bodies::erase_replies`]), and
@@ -81,7 +83,9 @@ pub(super) enum ResponseScrub {
 /// is put back in its erased form, past the side-row wall, the reply bodies
 /// it names are released, and its owner row says Erased; then the wait
 /// replies those runs were delivered take their erased form (FIX 5718 part
-/// 2). A record that does not decode keeps its row as it is, and erasing an
+/// 2). A record that is stored but does not decode keeps its row as it is,
+/// and the reply bodies of the run its owner row names are released
+/// ([`unreadable_record_reply_occurrences_in_txn`], FIX 7365). Erasing an
 /// erased one again changes nothing. Nothing retires here: the provenance
 /// door's retirement ran before it.
 ///
@@ -126,7 +130,9 @@ pub(crate) fn soft_delete_actor_responses_in_txn(
 /// are in is put back in its erased form and its reply bodies are
 /// released; its owner row says Deleted, with the bodies released, or
 /// Erased; then the wait replies its runs were delivered take their erased
-/// form, each membership as its owner row.
+/// form, each membership as its owner row. A record that is stored but does
+/// not decode releases the reply bodies of its owner row's run `run`, which
+/// need not be the replay key, and its row stays as it is.
 fn scrub_actor_responses_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -143,6 +149,11 @@ fn scrub_actor_responses_in_txn(
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             released = release_reply_outputs_in_txn(store, wtxn, &record)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
+        } else if REPLAY_RECORDS.contains(store, wtxn, &record_id)? {
+            // Stored but not decoded: its reply bodies are its owner row's
+            // run's (FIX 7365).
+            let held = unreadable_record_reply_occurrences_in_txn(store, wtxn, run)?;
+            released = release_occurrences_in_txn(store, wtxn, held)?;
         }
         match scrub {
             ResponseScrub::Delete => {
@@ -249,8 +260,10 @@ pub(crate) fn response_erased_in_txn(
 /// holder keeps owes its retirement to that holder's release. A record a
 /// soft delete of `actor` left Deleted retires the reply bodies that delete
 /// released too, by the digests its owner row kept, and then says Erased:
-/// its actor link and those bodies go (FIX 6591). An id whose entity is no
-/// actor scans nothing.
+/// its actor link and those bodies go (FIX 6591). A record that is stored
+/// but does not decode retires the reply bodies of its owner row's run
+/// ([`unreadable_record_reply_occurrences_in_txn`], FIX 7365). An id whose
+/// entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -276,6 +289,12 @@ pub(crate) fn retire_actor_responses_in_txn(
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(run_reply_occurrences_in_txn(store, wtxn, &record)?);
+        } else if REPLAY_RECORDS.contains(store, wtxn, &record_id)? {
+            // Stored but not decoded: its reply bodies are its owner row's
+            // run's (FIX 7365).
+            held.extend(unreadable_record_reply_occurrences_in_txn(
+                store, wtxn, run,
+            )?);
         }
         if let Some(released) =
             response_owner_in_txn(store, wtxn, &record_id)?.and_then(ResponseOwner::into_released)
@@ -395,11 +414,45 @@ fn run_reply_occurrences_in_txn(
     if !run_output_closed(record) {
         return Ok(held);
     }
-    let run = record.run_id;
     let mut listed = BTreeSet::new();
     for output in &record.outputs {
-        listed.insert(ResultOccurrence::owned(run, &output.path)?.id());
+        listed.insert(ResultOccurrence::owned(record.run_id, &output.path)?.id());
     }
+    held.extend(unlisted_reply_occurrences_in_txn(
+        store,
+        txn,
+        record.run_id,
+        listed,
+    )?);
+    Ok(held)
+}
+
+/// The reply bodies of a record that is stored but does not decode (FIX
+/// 7365): each body [`unlisted_reply_occurrences_in_txn`] finds on run
+/// `run`, none listed, since its outputs cannot be read. `run` is the run
+/// its owner row names, which need not be the replay key. Such a record can
+/// append no more, since each writer that appends to it decodes it first and
+/// fails, so it counts as closed for [`run_output_closed`]'s rule.
+fn unreadable_record_reply_occurrences_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> Result<Vec<Occurrence>> {
+    unlisted_reply_occurrences_in_txn(store, txn, run, BTreeSet::new())
+}
+
+/// Each reply body run `run` holds outside the occurrences `listed`, once by
+/// its occurrence (FIX 7365): a descriptor the run owns whose code-run
+/// output path holds reply content and derives its occurrence, its handle
+/// its held digest's. One with no such path, one under
+/// [`CAPSULE_BODY_PATH_PREFIX`] and one that holds no bytes name none.
+fn unlisted_reply_occurrences_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+    mut listed: BTreeSet<EntityId>,
+) -> Result<Vec<Occurrence>> {
+    let mut held = Vec::new();
     for body in owned_bodies_in_txn(store, txn, &run)? {
         let (Some(origin), Some(bytes)) = (&body.code_run_output, body.state.held()) else {
             continue;
@@ -437,16 +490,26 @@ fn run_output_closed(record: &CodeRunReplayRecord) -> bool {
 }
 
 /// Releases each of `record`'s reply occurrences
-/// ([`run_reply_occurrences_in_txn`]), with each occurrence's own taint and
-/// secret marks, never another holder's or a retained receipt's: what each
-/// held, read before, for a soft delete to keep (FIX 6591).
+/// ([`run_reply_occurrences_in_txn`], [`release_occurrences_in_txn`]),
+/// never another holder's or a retained receipt's.
 fn release_reply_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
 ) -> Result<Vec<ReleasedReplyBody>> {
+    let held = run_reply_occurrences_in_txn(store, wtxn, record)?;
+    release_occurrences_in_txn(store, wtxn, held)
+}
+
+/// Releases each occurrence of `held`, with its own taint and secret marks:
+/// what each held, read before, for a soft delete to keep (FIX 6591).
+fn release_occurrences_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    held: Vec<Occurrence>,
+) -> Result<Vec<ReleasedReplyBody>> {
     let mut released = Vec::new();
-    for (owner, path, handle) in run_reply_occurrences_in_txn(store, wtxn, record)? {
+    for (owner, path, handle) in held {
         released.extend(release_held_occurrence_in_txn(
             store, wtxn, owner, path, handle,
         )?);

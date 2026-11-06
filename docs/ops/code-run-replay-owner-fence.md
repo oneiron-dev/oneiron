@@ -24,6 +24,8 @@ A later record write, a wait delivery and a connector caller's settle check the 
 
 The erase also releases reply bodies that a run holds but its record does not list, such as a raw put's (FIX 7365). It does this only when the record shows that the run can append no more: the record lists a terminal marker, and the run did not resume from the latest one. A live run can publish a body, such as a team-start receipt, before it records the bridge call. The erase skips those bodies. The run's next record write meets the fence, and the run's release takes the rest.
 
+A record that is stored but does not decode can no longer append, because each writer that appends to it decodes it first and fails. The erase counts it as closed. It releases the reply bodies of the run that the record's owner row names, which need not be the replay key: each descriptor of that run at a code-run output path that holds reply content, outside `replay/`. A soft delete keeps their digests on the owner row as Deleted evidence, and the hard erase retires them.
+
 A descriptor stored before the code-run origin field existed has no origin. A re-publication compares descriptors without that field, so the stored row stays as it is. The erase's sweep of unlisted bodies does not find such a descriptor; the run's release takes it.
 
 ## Session storage
