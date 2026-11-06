@@ -258,7 +258,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/conversation_members.rs` | src | s | 5 crate-vis | — | Room membership routes |
 | `src/api/conversation_transcript.rs` | src | s | 4 crate-vis | — | `GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in… |
 | `src/api/conversation_transcript/tests.rs` | test | s | — | — | A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local… |
-| `src/api/conversations.rs` | src | m | 11 crate-vis | — | The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns |
+| `src/api/conversations.rs` | src | m | 12 crate-vis | — | The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns |
 | `src/api/conversations/tests.rs` | test | s | — | — | The conversation list reads as a named reader, on the read lane recall and the transcript use (ARCH-0006a… |
 | `src/api/conversations/turn_reads.rs` | src | s | 2 crate-vis | — | The TURN read and list doors' rows (FIX 5652, 5938), each one judged and its words read in one snapshot (FIX… |
 | `src/api/core/batch.rs` | src | s | 9 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
@@ -267,7 +267,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/core/hydrate/use_restricted.rs` | src | s | 2 crate-vis | — | A named short ref whose row a legal order keeps from use (FIX 5226): the single hydrate answers the order's… |
 | `src/api/core/mod.rs` | src | s | 7 crate-vis | — | — |
 | `src/api/core/propose.rs` | src | s | 5 crate-vis | — | Proposal-only cloud leg |
-| `src/api/core/query.rs` | src | m | 16 crate-vis | — | Query/list/capability routes and their paging helpers |
+| `src/api/core/query.rs` | src | m | 15 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
 | `src/api/core/widen.rs` | src | s | 6 crate-vis | — | Host-only landing or decline of a frozen widen proposal |
 | `src/api/core/widen/streamed.rs` | src | s | 5 crate-vis | — | Large widen-accept bodies: both strings streamed from disk, never one head |
@@ -851,6 +851,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
 | `src/big_rung.rs` | src | m | 8 crate-vis | — | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
+| `src/big_rung/cost.rs` | src | s | 1 crate-vis | — | The completed Big reading's catalog price, not the seat's requested route |
 | `src/big_rung/joint.rs` | src | s | 5 crate-vis | — | The Big rung's joint reading (FIX 1557) |
 | `src/big_rung/note.rs` | src | s | 1 crate-vis | — | The Big rung's model as the host's notes model (FIX 3040, 654): one tool-less text call on the rung's seat… |
 | `src/big_rung/route.rs` | src | s | 6 crate-vis | — | The route a Big-rung call takes (FIX 9525) |
