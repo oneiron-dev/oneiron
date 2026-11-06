@@ -257,7 +257,11 @@ impl GraphFsResolver<'_, '_> {
                 Some(page) => page,
                 None => {
                     steps += 1;
-                    let page = self.readdir(&dirs[depth], at.frames[depth].page.as_deref())?;
+                    let page = self.readdir_with_reader(
+                        &dirs[depth],
+                        at.frames[depth].page.as_deref(),
+                        reader,
+                    )?;
                     if let Some(read) = page.read_receipt() {
                         fold_receipt(&mut walk.receipt, read.clone());
                     }

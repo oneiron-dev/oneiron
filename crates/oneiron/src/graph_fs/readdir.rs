@@ -60,6 +60,19 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     pub fn readdir(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
+        self.readdir_with_reader(
+            path,
+            cursor,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    pub(super) fn readdir_with_reader(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsPage> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
         if self.snapshot.is_some() {
@@ -105,7 +118,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities", entity] => {
                 let id = parse_entity_id(entity)?;
                 let readable = self.scoped_read.is_entity_readable(&id)?;
-                let body = self.file_row(id)?;
+                let body = self.file_row_with_reader(id, reader)?;
                 let page = if readable {
                     self.fixed_page(
                         &normalized,
@@ -124,9 +137,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 };
                 Ok(page.with_read_receipt(body.receipt))
             }
-            ["entities", entity, "claims"] => {
-                self.listdir_claims_for_subject(&normalized, &parse_entity_id(entity)?, cursor)
-            }
+            ["entities", entity, "claims"] => self.listdir_claims_for_subject(
+                &normalized,
+                &parse_entity_id(entity)?,
+                cursor,
+                reader,
+            ),
             ["entities", entity, "backlinks"] => {
                 self.listdir_backlinks(&normalized, &parse_entity_id(entity)?, cursor)
             }
@@ -140,7 +156,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             )),
             ["claims", "by-time"] => self.listdir_claim_days(&normalized, cursor),
             ["claims", "by-time", day] => self.listdir_claims_in_day(&normalized, day, cursor),
-            ["claims", "by-id"] => self.listdir_claims_by_id(&normalized, cursor),
+            ["claims", "by-id"] => self.listdir_claims_by_id(&normalized, cursor, reader),
             ["backlinks"] => self.listdir_entities(&normalized, cursor),
             ["backlinks", entity] => {
                 self.listdir_backlinks(&normalized, &parse_entity_id(entity)?, cursor)
@@ -263,8 +279,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         &self,
         id: EntityId,
         receipt: &mut ScopedReadReceipt,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<ReadRow>> {
-        let row = self.file_row(id)?;
+        let row = self.file_row_with_reader(id, reader)?;
         receipt.restrict_with(&row.receipt);
         Ok(row.value)
     }
