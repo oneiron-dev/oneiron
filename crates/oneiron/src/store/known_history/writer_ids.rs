@@ -33,7 +33,7 @@ impl Store {
         let mut ids = Vec::new();
         for (holder, refs) in HISTORY.scan(self, wtxn)? {
             let slots: Vec<u64> = refs.slots().collect();
-            let entries = read_entries(custody, &holder, slots.iter().copied())?;
+            let entries = read_entries(custody.clone(), &holder, slots.iter().copied())?;
             if !entries.is_empty() {
                 holders.push((holder, entries));
             }

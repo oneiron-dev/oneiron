@@ -102,7 +102,8 @@ impl Store {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(());
         };
-        let Some(intent) = retirement_in_txn(self, txn, &orcb::claim_subject(custody, claim)?)?
+        let Some(intent) =
+            retirement_in_txn(self, txn, &orcb::claim_subject(custody.clone(), claim)?)?
         else {
             return Ok(());
         };
@@ -603,7 +604,7 @@ impl Vault {
             for claim in removed_claims.difference(&live_claims) {
                 // An erase that committed after this pass's finisher may name
                 // a newer generation or an erase; staging never lowers either.
-                let subject = orcb::claim_subject(custody, claim)?;
+                let subject = orcb::claim_subject(custody.clone(), claim)?;
                 let intent = RetirementIntent {
                     through: custody.first_unretired(&subject)?,
                     subject,

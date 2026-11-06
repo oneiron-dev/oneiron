@@ -53,7 +53,7 @@ pub(super) fn encode_hot(
     record: &GateDecisionRecord,
 ) -> Result<Vec<u8>> {
     let claim_id = record.claim_id.ok_or_else(corrupt)?;
-    let generation = custody.first_unretired(&claim_subject(custody, &claim_id)?)?;
+    let generation = custody.first_unretired(&claim_subject(custody.clone(), &claim_id)?)?;
     encode_hot_at(custody, record, generation)
 }
 
@@ -95,7 +95,7 @@ fn seal(
 ) -> Result<Vec<u8>> {
     // The first sealed append publishes and syncs the key before LMDB may
     // commit ciphertext under it.
-    let key = custody.get_or_create(&claim_subject(custody, &item)?.at(generation))?;
+    let key = custody.get_or_create(&claim_subject(custody.clone(), &item)?.at(generation))?;
     let plain = encode_gate_decision(record)?;
     if plain.len() > MAX_PLAINTEXT {
         return Err(Error::InvariantViolation("gate decision ORCB size"));
@@ -160,7 +160,7 @@ pub(super) fn decode_hot(
     if raw[21..37] != decision_id.as_bytes() {
         return Err(corrupt());
     }
-    let key = custody.read(&claim_subject(custody, &claim_id)?.at(generation))?;
+    let key = custody.read(&claim_subject(custody.clone(), &claim_id)?.at(generation))?;
     let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
     let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
     let compressed = cipher
@@ -197,7 +197,7 @@ fn decode_policy(
     {
         return Err(corrupt());
     }
-    let key = custody.read(&claim_subject(custody, &POLICY_PARTITION)?.at(0))?;
+    let key = custody.read(&claim_subject(custody.clone(), &POLICY_PARTITION)?.at(0))?;
     let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
     let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
     let compressed = cipher
@@ -226,7 +226,7 @@ fn decode_policy(
 pub(super) fn raw_key_retired(custody: Option<LocalCustody<'_>>, raw: &[u8]) -> Result<bool> {
     match (custody, raw_claim_generation(raw)) {
         (Some(custody), Some((claim, generation))) => {
-            custody.retired(&claim_subject(custody, &claim)?.at(generation))
+            custody.retired(&claim_subject(custody.clone(), &claim)?.at(generation))
         }
         _ => Ok(false),
     }

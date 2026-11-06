@@ -233,7 +233,7 @@ impl Store {
             return Ok(none);
         }
         let journal = custody.journal()?;
-        if custody_empty(self, custody, &journal)? {
+        if custody_empty(self, custody.clone(), &journal)? {
             return Ok(none);
         }
         custody.open_compartment()?;
@@ -274,7 +274,7 @@ impl Store {
             return Ok(PolicyStanding::default());
         }
         let journal = custody.journal()?;
-        if custody_empty(self, custody, &journal)? {
+        if custody_empty(self, custody.clone(), &journal)? {
             return Ok(PolicyStanding::default());
         }
         let carried = {

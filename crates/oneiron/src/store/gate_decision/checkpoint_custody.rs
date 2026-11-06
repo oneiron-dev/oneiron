@@ -444,11 +444,11 @@ pub(crate) fn preflight_absent_custody_rows(
                 }
                 None => return Err(Rejected::new(R::CustodyLineageMismatch, corrupt())),
             };
-            let needed = orcb::claim_subject(custody, &claim)?.at(generation);
+            let needed = orcb::claim_subject(custody.clone(), &claim)?.at(generation);
             match plan.require_rejected(&needed) {
                 Ok(Requirement::Retired) => erased.push((id, claim)),
                 Ok(Requirement::Live) => {
-                    orcb::decode_hot(custody, id, value).map_err(Rejected::receipt)?;
+                    orcb::decode_hot(custody.clone(), id, value).map_err(Rejected::receipt)?;
                 }
                 Err(_)
                     if CUSTODY_NO_HEAD_GATE_ROWS
@@ -541,7 +541,9 @@ pub(crate) fn preflight_checkpoint_rows_rejected(
                 .as_ref()
                 .ok_or_else(|| Rejected::new(R::CustodyLineageMismatch, corrupt()))?;
             let custody = LocalCustody::at(binding);
-            match plan.require_rejected(&orcb::claim_subject(custody, &claim)?.at(generation))? {
+            match plan
+                .require_rejected(&orcb::claim_subject(custody.clone(), &claim)?.at(generation))?
+            {
                 Requirement::Retired => erased.push((id, claim)),
                 Requirement::Live => {
                     orcb::decode_hot(custody, id, value).map_err(Rejected::receipt)?;

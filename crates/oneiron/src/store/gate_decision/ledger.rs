@@ -603,7 +603,7 @@ impl Store {
                 let custody = self.core.key_custody.local();
                 for row in LEDGER.iter_raw_from(self, &rtxn, &[])? {
                     let (key, raw) = row?;
-                    if orcb::raw_key_retired(custody, &raw)?
+                    if orcb::raw_key_retired(custody.clone(), &raw)?
                         && let Some(decision_id) = GateDecisionId::decode_key(&key)
                     {
                         retired_keys.push(decision_id);

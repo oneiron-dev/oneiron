@@ -309,7 +309,7 @@ impl Store {
                 }
                 custody.retire_local(&id)?;
             }
-            retired(custody, &intent)?;
+            retired(custody.clone(), &intent)?;
             clear_finished_intent_in_txn(self, custody, &mut wtxn, &intent)?;
             wtxn.commit()?;
         }

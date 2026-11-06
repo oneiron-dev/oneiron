@@ -62,7 +62,7 @@ impl Store {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(());
         };
-        let subject = orcb::claim_subject(custody, claim_id)?;
+        let subject = orcb::claim_subject(custody.clone(), claim_id)?;
         let overflow = || Error::ArithmeticOverflow("gate decision key generation");
         // An earlier erase whose key is not destroyed yet may already have
         // moved kept receipts one generation up.
@@ -83,7 +83,7 @@ impl Store {
                     self,
                     wtxn,
                     &record.decision_id,
-                    &orcb::encode_hot_at(custody, &record, next)?,
+                    &orcb::encode_hot_at(custody.clone(), &record, next)?,
                 )?;
             }
         }
@@ -139,7 +139,7 @@ impl Store {
                 if store.gate_partition_held_in_txn(txn, Some(claim))? {
                     continue;
                 }
-                let subject = orcb::claim_subject(custody, claim)?;
+                let subject = orcb::claim_subject(custody.clone(), claim)?;
                 let mut through = None;
                 let mut generation = custody.first_unretired(&subject)?;
                 while custody.published(&subject.at(generation))? {
@@ -202,7 +202,7 @@ pub(super) fn sealed_claim_row_in_txn(
     let custody = store.key_custody().bind_in_txn(store, wtxn)?;
     // A committed age sweep may still be retiring this partition's
     // exterior key. No new ciphertext may reuse it in that interval.
-    if retirement_in_txn(store, wtxn, &orcb::claim_subject(custody, claim)?)?.is_some() {
+    if retirement_in_txn(store, wtxn, &orcb::claim_subject(custody.clone(), claim)?)?.is_some() {
         return Err(Error::InvalidConfig(
             "gate decision partition is retiring".into(),
         ));

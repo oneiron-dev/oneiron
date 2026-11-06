@@ -14,6 +14,7 @@
 //! link; on Windows the user's profile ACL, which custody's directories
 //! inherit, is the boundary ([`super::platform`]).
 
+use std::borrow::Cow;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -295,18 +296,33 @@ pub(in crate::store) fn arm_after_key_marker_check(callback: impl FnOnce() + 'st
 /// One binding's custody on this host's filesystem. It owns storage and
 /// lifecycle only: whether a subject may be read, published or retired is
 /// its client's policy.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct LocalCustody<'a> {
-    binding: &'a CustodyBinding,
+    binding: Cow<'a, CustodyBinding>,
+    private_owner: Option<usize>,
 }
 
 impl<'a> LocalCustody<'a> {
     pub(crate) fn at(binding: &'a CustodyBinding) -> Self {
-        Self { binding }
+        Self {
+            binding: Cow::Borrowed(binding),
+            private_owner: None,
+        }
     }
 
-    pub(crate) fn binding(&self) -> &'a CustodyBinding {
-        self.binding
+    pub(super) fn owned(owner: usize, binding: CustodyBinding) -> LocalCustody<'static> {
+        LocalCustody {
+            binding: Cow::Owned(binding),
+            private_owner: Some(owner),
+        }
+    }
+
+    pub(super) fn private_owner(&self) -> Option<usize> {
+        self.private_owner
+    }
+
+    pub(crate) fn binding(&self) -> &CustodyBinding {
+        self.binding.as_ref()
     }
 }
 
@@ -367,6 +383,13 @@ impl LocalCustody<'_> {
     /// Whether an entry was published for `id` and is still there. No
     /// custody directory means no entry at all.
     pub(crate) fn published(&self, id: &CustodyId) -> Result<bool> {
+        if super::private_publication::contains(self, id) {
+            return Ok(true);
+        }
+        self.physical_published(id)
+    }
+
+    fn physical_published(&self, id: &CustodyId) -> Result<bool> {
         exists(
             &self
                 .subject_dir(id.subject())?
@@ -377,9 +400,20 @@ impl LocalCustody<'_> {
     /// Retired dominates: a crash between a marker and its unlink leaves an
     /// entry no one may read.
     pub(crate) fn state(&self, id: &CustodyId) -> Result<EntryState> {
+        if super::private_publication::contains(self, id) {
+            return Ok(if self.retired(id)? {
+                EntryState::Retired
+            } else {
+                EntryState::Live
+            });
+        }
+        self.physical_state(id)
+    }
+
+    pub(super) fn physical_state(&self, id: &CustodyId) -> Result<EntryState> {
         Ok(if self.retired(id)? {
             EntryState::Retired
-        } else if self.published(id)? {
+        } else if self.physical_published(id)? {
             EntryState::Live
         } else {
             EntryState::Missing
@@ -400,6 +434,13 @@ impl LocalCustody<'_> {
     /// Reads a live entry, strictly: a retired, short or long one is damaged,
     /// and a missing one fails.
     pub(crate) fn read(&self, id: &CustodyId) -> Result<CustodySecret> {
+        if let Some(result) = super::private_publication::read(self, id) {
+            return result;
+        }
+        self.physical_read(id)
+    }
+
+    pub(super) fn physical_read(&self, id: &CustodyId) -> Result<CustodySecret> {
         let kind = id.kind();
         let (dir, _directory) = self.open_subject(id.subject(), Create::Nothing)?;
         if retired_in(&dir, id.generation(), kind)? {
@@ -417,6 +458,49 @@ impl LocalCustody<'_> {
             false,
             Some(kind),
         )?;
+        strict_read(&mut file, kind)
+    }
+
+    /// Reads the entry a publication will keep after `prepare` removes its
+    /// interrupted pending links, without unlinking anything in this phase.
+    pub(super) fn read_after_pending_cleanup(&self, id: &CustodyId) -> Result<CustodySecret> {
+        let kind = id.kind();
+        let (dir, _directory) = self.open_subject(id.subject(), Create::Nothing)?;
+        if retired_in(&dir, id.generation(), kind)? {
+            return Err(kind.corrupt());
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        let mut file =
+            platform::secure(&mut options).open(dir.join(entry_name(id.generation())))?;
+        let metadata = file.metadata()?;
+        if !platform::owned(&metadata, false, false) {
+            return Err(kind.corrupt());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                let mut removed_links = 0_u64;
+                for pending in fs::read_dir(&dir)? {
+                    let pending = pending?;
+                    if !pending
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.starts_with(".g") && name.ends_with(".pending"))
+                    {
+                        continue;
+                    }
+                    let pending = fs::symlink_metadata(pending.path())?;
+                    if pending.dev() == metadata.dev() && pending.ino() == metadata.ino() {
+                        removed_links += 1;
+                    }
+                }
+                if metadata.nlink().checked_sub(removed_links) != Some(1) {
+                    return Err(kind.corrupt());
+                }
+            }
+        }
         strict_read(&mut file, kind)
     }
 
@@ -438,6 +522,9 @@ impl LocalCustody<'_> {
     /// accepted; other bytes, a retired id, or a secret not the kind's width
     /// are refused.
     pub(crate) fn publish(&self, id: &CustodyId, secret: &CustodySecret) -> Result<()> {
+        if let Some(result) = super::private_publication::publish(self, id, secret) {
+            return result;
+        }
         let kind = id.kind();
         if secret.expose().len() != kind.secret_len() {
             return Err(kind.corrupt());
@@ -470,7 +557,10 @@ impl LocalCustody<'_> {
     /// here at its next use, before any row sealed under it commits: one
     /// frame per entry, not one per use. A mark lost to a crash only
     /// journals the Mint again, which moves the log on and changes no set.
-    fn journal_mint(&self, id: &CustodyId) -> Result<()> {
+    pub(super) fn journal_mint(&self, id: &CustodyId) -> Result<()> {
+        if super::private_publication::journal_mint(self, id) {
+            return Ok(());
+        }
         let dir = self.subject_dir(id.subject())?;
         if exists(&dir.join(journaled_name(id.generation())))? {
             return Ok(());
@@ -484,6 +574,15 @@ impl LocalCustody<'_> {
     /// for, an unpublished temporary aside; `None` when it holds neither, or
     /// has no directory yet.
     pub(crate) fn newest_generation(&self, subject: &CustodySubject) -> Result<Option<u64>> {
+        let private = super::private_publication::ids(self)
+            .into_iter()
+            .filter(|id| id.subject() == subject)
+            .map(|id| id.generation())
+            .max();
+        Ok(self.physical_newest_generation(subject)?.max(private))
+    }
+
+    fn physical_newest_generation(&self, subject: &CustodySubject) -> Result<Option<u64>> {
         let names = match fs::read_dir(self.subject_dir(subject)?) {
             Ok(names) => names,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -512,6 +611,23 @@ impl LocalCustody<'_> {
     /// in id order: every pad instance of one world (KS-5). No compartment
     /// holds none.
     pub(crate) fn subjects_with_prefix(
+        &self,
+        kind: CustodyKind,
+        prefix: &[u8],
+    ) -> Result<Vec<CustodySubject>> {
+        let mut subjects = self.physical_subjects_with_prefix(kind, prefix)?;
+        subjects.extend(
+            super::private_publication::ids(self)
+                .into_iter()
+                .map(|id| id.subject().clone())
+                .filter(|subject| subject.kind() == kind && subject.item().starts_with(prefix)),
+        );
+        subjects.sort();
+        subjects.dedup();
+        Ok(subjects)
+    }
+
+    fn physical_subjects_with_prefix(
         &self,
         kind: CustodyKind,
         prefix: &[u8],
@@ -552,6 +668,9 @@ impl LocalCustody<'_> {
     /// discarded. A retired id is refused, never minted again; a found key
     /// is kept.
     pub(crate) fn get_or_create(&self, id: &CustodyId) -> Result<CustodySecret> {
+        if let Some(result) = super::private_publication::get_or_create(self, id) {
+            return result;
+        }
         let kind = id.kind();
         let (dir, directory) = self.prepare(id)?;
         let path = dir.join(entry_name(id.generation()));
