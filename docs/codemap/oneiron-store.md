@@ -58,12 +58,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/mod.rs` | src | s | 2 struct · 1 enum · 1 fn | AppliedPut, BatchEntityPut, EffectiveEntity | Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers |
 | `src/batch/row_put.rs` | src | s | 1 enum | RowPut | What a put is to the row it writes, as the record-scope stamp reads it |
 | `src/batch/secret_scan.rs` | src | s | 7 mod | — | Store-layer modules of core `batch::secret_scan`; core re-exports each one at its old path |
-| `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 21 fn · 1 type · 3 const · 7 mod · 1 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
+| `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 21 fn · 1 type · 3 const · 8 mod · 1 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 1 struct · 6 fn · 2 const | Entry | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 fn | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
 | `src/batch/secret_scan/container/pdf.rs` | src | m | 10 fn · 3 const | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
 | `src/batch/secret_scan/container/projection_edit.rs` | src | s | 1 struct · 1 enum · 1 type | MemberEdits, RetainedProjectionEdit | An agent's edit of a masked container copy, replayed member by member onto its ORIGINAL (FIX 7608 slice… |
 | `src/batch/secret_scan/container/retained_iterative.rs` | src | s | 2 struct · 1 enum · 1 trait | FillPlaces, Frame, RebuildAll, RetainedLeafTransform | The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held… |
+| `src/batch/secret_scan/container/sevenz.rs` | src | s | 3 fn · 1 const | — | A 7z archive's members (FIX 11575): each entry with data, by its place in the archive's file list, decoded… |
 | `src/batch/secret_scan/container/tar.rs` | src | s | 3 fn | — | A tar archive's members: each regular file in archive order, read whole against its declared length under… |
 | `src/batch/secret_scan/container/xz.rs` | src | s | 2 fn | — | An xz file's payload: the stream decoded whole, its checks verified and nothing left after the last stream… |
 | `src/batch/secret_scan/lift_history.rs` | src | s | 2 mod | — | Store-layer modules of core `batch::secret_scan::lift_history`; core re-exports each one at its old path |
@@ -76,7 +77,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mask/text_spans.rs` | src | s | 2 fn | — | The spans the door's text rules place (OF-560): in a text, in each run of text in a file's bytes, and at… |
 | `src/batch/secret_scan/mask/wipe.rs` | src | s | 3 struct · 9 fn | PlanOps, PlanTree, PlanValues | Wiping owners for what a mask plan copies (FIX 1101) |
 | `src/batch/secret_scan/provider_tokens.rs` | src | s | 2 enum · 1 fn · 1 const | Body, KeyShape | The provider rules of [`super::detect`]: a known provider's key, read at a token's start and at each later… |
-| `src/batch/secret_scan/release_read.rs` | src | s | 1 struct · 1 fn · 2 const | HeaderLine | The release scan over a body read as it streams (FIX 5392, FIX 3677): what [`super::scan_file_content`]… |
+| `src/batch/secret_scan/release_read.rs` | src | s | 1 struct · 2 fn · 1 const | HeaderLine | The release scan over a body read as it streams (FIX 5392, FIX 3677): what [`super::scan_file_content`]… |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 2 enum · 7 fn | Encoding, JoinedText | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
 | `src/batch/secret_scan/wordlist.rs` | src | s | 1 static | — | BIP39 English word list (bitcoin/bips bip-0039), sorted for shape checks |
 | `src/batch/shared_vault_write.rs` | src | s | 2 enum · 2 fn | OrgAdminPower, SharedVaultWrite | A requested shared-vault mutation and the closed organization-administration vocabulary it names |
@@ -256,7 +257,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/retained_object.rs` | src | m | 3 struct · 1 enum · 26 fn | GitObjectKind, GitRetainedObject, GitSpool, RetainedGitIo | Retained Git object IO (FIX 7608 slice 2b-i, Rule 5) |
 | `src/graph_fs.rs` | src | s | 4 mod | — | Store-layer modules of core `graph_fs`; core re-exports each one at its old path |
 | `src/graph_fs/coreutils_text.rs` | src | s | 2 struct · 2 fn | HeadPosition, LinePosition | Bounded text rendering for Graph-FS grep, head and path walks, and the position a page of one file's lines… |
-| `src/graph_fs/model.rs` | src | m | 4 struct · 4 enum · 32 fn · 11 const | GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage | Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils… |
+| `src/graph_fs/model.rs` | src | m | 4 struct · 4 enum · 33 fn · 11 const | GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage | Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils… |
 | `src/graph_fs/paging.rs` | src | s | 3 struct · 1 trait · 12 fn | CursorScope, EdgeCursor, SealedPosition, WorldPosition | Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math |
 | `src/graph_fs/snapshot.rs` | src | s | — | — | The `SealedPosition` encoding of a `String` page position, which the historical snapshot pages of core's… |
 | `src/graph_version.rs` | src | s | 3 fn · 1 const | — | The graph version counter in `hnsw_meta`, which PPR caches are keyed and validated by, and its little-endian… |
@@ -265,7 +266,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/home_handoff_custody/seal.rs` | src | s | 3 fn · 4 const | — | The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit… |
 | `src/host_issuer_seed.rs` | src | s | 2 const | — | Independent host-issuer seed format and derivation label |
 | `src/housekeeping_report.rs` | src | s | 4 struct · 2 enum · 6 fn | HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork | What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports |
-| `src/housekeeping_schedule.rs` | src | s | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
+| `src/housekeeping_schedule.rs` | src | m | 3 struct · 3 enum · 8 fn · 4 const | Deadline, HostOnlyReason, HousekeepingBudget, HousekeepingHandle, HousekeepingSweep, Runner | Housekeeping sweep identifiers, cadence policy, and pass budget values |
 | `src/human_task.rs` | src | s | 1 mod | — | Store-layer modules of core `human_task`; core re-exports each one at its old path |
 | `src/human_task/storage.rs` | src | s | 14 fn · 15 const | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
 | `src/identity_hints.rs` | src | s | 1 fn | — | Per-kind declared identity fields (human-facing identity hints) |
@@ -510,7 +511,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 7 fn · 9 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
 | `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 2 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/publication.rs` | src | s | 1 fn | — | Visibility of a segment whose base writer has already committed |
-| `src/session_overlay/overlay/repo_projection.rs` | src | s | 1 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
+| `src/session_overlay/overlay/repo_projection.rs` | src | s | 2 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
 | `src/session_overlay/overlay/retained.rs` | src | s | 8 crate-vis | — | The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX… |
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
@@ -567,7 +568,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/window_protocol.rs` | src | s | 2 enum · 1 fn · 2 const | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/window_rows.rs` | src | s | 5 struct · 1 enum · 2 const | CarrierRemoval, HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey, WindowUpdateSeq | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/witness_message_body.rs` | src | m | 1 struct · 2 enum · 4 fn · 3 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body.rs` | src | m | 1 struct · 2 enum · 4 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/workflow_definition.rs` | src | s | 1 struct · 6 fn | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/world_registration_keys.rs` | src | s | 2 const | — | Storage keys for foreign-world registration and stale markers |

@@ -36,7 +36,7 @@ enum DenseChannel<'q> {
     },
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
@@ -119,18 +119,25 @@ impl<'v> ScopedRead<'v> {
         skip_rescore: bool,
         session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        // The key's own filter (B) and the candidates its own live Grants
+        // add (A, FIX 7528): the search ranks both, and each candidate takes
+        // the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let plan_admits = self.plan_admits(&filter, &policy, &excluded);
+        let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
@@ -140,7 +147,7 @@ impl<'v> ScopedRead<'v> {
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted);
         let results = match channel {
@@ -166,13 +173,16 @@ impl<'v> ScopedRead<'v> {
             }
             _ => None,
         };
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -207,18 +217,25 @@ impl<'v> ScopedRead<'v> {
         as_of: Option<u64>,
         session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        // The key's own filter (B) and the candidates its own live Grants
+        // add (A, FIX 7528): the search ranks both, and each candidate takes
+        // the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let plan_admits = self.plan_admits(&filter, &policy, &excluded);
+        let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
@@ -228,7 +245,7 @@ impl<'v> ScopedRead<'v> {
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .search_text(query, limit)
@@ -237,13 +254,16 @@ impl<'v> ScopedRead<'v> {
             pipeline = pipeline.with_temporal_now(as_of);
         }
         let results = pipeline.run_for_pack()?;
-        let filtered = self.filter_search_results(
+        let filtered = self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            super::search::SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -364,7 +384,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<AdmittedRevision>> {
         let Some(raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
@@ -417,7 +437,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<Vec<u8>>> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
@@ -474,7 +494,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         entity: &ContextEntity,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let mode = entity
             .source_revision_ref

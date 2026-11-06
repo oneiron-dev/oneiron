@@ -342,6 +342,21 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is a membership change's record no host issuer signed, which
+    // withdraws the slips of each Grant it names (FIX 12335).
+    if let AuthorityOp::MembershipExecution(record) = &entry.op {
+        if let Err(issue) = super::membership_execution::apply_membership_execution(
+            &mut state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // So is an act on a vault setting or an agent's free-time policy, on its
     // target's frontier (FIX 4624, FIX 5660).
     if let AuthorityOp::PolicySettingSet(set) = &entry.op {
@@ -523,6 +538,7 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::SlipGrantRevoke { .. }
+            | AuthorityOp::RemovalArchiveConsume { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
         if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
@@ -651,6 +667,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::FederationLifecycle(_)
@@ -680,6 +697,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::OwnerWorkCancel(_)
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
-        | AuthorityOp::FrontierJoin(_) => false,
+        | AuthorityOp::FrontierJoin(_)
+        | AuthorityOp::MembershipExecution(_) => false,
     }
 }

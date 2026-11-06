@@ -135,7 +135,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
@@ -168,7 +168,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let asked = authority.grants().asked();
         let own = self.own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?;
@@ -209,7 +209,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
             return Ok(false);
@@ -451,7 +451,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         body: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<bool>> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
@@ -508,7 +508,7 @@ impl<'v> ScopedRead<'v> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
             // FIX 1496 S8: as above, the owner reads every text except one
@@ -564,7 +564,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Result<bool> {
         Ok(self
@@ -586,7 +586,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Result<OwnAdmission<'v>> {
         if self.own_row_readable_in(rtxn, policy, id, raw, filter, authority, None)?
@@ -616,7 +616,7 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
         grant: Option<&crate::federation::Scope>,
     ) -> Result<bool> {
         // A legal use limit keeps the bytes as storage only: no ordinary
