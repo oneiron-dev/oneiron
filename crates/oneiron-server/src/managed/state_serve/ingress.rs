@@ -27,6 +27,19 @@ impl ManagedCarrierContext {
         Ok(action())
     }
 
+    /// Holds one socket call through completion, even if its answer waiter
+    /// disconnects. An idle carrier holds no reap admission.
+    pub(crate) fn admit_socket_call<T: Send + 'static>(
+        &self,
+        action: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Result<tokio::task::JoinHandle<T>, CarrierPaused> {
+        let admission = self.0.admit(WriteKind::OwnerWrite).map_err(CarrierPaused)?;
+        Ok(tokio::spawn(async move {
+            let _admission = admission;
+            action.await
+        }))
+    }
+
     /// Marks `request` as a call the socket carries, so the task its
     /// admission finishes in runs as the socket's connection (FIX 811),
     /// not as a fresh one.

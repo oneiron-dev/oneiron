@@ -159,6 +159,25 @@ pub(crate) struct RpcReply {
 }
 
 impl RpcReply {
+    /// The served reap pause, without running a call or writing a receipt.
+    pub(crate) fn paused(
+        request_id: u64,
+        pause: &crate::managed::CarrierPaused,
+    ) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            request_id,
+            frames: vec![wire::frame(
+                TAG_RPC,
+                "rpc.err",
+                request_id,
+                0,
+                true,
+                pause.body(),
+            )?],
+            rows: None,
+        })
+    }
+
     /// OF-538's one WS door: records the call once it has answered, in its
     /// own write transaction, and states the receipt on every `rpc.res`
     /// chunk and on `rpc.err` alike. The result is packed first, so one past

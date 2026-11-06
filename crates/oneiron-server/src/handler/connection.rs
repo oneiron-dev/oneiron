@@ -16,6 +16,7 @@ use crate::protocol::{self, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
 
 // The connection loop itself, apart so each file stays under the size bar.
+mod app_booking;
 mod dispatch_error;
 mod run;
 
@@ -45,8 +46,9 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// root snapshot and window exports. When no secret is configured, upgrades
 /// are rejected unless the explicit insecure dev escape hatch is enabled,
 /// matching `auth::require_owner_auth` on the HTTP side. An upgrade naming
-/// the MCP subprotocol is the one exception: it opens the MCP carrier
-/// ([`super::mcp_socket`]), which serves none of that state.
+/// the MCP subprotocol opens the MCP carrier ([`super::mcp_socket`]),
+/// which serves none of that state. A supervisor-attested stale owner
+/// sign-in instead opens a booking-only app carrier, also without sync state.
 ///
 /// The credential's revocable identity is carried into the connection rather
 /// than discarded with the rest of the `CoreAuth`: the handshake proves the
@@ -87,6 +89,19 @@ async fn ws_upgrade_handler(
             return super::mcp_socket::booking_upgrade(ws, &headers, &extensions, server, holder);
         }
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
+    }
+    if let Some(holder) = super::mcp_socket::stale_booking_holder(&headers, &extensions, &server) {
+        return app_booking::upgrade(
+            ws,
+            &headers,
+            &extensions,
+            server,
+            holder,
+            (
+                locality,
+                machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0),
+            ),
+        );
     }
     let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
         Some(Ok(auth)) if auth.is_owner_grade() => auth,
