@@ -167,7 +167,7 @@ fn line_chat_of_address(address: &str) -> Option<(String, LineChat)> {
 
 /// The artifact and version a provider event ref
 /// (`blob:<artifact hex>@<version>`) names.
-fn archived_version(payload_ref: &str) -> Option<(EntityId, u64)> {
+pub(super) fn archived_version(payload_ref: &str) -> Option<(EntityId, u64)> {
     let (artifact, version) = payload_ref
         .strip_prefix(PROVIDER_EVENT_REF_PREFIX)?
         .split_once('@')?;

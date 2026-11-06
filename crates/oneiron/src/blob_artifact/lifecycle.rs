@@ -211,6 +211,62 @@ pub(crate) fn release_response_version_in_txn(
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<()> {
+    release_version_in_txn(write, wtxn, artifact, version, content_hash, true)
+}
+
+/// Releases a native provider archive's privately captured version. The
+/// ledger claim must still be the exact captured claim. Unlike a fresh
+/// response artifact, a provider archive has a deterministic id: its empty
+/// metadata row stays, so a later native append can use the high-water
+/// number without colliding with a permanent artifact tombstone.
+pub(crate) fn release_archive_version_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    version_claim: &EntityId,
+) -> Result<()> {
+    if !archive_version_stands_in_txn(
+        write.store,
+        wtxn,
+        artifact,
+        version,
+        content_hash,
+        version_claim,
+    )? {
+        return Ok(());
+    }
+    release_version_in_txn(write, wtxn, artifact, version, content_hash, false)
+}
+
+/// Whether the immutable local archive version still names the exact
+/// ledger claim captured by its native producer. HEAD is irrelevant.
+pub(crate) fn archive_version_stands_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    version_claim: &EntityId,
+) -> Result<bool> {
+    Ok(VERSIONS
+        .get(store, txn, &(*artifact, version))?
+        .is_some_and(|record| {
+            record.version == version
+                && record.content_hash == *content_hash
+                && record.claim_id == *version_claim
+        }))
+}
+
+fn release_version_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    remove_empty_artifact: bool,
+) -> Result<()> {
     let store = write.store;
     let Some(record) = VERSIONS.get(store, wtxn, &(*artifact, version))? else {
         return Ok(());
@@ -265,7 +321,7 @@ pub(crate) fn release_response_version_in_txn(
         .is_none()
         && !claimed_hash_rows_exist(store, wtxn, artifact)?
         && !retained_claim_names(store, wtxn, artifact, None)?;
-    if emptied {
+    if remove_empty_artifact && emptied {
         tear_in_txn(write, wtxn, artifact, &mut cleanup)?;
     }
     if cleanup.had_graph_mutation {

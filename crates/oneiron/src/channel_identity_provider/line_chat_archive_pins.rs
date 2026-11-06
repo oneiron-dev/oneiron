@@ -1,5 +1,11 @@
 //! Native capture of a LINE observation's exact provider archive version.
-//! Registration changes no current teardown or archive-retention behavior.
+//! Only a native archive receipt can register ownership of a join version.
+
+mod lifetime;
+pub(crate) use lifetime::{
+    line_chat_archive_releases_owed_in_txn, release_line_chat_archive_pin_in_txn,
+    settle_line_chat_archive_releases_in_txn,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +14,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::surface_event::ProviderEventArchiveReceipt;
 use crate::{EntityId, Vault};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct LineChatArchivePin {
     artifact_id: EntityId,
     version: u64,
