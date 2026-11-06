@@ -48,6 +48,7 @@ pub struct ServeAxisBandit<'a> {
     notes: &'a dyn HeldOutReplayNotes,
     /// The active skill the proposal revises, whose goal it is measured on.
     target: EntityId,
+    goal_revision: String,
     incumbent: Arm,
     candidate: Arm,
     /// Each axis of the goal, with its measure and bound, and the goal and
@@ -104,7 +105,9 @@ impl<'a> ServeAxisBandit<'a> {
             .axes
             .iter()
             .map(|axis| {
-                let criterion = json!({"name": axis.name, "goal_revision": goal.revision});
+                let criterion = json!({
+                    "name": axis.name, "kind": axis.kind, "goal_revision": goal.revision,
+                });
                 (axis.name.clone(), criterion)
             })
             .collect();
@@ -118,9 +121,11 @@ impl<'a> ServeAxisBandit<'a> {
                 .chain(&record.cost_axes)
             {
                 if let Some(criterion) = criteria.get_mut(&axis.name) {
+                    let kind = criterion["kind"].clone();
                     *criterion = json!({
                         "name": axis.name, "measure": axis.measure, "bound": axis.bound,
-                        "goal": record.goal, "why": record.why, "goal_revision": goal.revision,
+                        "goal": record.goal, "why": record.why, "kind": kind,
+                        "goal_revision": goal.revision,
                     });
                 }
             }
@@ -129,6 +134,7 @@ impl<'a> ServeAxisBandit<'a> {
             judge,
             notes,
             target,
+            goal_revision: goal.revision,
             incumbent: Arm {
                 loaded: format!("{}@{}", current.skill_id, current.version),
                 skill: target,
@@ -152,6 +158,10 @@ impl<'a> ServeAxisBandit<'a> {
 }
 
 impl GoalAxisBandit for ServeAxisBandit<'_> {
+    fn goal_revision(&self) -> Option<&str> {
+        Some(&self.goal_revision)
+    }
+
     fn arm_record(&self, arm: AxisArm) -> Option<(EntityId, &SkillRecord)> {
         let arm = match arm {
             AxisArm::Incumbent => &self.incumbent,

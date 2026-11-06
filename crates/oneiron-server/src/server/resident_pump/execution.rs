@@ -75,6 +75,11 @@ pub(super) fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // FIX 15011: a run its dispatch started from an event opens with the
+    // wake opener; a continued run goes on from its source's fork.
+    if !continues {
+        config.wake = claimed.wake;
+    }
     // CUA E4 (FIX 7603): a try whose TASK binds a library program runs it
     // strict on this door before its seat is born. One that met its TASK's
     // goal settles the try with no model call; one that handed off names its
@@ -332,6 +337,9 @@ pub(super) fn run_bound(
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
+        if door.take_media_trap() {
+            return Ok(BoundRun::Trapped);
+        }
         let outcome = outcome?;
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
@@ -610,6 +618,12 @@ fn enter_run(
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
+    door.bind_media_step(crate::server::RunMediaStep::new(
+        vault,
+        &status.attempt,
+        actor,
+        config.run_id,
+    ));
     let entered = enter_engine_native_run(
         vault,
         provider,
