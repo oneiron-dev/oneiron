@@ -211,6 +211,11 @@ pub enum CtlRequest {
         #[serde(flatten)]
         request: LedgerPulledRequest,
     },
+    /// Installs an original allocation on the native backend selected at boot.
+    /// Build floor: the engine revision adding `--allocation-fd`.
+    AllocationInstall {
+        delivery: crate::allocation::AllocationDelivery,
+    },
 }
 
 impl CtlRequest {
@@ -250,7 +255,8 @@ impl CtlRequest {
             | CtlRequest::SlimStatus
             | CtlRequest::Unslim
             | CtlRequest::RestoreStatus { .. }
-            | CtlRequest::PrepareIdleReap => {}
+            | CtlRequest::PrepareIdleReap
+            | CtlRequest::AllocationInstall { .. } => {}
         }
         Ok(())
     }
@@ -749,6 +755,11 @@ pub enum CtlResponse {
     /// above, and it carries no `ok`.
     LedgerPage {
         ledger_page: LedgerPage,
+    },
+    /// Native account revision at the original install transaction. This
+    /// acknowledges descriptor retention, not current selection or money paid.
+    AllocationInstalled {
+        allocation_installed: u64,
     },
 }
 

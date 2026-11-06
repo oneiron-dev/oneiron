@@ -47,6 +47,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let shutdown = ManagedShutdown::new();
     let mut host = super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
+    let allocation = crate::managed::allocation::read(&managed)?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
     let mut restore = super::restore::ManagedRestore::begin(&managed, &mut config)?;
@@ -230,6 +231,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     #[cfg(unix)]
     {
         sync_server = sync_server.with_organ_dir(super::owner_storage::organ_dir(&managed));
+    }
+    if let Some(allocation) = allocation {
+        sync_server =
+            crate::managed::allocation::bind(sync_server, &managed.vault_name, allocation)?;
     }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
     // plain serve attaches them: a vault that dials a home, by the owner's

@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use super::{
-    AllocationCallKey, AllocationCommit, AllocationStoreError, AllocationTerminal,
-    DurableAllocationHold, VaultAllocationLedger,
+    AllocationCallContext, AllocationCallKey, AllocationCommit, AllocationStoreError,
+    AllocationTerminal, DurableAllocationHold, VaultAllocationLedger,
 };
 use crate::llm::run_admission::admission::RunInner;
 use crate::llm::run_admission::permit::RunPermit;
@@ -19,6 +19,7 @@ pub trait AllocationProducer: Send + Sync {
         &self,
         txn: &mut heed::RwTxn<'_>,
         admitted: &RunReceipt,
+        context: &AllocationCallContext,
     ) -> Result<(), AllocationStoreError>;
 
     /// Called only by the durable hold's once-selected terminal transition.
@@ -33,6 +34,18 @@ pub trait AllocationProducer: Send + Sync {
     /// Releases memory-only producer facts only after the original hold and
     /// usage transaction committed. No vault writer is held here.
     fn terminal_committed(&self, _terminal: &RunReceipt) {}
+}
+
+/// A caller's original durable intent, committed with its native hold and
+/// the original admitted usage producer. Implementations use only `txn` and
+/// retain the hold's original call key, not a reflected copy of its money.
+pub trait AllocationCallIntent: Send + Sync {
+    fn freeze_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        hold: &DurableAllocationHold,
+        admitted: &RunReceipt,
+    ) -> Result<(), AllocationStoreError>;
 }
 
 /// An explicit backend selection, not a grant or a reflected balance. Grant,
@@ -76,6 +89,7 @@ impl RunInner {
     pub(in crate::llm::run_admission) fn freeze_allocation(
         &self,
         permit: &mut RunPermit,
+        intent: Option<&dyn AllocationCallIntent>,
     ) -> Result<RunReceipt, RunDenied> {
         let Some(account) = self
             .persistent_allocation
@@ -107,7 +121,22 @@ impl RunInner {
                 facts.allocation_unit = Some(hold.unit.clone());
                 facts.allocation_reserved_units = Some(hold.reserved_units);
                 let receipt = self.receipt(permit.revision, RunEvent::Admitted(Box::new(facts)));
-                account.producer.freeze_in_write_txn(txn, &receipt)?;
+                let context = AllocationCallContext {
+                    run: receipt.run.clone(),
+                    revision: receipt.revision,
+                    admitted_occurred_at: receipt.occurred_at,
+                    native: permit.native.clone(),
+                    unit_cost: permit.unit_cost,
+                    reserve_native: permit.reserve_native,
+                    rates: permit.rates.clone(),
+                    metered: permit.metered,
+                };
+                account
+                    .producer
+                    .freeze_in_write_txn(txn, &receipt, &context)?;
+                if let Some(intent) = intent {
+                    intent.freeze_in_write_txn(txn, hold, &receipt)?;
+                }
                 Ok(receipt)
             },
         );

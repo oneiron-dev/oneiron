@@ -168,7 +168,15 @@ impl AiHost {
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
         Self::start_with(
-            vault, models, host_root, receipts, account, None, None, None, None,
+            vault,
+            models,
+            host_root,
+            receipts,
+            account,
+            Default::default(),
+            None,
+            None,
+            None,
         )
         .await
     }
@@ -189,7 +197,7 @@ impl AiHost {
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
-        native: Option<crate::models::NativeRunAllocation>,
+        native: crate::models::NativeUsageBinding,
         attached: Option<Attached>,
         broker: Option<&BrokerContext>,
         budgets: Option<crate::models::ModelHostBudgets>,

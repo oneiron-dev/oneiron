@@ -106,6 +106,10 @@ impl ManagedArgs {
             hypnos_socket: require(args.hypnos_socket.clone(), "hypnos-socket")?,
             ready_fd,
             credentials_fd,
+            allocation_fd: args
+                .allocation_fd
+                .map(|fd| require_fd(Some(fd), "allocation-fd"))
+                .transpose()?,
             custody_anchor_credentials_fd,
             vm_anchor,
             start_mode,
@@ -243,6 +247,32 @@ impl ManagedArgs {
                 }
             }
         }
+        if let Some(allocation) = managed.allocation_fd {
+            for other in [
+                ("--ready-fd", managed.ready_fd),
+                ("--credentials-fd", managed.credentials_fd),
+            ] {
+                refuse_fd_alias(("--allocation-fd", allocation), other)?;
+            }
+            if let Some(anchor) = managed.custody_anchor_credentials_fd {
+                refuse_fd_alias(
+                    ("--allocation-fd", allocation),
+                    ("--custody-anchor-credentials-fd", anchor),
+                )?;
+            }
+            if let ManagedStartMode::Restore {
+                input_fd,
+                result_fd,
+            } = managed.start_mode
+            {
+                for other in [
+                    ("--restore-input-fd", input_fd),
+                    ("--restore-result-fd", result_fd),
+                ] {
+                    refuse_fd_alias(("--allocation-fd", allocation), other)?;
+                }
+            }
+        }
         managed.vault_binding()?;
         Ok(Some(managed))
     }
@@ -260,6 +290,12 @@ impl ManagedArgs {
     /// consumed and before the vault is opened, so neither the frame nor
     /// storage is touched on the way to the refusal.
     pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {
+        if let Some(allocation) = self.allocation_fd {
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--allocation-fd", allocation),
+            )?;
+        }
         refuse_fd_alias((HYPNOS_LISTEN_FD, listen_fd), ("--ready-fd", self.ready_fd))?;
         if let Some(anchor) = self.custody_anchor_credentials_fd {
             refuse_fd_alias(

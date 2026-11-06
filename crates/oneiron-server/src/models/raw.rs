@@ -29,7 +29,7 @@ pub(crate) struct RawInference {
     host: Option<Arc<HostAccount>>,
     /// Who funds each call, when a room's root spend scope pays for them.
     payer: Option<PayerPerson>,
-    native_allocation: Option<super::NativeRunAllocation>,
+    native_allocation: super::NativeUsageBinding,
 }
 
 #[derive(Clone)]
@@ -52,7 +52,7 @@ impl RawInference {
             meter,
             host,
             payer: None,
-            native_allocation: None,
+            native_allocation: Default::default(),
         }
     }
 
@@ -62,14 +62,11 @@ impl RawInference {
             meter,
             host: None,
             payer: None,
-            native_allocation: None,
+            native_allocation: Default::default(),
         }
     }
 
-    pub(crate) fn with_native_allocation(
-        mut self,
-        native: Option<super::NativeRunAllocation>,
-    ) -> Self {
+    pub(crate) fn with_native_allocation(mut self, native: super::NativeUsageBinding) -> Self {
         self.native_allocation = native;
         self
     }
@@ -97,9 +94,11 @@ impl RawInference {
                 }))
             }
         };
-        let run = match &self.native_allocation {
+        let run = match self.native_allocation.current() {
             Some(native) => {
-                native.funded_run(RAW_RUN, self.meter.clone(), self.payer.clone(), None)
+                native
+                    .runs()
+                    .funded_run(RAW_RUN, self.meter.clone(), self.payer.clone(), None)
             }
             None => funded_run(
                 RAW_RUN,
