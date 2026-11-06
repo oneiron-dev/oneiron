@@ -25711,7 +25711,7 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 1,
       "re-export": 8
      }
@@ -25733,6 +25733,16 @@
       "enum": 2,
       "fn": 5,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/retained_copies.rs",
+     "purpose": "Retained courtesy copies stay the recipient owner's to read (BIZ-LEGAL-0004 B2, Docs Q09)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -59327,14 +59337,15 @@
      "kind": "src",
      "notable": [
       "ReactionSignal",
+      "ReactionSignalDeadlineExceeded",
       "ReactionSignalPage"
      ],
      "path": "src/reaction/signal.rs",
      "purpose": "The agent signal feed: new reactions to a person's own messages since a time, read from the reaction claims…",
      "surface": {
       "const": 1,
-      "fn": 4,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -90132,7 +90143,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91240,7 +91251,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6413,
+   "source_files": 6414,
    "test_files": 895
   },
   "oneiron-android": {
@@ -120626,7 +120637,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 2,
-      "fn": 28,
+      "fn": 29,
       "re-export": 1,
       "struct": 4
      }
