@@ -43,6 +43,43 @@ pub enum AuthorityEntryStatus {
     Unknown,
 }
 
+struct PreparedAuthorityLogRows {
+    ids: Vec<EntityId>,
+    ops: Vec<BatchOp>,
+    pending: Option<super::history_admission::PendingAuthorityHistory>,
+}
+
+impl PreparedAuthorityLogRows {
+    // Encoding and ordering are captured without writes, then consumed at the
+    // original call site in the same writer through the native batch path.
+    fn apply(
+        self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<super::history_admission::AuthorityPut> {
+        let Self { ids, ops, pending } = self;
+        if ops.is_empty() {
+            return Ok(super::history_admission::AuthorityPut::Stored(ids));
+        }
+        apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            ops,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        if let Some(pending) = pending {
+            return Ok(super::history_admission::AuthorityPut::Pending(pending));
+        }
+        Ok(super::history_admission::AuthorityPut::Stored(ids))
+    }
+}
+
 impl Vault {
     /// Engine-authored write door for signed AUTHORITY_LOG entries.
     ///
@@ -148,6 +185,16 @@ impl Vault {
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
         keep_pending: bool,
     ) -> Result<super::history_admission::AuthorityPut> {
+        self.prepare_authority_log_rows_in_txn(wtxn, entries, keep_pending)?
+            .apply(self, wtxn)
+    }
+
+    fn prepare_authority_log_rows_in_txn(
+        &self,
+        wtxn: &heed::RoTxn<'_>,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+        keep_pending: bool,
+    ) -> Result<PreparedAuthorityLogRows> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
         // Rows of this batch, for an ancestry that runs through one.
@@ -213,7 +260,11 @@ impl Vault {
             });
         }
         if ops.is_empty() {
-            return Ok(super::history_admission::AuthorityPut::Stored(ids));
+            return Ok(PreparedAuthorityLogRows {
+                ids,
+                ops,
+                pending: None,
+            });
         }
         // A batch of granting rows, each of whose fold past an adopted image
         // needs history this vault does not hold, is evidence, not log (FIX
@@ -242,21 +293,7 @@ impl Vault {
             .into_iter()
             .filter_map(|index| ops[index].take())
             .collect();
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        if let Some(pending) = pending {
-            return Ok(super::history_admission::AuthorityPut::Pending(pending));
-        }
-        Ok(super::history_admission::AuthorityPut::Stored(ids))
+        Ok(PreparedAuthorityLogRows { ids, ops, pending })
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
