@@ -51,6 +51,7 @@ pub mod dispatch_target;
 pub(crate) use dispatch_input as widen_record;
 mod aging_profiles;
 mod authorship;
+mod candidate_write;
 pub mod code_instruction;
 pub mod consult_payload_ref;
 pub mod retrieval_scope;
