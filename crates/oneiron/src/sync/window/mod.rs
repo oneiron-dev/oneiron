@@ -25,6 +25,7 @@ use loro::{LoroDoc, Subscription};
 mod admission;
 mod device_only;
 mod egress;
+mod erased_origin;
 mod forward;
 mod history_free;
 mod pad_custody;
