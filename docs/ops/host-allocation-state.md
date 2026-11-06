@@ -118,7 +118,10 @@ when it has no existing run, and its cost update selects the original permit's
 native backend before settlement. Ordinary permits keep the existing memory
 service-cost method. Native admission and dispatch storage failures keep their
 host-storage distinction and become an internal facade error, never a spent
-budget or provider-health refusal.
+budget or provider-health refusal. Model raw HTTP errors retain their original
+typed `HostStore` payload with an internal status and `host_store` code; role
+invocation facades also keep host storage as an internal error. The model walk
+classifies that new error explicitly and does not send it to another provider.
 
 The producer retains the exact content-free provider cost before attempting
 its preliminary row update. If that write fails, the terminal's same-writer

@@ -51,6 +51,12 @@ fn producer_error(error: UsageError) -> AllocationStoreError {
 }
 
 impl NativeUsageProducer {
+    /// The original usage ledger's vault; the allocation backend must bind
+    /// this writer too, not a separately supplied vault.
+    pub(crate) fn vault(&self) -> Arc<oneiron::Vault> {
+        Arc::clone(&self.vault)
+    }
+
     fn read(&self, txn: &heed::RwTxn<'_>, key: &str) -> Result<AdmittedCall, UsageError> {
         let raw = self
             .vault
