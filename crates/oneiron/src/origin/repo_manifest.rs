@@ -475,57 +475,70 @@ impl Vault {
             None => None,
         };
         self.with_write_txn_grouped(|txn| {
-            if !code_anchor_live(self, txn, &carried.code)? {
-                return Ok(RepoManifestMerge::Waiting);
+            self.merge_carried_repo_manifest_in_txn(txn, carried, &resolved_for, served)
+        })
+    }
+
+    /// Merges a carried manifest in the caller's writer, with the held repo's
+    /// origin identity resolved before that writer opened.
+    #[cfg(feature = "sync")]
+    pub(crate) fn merge_carried_repo_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        carried: &RepoManifest,
+        resolved_for: &Option<(Option<String>, EntityId)>,
+        served: Option<EntityId>,
+    ) -> Result<RepoManifestMerge> {
+        if !code_anchor_live(self, txn, &carried.code)? {
+            return Ok(RepoManifestMerge::Waiting);
+        }
+        let key = carried.portable.0;
+        if let Some(held) = MANIFESTS.get(&self.store, txn, &key)? {
+            if held.code != carried.code || held.minted_at != carried.minted_at {
+                return Ok(RepoManifestMerge::Conflict);
             }
-            let key = carried.portable.0;
-            if let Some(held) = MANIFESTS.get(&self.store, txn, &key)? {
-                if held.code != carried.code || held.minted_at != carried.minted_at {
-                    return Ok(RepoManifestMerge::Conflict);
-                }
-                if !carried.replaces(&held)? {
-                    return Ok(RepoManifestMerge::Held);
-                }
-                // The held copy moved since the repo was resolved: wait for
-                // the next pass to resolve it again.
-                if resolved_for.as_ref() != Some(&(held.origin_name.clone(), held.code)) {
-                    return Ok(RepoManifestMerge::Unproven);
-                }
-                // Where this host serves the repo, a copy keeps the served
-                // name, so refresh and later merges still judge it here.
-                if served.is_some() && carried.origin_name != held.origin_name {
-                    return Ok(RepoManifestMerge::Unproven);
-                }
-                let origin = match served {
-                    Some(repo_id) => self.origin_authority_in_txn(txn, repo_id)?,
-                    None => None,
-                };
-                if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
-                    return Ok(RepoManifestMerge::Unproven);
-                }
-            } else if self
-                .authority_view_readonly_in_txn(txn)?
-                .origin_cut_standing(carried.portable.as_bytes())?
-                != OriginCutStanding::NoCut
-                && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
-            {
-                // Once the owner cut the repo, a first copy is proven as a
-                // replacement is (FIX 15740); before any cut it is adopted.
+            if !carried.replaces(&held)? {
+                return Ok(RepoManifestMerge::Held);
+            }
+            // The held copy moved since the repo was resolved: wait for
+            // the next pass to resolve it again.
+            if resolved_for.as_ref() != Some(&(held.origin_name.clone(), held.code)) {
                 return Ok(RepoManifestMerge::Unproven);
             }
-            MANIFESTS.put(&self.store, txn, &key, carried)?;
-            let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
-                Some(standing) if standing == key => false,
-                Some(standing) => MANIFESTS
-                    .get(&self.store, txn, &standing)?
-                    .is_none_or(|other| carried.mints_before(&other)),
-                None => true,
-            };
-            if stands {
-                BY_CODE.put(&self.store, txn, &carried.code, &key)?;
+            // Where this host serves the repo, a copy keeps the served
+            // name, so refresh and later merges still judge it here.
+            if served.is_some() && carried.origin_name != held.origin_name {
+                return Ok(RepoManifestMerge::Unproven);
             }
-            Ok(RepoManifestMerge::Adopted)
-        })
+            let origin = match served {
+                Some(repo_id) => self.origin_authority_in_txn(txn, repo_id)?,
+                None => None,
+            };
+            if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
+                return Ok(RepoManifestMerge::Unproven);
+            }
+        } else if self
+            .authority_view_readonly_in_txn(txn)?
+            .origin_cut_standing(carried.portable.as_bytes())?
+            != OriginCutStanding::NoCut
+            && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
+        {
+            // Once the owner cut the repo, a first copy is proven as a
+            // replacement is (FIX 15740); before any cut it is adopted.
+            return Ok(RepoManifestMerge::Unproven);
+        }
+        MANIFESTS.put(&self.store, txn, &key, carried)?;
+        let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
+            Some(standing) if standing == key => false,
+            Some(standing) => MANIFESTS
+                .get(&self.store, txn, &standing)?
+                .is_none_or(|other| carried.mints_before(&other)),
+            None => true,
+        };
+        if stands {
+            BY_CODE.put(&self.store, txn, &carried.code, &key)?;
+        }
+        Ok(RepoManifestMerge::Adopted)
     }
 
     /// Signs `manifest` as this machine, the refs writer that writes it, in
