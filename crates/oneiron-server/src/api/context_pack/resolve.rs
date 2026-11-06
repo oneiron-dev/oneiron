@@ -589,9 +589,9 @@ fn read_reaction_signals(
         .as_deref()
         .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
         .transpose()?;
-    let deadline = req
-        .signals_deadline_ms
-        .map(|ms| oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms)));
+    let deadline = req.signals_deadline_ms.map(|ms| {
+        oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms))
+    });
     let signal_error = |error: oneiron::Error| match &error {
         oneiron::Error::Io(error)
             if error.get_ref().is_some_and(|source| {
