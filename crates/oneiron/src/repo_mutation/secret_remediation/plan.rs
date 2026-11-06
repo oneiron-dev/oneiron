@@ -16,6 +16,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::git_wire::git_path_bytes;
 use crate::origin::secret_manifest::SECRET_MANIFEST_PATH;
 use crate::origin::secret_marks::{RepoBlobMarks, RepoMarkFacts, RepoSecretPlacement};
 use crate::repo_mutation::snapshot::SnapshotCustody;
@@ -131,7 +132,7 @@ impl Plan {
             return Ok(());
         }
         self.write_examples(files);
-        self.write_ignore(files);
+        self.write_ignore(files)?;
         self.write_manifest(manifest);
         Ok(())
     }
@@ -448,31 +449,43 @@ impl Plan {
     }
 
     /// The ignore file gains `.env` and each removed dotenv file's exact
-    /// path, unless a line already names it.
-    fn write_ignore(&mut self, files: &BTreeMap<String, CommitFile>) {
+    /// path, unless a line already names it. An ignore rule is bytes, as Git
+    /// matches it: a removed file's name outside UTF-8 is written and matched
+    /// as its own bytes, never as its path text's escape (FIX 21326).
+    fn write_ignore(&mut self, files: &BTreeMap<String, CommitFile>) -> Result<()> {
         let mut text = files
             .get(IGNORE_PATH)
             .map(|file| file.content.clone())
             .unwrap_or_default();
-        let present: BTreeSet<String> = text
+        let present: BTreeSet<&[u8]> = text
             .split(|byte| *byte == b'\n')
-            .filter_map(|line| std::str::from_utf8(line).ok())
-            .map(|line| line.trim().trim_start_matches('/').to_owned())
+            .map(|line| {
+                let mut rule = line.trim_ascii();
+                while let Some(rest) = rule.strip_prefix(b"/") {
+                    rule = rest;
+                }
+                rule
+            })
             .collect();
         let mut wanted = std::mem::take(&mut self.ignored);
         wanted.insert(".env".to_owned());
-        let missing: Vec<String> = wanted
-            .into_iter()
-            .filter(|entry| !present.contains(entry))
-            .collect();
+        let mut missing = Vec::new();
+        let mut rules = Vec::new();
+        for entry in wanted {
+            let rule = git_path_bytes(&entry)?.into_owned();
+            if !present.contains(rule.as_slice()) {
+                rules.push(rule);
+                missing.push(entry);
+            }
+        }
         if missing.is_empty() {
-            return;
+            return Ok(());
         }
         if !text.is_empty() && !text.ends_with(b"\n") {
             text.push(b'\n');
         }
-        for entry in &missing {
-            text.extend_from_slice(entry.as_bytes());
+        for rule in &rules {
+            text.extend_from_slice(rule);
             text.push(b'\n');
         }
         self.files.insert(
@@ -483,6 +496,7 @@ impl Plan {
                 custody: Vec::new(),
             },
         );
+        Ok(())
     }
 
     /// The manifest gains one entry per secret it does not declare yet,
