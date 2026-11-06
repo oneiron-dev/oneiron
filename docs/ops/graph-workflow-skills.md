@@ -14,6 +14,11 @@ only caps that dial; it never lowers the saved first rung. Explicit deadline and
 criteria override those saved values. Posture always keeps the stricter of the
 saved question, caller and vault.
 
+An explicit criteria override has its own answer deduplication identity, including
+when its criteria are empty or equal to the saved criteria. Different overrides
+cannot reuse each other's answers or a saved-question pump's answer. The saved
+question version and physical source-frontier checks stay unchanged.
+
 The caller cannot supply an actor, principal, run, attempt, lease, executor or
 payer. The door uses its bound actor and run. It matches that actor and the
 origin's exact attempt/owner/generation to the registered run, checks the live
