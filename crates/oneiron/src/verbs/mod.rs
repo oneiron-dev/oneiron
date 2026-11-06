@@ -12,6 +12,7 @@ mod campaign_split;
 mod catalog_fragment;
 mod comm_widen;
 mod connector;
+mod campaign_enrollment;
 mod connector_call;
 mod connector_pack;
 mod connector_slate;
@@ -434,6 +435,7 @@ pub use self::catalog_fragment::{
 };
 pub use self::comm_widen::*;
 pub use self::connector::*;
+pub use self::campaign_enrollment::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
 pub use self::connector_slate::*;
