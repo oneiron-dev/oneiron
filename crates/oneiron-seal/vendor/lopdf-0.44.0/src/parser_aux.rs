@@ -26,6 +26,18 @@ impl Content<Vec<Operation>> {
     pub fn decode_strict(data: &[u8]) -> Result<Self> {
         parser::content_strict(data).map_err(|e| e.into())
     }
+
+    /// Decode content operations, admitting each allocation before it is made.
+    /// The caller retains the admitted memory until the content is dropped.
+    pub fn decode_admitted(data: &[u8], admission: &dyn DecodeAdmission) -> Result<Self> {
+        parser::content_admitted(data, admission)?.ok_or(ParseError::InvalidContentStream.into())
+    }
+
+    /// Strict decode content operations, admitting each allocation before it is made.
+    /// The caller retains the admitted memory until the content is dropped.
+    pub fn decode_strict_admitted(data: &[u8], admission: &dyn DecodeAdmission) -> Result<Self> {
+        parser::content_strict_admitted(data, admission)
+    }
 }
 
 impl Stream {

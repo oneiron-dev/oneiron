@@ -1,7 +1,7 @@
 //! Linear lexical framing; the PDF parser validates the single bounded operand.
 use super::*;
 
-pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
+pub(super) fn leading_dictionary(bytes: &[u8], stage: &super::Stage) -> Result<(Dictionary, usize)> {
     let end = bytes.len().min(64 * 1024);
     let mut cursor = 0;
     let mut nesting = Vec::new();
@@ -62,8 +62,12 @@ pub(super) fn leading_dictionary(bytes: &[u8]) -> Result<(Dictionary, usize)> {
                 }
                 cursor += 1;
                 if nesting.is_empty() {
-                    let object = super::operand(&bytes[..=cursor])?;
-                    return Ok((object.as_dict()?.clone(), cursor + 1));
+                    let mut object = super::operand_in(&bytes[..=cursor], stage)?;
+                    let dictionary = match &mut object {
+                        super::Object::Dictionary(dictionary) => std::mem::take(dictionary),
+                        _ => return Err(PdfPreparationError::MalformedPdf),
+                    };
+                    return Ok((dictionary, cursor + 1));
                 }
             }
             _ => {}
