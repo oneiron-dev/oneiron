@@ -74651,6 +74651,11 @@ pub enum AgentSpawnOutput {
         #[serde(rename = "kind")]
         kind: AgentSpawnKind,
     },
+    #[serde(rename = "asker_erased")]
+    AskerErased {
+        #[serde(rename = "kind")]
+        kind: AgentSpawnKind,
+    },
 }
 
 /// `oneiron::code_run::run_verbs::LeaderSplitInput`.
