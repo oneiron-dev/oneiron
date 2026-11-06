@@ -368,7 +368,7 @@ async fn seal(
     let pre_export = registry::reserve_host(candidate.residency.unique_bytes.unwrap_or(0))
         .await
         .ok_or(Some(Skip::NoRoom))?;
-    let (answer, region) = session_export(&place.socket, &place.epoch, &body, &place.worker)
+    let (answer, region) = session_export(&place.launch, &place.epoch, &body, &place.worker)
         .await
         .map_err(|_| None)?;
     let region_len = region.len();
