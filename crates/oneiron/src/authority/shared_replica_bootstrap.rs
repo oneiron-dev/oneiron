@@ -123,3 +123,12 @@ impl PreparedSharedReplicaAuthority {
         Ok(())
     }
 }
+
+impl Vault {
+    /// Whether native authority has never started in this replica target.
+    /// This is an early host check only. Import repeats the same predicate
+    /// on its actual writer before any authority history may land.
+    pub fn is_unstarted_replica_target(&self) -> Result<bool> {
+        self.authority_is_unstarted()
+    }
+}
