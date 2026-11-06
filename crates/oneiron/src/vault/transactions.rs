@@ -33,7 +33,8 @@ pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// discard and its projection write them (FIX 14534). Nor a federation world's
 /// registration or stale stamp: only the registration and the stale sweep
 /// write them. Nor a peer-origin digest: only the peer import records what it
-/// brought.
+/// brought. Nor the record of which machine wrote a MESSAGE row: only the put
+/// that stages the row writes it (FIX 12113).
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -96,6 +97,14 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     {
         return Err(Error::InvalidConfig(
             "peer-origin digests are written only by the peer import".to_owned(),
+        ));
+    }
+    if key
+        .as_bytes()
+        .starts_with(crate::side_table::SYNC_MESSAGE_WRITER.prefix)
+    {
+        return Err(Error::InvalidConfig(
+            "MESSAGE writer records are written only by the put that stages the row".to_owned(),
         ));
     }
     Ok(())
