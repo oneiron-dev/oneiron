@@ -71,7 +71,8 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// sign joins (FIX 8498). 20: the owner work fold keeps the owner's export supplement import marks
 /// (FIX 12062). 21: the fold keeps each repository's owner origin cuts (FIX 15740). 22: the fold
 /// keeps each predecessor device key's owner-named successor (FIX 11135).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 22;
+/// 23: the fold counts a removal-archive consume's slip consumed (FIX 11862).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 23;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
