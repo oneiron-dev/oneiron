@@ -4,7 +4,8 @@ use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer as _};
 
 use super::{
-    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalEntity, CanonicalSnapshot,
+    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalEntity, CanonicalPinCarrier,
+    CanonicalRoomFact, CanonicalRoomTurn, CanonicalSnapshot,
 };
 use crate::error::Result;
 
@@ -19,7 +20,7 @@ pub(crate) struct CanonicalEncoding {
 #[derive(Debug, Default)]
 struct RowCursor {
     next: usize,
-    blob: Option<usize>,
+    bytes: Option<usize>,
 }
 
 impl CanonicalEncoding {
@@ -86,9 +87,9 @@ impl CanonicalEncoding {
             ("schema_manifest", &Scalar(schema_manifest)),
             ("suppressed_tasks", &Rows(suppressed_tasks, true)),
             ("custody_transitions", &Rows(custody_transitions, true)),
-            ("room_turns", &Rows(room_turns, true)),
-            ("room_facts", &Rows(room_facts, true)),
-            ("document_pins", &Rows(document_pins, true)),
+            ("room_turns", &KeyedRows(room_turns)),
+            ("room_facts", &KeyedRows(room_facts)),
+            ("document_pins", &KeyedRows(document_pins)),
             ("peer_origins", &Rows(peer_origins, true)),
             ("row_births", &Rows(row_births, true)),
             ("withdrawn_cutoffs", &Rows(withdrawn_cutoffs, true)),
@@ -130,7 +131,7 @@ impl CanonicalEncoding {
     }
 }
 
-/// Scalar and ordinary row serializers stay native; entity blobs also yield within bytes.
+/// Scalar and ordinary row serializers stay native; selected byte rows also yield within bytes.
 trait Field {
     fn present(&self) -> bool;
     fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool>;
@@ -182,14 +183,8 @@ impl Field for Entities<'_> {
             return Ok(self.0.is_empty());
         };
         let CanonicalEntity { id, blob } = &self.0[cursor.next];
-        if let Some(next) = cursor.blob {
-            let end = next.saturating_add(blake3::CHUNK_LEN).min(blob.len());
-            // Vec<u8> uses the native normal-mode array of compact integers, not bin.
-            for byte in &blob[next..end] {
-                write_named(out, byte)?;
-            }
-            cursor.blob = Some(end);
-            if end != blob.len() {
+        if let Some(next) = cursor.bytes.as_mut() {
+            if !write_byte_page(out, blob, next)? {
                 return Ok(false);
             }
         } else {
@@ -204,15 +199,98 @@ impl Field for Entities<'_> {
             write_named(out, id)?;
             write_named(out, "blob")?;
             write_array_header(out, blob.len())?;
-            cursor.blob = Some(0);
+            cursor.bytes = Some(0);
             if !blob.is_empty() {
                 return Ok(false);
             }
         }
         cursor.next += 1;
-        cursor.blob = None;
+        cursor.bytes = None;
         Ok(cursor.next == self.0.len())
     }
+}
+
+trait KeyedRow {
+    const NAME: &'static str;
+    fn key_and_row(&self) -> (&str, &[u8]);
+}
+
+impl KeyedRow for CanonicalRoomTurn {
+    const NAME: &'static str = "CanonicalRoomTurn";
+
+    fn key_and_row(&self) -> (&str, &[u8]) {
+        let CanonicalRoomTurn { key, row } = self;
+        (key, row)
+    }
+}
+
+impl KeyedRow for CanonicalRoomFact {
+    const NAME: &'static str = "CanonicalRoomFact";
+
+    fn key_and_row(&self) -> (&str, &[u8]) {
+        let CanonicalRoomFact { key, row } = self;
+        (key, row)
+    }
+}
+
+impl KeyedRow for CanonicalPinCarrier {
+    const NAME: &'static str = "CanonicalPinCarrier";
+
+    fn key_and_row(&self) -> (&str, &[u8]) {
+        let CanonicalPinCarrier { key, row } = self;
+        (key, row)
+    }
+}
+
+struct KeyedRows<'a, T>(&'a [T]);
+
+impl<T: KeyedRow> Field for KeyedRows<'_, T> {
+    fn present(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool> {
+        let Some(cursor) = row else {
+            write_array_header(out, self.0.len())?;
+            *row = Some(RowCursor::default());
+            return Ok(self.0.is_empty());
+        };
+        let (key, bytes) = self.0[cursor.next].key_and_row();
+        if let Some(next) = cursor.bytes.as_mut() {
+            if !write_byte_page(out, bytes, next)? {
+                return Ok(false);
+            }
+        } else {
+            let result = {
+                let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
+                serializer
+                    .serialize_struct(T::NAME, 2)
+                    .and_then(SerializeStruct::end)
+            };
+            result.map_err(|_| out.refusal())?;
+            write_named(out, "key")?;
+            write_named(out, key)?;
+            write_named(out, "row")?;
+            write_array_header(out, bytes.len())?;
+            cursor.bytes = Some(0);
+            if !bytes.is_empty() {
+                return Ok(false);
+            }
+        }
+        cursor.next += 1;
+        cursor.bytes = None;
+        Ok(cursor.next == self.0.len())
+    }
+}
+
+fn write_byte_page(out: &mut BoundedWriter, bytes: &[u8], next: &mut usize) -> Result<bool> {
+    let end = next.saturating_add(blake3::CHUNK_LEN).min(bytes.len());
+    // Vec<u8> uses the native normal-mode array of compact integers, not bin.
+    for byte in &bytes[*next..end] {
+        write_named(out, byte)?;
+    }
+    *next = end;
+    Ok(end == bytes.len())
 }
 
 fn write_array_header(out: &mut BoundedWriter, len: usize) -> Result<()> {
