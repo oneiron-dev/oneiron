@@ -371,7 +371,7 @@ fn wait_child(child: libc::pid_t) -> i32 {
     }
 }
 
-fn block_sigchld() -> Result<libc::sigset_t> {
+pub(crate) fn block_sigchld() -> Result<libc::sigset_t> {
     let mut signals = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
     // SAFETY: sigemptyset initializes signals before sigaddset/sigprocmask use it.
     let result = unsafe {
@@ -386,7 +386,7 @@ fn block_sigchld() -> Result<libc::sigset_t> {
     Ok(unsafe { signals.assume_init() })
 }
 
-fn await_host_shutdown(signals: &libc::sigset_t) -> ! {
+pub(crate) fn await_host_shutdown(signals: &libc::sigset_t) -> ! {
     loop {
         let mut status = 0;
         // SAFETY: PID 1 owns reaping of all adopted children. WNOHANG prevents
