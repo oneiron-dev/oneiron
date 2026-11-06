@@ -450,8 +450,8 @@ pub(super) async fn call_with_key(
     call_with_key_released(client, keys, secret, header, body, None, None).await
 }
 
-/// [`call_with_key`] with the caller's release invoked after connection and
-/// key retrieval, immediately before the broker sends the bytes.
+/// [`call_with_key`] with the caller's original release after key retrieval,
+/// then before each physical broker HTTP write, including a gzip/plain resend.
 pub(super) async fn call_with_key_released(
     client: &BrokerClient,
     keys: &Arc<dyn KeyDoor>,
@@ -476,6 +476,20 @@ pub(super) async fn call_with_key_released(
         })?;
     if let Some(release) = release {
         release()?;
+        let before_send = || {
+            release()?;
+            if let Some(lease) = lease {
+                lease.begin_physical_attempt();
+            }
+            Ok::<(), LlmError>(())
+        };
+        return connection
+            .call_released(header, body, key, &before_send)
+            .await
+            .map_err(|error| match error {
+                oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+                oneiron_broker::DispatchError::Release(error) => error,
+            });
     }
     if let Some(lease) = lease {
         lease.begin_physical_attempt();

@@ -121,6 +121,16 @@ pub(crate) async fn write_call<W: AsyncWrite + Unpin>(
     write_call_parts(writer, header, body, None, secret, false).await
 }
 
+/// Writes an HTTP call that checks the daemon's release before each send.
+pub(crate) async fn write_call_released<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &CallHeader,
+    body: &[u8],
+    secret: &[u8],
+) -> io::Result<()> {
+    write_call_parts(writer, header, body, None, secret, true).await
+}
+
 /// Writes a Responses call: its header, planned create body, the whole turn
 /// used for admission and a possible full retry, then the key. The whole turn
 /// travels as its own raw segment, never inside the size-capped JSON header.
@@ -158,9 +168,7 @@ async fn write_call_parts<W: AsyncWrite + Unpin>(
         write_segment(writer, whole).await?;
     }
     write_segment(writer, secret).await?;
-    if whole.is_some() {
-        writer.write_all(&[u8::from(released)]).await?;
-    }
+    writer.write_all(&[u8::from(released)]).await?;
     writer.flush().await
 }
 
@@ -171,7 +179,7 @@ pub(crate) struct ReadCall {
     /// The whole Responses turn for a same-socket full retry; absent for HTTP shapes.
     pub(crate) whole: Option<Zeroizing<Vec<u8>>>,
     pub(crate) secret: Zeroizing<Vec<u8>>,
-    /// Responses waits for the daemon before each provider create frame.
+    /// The broker waits for the daemon before each physical provider send.
     pub(crate) released: bool,
 }
 
@@ -192,7 +200,7 @@ pub(crate) async fn read_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Re
     let secret = read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
-    let released = read_release_mode(reader, &header).await?;
+    let released = read_release_mode(reader).await?;
     Ok(ReadCall {
         header,
         body,
@@ -218,17 +226,11 @@ pub(crate) async fn skip_call<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Ca
     read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
-    read_release_mode(reader, &header).await?;
+    read_release_mode(reader).await?;
     Ok(header)
 }
 
-async fn read_release_mode<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    header: &CallHeader,
-) -> Result<bool, Refusal> {
-    if header.shape != crate::Shape::OpenAiResponses {
-        return Ok(false);
-    }
+async fn read_release_mode<R: AsyncRead + Unpin>(reader: &mut R) -> Result<bool, Refusal> {
     match reader.read_u8().await.map_err(|_| Refusal::Frame)? {
         0 => Ok(false),
         1 => Ok(true),
