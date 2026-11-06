@@ -383,6 +383,33 @@ impl Vault {
         let suffix = reference[10..].to_owned();
         Ok(RECEIPT_BY_REF.get(&self.store, &txn, &suffix)?)
     }
+    /// The live MESSAGE a stored continuation names in the caller's snapshot.
+    /// Fresh, missing or malformed seeds and absent or non-MESSAGE records
+    /// stay unknown; no source is reconstructed from a terminal receipt.
+    pub(crate) fn message_stream_continuation_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let Some(seed) = ACTIVE.get_lenient(&self.store, txn, message)? else {
+            return Ok(None);
+        };
+        if seed.message_id != *message || !seed.continuation {
+            return Ok(None);
+        }
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &seed.message_id)?
+        else {
+            return Ok(None);
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
+            return Ok(None);
+        }
+        Ok(Some(seed.message_id))
+    }
 }
 
 impl crate::off_record::FloorWrites<'_> {

@@ -1,7 +1,9 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod reply_evidence;
 mod script_context;
 pub(super) use script_context::load_script_context;
+pub(crate) use script_context::mask_known_text;
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
@@ -82,18 +84,24 @@ pub(super) fn bind_published_output(
     digest_bindings.push((name, output.handle.clone()));
 }
 
-/// A step's model reply as the provider gave it, kept apart from the program
-/// healed out of it: untrusted evidence, never executed. It streams into its
-/// body as it is encoded.
+/// A step's model reply, kept apart from the program healed out of it:
+/// untrusted evidence, never executed. PERSON and custody matches share the
+/// original encoding, so neither substitution changes the other's context.
 pub(super) fn record_reply_evidence(
     storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     seq: u64,
     reply: &crate::LlmMessage,
 ) -> EngineExecutorResult<()> {
-    let mut sink = storage.code_run_output_sink()?;
-    write_json(&mut sink, reply)?;
-    publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    if let Some(bytes) = reply_evidence::for_run_bytes(storage, record.run_id, reply)? {
+        let mut sink = storage.code_run_script_sink()?;
+        sink.write(bytes.as_slice())?;
+        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    } else {
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    }
 }
 
 /// Encodes `value` as JSON straight into a body sink, never whole first.
