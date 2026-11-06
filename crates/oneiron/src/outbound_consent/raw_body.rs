@@ -64,6 +64,18 @@ impl RawOutboundBody {
         })
     }
 
+    /// Takes an already-written spool without copying its bytes. The body
+    /// covers the file's start through its current cursor; the caller passes
+    /// its anonymous spool after its final write, not a path to open.
+    pub fn from_spooled_file(mut file: File) -> Result<Self> {
+        let len = file.stream_position()?;
+        Ok(Self {
+            storage: Arc::new(Storage::File(Mutex::new(file))),
+            start: 0,
+            len,
+        })
+    }
+
     /// Moves byte-backed storage to an anonymous spool when possible.
     /// Existing file storage is retained. A placement error keeps the original
     /// bytes, so moving storage cannot refuse an already returned body.

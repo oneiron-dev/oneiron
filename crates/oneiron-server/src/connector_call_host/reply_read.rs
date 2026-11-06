@@ -32,16 +32,16 @@ pub(super) enum StreamEvent {
     End,
 }
 
-/// A reply stream read event by event, each event whole whatever its size
-/// (FIX 8227). The first tools/call read can release the event's text before
-/// parsing its typed value; control and later reads keep their byte storage. Past
-/// `deadline`, so is the rest of a round. Everything it holds of what the
-/// connector said is wiped once read past or dropped (FIX 8309, L10 09:30):
-/// the reader's buffer, the line, the event's data, the event ids and a
-/// message it drops.
+/// A reply stream read event by event, each message whole whatever its size
+/// (FIX 8227). The first tools/call read spools normalized data fields when
+/// possible; control and later reads keep their in-memory data. Past
+/// `deadline`, the rest of a round is unreadable. In-memory foreign bytes
+/// are wiped once read past or dropped (FIX 8309, L10 09:30): the reader's
+/// buffer, the line, event data and ids, and dropped messages. Event files
+/// have the raw body's anonymous, delete-on-close spool lifetime.
 pub(super) struct EventStream {
     reader: ZeroizingBufReader<reqwest::blocking::Response>,
-    data: Zeroizing<String>,
+    data: event_body::Data,
     deadline: Option<Instant>,
     /// The line being read, kept across a read that timed out (FIX 9286).
     line: Zeroizing<String>,
@@ -107,7 +107,7 @@ impl EventStream {
                 self.last_event_id.clone_from(&self.id_buffer);
                 if !self.data.is_empty() {
                     let event = std::mem::take(&mut self.data);
-                    if let Some((message, body)) = event_body::read(event, vault)? {
+                    if let Some((message, body)) = event.read()? {
                         if answers(&message, id) {
                             return Ok(StreamEvent::Answer(message, body));
                         }
@@ -123,10 +123,8 @@ impl EventStream {
                 continue;
             }
             if let Some(field) = trimmed.strip_prefix("data:") {
-                if !self.data.is_empty() {
-                    self.data.push('\n');
-                }
-                self.data.push_str(field.strip_prefix(' ').unwrap_or(field));
+                self.data
+                    .append(field.strip_prefix(' ').unwrap_or(field), vault)?;
             } else if let Some(field) = id_field(trimmed) {
                 field.clone_into(&mut self.id_buffer);
             }
@@ -206,7 +204,7 @@ fn open_reply_body(
     if stream {
         return Ok(Reply::Stream(EventStream {
             reader: ZeroizingBufReader::new(body),
-            data: Zeroizing::default(),
+            data: event_body::Data::default(),
             deadline,
             line: Zeroizing::default(),
             id_buffer: Zeroizing::default(),
