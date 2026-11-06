@@ -136,6 +136,23 @@ pub(crate) fn live_origin(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<Option<CalendarOrigin>> {
+    live_origin_with_authority(store, store, txn, event)
+}
+
+pub(in crate::calendar) fn live_origin_from_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<Option<CalendarOrigin>> {
+    live_origin_with_authority(read, read.base(), txn, event)
+}
+
+fn live_origin_with_authority(
+    store: &impl ManifestDbs,
+    authority: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<Option<CalendarOrigin>> {
     let mut chosen = None;
     for entry in store.port_edges(
         txn,
@@ -157,7 +174,7 @@ pub(crate) fn live_origin(
         let body = crate::claim::decode_claim_body(bytes, true)?;
         if body.predicate == PREDICATE_CALENDAR_ORIGIN
             && claim_surfaceable(&body)
-            && crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &id)?
+            && crate::gate::claim_critical_confirm_settled_in_txn(authority, txn, &id)?
         {
             let origin = body
                 .value
@@ -516,6 +533,15 @@ pub(crate) fn replay_origin_bound(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<bool> {
+    replay_origin_bound_with_authority(store, store, txn, event)
+}
+
+fn replay_origin_bound_with_authority(
+    store: &impl ManifestDbs,
+    authority: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool> {
     let Some(row) = store.port_entity_record(txn, &event)? else {
         return Ok(true);
     };
@@ -525,7 +551,7 @@ pub(crate) fn replay_origin_bound(
     let Some(origin) = declared_origin(&row.body)? else {
         return Ok(true);
     };
-    Ok(live_origin(store, txn, event)? == Some(origin))
+    Ok(live_origin_with_authority(store, authority, txn, event)? == Some(origin))
 }
 
 fn declared_origin(body: &[u8]) -> Result<Option<CalendarOrigin>> {
@@ -613,5 +639,15 @@ pub(in crate::calendar) fn invalidated_in_txn(
         || INVALIDATED_EVENT.contains(&vault.store, txn, &event)?)
 }
 
+pub(in crate::calendar) fn invalidated_from_read_in_txn(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool> {
+    Ok(
+        !replay_origin_bound_with_authority(read, read.base(), txn, event)?
+            || INVALIDATED_EVENT.contains(read, txn, &event)?,
+    )
+}
 #[cfg(test)]
 mod tests;

@@ -31,9 +31,19 @@ vault-authoritative MACHINE-history projection. Standing party STOP still folds
 from the canonical vault; staged content never becomes grant or control authority.
 The scoped PPR builder and the final candidate deletion/learned-time reads also use
 the serving content reader. The unrestricted builder still supplies the base view.
-The public `Memory::calendar_prep` entry still opens its canonical lane. EVENT facts,
-Session telemetry and the actual Session verb caller remain separate work; this is
-not a claim that calendar prep is served through an off-record session route.
+The public `Memory::calendar_prep` entry still opens its canonical lane. A
+session-bound code run opts `vault.calendar.prep` into its captured read context.
+EVENT metadata, active deciding CLAIMs, origin binding and source invalidation use
+that same content view. Critical-confirm obligations and pending consent remain
+vault authority, never staged room policy. A withheld deciding CLAIM still makes
+the EVENT unavailable rather than turning the claim into an absent/default fact.
+
+The Session caller routes both retrieval registration and finalization through
+`retrieval_telemetry` on the run's captured route. It never opens a fresh route or
+writes the room's retrieval ids to base through a canonical builder. The answer
+keeps its scoped receipt and returns the EVENT, active deciding CLAIMs and rendered
+source refs to the existing code-run release rule. Existing host admission, hooks,
+credential checks and final participant admission remain in place.
 
 All new evidence must have been learned by the supplied fire instant. The existing
 eligibility, EVENT/attendee PPR seeds, three-hop walk, 64-candidate PPR limit, nine
