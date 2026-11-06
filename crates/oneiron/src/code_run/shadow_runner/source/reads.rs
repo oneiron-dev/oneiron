@@ -20,7 +20,7 @@ use crate::code_run::{
     CodeRunRawOutput, CodeRunReplayRecord, ReaderFoldReceipt, ReaderReadCapture,
 };
 use crate::engine_executor::JsResultRef;
-use crate::result_body::ResultShare;
+use crate::store::result_memory::ResultShare;
 use crate::{EntityId, Result, Vault};
 
 /// A body of another run that the step's read context names, frozen for the
