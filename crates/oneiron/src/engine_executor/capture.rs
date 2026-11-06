@@ -121,8 +121,9 @@ impl EngineNativeExecutor<'_> {
 
     /// The replay context of the step `record` is about to checkpoint, whose
     /// calls are its bridge rows from `bridge_start` on, with what its host
-    /// kept in `capture`: the responses it handed out (FIX 6351) and what its
-    /// result reads saw of reader state (FIX 6352). Beside them, where its
+    /// kept in `capture`: the responses it handed out (FIX 6351), what its
+    /// result reads saw of reader state (FIX 6352) and the callables its
+    /// program called that answered (FIX 3608). Beside them, where its
     /// checkpoint says its calls end (FIX 6354): the end and the
     /// context's digest, which the checkpoint binds, and the context as the
     /// checkpoint commits it. Only a leased attempt's own canonical run
@@ -151,6 +152,7 @@ impl EngineNativeExecutor<'_> {
             bridge_end,
             guest_responses: capture.guest_responses,
             reader_reads: capture.reader_reads,
+            callables: capture.callables,
         };
         let commit = StepContextCommit::new(capsule, context)?;
         let end = StepEnd {
