@@ -524,6 +524,11 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&entry.to_be_bytes());
         }
         MemberStep::Xz => out.push(5),
+        // FIX 11575: a 7z entry.
+        MemberStep::SevenZip { entry } => {
+            out.push(7);
+            out.extend_from_slice(&entry.to_be_bytes());
+        }
         MemberStep::PdfStream { object, generation } => {
             out.push(2);
             out.extend_from_slice(&object.to_be_bytes());
@@ -587,6 +592,8 @@ impl<'b> Spooled<'b> {
             // FIX 2471: a tar entry and an xz payload.
             4 => MemberStep::Tar { entry: self.u32()? },
             5 => MemberStep::Xz,
+            // FIX 11575: a 7z entry.
+            7 => MemberStep::SevenZip { entry: self.u32()? },
             2 => MemberStep::PdfStream {
                 object: self.u32()?,
                 generation: self.u16()?,
