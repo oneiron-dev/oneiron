@@ -43,6 +43,9 @@ pub struct UnmergedUpload {
     pub generation: SealedBundleGeneration,
     /// Empty when it merged every section this machine may read.
     pub sections: Vec<UnmergedSection>,
+    /// Whether it came back from a committed attempt a later pass found,
+    /// rather than from an assembly this process saw.
+    pub restored: bool,
 }
 
 /// What this process last saw of one machine's sealed bundle upkeep. Each
@@ -109,6 +112,7 @@ pub(super) fn observe_upload(
         at: vault.store.clock.peek_recorded_at(),
         generation,
         sections: sections.to_vec(),
+        restored: false,
     };
     observed
         .entry(machine)
@@ -117,26 +121,35 @@ pub(super) fn observe_upload(
         .insert(home, upload);
 }
 
-/// Notes the upload of `attempt`, which a later pass found committed, when
-/// this process noted no upload for its home since (FIX 19525): after a
-/// restart, the owner still sees what it carries unmerged. An upload noted
-/// already is this attempt's own, assembled in this process, or a later one,
-/// and stays.
+/// Notes the upload of `attempt`, which a later pass found committed (FIX
+/// 19525): after a lost acknowledgement or a restart, the owner still sees
+/// what it carries unmerged. An upload assembled in this process is this
+/// attempt's own or a later one, and stays. One restored from another
+/// attempt gives way when this attempt is the later one: it was sealed on
+/// top of that one's generation, or for a later slot. So the record names
+/// the newest upload whatever order a pass reconciles attempts in.
 pub(super) fn restore_upload(vault: &Vault, attempt: &BundleAttempt) {
     let (Some(machine), Ok(mut observed)) = (local_machine(vault), observations().lock()) else {
         return;
     };
-    let at = vault.store.clock.peek_recorded_at();
-    observed
-        .entry(machine)
-        .or_default()
-        .uploads
-        .entry(attempt.home)
-        .or_insert_with(|| UnmergedUpload {
-            at,
-            generation: attempt.generation,
-            sections: attempt.unmerged_sections.clone(),
-        });
+    let uploads = &mut observed.entry(machine).or_default().uploads;
+    let later = uploads.get(&attempt.home).is_none_or(|held| {
+        held.restored
+            && held.generation != attempt.generation
+            && (attempt.parent == Some(held.generation)
+                || attempt.generation.slot > held.generation.slot)
+    });
+    if later {
+        uploads.insert(
+            attempt.home,
+            UnmergedUpload {
+                at: vault.store.clock.peek_recorded_at(),
+                generation: attempt.generation,
+                sections: attempt.unmerged_sections.clone(),
+                restored: true,
+            },
+        );
+    }
 }
 
 /// Notes one upkeep relay's `result` for this install's machine and hands it
