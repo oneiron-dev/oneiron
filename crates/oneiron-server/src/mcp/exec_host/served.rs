@@ -65,17 +65,17 @@ impl Default for CodeRunLimits {
 /// The PRODUCTION adapter: the injected provider, entered through the engine's
 /// own durable executor.
 pub struct McpEngineNativeCodeHost {
-    provider: Arc<dyn McpCodeModeProvider>,
+    pub(super) provider: Arc<dyn McpCodeModeProvider>,
     /// Each run's single flight: one entry at a time, the next in arrival
     /// order (FIX 9505).
-    active: ActiveRuns,
+    pub(super) active: ActiveRuns,
     seats: Arc<Mutex<RunSeats>>,
     /// Keyed by the credential's stream connection, its registered
     /// fingerprint.
-    runs: Admission<String>,
+    pub(super) runs: Admission<String>,
     /// Where each run's seat to spawn reader children comes from; none
     /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
-    reader_seats: Option<Arc<crate::server::ReaderSeats>>,
+    pub(super) reader_seats: Option<Arc<crate::server::ReaderSeats>>,
     /// The operator's own Git door base each run's checkouts point at (FIX
     /// 7181); `None` keeps a run's own base.
     git_door_base: Option<String>,
