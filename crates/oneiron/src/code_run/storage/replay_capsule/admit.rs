@@ -21,7 +21,9 @@ use std::ops::Range;
 
 use heed::RwTxn;
 
-use super::super::super::contribution::{ContributionForkReceipt, ForkTreatment};
+use super::super::super::contribution::{
+    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
+};
 use super::super::super::replay_capsule::{
     CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
     StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
@@ -29,7 +31,10 @@ use super::super::super::replay_capsule::{
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
-use super::{CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, capsule_key, fork_row_name};
+use super::{
+    CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, ForkWrite, capsule_key,
+    fork_capsule_in_txn, fork_row_name,
+};
 use crate::batch::secret_scan::{
     SidePart, TextReplacements, admit_side_parts, admit_tracked_side_parts,
 };
@@ -46,7 +51,7 @@ const START_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:start";
 const RESPONSE_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:fork_response";
 
 /// Why a capsule writer's transaction rolled back.
-enum Unwritten {
+pub(super) enum Unwritten {
     /// Its masked bodies past the inline bound need this many body
     /// instances, minted before a writer opens: a writer never mints.
     Unreserved(usize),
@@ -60,22 +65,34 @@ impl From<Error> for Unwritten {
 }
 
 /// How many bodies of `lens` bytes spill past `bound`.
-fn spilling(bound: u64, lens: &[usize]) -> usize {
+pub(super) fn spilling(bound: u64, lens: &[usize]) -> usize {
     lens.iter().filter(|&&len| len as u64 > bound).count()
 }
 
 /// Where a writer's bodies go: inline within the bound, past it into the
 /// instances minted before the writer opened.
-struct Spill {
+pub(super) struct Spill {
     bound: u64,
     mint: BodyMint,
     reserved: usize,
 }
 
 impl Spill {
+    /// The instances bodies of `lens` bytes spill into, minted now, before
+    /// the writer that publishes them opens.
+    pub(super) fn minted(vault: &Vault, lens: &[usize]) -> Result<Self> {
+        let bound = vault.code_result_inline_bytes();
+        let reserved = spilling(bound, lens);
+        Ok(Self {
+            bound,
+            mint: vault.store.body_mint()?.reserve(reserved)?,
+            reserved,
+        })
+    }
+
     /// Rolls the writer back, before anything spills, when bodies of `lens`
     /// bytes need more instances than it holds.
-    fn holds(&self, lens: &[usize]) -> std::result::Result<(), Unwritten> {
+    pub(super) fn holds(&self, lens: &[usize]) -> std::result::Result<(), Unwritten> {
         let needed = spilling(self.bound, lens);
         if needed > self.reserved {
             return Err(Unwritten::Unreserved(needed));
@@ -86,7 +103,7 @@ impl Spill {
     /// Publishes `bytes` as the complete body run `owner` holds at `path`, in
     /// `wtxn`: its row, the secret mark of the run's occurrence when the
     /// sink's own scan hits, and its descriptor. Its size is measured.
-    fn publish_in_txn(
+    pub(super) fn publish_in_txn(
         &self,
         vault: &Vault,
         wtxn: &mut RwTxn<'_>,
@@ -108,7 +125,7 @@ impl Spill {
 /// Runs `write` in one write transaction with `reserved` body instances
 /// minted before it opens. When its masked bodies need more, it rolls back,
 /// and runs again with as many minted first.
-fn with_spill<T>(
+pub(super) fn with_spill<T>(
     vault: &Vault,
     mut reserved: usize,
     write: impl Fn(&mut RwTxn<'_>, &Spill) -> std::result::Result<T, Unwritten>,
@@ -218,6 +235,8 @@ fn write_capsule_in_txn(
         captured_at: crate::unix_seconds_now(),
         start,
         content: CapsuleContent::Kept { actor },
+        context: None,
+        answer: None,
     };
     CAPSULES.put(vault, wtxn, &key, &capsule)?;
     Ok(Some(capsule))
@@ -264,6 +283,8 @@ fn write_withheld_in_txn(
         captured_at: crate::unix_seconds_now(),
         start,
         content: CapsuleContent::Kept { actor: draft.actor },
+        context: None,
+        answer: None,
     };
     CAPSULES.put(vault, wtxn, &draft.key(), &capsule)?;
     Ok(Some(capsule))
@@ -570,10 +591,13 @@ fn text_part<'r>(request: &'r LlmRequest, slot: &ExposureSlot) -> Option<&'r str
 }
 
 /// Stores a fork's answer as a body the original run owns, admitted as the
-/// capsule's own bodies are, in a writer that reads the capsule again first:
-/// `None`, with nothing written, once the capsule is erased or gone, or its
-/// actor is (FIX 6144). Its receipt and erase provenance land in that SAME
-/// writer, so an erase always discovers a published answer (FIX 9713).
+/// capsule's own bodies are, in a writer that reads the capsule again first.
+/// Nothing is written once the capsule is gone (`Unreadable`), its actor's
+/// erase took its content (`Erased`), or a subject is gone now (FIX 6144).
+/// That last stop is the fence's `Unfinished`, so a restore before a later
+/// writer never makes it lasting (FIX 6256). Its receipt and erase
+/// provenance land in that SAME writer, so an erase always discovers a
+/// published answer (FIX 9713).
 pub(crate) fn store_fork_response(
     vault: &Vault,
     capsule: &StepReplayCapsule,
@@ -583,35 +607,38 @@ pub(crate) fn store_fork_response(
     path: &str,
     response: &LlmResponse,
     receipt: impl Fn(OutputRef) -> ContributionForkReceipt,
-) -> Result<Option<ContributionForkReceipt>> {
+) -> Result<ForkWrite<ContributionForkReceipt>> {
     let sent = serde_json::to_vec(response)
         .map_err(|error| Error::InvalidConfig(format!("fork response: {error}")))?;
     let key = capsule_key(capsule);
     let reserved = spilling(vault.code_result_inline_bytes(), &[sent.len()]);
     with_spill(vault, reserved, |wtxn, spill| {
-        let Some(held) = CAPSULES.get(&vault.store, wtxn, &key)? else {
-            return Ok(None);
-        };
-        let Some(actor) = held.content.actor() else {
-            return Ok(None);
+        let (held, actor) = match fork_capsule_in_txn(vault, wtxn, &key)? {
+            Ok(held) => held,
+            Err(reason) => return Ok(Err(reason)),
         };
         let provenance = provenance.with_actor(actor);
-        if !provenance.live_in_txn(vault, wtxn) {
-            return Ok(None);
+        if let Err(reason) = provenance.fence_in_txn(vault, wtxn) {
+            return Ok(Err(reason));
         }
         let fork_key = (*pair, fork_row_name(treatment).to_owned());
         if let Some(row) = FORKS.get(&vault.store, wtxn, &fork_key)? {
             let ForkValue::Fork(kept) = row.value else {
-                return Ok(None);
+                return Ok(Err(ContributionReplayUnavailable::Unreadable));
             };
             // A concurrent generator already published this side. Keep its
             // actual body discoverable instead of replacing its owner row.
             let mut expected = receipt(kept.response);
             expected.receipt.clone_from(&kept.receipt);
             expected.response_path.clone_from(&kept.response_path);
-            expected.passed = kept.passed;
+            expected.score = kept.score;
+            expected.execution.clone_from(&kept.execution);
             expected.generated_at = kept.generated_at;
-            return Ok((expected == kept).then_some(kept));
+            return Ok(if expected == kept {
+                Ok(kept)
+            } else {
+                Err(ContributionReplayUnavailable::Unreadable)
+            });
         }
         let key_bytes = CAPSULES.key_bytes(&key);
         let mut parts = [SidePart::Body(sent.clone())];
@@ -634,7 +661,7 @@ pub(crate) fn store_fork_response(
                 value: ForkValue::Fork(receipt.clone()),
             },
         )?;
-        Ok(Some(receipt))
+        Ok(Ok(receipt))
     })
 }
 
