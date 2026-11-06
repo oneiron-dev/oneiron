@@ -690,10 +690,10 @@ impl Bridge {
                 None,
             )?
             .answer_to(&id)?;
-        let Some(delivery) = answer.get("result").cloned() else {
+        let Some(delivery) = answer.get("result") else {
             return Err(Refusal::Refused(answer));
         };
-        serde_json::from_value(delivery)
+        serde::Deserialize::deserialize(delivery)
             .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
     }
 
