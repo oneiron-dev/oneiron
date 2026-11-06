@@ -34,7 +34,7 @@ use oneiron_code_check::{
 
 use super::CHAT_ROLE;
 use super::browser_planner::{self, BrowserPlannerRuns};
-use super::compaction::{CodeModeCompaction, LiveAdmission};
+use super::compaction::{AnsweringRungSlot, AnsweringRungSlots, CodeModeCompaction, LiveAdmission};
 use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
@@ -42,7 +42,7 @@ use crate::mcp::{
     McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
     PlannedRoute, RunCompactionSeat,
 };
-use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
+use crate::models::{AnsweringRung, ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
@@ -111,6 +111,9 @@ pub(super) async fn bind(
     // through the provider, and every backend and live admission below
     // routes the run's step calls by it.
     let browser = Arc::new(BrowserPlannerRuns::default());
+    // FIX 4933: each run's answering rungs, kept for its live fork: every
+    // backend below fills its run's slot, and every live admission reads it.
+    let answering = Arc::new(AnsweringRungSlots::default());
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
@@ -119,6 +122,7 @@ pub(super) async fn bind(
         planned: None,
         lease: None,
         browser: Arc::clone(&browser),
+        answering: Arc::clone(&answering),
         caller: None,
         listed: Vec::new(),
     });
@@ -147,6 +151,7 @@ pub(super) async fn bind(
         models: Arc::clone(runtime),
         pinned: false,
         browser: Arc::clone(&browser),
+        answering: Arc::clone(&answering),
     });
     // A reader child's calls take the same admission: on its own child
     // scope's guard when its run spends under a scope, else on code mode's
@@ -156,6 +161,7 @@ pub(super) async fn bind(
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
+        let answering = Arc::clone(&answering);
         Arc::new(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
@@ -169,6 +175,7 @@ pub(super) async fn bind(
                     planned: None,
                     lease,
                     browser: Arc::clone(&browser),
+                    answering: Arc::clone(&answering),
                     caller: None,
                     listed,
                 }) as Arc<dyn LlmBackend>
@@ -187,6 +194,7 @@ pub(super) async fn bind(
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
+        let answering = Arc::clone(&answering);
         Arc::new(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
@@ -201,6 +209,7 @@ pub(super) async fn bind(
                     planned: Some(planned.clone()),
                     lease,
                     browser: Arc::clone(&browser),
+                    answering: Arc::clone(&answering),
                     caller: None,
                     listed,
                 }) as Arc<dyn LlmBackend>
@@ -280,6 +289,7 @@ pub(super) async fn bind(
         models: Arc::clone(runtime),
         pinned: true,
         browser,
+        answering,
     });
     let provider =
         provider.with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned));
@@ -427,6 +437,9 @@ struct CodeModeBackend {
     planned: Option<PlannedModel>,
     /// The runs' browser planner states each call is routed by (CUA E5).
     browser: Arc<BrowserPlannerRuns>,
+    /// The runs' answering rung slots each step's call that answers fills
+    /// (FIX 4933).
+    answering: Arc<AnsweringRungSlots>,
     caller: Option<CodeModeCaller>,
     /// The bound run's actual frozen list. Other backend paths retain
     /// their existing unconstrained routing until they carry one too.
@@ -506,6 +519,8 @@ struct LiveStepAdmission {
     pinned: bool,
     /// The runs' browser planner states, read as the backend reads them.
     browser: Arc<BrowserPlannerRuns>,
+    /// The runs' answering rung slots the backend fills (FIX 4933).
+    answering: Arc<AnsweringRungSlots>,
 }
 
 impl LiveAdmission for LiveStepAdmission {
@@ -513,6 +528,14 @@ impl LiveAdmission for LiveStepAdmission {
         let (role, request, _) = self.browser.route(request, self.pinned);
         admit_code_mode_call(&self.models, &self.vault, request, self.pinned, role)
             .map(|(call, _, _)| call)
+    }
+
+    fn hold_answering_rungs(&self, live: &LlmRequest) -> Option<Arc<AnsweringRungSlot>> {
+        browser_planner::step_run(live).map(|run| self.answering.hold(run))
+    }
+
+    fn answering_rung(&self, live: &LlmRequest) -> Option<AnsweringRung> {
+        self.answering.latest(browser_planner::step_run(live)?)
     }
 }
 
@@ -528,6 +551,9 @@ impl CodeModeBackend {
             // staged: routing below only adds host data after them, and
             // admission leaves them as they are.
             let staged_len = request.messages.len();
+            // The run this step's call belongs to: #6061's refresh re-keys its
+            // capture, and (FIX 4933) the call fills that run's answering rung
+            // slot once it answers.
             let capture_run = browser_planner::step_run(&request);
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
@@ -606,6 +632,10 @@ impl CodeModeBackend {
             };
             if answered.is_ok() {
                 handoff.answered();
+            }
+            // FIX 4933: only a call that answered fills its run's slot.
+            if let (Ok((_, binding)), Some(run)) = (&answered, capture_run) {
+                self.answering.answered(run, binding);
             }
             answered.map(|(response, binding)| {
                 if let (Some(caller), Some(request)) = (&self.caller, &record_request) {

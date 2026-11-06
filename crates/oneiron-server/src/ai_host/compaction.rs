@@ -41,7 +41,7 @@ use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::embedder::EmbedderSlot;
 #[cfg(feature = "code-sandbox-wasmtime")]
 use crate::mcp::McpQuickJsProvider;
-use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
+use crate::models::{AnsweringRung, ModelRuntime, RoleCall, RoleRefusal};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod chat;
@@ -50,12 +50,22 @@ mod self_writer;
 mod serve;
 
 pub(crate) use chat::{ChatBreakpointCall, ChatSelfMode};
+pub(super) use live_fork::{AnsweringRungSlot, AnsweringRungSlots};
 
-/// How a run's own compaction writer reads the rung its live request is
-/// admitted on (FIX 4465 C): the step's call admitted exactly as its host
-/// admits it, at the breakpoint, before it is sent.
+/// How a run's own compaction writer reads its live request (FIX 4465 C):
+/// the step's call admitted exactly as its host admits it, at the
+/// breakpoint, before it is sent; and the rung that answered the run's
+/// latest completed call, which a live fork binds (FIX 4933).
 pub(super) trait LiveAdmission: Send + Sync {
     fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal>;
+    /// The slot the answering rungs of the run `live` belongs to fill, for
+    /// that run's compaction writer to hold (FIX 4933): each of the run's
+    /// calls that answers keeps its rung there. `None` where the admission
+    /// holds its one answer itself.
+    fn hold_answering_rungs(&self, live: &LlmRequest) -> Option<Arc<AnsweringRungSlot>>;
+    /// The latest completed call of the run `live` belongs to, as its
+    /// answering rung sent it (FIX 4933). `None` until one answered.
+    fn answering_rung(&self, live: &LlmRequest) -> Option<AnsweringRung>;
 }
 
 /// The registry key a run's memory profile names.

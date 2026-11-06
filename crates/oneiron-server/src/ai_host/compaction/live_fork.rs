@@ -11,7 +11,8 @@
 //! first call goes out only while it still is; otherwise the cheap writer
 //! writes as the agent.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Instant;
 
 use oneiron::EntityId;
@@ -30,7 +31,7 @@ use super::self_writer::SELF_WRITER_FRAME;
 use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
 use super::{LiveAdmission, ServedCompactionBackend, output_tokens};
 use crate::ai_host::CHAT_ROLE;
-use crate::models::RoleCall;
+use crate::models::{AnsweringRung, ModelCallBinding, RoleCall};
 
 /// How a breakpoint binds the live fork: forced, under a row that selects
 /// it, each failure typed; or, under a row on `auto` (FIX 6029), only while
@@ -216,5 +217,62 @@ impl ServedCompactionBackend {
                 Ok((home.refs, Some(home_rows)))
             },
         )
+    }
+}
+
+/// The slot one run's answering rungs fill (FIX 4933): the run's latest
+/// call that answered, as its rung sent it. The run's own compaction writer
+/// holds it, so it lives as long as the run's seat. A call that fails, or a
+/// stream that drops, leaves what it holds.
+#[derive(Default)]
+pub(in crate::ai_host) struct AnsweringRungSlot(Mutex<Option<AnsweringRung>>);
+
+/// A host's answering rung slots, by run (FIX 4933): each beside the
+/// compaction writer that holds it, and gone with it. Only a run whose
+/// writer holds a slot keeps its calls' rungs.
+#[derive(Default)]
+pub(in crate::ai_host) struct AnsweringRungSlots {
+    runs: Mutex<HashMap<EntityId, Weak<AnsweringRungSlot>>>,
+}
+
+impl AnsweringRungSlots {
+    /// `run`'s slot, for its writer to hold: the one held already, else a
+    /// fresh one.
+    pub(in crate::ai_host) fn hold(&self, run: EntityId) -> Arc<AnsweringRungSlot> {
+        let mut runs = self.held();
+        if let Some(slot) = runs.get(&run).and_then(Weak::upgrade) {
+            return slot;
+        }
+        let slot = Arc::new(AnsweringRungSlot::default());
+        runs.insert(run, Arc::downgrade(&slot));
+        slot
+    }
+
+    /// `run`'s latest call that answered, as its rung sent it.
+    pub(in crate::ai_host) fn latest(&self, run: EntityId) -> Option<AnsweringRung> {
+        let slot = self.held().get(&run).and_then(Weak::upgrade)?;
+        slot.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// One of `run`'s calls answered, on `binding`'s rung: a held slot keeps
+    /// it in place of the call before it. Only a call that answered comes
+    /// here, so a failed rung never replaces one that answered.
+    pub(in crate::ai_host) fn answered(&self, run: EntityId, binding: &ModelCallBinding) {
+        let Some(slot) = self.held().get(&run).and_then(Weak::upgrade) else {
+            return;
+        };
+        if let Some(answering) = &binding.answering {
+            *slot.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(answering.clone());
+        }
+    }
+
+    /// The slots whose writers still hold them: each let go goes here.
+    fn held(&self) -> MutexGuard<'_, HashMap<EntityId, Weak<AnsweringRungSlot>>> {
+        let mut runs = self.runs.lock().unwrap_or_else(PoisonError::into_inner);
+        runs.retain(|_, slot| slot.strong_count() > 0);
+        runs
     }
 }

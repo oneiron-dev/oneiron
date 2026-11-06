@@ -256,8 +256,9 @@ impl OfferLadder {
                     .send(call, index, may_send, sources, prompt, &mut walk)
                     .await?
                 {
-                    Sent::Answer(response) => {
-                        return Ok((response, ModelCallBinding::for_rung(&self.rungs[index])));
+                    Sent::Answer(response, sent_call) => {
+                        let binding = ModelCallBinding::for_rung(&self.rungs[index], sent_call);
+                        return Ok((response, binding));
                     }
                     Sent::Failed | Sent::Held => {}
                     Sent::Stopped => return Err(self.ended(call, walk)),
@@ -360,7 +361,9 @@ impl OfferLadder {
                     if prompt.noted() {
                         rung.note_answered(call.request);
                     }
-                    return Ok(Sent::Answer(response));
+                    // FIX 4933: the call as this rung sent it, for its binding.
+                    let sent_call = Arc::new(rung.bind(call.request.clone()));
+                    return Ok(Sent::Answer(response, sent_call));
                 }
                 Err(error) => {
                     let fallback = rung.offer.backend.fallback(&error);

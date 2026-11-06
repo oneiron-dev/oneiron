@@ -54,7 +54,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
 pub use call_deadline::CallDeadline;
-pub(crate) use model_call::ModelCallBinding;
+pub(crate) use model_call::{AnsweringRung, ModelCallBinding};
 pub(crate) use replay_prompt::ReplayLadder;
 use replay_prompt::RungPrompt;
 
@@ -1887,7 +1887,11 @@ impl OfferLadder {
                             // already finds it (FIX 12743). A denied settle sends
                             // no Done and resolves nothing.
                             if let Some(tx) = binding.take() {
-                                let _ = tx.send(ModelCallBinding::for_rung(&self.rungs[index]));
+                                let sent_call = Arc::new(rung.bind(context.request.clone()));
+                                let _ = tx.send(ModelCallBinding::for_rung(
+                                    &self.rungs[index],
+                                    sent_call,
+                                ));
                             }
                             Ok(LlmStreamEvent::Done {
                                 message,
@@ -2021,7 +2025,8 @@ struct Back {
 
 /// What sending one rung came to.
 enum Sent {
-    Answer(LlmResponse),
+    /// The answer, and the call as the rung sent it (FIX 4933).
+    Answer(LlmResponse, Arc<LlmRequest>),
     /// It failed and the call goes on.
     Failed,
     /// It was kept from the work, unsent, and the call goes on: the world

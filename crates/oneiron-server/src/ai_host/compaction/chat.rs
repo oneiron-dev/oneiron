@@ -30,9 +30,9 @@ use oneiron::{
     MemoryProfile, Vault, WriteActor,
 };
 
-use super::{CodeModeCompaction, CompactionMeter, LiveAdmission, ThreadSpawn};
+use super::{AnsweringRungSlot, CodeModeCompaction, CompactionMeter, LiveAdmission, ThreadSpawn};
 use crate::ai_host::AiHandle;
-use crate::models::{OfferLadder, RoleCall, RoleRefusal};
+use crate::models::{AnsweringRung, OfferLadder, RoleCall, RoleRefusal};
 
 /// `chat_compaction_entry`: a chat answer compacts as its agent only for an
 /// agent whose engine-owned profile names `self`, under a row that reads
@@ -96,10 +96,12 @@ pub(crate) struct ChatBreakpointCall {
 }
 
 /// One answer's own admitted call, as its breakpoint captures it: a clone
-/// of that call, handed back only for that call's own request.
+/// of that call, handed back only for that call's own request, with the
+/// rung that answered it, once it answered (FIX 4933).
 struct AnswerAdmission {
     request: LlmRequest,
     ladder: Arc<OfferLadder>,
+    answering: Option<AnsweringRung>,
 }
 
 impl LiveAdmission for AnswerAdmission {
@@ -113,6 +115,18 @@ impl LiveAdmission for AnswerAdmission {
             request: self.request.clone(),
             ladder: Arc::clone(&self.ladder),
         })
+    }
+
+    /// The answer holds its one answering rung itself.
+    fn hold_answering_rungs(&self, _: &LlmRequest) -> Option<Arc<AnsweringRungSlot>> {
+        None
+    }
+
+    fn answering_rung(&self, live: &LlmRequest) -> Option<AnsweringRung> {
+        if *live != self.request {
+            return None;
+        }
+        self.answering.clone()
     }
 }
 
@@ -177,6 +191,7 @@ impl AiHandle {
         let admission: Arc<dyn LiveAdmission> = Arc::new(AnswerAdmission {
             request: admitted.request.clone(),
             ladder: Arc::clone(&admitted.ladder),
+            answering: None,
         });
         let meter = CompactionMeter::Chat {
             guard,
