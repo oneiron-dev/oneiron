@@ -295,11 +295,20 @@ impl Vault {
     /// run's, never an entity read.
     pub fn code_run_results_stand(&self, run: &EntityId) -> Result<Option<bool>> {
         let rtxn = self.store.env.read_txn()?;
-        if response_erased_in_txn(&self.store, &rtxn, run)? {
+        self.code_run_results_stand_in_txn(&rtxn, run)
+    }
+
+    /// [`Self::code_run_results_stand`] in the caller's snapshot.
+    pub(crate) fn code_run_results_stand_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run: &EntityId,
+    ) -> Result<Option<bool>> {
+        if response_erased_in_txn(&self.store, rtxn, run)? {
             return Ok(Some(false));
         }
         Ok(REPLAY_RECORDS
-            .contains(&self.store, &rtxn, run)?
+            .contains(&self.store, rtxn, run)?
             .then_some(true))
     }
 
