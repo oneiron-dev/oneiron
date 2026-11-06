@@ -122,19 +122,21 @@ impl CoachReplay<'_> {
     /// took since the job read it, or one that no longer reads as it did, is
     /// dropped and never sent again, and the call may be rebuilt; a copy the
     /// job did not read is not taken up now. So is a copy the Coach's Grant
-    /// no longer admits, read again here before the send (FIX 8704).
+    /// no longer admits, read again here before the send (FIX 8704). A call
+    /// whose route prompt reads unavailable latches as an erased one does
+    /// (FIX 6255): no exact or rebuilt replay of it runs.
     fn live_exact(&self) -> Result<ExactReplay> {
-        if matches!(*self.exact.borrow(), ExactReplay::Erased) {
-            return Ok(ExactReplay::Erased);
+        if self.exact.borrow().runs_none() {
+            return Ok(self.exact.borrow().clone());
         }
         let live =
             self.snapshot
                 .replay
                 .pinned_exact(self.vault, &self.job.origin, self.admitted()?)?;
-        if matches!(live, ExactReplay::Erased) {
-            *self.exact.borrow_mut() = ExactReplay::Erased;
+        if live.runs_none() {
+            *self.exact.borrow_mut() = live.clone();
             *self.baseline.borrow_mut() = Some(None);
-            return Ok(ExactReplay::Erased);
+            return Ok(live);
         }
         let mut kept = self.exact.borrow_mut();
         if kept.request().is_some() && kept.request() == live.request() {
@@ -184,7 +186,7 @@ impl CoachReplay<'_> {
             return Ok(None);
         };
         let live = self.live_exact()?;
-        if matches!(live, ExactReplay::Erased) {
+        if live.runs_none() {
             return Ok(None);
         }
         if baseline.fidelity == ReplayFidelity::Rebuilt {
@@ -220,13 +222,14 @@ impl CoachReplay<'_> {
     }
 
     /// The call rebuilt from the failure's text, when it reproduces the
-    /// failure; none once the call's capsule reads erased, read again just
-    /// before the call is sent (FIX 6251).
+    /// failure; none once the call's capsule reads erased or its route
+    /// prompt unavailable, read again just before the call is sent (FIX
+    /// 6251, 6255): a failed exact send never rebuilds past them.
     fn rebuilt_baseline(&self) -> Result<Option<Baseline>> {
         let Some(conversation) = self.real_conversation() else {
             return Ok(None);
         };
-        if matches!(self.live_exact()?, ExactReplay::Erased) {
+        if self.live_exact()?.runs_none() {
             return Ok(None);
         }
         // The rebuilt call sends the failure's own texts alone.
