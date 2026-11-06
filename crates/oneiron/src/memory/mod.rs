@@ -181,8 +181,8 @@ pub use asset_resolve::{
     resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
-    asset_audio_in_lane, asset_image_in_lane, asset_media_in, land_asset_blob_in_txn,
-    release_asset_blob_in_txn,
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, discard_asset_blob_reference_in_txn,
+    land_asset_blob_in_txn, release_asset_blob_in_txn,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
