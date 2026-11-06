@@ -112,6 +112,14 @@ buffer. Internal typed Board callers still receive the same `Json` response.
 The standing-budget check uses the same byte owner while counting its JSON,
 inside the original recording transaction and with the same error mapping.
 
+Receipt and presence-notice construction append directly into their final
+string. They no longer build a per-entry string vector or a joined intermediate.
+Receipt labels retain the same uppercase percent encoding for reserved ASCII
+and control-character UTF-8 bytes; other Unicode characters stay verbatim.
+Presence text and non-owner ordering are unchanged. The four-byte control
+scratch is UTF-8 scalar storage, not an engine size limit. Final strings and
+any reallocations still occur before the response's capacity capture.
+
 This is output custody, not pre-allocation admission. Serialization may still
 allocate before its capacity is recorded, and reallocation may temporarily
 hold old and new backing. Independent MEMORIES disclosure clones, reply JSON
