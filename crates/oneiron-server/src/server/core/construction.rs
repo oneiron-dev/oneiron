@@ -358,6 +358,7 @@ impl SyncServer {
             #[cfg(unix)]
             organ_dir: None,
             run_receipts,
+            native_usage: None,
             ai: crate::ai_host::AiHandle::inert(),
             pattern_launch_runner: None,
             rerank_runtime: Default::default(),

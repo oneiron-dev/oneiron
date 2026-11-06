@@ -12,7 +12,7 @@ use super::{RunAdmission, RunInner};
 /// began (FIX 4453): the agent, its free-time cycle and item, the label every
 /// call carries and the spend scope its spend lands on. Fixed for the run's
 /// life; never read from a prompt or from the run's name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct RunAttribution {
     pub agent: crate::EntityId,
     pub cycle: crate::EntityId,

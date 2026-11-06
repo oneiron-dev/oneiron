@@ -24,6 +24,11 @@ pub struct RunReceipt {
     pub revision: u32,
     #[serde(flatten)]
     pub event: RunEvent,
+    /// Runtime-only provenance on a captured native settlement. Actual guard
+    /// and lease tokens cannot survive serialization or certify NET payment.
+    /// The host's ordinary receipt sink never receives this capture attachment.
+    #[serde(skip)]
+    pub native_admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
 }
 
 /// What happened.
@@ -185,7 +190,7 @@ pub enum RunOverageSource {
 }
 
 /// Everything one permit binds.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct PermitFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector: Option<String>,

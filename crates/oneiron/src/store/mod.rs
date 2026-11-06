@@ -393,6 +393,8 @@ pub(crate) use oneiron_store::task_body_checks;
 mod training_link;
 pub(crate) mod turn_missing;
 mod usage_sources;
+mod usage_admission;
+pub(crate) use usage_admission::erase_admitted_usage_source_in_txn;
 mod world_pad_custody;
 mod writer_lease;
 

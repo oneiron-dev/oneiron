@@ -1,5 +1,7 @@
 //! Typed question records and shared outcome projection.
 
+pub use crate::dreamer_wake::{DecisionCallAdmission, DecisionCallSource};
+
 mod answer_actor;
 pub use answer_actor::AnswerActor;
 pub(crate) use answer_actor::erase_ask_actor_in_txn;
