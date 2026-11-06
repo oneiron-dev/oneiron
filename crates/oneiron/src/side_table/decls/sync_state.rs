@@ -414,6 +414,10 @@ side_tables! {
     SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
+    /// Where a thin-residence item's row sits, as the home witnessed it with the item's blob
+    /// (FIX 14534): `ContentWorld`'s tag, then a world id for one in a single world. Key: hex32
+    /// (entity id).
+    SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.

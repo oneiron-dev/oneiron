@@ -16,6 +16,7 @@ use super::credential::{
     egress_destination_from_args,
 };
 use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
+use super::output::MicroVmOutputSink;
 use super::overlay::{MAX_OVERLAY_FILE_BYTES, overlay_error};
 use crate::error::CodeError;
 
@@ -122,8 +123,13 @@ impl MicroVmSandboxAdapter {
     ///
     /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) after overlay export is sealed;
     /// otherwise propagates the backend's run failure.
-    pub fn run(&mut self, image: &GuestImage, budget: ExecutionBudget) -> Result<MicroVmExit> {
-        self.run_cancellable(image, budget, &StepCancellation::never())
+    pub fn run(
+        &mut self,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        output: &mut dyn MicroVmOutputSink,
+    ) -> Result<MicroVmExit> {
+        self.run_cancellable(image, budget, &StepCancellation::never(), output)
     }
 
     /// [`Self::run`] for a step `cancel` may stop (FIX 600): the backend ends
@@ -139,14 +145,21 @@ impl MicroVmSandboxAdapter {
         image: &GuestImage,
         budget: ExecutionBudget,
         cancel: &StepCancellation,
+        output: &mut dyn MicroVmOutputSink,
     ) -> Result<MicroVmExit> {
         if self.overlay_collected {
             return Err(overlay_error(
                 "guest execution is forbidden after overlay export is sealed",
             ));
         }
-        self.backend
-            .run_with_proxy_cancellable(&self.vm, image, budget, &self.proxy, cancel)
+        self.backend.run_with_proxy_cancellable(
+            &self.vm,
+            image,
+            budget,
+            &self.proxy,
+            cancel,
+            output,
+        )
     }
 
     /// Drains the overlay into proposal deltas.

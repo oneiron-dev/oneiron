@@ -1071,6 +1071,11 @@ impl OffRecordSession<'_> {
         self.vault.result_share()
     }
 
+    /// Wall milliseconds from this session's vault clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        self.vault.now_recorded_ms()
+    }
+
     /// Identity of the vault this session belongs to.
     ///
     /// The executor binding compares its storage's owning vault against its

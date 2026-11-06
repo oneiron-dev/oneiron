@@ -344,9 +344,10 @@ impl Memory<'_> {
         if lane.entities_readable_in_txn(txn, &[proposal])? != [true] {
             return Err(MemoryError::not_found("no readable topology proposal"));
         }
+        // The proposal read whole (FIX 10188).
         let record = self
             .vault()
-            .identity_topology_event_in_txn(txn, &proposal)?
+            .identity_topology_decision_in_txn(txn, &proposal)?
             .filter(|record| record.approval == ClaimApprovalStatus::Proposed)
             .ok_or_else(|| MemoryError::not_found("no such topology proposal"))?;
         let IdentityTopologyAction::Apply(mut op) = record.action.to_fold_action() else {
