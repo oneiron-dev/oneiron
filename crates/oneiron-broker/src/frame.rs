@@ -21,7 +21,8 @@
 //! header, its body in chunks, the broker's acknowledgement, then the key,
 //! then a streamed reply. An LFS exchange opens with [`LFS_CALL`] and runs
 //! the same steps (see `lfs_http`), its key segment empty when it carries
-//! none.
+//! none; an answered batch reply has one more JSON segment between its
+//! header and its first chunk, the count of the broker's rewrites in it.
 
 use std::io;
 
