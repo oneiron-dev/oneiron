@@ -107,7 +107,7 @@ fn unknown_source() -> MemoryError {
 }
 
 /// Whether `id` is a live PERSON in `txn`.
-fn live_person_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(super) fn live_person_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(
         crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.live_type()
             == Some(ENTITY_TYPE_PERSON),

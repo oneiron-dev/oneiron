@@ -71,8 +71,8 @@ pub(crate) use wake::{
 #[cfg(feature = "sync")]
 pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
-    ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
-    withheld_from_replication_in,
+    ExportAudience, ExportJudge, ExportMet, ReplicationScope, lineage_held_in,
+    readable_with_read_in, withheld_by_lineage_in, withheld_from_replication_in,
 };
 
 /// Each row a source landing is about to stamp with the source-audience

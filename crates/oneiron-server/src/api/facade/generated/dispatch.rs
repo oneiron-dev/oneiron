@@ -38266,6 +38266,28 @@ async fn vault_mail_compliance_set(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_mail_export_member_mail_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.export_member_mail.set",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_mail_compliance_log(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -42498,6 +42520,9 @@ async fn call_verb_row(
         }
         "vault.mail.compliance.set" => {
             Box::pin(vault_mail_compliance_set(server, call, input)).await
+        }
+        "vault.mail.export_member_mail.set" => {
+            Box::pin(vault_mail_export_member_mail_set(server, call, input)).await
         }
         "vault.mail.compliance.log" => {
             Box::pin(vault_mail_compliance_log(server, call, input)).await

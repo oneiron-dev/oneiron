@@ -36,6 +36,11 @@ pub enum MailComplianceEventKind {
     Disabled,
     /// One search across mailboxes, made while the setting was on.
     Search,
+    /// "Owners can export members' mail" was turned on (fix list row
+    /// 15416).
+    ExportMemberMailEnabled,
+    /// "Owners can export members' mail" was turned off.
+    ExportMemberMailDisabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +132,35 @@ fn append_in_txn(
     };
     LOG.put(&vault.store, txn, &next, row)?;
     Ok(next)
+}
+
+/// Records `by`'s change of "Owners can export members' mail" to `enabled`
+/// at `at` in the compliance log, in `txn` (fix list row 15416). The change
+/// states no purpose; its entry keeps an empty one.
+pub(super) fn record_export_member_mail_change_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    enabled: bool,
+    by: EntityId,
+    at: u64,
+) -> Result<()> {
+    append_in_txn(
+        vault,
+        txn,
+        &MailComplianceEventRow {
+            kind: if enabled {
+                MailComplianceEventKind::ExportMemberMailEnabled
+            } else {
+                MailComplianceEventKind::ExportMemberMailDisabled
+            },
+            by: Some(by),
+            at,
+            purpose: String::new(),
+            query_digest: None,
+            result_count: None,
+        },
+    )
+    .map(drop)
 }
 
 /// Records one compliance search in `txn`, before the search answers: who
@@ -252,8 +286,9 @@ impl Memory<'_> {
     }
 }
 
-/// An actor's erase takes its id out of the setting and the log (FIX 3520);
-/// the entries themselves stay, so the log still shows each change and use.
+/// An actor's erase takes its id out of the setting, out of "Owners can
+/// export members' mail" and out of the log (FIX 3520); the entries
+/// themselves stay, so the log still shows each change and use.
 pub(crate) fn erase_compliance_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -265,6 +300,7 @@ pub(crate) fn erase_compliance_actor_in_txn(
         row.set_by = None;
         SETTING.put(&vault.store, wtxn, &(), &row)?;
     }
+    super::export_mailboxes::erase_export_member_mail_setter_in_txn(vault, wtxn, actor)?;
     let entries = LOG.scan(&vault.store, wtxn)?;
     for (sequence, mut row) in entries {
         if row.by == Some(*actor) {

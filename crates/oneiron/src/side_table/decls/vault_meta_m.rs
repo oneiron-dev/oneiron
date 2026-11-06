@@ -24,6 +24,10 @@ side_tables! {
     /// scrubs that message's occurrence. Key: id16(row) + id16(source) + blake3 (32) of the
     /// provider id.
     MAIL_PACK_OCCURRENCE_ROW: VaultMeta b"mail_pack:occurrence_row:v1:" Named;
+    /// "Owners can export members' mail", off when absent (fix list row 15416): on, a
+    /// person-owned shared vault's whole-vault export carries members' personal mailboxes.
+    /// Key: ().
+    MAIL_PACK_OWNERS_EXPORT_MEMBER_MAIL: VaultMeta b"mail_pack:owners_export_member_mail:v1" Named;
     /// One connected mail or calendar source: provider, kind, address, custody name, owner,
     /// audience and what it keeps (FIX 12559). Key: id16(source).
     MAIL_PACK_SOURCE: VaultMeta b"mail_pack:source:v1:" Named

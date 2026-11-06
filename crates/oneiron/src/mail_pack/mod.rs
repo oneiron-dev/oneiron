@@ -18,7 +18,8 @@
 //!
 //! The org's compliance search ([`compliance`]) is the one reader across
 //! mailboxes: an admin setting, off by default, every use logged before it
-//! answers.
+//! answers. An Owner's whole-vault export carries another member's personal
+//! mailbox only as who owns the shared vault decides ([`export_mailboxes`]).
 //!
 //! Each source keeps the owner's "Keep a copy of my mail" setting (all mail,
 //! the default; recent months; search only) and "When I delete at the
@@ -32,6 +33,7 @@
 
 mod compliance;
 mod doors;
+mod export_mailboxes;
 mod importer;
 mod inbox;
 mod landing;
@@ -53,6 +55,10 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
+pub(crate) use export_mailboxes::{
+    CarriedMemberMailboxes, MemberMailboxPlan, tell_member_mailboxes_in_txn,
+};
+pub use export_mailboxes::{MailExportMemberMailSetRequest, MailExportMemberMailSettingView};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,

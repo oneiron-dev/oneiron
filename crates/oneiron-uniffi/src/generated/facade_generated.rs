@@ -6101,6 +6101,11 @@ export_facade! {
     let output = client.vault_mail_compliance_set(&input)?;
     crate::codec::lift_record("vault.mail.compliance.set", &output)
 };
+"vault.mail.export_member_mail.set" => fn vault_mail_export_member_mail_set(&self, input: MailExportMemberMailSetRequest) -> MailExportMemberMailSettingView = |client| {
+    let input: oneiron::mail_pack::MailExportMemberMailSetRequest = crate::codec::lower_record("vault.mail.export_member_mail.set", input)?;
+    let output = client.vault_mail_export_member_mail_set(&input)?;
+    crate::codec::lift_record("vault.mail.export_member_mail.set", &output)
+};
 "vault.mail.compliance.log" => fn vault_mail_compliance_log(&self) -> Vec<MailComplianceEventView> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mail.compliance.log")?;
     let output = client.vault_mail_compliance_log(&input)?;
