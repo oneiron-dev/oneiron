@@ -33,6 +33,8 @@ retry-question handoff. This releases the old allocation when its last owner
 drops. An existing spool is kept without another copy. If the storage move
 fails, the original byte-backed body is retained without a new send failure.
 The typed response remains in memory; this does not stream the event parser.
+The initial stream-question handoff uses the same placement after its original
+clear, including when a question worker cannot start.
 
 Clearing detects change during the existing string and key walk without
 cloning the whole parsed Value when there is at most one effective pass,
