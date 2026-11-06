@@ -285,6 +285,7 @@ impl EngineNativeExecutor<'_> {
                         self.storage.now_recorded_ms(),
                         wake,
                     ),
+                    signature: None,
                 }],
             });
         }
