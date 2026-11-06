@@ -16,7 +16,7 @@ pub(super) fn unscoped_ledger_prep_items(
     fired_at: u64,
 ) -> Result<Vec<(EntityId, PrepItem)>> {
     let txn = vault.store.env.read_txn()?;
-    ledger_prep_items(vault, &txn, event, fired_at, |id| {
+    ledger_prep_items(vault, &vault.store.read(), &txn, event, fired_at, |id| {
         Ok(vault
             .store
             .port_entity_record(&txn, id)?
@@ -28,6 +28,7 @@ pub(super) fn unscoped_ledger_prep_items(
 /// in the PPR result. Every deciding label and rendered promise uses this cut.
 pub(super) fn ledger_prep_items(
     vault: &Vault,
+    store: &impl EntityStoreRead,
     txn: &heed::RoTxn<'_>,
     event: &PrepEvent,
     fired_at: u64,
@@ -45,7 +46,7 @@ pub(super) fn ledger_prep_items(
     let mut items = Vec::new();
     for attendee in &event.attendee_refs {
         let (ledger, label_heads) =
-            match vault.commitment_ledger_for_counterparty_in_txn(txn, attendee, |id| {
+            match vault.commitment_ledger_for_counterparty_in_txn(store, txn, attendee, |id| {
                 Ok(source_in_time(id)?.is_some())
             }) {
                 Ok(ledger) => ledger,

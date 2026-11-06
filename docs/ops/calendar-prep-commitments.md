@@ -20,6 +20,14 @@ ledger slice; a withheld or future commitment drops that entry. Existing PPR ite
 remain. The rendered commitment text is decoded from the caller's projected row,
 not copied from the raw ledger. New items cite their commitment and deciding heads.
 
+The commitment scan takes its entity ids and bodies from the serving lane's native
+store reader, not from a separate vault-base cursor. A session-backed lane therefore
+uses its captured overlay/base union for those obligations, with the same admission
+and projected-text callbacks. The unrestricted wrapper still uses the base reader.
+Contact and identity label selection remains base-only, and the public
+`Memory::calendar_prep` entry still opens its canonical lane. This is not a claim
+that calendar prep is served through an off-record session route.
+
 All new evidence must have been learned by the supplied fire instant. The existing
 eligibility, EVENT/attendee PPR seeds, three-hop walk, 64-candidate PPR limit, nine
 types, section order, recency order, blank result and 250-word default remain.
