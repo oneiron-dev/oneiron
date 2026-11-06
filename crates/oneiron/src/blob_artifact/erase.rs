@@ -137,8 +137,7 @@ fn rewrite_version_claim_in_txn(
     if let Some(rmpv::Value::Map(entries)) = claim.evidence.as_mut() {
         entries.retain(|(key, _)| {
             key.as_str() != Some("machine_signature")
-                && key.as_str()
-                    != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+                && key.as_str() != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
         });
     }
     vault.put_reserved_claim_in_txn(
@@ -152,7 +151,11 @@ fn rewrite_version_claim_in_txn(
         header.learned_at,
     )?;
     for control in &controls {
-        let _ = crate::batch::deindex_entity(&vault.store, wtxn, control)?;
+        let _ = crate::batch::deindex_entity(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            control,
+        )?;
     }
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, &record.claim_id)?;
     let raw = vault

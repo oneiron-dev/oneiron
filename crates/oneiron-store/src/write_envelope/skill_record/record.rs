@@ -2,8 +2,8 @@
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::entity_id::EntityId;
 
 use super::identity::SkillContentHash;
 use super::lifecycle::{SkillGovernanceTier, SkillLifecycle};

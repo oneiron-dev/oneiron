@@ -5,10 +5,10 @@
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
+use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::error::{Error, Result};
 
 /// The pinned four kinds of carry-forward claims.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

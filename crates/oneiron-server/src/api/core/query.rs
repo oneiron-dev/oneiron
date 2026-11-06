@@ -57,8 +57,8 @@ pub(crate) struct CoreQueryRequest {
     /// valence, arousal and dominance sit.
     #[serde(default, alias = "queryAffect")]
     query_affect: Option<ContextPackQueryAffect>,
-    /// Maximum result count. A limit past 1,000 is served at 1,000 and
-    /// `meta.limitClamped` says so.
+    /// Maximum result count. The whole requested count is served, and
+    /// `meta.limitClamped` stays false.
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     limit: usize,
@@ -131,7 +131,7 @@ pub(crate) async fn core_query(
         .as_ref()
         .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
         .transpose()?;
-    let (limit, limit_clamped) = oneiron::memory::caps::clamp_search_limit(req.limit);
+    let limit = req.limit;
 
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
@@ -140,6 +140,23 @@ pub(crate) async fn core_query(
     // Embedded once everything free is checked, before the session's read
     // set is held: it is a paid call.
     let media = embed_media_seeds(&server, media, query).await?;
+    let (mut media_memory, media) = (server.memory.empty_lease(), media);
+    media_memory.materialized(
+        0,
+        media.iter().fold(
+            (media.capacity() as u64).saturating_mul(std::mem::size_of::<MediaSeed>() as u64),
+            |bytes, seed| {
+                let vector_bytes = (seed.vector.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<f32>() as u64);
+                let kind_bytes = (seed.kinds.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<oneiron::embed::InputKind>() as u64);
+                bytes
+                    .saturating_add(seed.space.capacity() as u64)
+                    .saturating_add(vector_bytes)
+                    .saturating_add(kind_bytes)
+            },
+        ),
+    );
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
@@ -150,6 +167,7 @@ pub(crate) async fn core_query(
         &media,
         fetch_limit,
         query_affect,
+        &server.memory,
     )
     .map_err(|error| {
         tracing::error!(kind = ?error.kind(), "core query failed");
@@ -230,7 +248,7 @@ pub(crate) async fn core_query(
         *target = staged;
     }
     let mut meta = search_meta(count_mode, total);
-    meta.limit_clamped = limit_clamped;
+    meta.limit_clamped = false;
 
     Ok(Json(CoreScopedQueryResponse {
         access: oneiron::access_grant::GrantedData::new(
@@ -275,10 +293,12 @@ pub(crate) fn run_core_query(
     media: &[MediaSeed],
     limit: usize,
     query_affect: Option<oneiron::Vad>,
+    machine_memory: &oneiron::host_memory::MachineMemory,
 ) -> oneiron::Result<oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>> {
     // A query asked in an affect rides the seeded search, the one that
     // takes it.
     if !media.is_empty() || query_affect.is_some() {
+        let mut media_memory = machine_memory.empty_lease();
         let media: Vec<_> = media
             .iter()
             .map(|seed| {
@@ -290,7 +310,24 @@ pub(crate) fn run_core_query(
                 )
             })
             .collect();
-        return scoped_read.search_seeded(query, vector, &media, limit, None, query_affect);
+        media_memory.materialized(
+            0,
+            (media.capacity() as u64).saturating_mul(std::mem::size_of::<(
+                &str,
+                oneiron::embed::InputKind,
+                &[f32],
+                &[oneiron::embed::InputKind],
+            )>() as u64),
+        );
+        return scoped_read.search_seeded(
+            query,
+            vector,
+            &media,
+            limit,
+            None,
+            query_affect,
+            Some(machine_memory),
+        );
     }
     match (query, vector) {
         (Some(query), Some(vector)) => scoped_read.search(query, vector, limit, None),

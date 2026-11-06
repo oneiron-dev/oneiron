@@ -19,6 +19,7 @@ use super::carrier_parts::{
     Parts, admit_part, is_part_key, join_parts, split_parts, unreferenced_parts, write_parts,
 };
 use super::loro_bytes::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
+use super::offer_parts::{self, OfferManifest};
 use crate::error::{Error, Result};
 
 /// The largest room turn row a window carries whole; past it a row rides as
@@ -46,13 +47,34 @@ fn encode_manifest(parts: &Parts) -> Result<Vec<u8>> {
 /// The manifest `value` holds, in its one spelling. A checkpoint places a
 /// manifest by the parts it lists.
 pub(crate) fn manifest(value: &[u8]) -> Option<Parts> {
+    if offer_parts::is_manifest(value) {
+        return Some(OfferManifest::parse(value)?.parts());
+    }
+    generic_manifest(value)
+}
+
+/// The generic manifest `value` holds, in its one spelling, as [`write_row`]
+/// writes a row past its bound that is no offer: never an offer's typed one.
+/// A checkpoint re-parts a turn row it carries joined against it (FIX 12153).
+pub(crate) fn generic_manifest(value: &[u8]) -> Option<Parts> {
+    if offer_parts::is_manifest(value) {
+        return None;
+    }
     let parts: Parts = rmp_serde::from_slice(value.strip_prefix(MANIFEST)?).ok()?;
     (parts.well_formed() && encode_manifest(&parts).ok()? == value).then_some(parts)
+}
+
+/// The generic manifest value of `parts`, as [`write_row`] writes it.
+pub(crate) fn generic_manifest_bytes(parts: &Parts) -> Result<Vec<u8>> {
+    encode_manifest(parts)
 }
 
 /// The row `value`, a row key's value in `map`, carries: itself, or the join
 /// of the parts its manifest lists; `None` while it waits for one.
 fn joined(map: &LoroMap, value: Vec<u8>) -> Option<Vec<u8>> {
+    if offer_parts::is_manifest(&value) {
+        return OfferManifest::parse(&value)?.joined(map);
+    }
     match manifest(&value) {
         Some(parts) => join_parts(map, &parts),
         None => Some(value),
@@ -60,8 +82,9 @@ fn joined(map: &LoroMap, value: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 /// Admits one insert into a room row map that is a part, or the manifest of
-/// a row past `max`: `Ok(true)` once admitted, `Ok(false)` for a value the
-/// map's own row admission judges.
+/// a row past `max` (a typed Offer admits on its canonical parse alone):
+/// `Ok(true)` once admitted, `Ok(false)` for a value the map's own row
+/// admission judges.
 pub(crate) fn admit(map_key: &str, value: &LoroValue, max: usize) -> Result<bool> {
     if is_part_key(map_key) {
         admit_part(map_key, value)?;
@@ -70,6 +93,13 @@ pub(crate) fn admit(map_key: &str, value: &LoroValue, max: usize) -> Result<bool
     let LoroValue::Binary(bytes) = value else {
         return Ok(false);
     };
+    if offer_parts::is_manifest(bytes) {
+        // A typed Offer admits on its canonical parse alone, with no length
+        // gate: a native header erase may shrink its logical row below the
+        // bound while its wording parts are still missing.
+        manifest(bytes).ok_or_else(|| refused("not a manifest"))?;
+        return Ok(true);
+    }
     if !bytes.starts_with(MANIFEST) {
         return Ok(false);
     }
@@ -158,8 +188,12 @@ pub(crate) fn capture_rows(
         }
         match manifest(value) {
             Some(parts) => {
-                charge(usize::try_from(parts.len).map_err(|_| refused("too long"))?)?;
-                match join_parts(&map, &parts) {
+                let len = match OfferManifest::parse(value) {
+                    Some(offer) => offer.logical_len().ok_or_else(|| refused("too long"))?,
+                    None => parts.len,
+                };
+                charge(usize::try_from(len).map_err(|_| refused("too long"))?)?;
+                match joined(&map, value.clone()) {
                     Some(row) => {
                         consumed.extend(parts.keys());
                         out.insert(key.clone(), row);
@@ -230,9 +264,11 @@ pub(crate) fn changed_rows(map: &LoroMap, delta: &MapDelta<'_>) -> Vec<(String, 
 pub(crate) fn write_row(map: &LoroMap, key: &str, row: &[u8], max: usize) -> Result<()> {
     let was_split = map_get_bytes(map, key).is_some_and(|value| manifest(&value).is_some());
     if row.len() > max {
-        let (parts, pieces) = split_parts(row)?;
-        map_insert_bytes(map, key, &encode_manifest(&parts)?)?;
-        write_parts(map, &pieces, || {})?;
+        if !offer_parts::write_row(map, key, row, max)? {
+            let (parts, pieces) = split_parts(row)?;
+            map_insert_bytes(map, key, &encode_manifest(&parts)?)?;
+            write_parts(map, &pieces, || {})?;
+        }
     } else {
         map_insert_bytes(map, key, row)?;
     }

@@ -12,8 +12,8 @@ pub(super) enum DatasetTier {
     Beam10m,
 }
 const LADDER: [DatasetTier; 5] = [
-    DatasetTier::LongMemEvalS,
     DatasetTier::Beam128k,
+    DatasetTier::LongMemEvalS,
     DatasetTier::Beam500k,
     DatasetTier::Beam1m,
     DatasetTier::Beam10m,
@@ -46,7 +46,7 @@ impl Graduation {
             let gated = tier == DatasetTier::Beam10m && !self.scale_work_ready;
             if let Some(value) = measurement
                 && (gated
-                    || !previous_cleared
+                    || (tier != DatasetTier::LongMemEvalS && !previous_cleared)
                     || !value.baseline.is_finite()
                     || !value.measured.is_finite()
                     || !(0.0..=1.0).contains(&value.baseline)
@@ -67,7 +67,12 @@ impl Graduation {
             } else {
                 "not-yet-run"
             };
-            previous_cleared = measurement.is_some_and(|m| m.measured >= m.baseline);
+            let cleared = measurement.is_some_and(|m| m.measured >= m.baseline);
+            previous_cleared = if tier == DatasetTier::LongMemEvalS {
+                previous_cleared && cleared
+            } else {
+                cleared
+            };
             cells.push(TierCell {
                 tier,
                 status: status.into(),

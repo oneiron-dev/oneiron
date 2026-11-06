@@ -125,8 +125,13 @@ pub(crate) enum Tag {
     Released,
     /// Result body digest → (): its first occurrence was checked.
     Staged,
+    /// Run id → (): one archived run row.
+    Run,
     /// Entity id → its birth row (FIX 1178).
     RowBirth,
+    /// TURN or CONVERSATION id → (): an archived MESSAGE joins it, so it
+    /// comes back stamped imported (FIX 7777).
+    MessageContainer,
 }
 
 /// The import's disk index: one LMDB database in the scratch environment,

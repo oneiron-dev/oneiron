@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::file_secret_marks::SecretSight;
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::secret_custody::sighted_bytes_in_txn;
+use crate::store::file_key_masks::sighted_bytes_in_txn;
 use crate::write_envelope::claim_body::ClaimSubject;
 
 use super::super::body::decode_blob_artifact_body;
@@ -171,13 +171,54 @@ impl Vault {
         artifact_id: &EntityId,
         version: u64,
     ) -> Result<Option<Vec<u8>>> {
+        self.read_blob_artifact_version_in_txn_with(rtxn, artifact_id, version, |rtxn, hash| {
+            read_blob_asset_in_txn(self, rtxn, hash)
+        })
+    }
+
+    /// [`Self::read_blob_artifact_version_in_txn`] with its bytes read by
+    /// `read`: the version and compaction gates stay, and the closure reads
+    /// the admitted content hash in the same snapshot.
+    pub(crate) fn read_blob_artifact_version_in_txn_with<R, E>(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+        read: impl FnOnce(
+            &RoTxn<'_>,
+            &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+        ) -> std::result::Result<R, E>,
+    ) -> std::result::Result<Option<R>, E>
+    where
+        E: From<Error>,
+    {
+        self.read_blob_artifact_version_in_txn_with_record(
+            rtxn,
+            artifact_id,
+            version,
+            |rtxn, record| read(rtxn, &record.content_hash),
+        )
+    }
+
+    /// The same version read, lending the stored metadata that selects its
+    /// bytes to `read` in the same snapshot.
+    pub(crate) fn read_blob_artifact_version_in_txn_with_record<R, E>(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+        read: impl FnOnce(&RoTxn<'_>, &BlobArtifactVersion) -> std::result::Result<R, E>,
+    ) -> std::result::Result<Option<R>, E>
+    where
+        E: From<Error>,
+    {
         let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
         if !compaction_response_readable_in(self, rtxn, artifact_id)? {
             return Ok(None);
         }
-        read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
+        read(rtxn, &record).map(Some)
     }
 
     /// Whether `artifact_id`'s version bytes may leave

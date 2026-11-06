@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::vault::RevisionRef;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::store::Store;
+use crate::store::revision_ref::RevisionRef;
 
 /// What one [`ManifestEntry`] names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -16,6 +18,8 @@ pub enum ManifestKind {
     Skill,
     /// An `actor.*` claim row loaded into the attempt's pack.
     ActorClaim,
+    /// A selected workflow context row whose admitted body was rendered.
+    WorkflowContextRow,
 }
 
 impl ManifestKind {
@@ -26,6 +30,7 @@ impl ManifestKind {
             Self::SkillIndex => "skill_index",
             Self::Skill => "skill",
             Self::ActorClaim => "actor_claim",
+            Self::WorkflowContextRow => "workflow_context_row",
         }
     }
 }
@@ -98,4 +103,41 @@ impl ManifestEntry {
     pub fn parse_wire_form(wire_form: &str) -> Option<(&str, &str)> {
         wire_form.split_once('@')
     }
+}
+
+/// Removes only the retained-revision witness for erased manifest entities.
+pub(crate) fn erase_manifest_revision_pins(
+    manifest: &mut [ManifestEntry],
+    mut erased: impl FnMut(&EntityId) -> bool,
+) -> bool {
+    let mut changed = false;
+    for entry in manifest {
+        if entry
+            .revision
+            .as_ref()
+            .is_some_and(|(entity, _)| erased(entity))
+        {
+            entry.revision = None;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// A stale writer cannot restore a hard-erased entity's revision witness.
+/// An unreadable marker keeps the witness and does not fail the caller's write.
+pub(crate) fn scrub_hard_erased_manifest_revisions_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    manifest: &mut [ManifestEntry],
+) {
+    erase_manifest_revision_pins(manifest, |entity| {
+        match store.port_deletion_marked(txn, DeletionMarker::HardDelete, entity) {
+            Ok(erased) => erased,
+            Err(_) => {
+                tracing::warn!("manifest revision fence: a hard-delete marker could not be read");
+                false
+            }
+        }
+    });
 }

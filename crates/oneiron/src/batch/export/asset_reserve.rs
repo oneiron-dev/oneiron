@@ -21,7 +21,7 @@ use crate::store::BodyMint;
 /// while the file plane is off.
 pub(super) struct ArchiveAssets {
     pub(super) mint: Option<BodyMint>,
-    pub(super) known: Option<Arc<crate::secret_custody::KnownValues>>,
+    pub(super) known: Option<Arc<crate::store::known_value_index::KnownValues>>,
 }
 
 /// The instances `archive`'s File ASSETs may spill into, minted now, before

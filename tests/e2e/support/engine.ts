@@ -34,6 +34,8 @@ export interface EngineOptions {
   /** Host configuration only. Read current public config before supplying TOML. */
   readonly serverConfig?:string;
   readonly initArgs?:readonly string[];
+  /** MRL prefix width; serialized at config root before [keystore] so init first-opens with it. Engine owns the 1 <= fd < dimensions check at open. */
+  readonly fastDims?:number;
   readonly embedder?:EndpointEmbedder;
   readonly oneironer?:EndpointTagger;
   readonly surface?:"primary"|"tool-first";
@@ -77,7 +79,7 @@ export class EngineFixture {
     this.url=`http://127.0.0.1:${port}`;
     this.artifacts=new Artifacts(resolve(process.env.E2E_ARTIFACTS_DIR??resolve(root,"artifacts"),`${options.id??"engine"}-${secretHex(4)}`));
     this.cli=new CliClient(requireAsset(build,"cli"),root,env,this.artifacts);
-    this.sdk=new SdkProcessDriver(build,root,env);
+    this.sdk=new SdkProcessDriver(build,root,env,this.artifacts);
   }
   static async start(options:EngineOptions):Promise<EngineFixture> {
     const profile=process.env.E2E_PROFILE;
@@ -87,6 +89,7 @@ export class EngineFixture {
     const peers=options.peers??0;
     if(!Number.isInteger(peers)||peers<0) throw new TypeError("peers must be a nonnegative integer");
     if(peers>0&&process.env.E2E_FILE_SLOTS!=="2") throw new BlockedDoor("Multi-peer flows require a two-slot file");
+    if(options.fastDims!==undefined&&(!Number.isInteger(options.fastDims)||options.fastDims<1)) throw new TypeError("fastDims must be a positive integer");
     const root=await tempRoot(options.id??"engine");
     const env=isolatedEnv(root,build.environment);
     for(const key of Object.keys(env)) if(key.startsWith("ONEIRON_")) delete env[key];
@@ -107,11 +110,11 @@ export class EngineFixture {
         ...("allowAll" in embedder.egress?["--embedder-egress-allow-all"]:["--embedder-egress-allow",embedder.egress.entityIds.join(",")])]:["--embedder","none"];
       const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
         "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
-      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n\n[keystore]\nbackend = "off"\n${options.serverConfig??""}`,{mode:0o600});
+      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
       const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true);
-      if(init.exitCode!==0) throw new CliError(init);
+      if(init.exitCode!==0) throw new CliError(init,"vault-init");
       const bootstrap=await engine.cli.run(["token","bootstrap","--url",engine.url,"--config",config],undefined,LIMITS.readyMs,true);
-      if(bootstrap.exitCode!==0) throw new CliError(bootstrap);
+      if(bootstrap.exitCode!==0) throw new CliError(bootstrap,"owner-bootstrap");
       const link=bootstrap.stdout.trim();redactor.add(link);
       const principalRef=new URL(link).hash.slice(1).split(".")[1];
       if(!principalRef||!/^[a-f0-9]{32}$/.test(principalRef)) throw new Error("Owner bootstrap returned no bound principal");
@@ -158,7 +161,7 @@ export class EngineFixture {
   async pairActor(options:PairActorOptions):Promise<PairedActor> {
     const result=await this.pairedActor.cli.run(["token","pair","--url",this.url,"--principal-ref",options.principalRef,"--actor-class",options.actorClass,
       ...(options.scope?["--scope",options.scope.join(",")]:[]),...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.requestMs,true);
-    if(result.exitCode!==0) throw new CliError(result);
+    if(result.exitCode!==0) throw new CliError(result,"actor-pair");
     const link=result.stdout.trim();redactor.add(link);
     return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
   }
@@ -166,8 +169,8 @@ export class EngineFixture {
   async awaitReceipt(ref:string,timeoutMs:number=LIMITS.requestMs):Promise<unknown> {
     if(ref.startsWith("call:")) return awaitPublic(()=>this.client.call("vault.receipts.get",{receipt_ref:ref}),value=>value!==null,
       {timeoutMs,label:`receipt ${ref}`});
-    return awaitPublic(()=>this.client.call("vault.receipts",{limit:1000}),rows=>rows.some(row=>row.receipt_ref===ref),
-      {timeoutMs,label:`receipt ${ref}`}).then(rows=>rows.find(row=>row.receipt_ref===ref));
+    return awaitPublic(()=>this.client.call("vault.receipts",{limit:1000}),page=>page.receipts.some(row=>row.receipt_ref===ref),
+      {timeoutMs,label:`receipt ${ref}`}).then(page=>page.receipts.find(row=>row.receipt_ref===ref));
   }
   async websocket(actor:PairedActor=this.pairedActor):Promise<WsClient> {return WsClient.connect(this.url,actor.credential)}
   /** Requires an existing typed door; never maps a missing canon verb to a generic endpoint. */
@@ -192,4 +195,4 @@ export class EngineFixture {
   }
 }
 export type PublicReceiptInput=FacadeInput<"vault.receipts">;
-export type PublicReceipt=FacadeResult<"vault.receipts">[number];
+export type PublicReceipt=FacadeResult<"vault.receipts">["receipts"][number];

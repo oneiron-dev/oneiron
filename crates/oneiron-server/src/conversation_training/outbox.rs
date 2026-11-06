@@ -35,6 +35,7 @@ use oneiron_vault_contract::conversation_training::{
     TrainingFileName, TrainingScopeCursorV2, TrainingScopesV2, decode_training_receipt,
     parse_training_file_name,
 };
+use oneiron_vault_contract::vm_outbox::vm_outbox_set_unfinished;
 use rand_core::{OsRng, RngCore as _};
 
 /// Held for a tick, so two vault processes never share the directory.
@@ -76,6 +77,17 @@ impl Outbox {
             .open(&path)
             .with_context(|| format!("open {}", path.display()))?;
         match lock.try_lock() {
+            // A set a vault VM's carrier has not published whole in this
+            // outbox, its intake keys or an offer, is read at a later tick
+            // (FIX 7543); a mark that does not read leaves it read as it
+            // stands.
+            Ok(()) if vm_outbox_set_unfinished(root).unwrap_or(false) => {
+                tracing::debug!(
+                    dir = %root.display(),
+                    "the outbox carrier is publishing a set in the publisher training outbox; this tick waits"
+                );
+                Ok(None)
+            }
             Ok(()) => Ok(Some(Self {
                 root: root.to_path_buf(),
                 offers,

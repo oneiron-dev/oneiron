@@ -42,6 +42,10 @@ pub enum LlmCapability {
     /// `top_logprobs`), so a decision rung reads a joint distribution over
     /// single-token labels (FIX 1557).
     TokenLogprobs,
+    /// The model returns a readable reasoning summary when asked (Responses
+    /// `reasoning.summary`); support only, still gated on [`Self::Reasoning`]
+    /// for any request to reason.
+    ReasoningSummary,
 }
 
 impl LlmCapability {
@@ -59,6 +63,7 @@ impl LlmCapability {
             Self::AudioInput => "audio_input",
             Self::ReasoningContentHistory => "reasoning_content_history",
             Self::TokenLogprobs => "token_logprobs",
+            Self::ReasoningSummary => "reasoning_summary",
         }
     }
 }

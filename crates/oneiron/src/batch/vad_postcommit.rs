@@ -22,6 +22,8 @@ type TransactionKey = (usize, usize);
 pub(crate) struct PostcommitWork {
     pub(crate) vad_ids: BTreeSet<EntityId>,
     pub(crate) proactivity_changed: bool,
+    /// An answered consent receipt, announced only after this writer commits.
+    pub(crate) consent_answered: bool,
     /// TASKs this transaction wrote, announced only after it commits.
     pub(crate) task_ids: BTreeSet<EntityId>,
     /// Rows this transaction wrote (puts, and the sources of edges it wrote),
@@ -39,6 +41,8 @@ pub(crate) struct PostcommitWork {
     /// Whether this transaction put or marked a notification, whose live
     /// queries wake only after it commits (FIX 3084).
     pub(crate) notifications_changed: bool,
+    /// NOTE documents invalidated only after this transaction commits.
+    pub(crate) note_document_ids: BTreeSet<EntityId>,
 }
 
 thread_local! {
@@ -118,6 +122,16 @@ pub(crate) fn queue_notification_change(vault: &Vault, txn: &RwTxn<'_>) {
     });
 }
 
+/// Mark an answered consent receipt for its transaction owner's durable wake.
+/// Raw-transaction owners publish their own wake only after a successful commit.
+pub(crate) fn queue_consent_answer(vault: &Vault, txn: &RwTxn<'_>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.consent_answered = true;
+        }
+    });
+}
+
 /// Mark TASK writes for the owner's post-commit announcement. A rolled-back
 /// scope drops them, so a subscriber never hears of a write that did not land.
 pub(crate) fn queue_task_updates(
@@ -130,6 +144,18 @@ pub(crate) fn queue_task_updates(
             queued.task_ids.extend(ids);
         }
     });
+}
+
+impl Vault {
+    /// Queue a NOTE document invalidation for this transaction's owner.
+    /// No owner scope means no work; rollback or unwind discards the id.
+    pub(crate) fn queue_note_document_update_in_txn(&self, txn: &RwTxn<'_>, id: EntityId) {
+        PENDING_VAD.with(|pending| {
+            if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(self, txn)) {
+                queued.note_document_ids.insert(id);
+            }
+        });
+    }
 }
 
 /// Mark settled TASKs for the owner's post-commit peer-result wake (FIX 1140).
@@ -236,8 +262,9 @@ pub(super) fn ops_put_tasks(ops: &[BatchOp]) -> Vec<EntityId> {
             BatchOp::Put {
                 id,
                 entity_type: crate::registry::ENTITY_TYPE_TASK,
+                data,
                 ..
-            } => Some(*id),
+            } => Some(crate::context_board::task_body_for_announcement(data, *id)),
             _ => None,
         })
         .collect()
@@ -273,7 +300,7 @@ pub(super) fn ops_touch_watched_units(
         let (BatchOp::Put { id, .. } | BatchOp::Delete { id }) = op else {
             continue;
         };
-        if crate::llm::decision::questions::unit_watched_in_txn(&vault.store, txn, id)? {
+        if crate::store::decision_question_watches::unit_watched_in_txn(&vault.store, txn, id)? {
             return Ok(true);
         }
     }
@@ -306,4 +333,22 @@ pub(super) fn pending_dreamer_vad_approvals(
         }
     }
     Ok(pending_ids)
+}
+
+/// Move a successful nested actor batch's postcommit work to its actual owner.
+pub(super) fn merge_postcommit_work(vault: &Vault, txn: &RwTxn<'_>, work: PostcommitWork) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.vad_ids.extend(work.vad_ids);
+            queued.proactivity_changed |= work.proactivity_changed;
+            queued.consent_answered |= work.consent_answered;
+            queued.task_ids.extend(work.task_ids);
+            queued.rows.extend(work.rows);
+            queued.room_joins.extend(work.room_joins);
+            queued.pad_windows.extend(work.pad_windows);
+            queued.settled_tasks.extend(work.settled_tasks);
+            queued.notifications_changed |= work.notifications_changed;
+            queued.note_document_ids.extend(work.note_document_ids);
+        }
+    });
 }

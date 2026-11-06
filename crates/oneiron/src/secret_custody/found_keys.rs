@@ -31,6 +31,8 @@
 
 mod actions;
 mod page;
+mod purpose;
+pub(crate) use purpose::purpose_questions_in_txn;
 
 pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
 
@@ -47,7 +49,10 @@ use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::found_key_notice_queue::DUE;
 use crate::vault::Vault;
+
+pub(crate) use crate::store::found_key_notice_queue::found_key_notices_due_in_txn;
 
 pub use self::actions::{FOUND_KEY_REASON_KEPT_AS_TEXT, FOUND_KEY_REASON_NOT_A_SECRET};
 pub(crate) use self::actions::{
@@ -68,9 +73,6 @@ const REASON_PREFIX: &str = "gate.secret_scan.";
 
 /// Each record's found keys. Key: the record's id.
 const FOUND: SideTable<EntityId, FoundKeys, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY);
-
-/// The records whose notice is still due, with when their keys were found.
-const DUE: SideTable<EntityId, u64, Named> = SideTable::new(&side_table::SECRET_FOUND_KEY_DUE);
 
 pub use crate::secret_record::FoundKeyAction;
 
@@ -219,12 +221,6 @@ pub(crate) fn note_found_keys_in_txn(
         DUE.put(store, txn, &record, &at)?;
     }
     Ok(())
-}
-
-/// Whether a record is due its notice, read through `txn`: what
-/// [`raise_found_key_notices_in_txn`] raises at the next write's commit.
-pub(crate) fn found_key_notices_due_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(DUE.iter_from(&vault.store, txn, &[])?.next().is_some())
 }
 
 /// Raises the notices of the next [`NOTICES_PER_WRITE`] records left due, in

@@ -17,7 +17,7 @@ use oneiron::engine_executor::{
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
-use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
+use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
@@ -117,6 +117,8 @@ pub struct McpCodeExecutionRequest<'a> {
     /// the call arrived at, so the host binds no vault of its own.
     pub vault: Arc<Vault>,
     pub actor: &'a McpResolvedActor,
+    /// The gateway-bound execution session, never the STREAM connection.
+    pub off_record_session: Option<String>,
     /// The caller's handle onto the durable run.
     pub run_ref: &'a str,
     /// The REPL task the durable run carries out.
@@ -213,6 +215,20 @@ pub trait McpCodeModeProvider: Send + Sync {
 
     /// The backend the durable REPL generates each step against.
     fn backend(&self) -> &dyn LlmBackend;
+    /// The same unscoped run backend with its authenticated model-call caller.
+    /// None keeps the ordinary backend without recording a guessed caller.
+    fn backend_with_model_call_context(
+        &self,
+        _principal: EntityId,
+        _session: Option<String>,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// The ordinary unscoped backend with this run's frozen model list.
+    /// None keeps the existing backend when the provider has no such binding.
+    fn backend_with_model_list(&self, _listed: Vec<AgentModel>) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The admission lease every generated step is charged to.
     fn lease(&self) -> &BudgetLease;
     /// A FRESH sandbox/REPL runtime for one run.
@@ -227,10 +243,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     /// `meter` (its own child scope's guard, or [`Self::host_meter`]) and
     /// billed to `payer` when a room's scope pays (OF-531). `None`: the
     /// provider has no metered backend to give, and the child does not run.
+    /// `listed` is the reader child's frozen inherited model list; empty
+    /// leaves other callers' existing unconstrained routing unchanged.
     fn reader_backend(
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -244,6 +263,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _lease: Option<LiveLeaseState>,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -369,6 +389,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _planned: &PlannedModel,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -381,6 +402,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _payer: Option<PayerPerson>,
         _planned: &PlannedModel,
         _lease: Option<LiveLeaseState>,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -434,6 +456,7 @@ pub type PlannedMeter = Arc<
             Option<PayerPerson>,
             &PlannedModel,
             Option<LiveLeaseState>,
+            Vec<AgentModel>,
         ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,
@@ -446,10 +469,23 @@ pub type PlannedMeter = Arc<
 pub type RunCompactionSeat =
     Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
+/// Copies the ordinary backend with one run's actual frozen model list.
+pub(crate) type ModelListBackend =
+    Arc<dyn Fn(Vec<AgentModel>) -> Arc<dyn LlmBackend> + Send + Sync>;
+
+/// Binds one authenticated MCP run's model-call evidence to its actual caller.
+pub(crate) type ModelCallBackend =
+    Arc<dyn Fn(EntityId, Option<String>) -> Arc<dyn LlmBackend> + Send + Sync>;
+
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
 pub type ReaderMeter = Arc<
-    dyn Fn(BudgetGuard, Option<PayerPerson>, Option<LiveLeaseState>) -> Arc<dyn LlmBackend>
+    dyn Fn(
+            BudgetGuard,
+            Option<PayerPerson>,
+            Option<LiveLeaseState>,
+            Vec<AgentModel>,
+        ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,
 >;
@@ -508,6 +544,9 @@ pub struct McpEngineNativeCodeHost {
     /// Where each run's seat to spawn reader children comes from; none
     /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
     reader_seats: Option<Arc<crate::server::ReaderSeats>>,
+    /// The operator's own Git door base each run's checkouts point at (FIX
+    /// 7181); `None` keeps a run's own base.
+    git_door_base: Option<String>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -531,6 +570,7 @@ impl McpEngineNativeCodeHost {
             seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
             reader_seats: None,
+            git_door_base: None,
         }
     }
 
@@ -539,6 +579,13 @@ impl McpEngineNativeCodeHost {
     #[must_use]
     pub(crate) fn with_reader_seats(mut self, seats: Arc<crate::server::ReaderSeats>) -> Self {
         self.reader_seats = Some(seats);
+        self
+    }
+
+    /// The operator's own Git door base for each run's checkouts (FIX 7181).
+    #[must_use]
+    pub(crate) fn with_git_door_base(mut self, base: Option<String>) -> Self {
+        self.git_door_base = base;
         self
     }
 
@@ -574,12 +621,18 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         let active = &self.active;
         let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
+        let model_call_context = request
+            .actor
+            .auth
+            .as_ref()
+            .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
         let reader_seats = self.reader_seats.clone();
+        let git_door_base = self.git_door_base.clone();
         let runs = &self.runs;
         Box::pin(async move {
             let changed =
@@ -662,6 +715,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &vault,
                         provider.as_ref(),
                         write_actor,
+                        model_call_context,
                         &run_ref,
                         &config,
                         verbs,
@@ -669,6 +723,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         worlds,
                         reader_seat,
                         seat.as_mut(),
+                        git_door_base,
                     );
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
                         let ended = outcome.as_ref().is_ok_and(|outcome| {
@@ -750,6 +805,7 @@ fn run_engine_native_code_mode(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     write_actor: WriteActor,
+    model_call_context: Option<(EntityId, Option<String>)>,
     run_ref: &str,
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
@@ -757,10 +813,13 @@ fn run_engine_native_code_mode(
     worlds: Vec<EntityId>,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
+    git_door_base: Option<String>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
-        .with_agent_verb_door(verbs);
+        .with_agent_verb_door(verbs)
+        .with_bound_run(config.run_id)
+        .with_git_door_base(git_door_base);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
     }
@@ -781,18 +840,35 @@ fn run_engine_native_code_mode(
         worlds,
     )
     .map_err(McpCodeExecutionError::RunBinding)?;
-    enter_engine_native_run(
-        vault,
-        provider,
-        &gated_write,
-        config,
-        compaction,
-        &reactor,
-        None,
-        seat.as_ref(),
-        // An `execute_code` run is no planned child.
-        None,
-    )
+    let model_call_backend = model_call_context.and_then(|(principal, session)| {
+        provider.backend_with_model_call_context(principal, session)
+    });
+    match model_call_backend.as_ref() {
+        Some(backend) => enter_on(
+            vault,
+            provider,
+            backend.as_ref(),
+            &gated_write,
+            config,
+            compaction,
+            &reactor,
+            seat.as_ref(),
+        ),
+        None => enter_engine_native_run(
+            vault,
+            provider,
+            &gated_write,
+            config,
+            compaction,
+            &reactor,
+            None,
+            seat.as_ref(),
+            // An `execute_code` run is no planned child.
+            None,
+            // Keep this caller's existing unconstrained routing.
+            Vec::new(),
+        ),
+    }
     .map_err(|error| match error.provider_outage() {
         Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
         None => match error {
@@ -912,6 +988,7 @@ pub(crate) fn enter_engine_native_run(
     spend: Option<ScopeMeter<'_>>,
     seat: Option<&ModelSeat>,
     planned: Option<&PlannedModel>,
+    listed: Vec<AgentModel>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -921,7 +998,16 @@ pub(crate) fn enter_engine_native_run(
     }) = spend
     else {
         let own = planned
-            .and_then(|planned| provider.planned_backend(provider.host_meter()?, None, planned));
+            .and_then(|planned| {
+                provider.planned_backend(provider.host_meter()?, None, planned, listed.clone())
+            })
+            .or_else(|| {
+                if listed.is_empty() {
+                    None
+                } else {
+                    provider.backend_with_model_list(listed)
+                }
+            });
         let backend: &dyn LlmBackend = match &own {
             Some(backend) => backend.as_ref(),
             None => provider.backend(),
@@ -940,10 +1026,16 @@ pub(crate) fn enter_engine_native_run(
                 payer.clone(),
                 planned,
                 Some(scoped.clone()),
+                listed.clone(),
             )
         })
         .or_else(|| {
-            provider.reader_backend_with_lease(guard.clone(), payer.clone(), Some(scoped.clone()))
+            provider.reader_backend_with_lease(
+                guard.clone(),
+                payer.clone(),
+                Some(scoped.clone()),
+                listed.clone(),
+            )
         });
     let per_rung = scoped_backend.is_some();
     // An unmodified provider takes its old wrapper; the scoped code-mode
@@ -951,8 +1043,10 @@ pub(crate) fn enter_engine_native_run(
     let backend = match scoped_backend {
         Some(backend) => Some(backend),
         None => planned
-            .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
-            .or_else(|| provider.reader_backend(guard.clone(), payer)),
+            .and_then(|planned| {
+                provider.planned_backend(guard.clone(), payer.clone(), planned, listed.clone())
+            })
+            .or_else(|| provider.reader_backend(guard.clone(), payer, listed)),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
@@ -1060,10 +1154,15 @@ pub(crate) fn task_run_seat(
     run_id: EntityId,
     type_ref: &TaskTypeRef,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, worlds, task)
+    seat_for(vault, provider, run_id, pin, None, worlds, |facet| {
+        let mut task = task(facet);
+        task.learning = learning;
+        task
+    })
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -1160,11 +1259,18 @@ pub(crate) fn task_engine_run_seat(
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        engine_seat_task(config, facet, warm_scope, model, listed)
-    })
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| engine_seat_task(config, facet, warm_scope, model, listed),
+    )
 }
 
 /// The task an engine-native run's seat is born for, from `config` as it
@@ -1194,6 +1300,7 @@ fn engine_seat_task(
         worlds: Vec::new(),
         // Stamped by `seat_for` from the host's served set (FIX 2745).
         served: None,
+        learning: None,
     }
 }
 

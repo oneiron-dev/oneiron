@@ -53,8 +53,8 @@ use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock};
 use super::{os_fill, refused};
 use crate::Vault;
 use crate::error::{Error, Result, SecretError};
-use oneiron_store::vault_page_seal::{PAGE_KEY_CONTEXT, SealOrigin};
 pub use oneiron_store::vault_page_seal::VaultPageSeal;
+use oneiron_store::vault_page_seal::{PAGE_KEY_CONTEXT, SealOrigin};
 
 mod creation;
 mod mirror_rewrite;
@@ -66,7 +66,7 @@ pub use self::creation::{refuse_unfinished_sealed_creation, remove_unfinished_se
 pub(crate) use self::mirror_rewrite::CapturedMirror;
 use self::mirror_rewrite::{captured_identity_current, write_mirror_if_changed};
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
-pub use self::sealed_swap::SealedSwap;
+pub use self::sealed_swap::{SealedSwap, finish_restore_archive_mirror};
 
 /// What the owner is told before choosing the tier, and while it is on.
 pub const PAGE_SEAL_WARNING: &str =
@@ -682,8 +682,7 @@ impl Vault {
             }
             _ => read_own_mirror(self.store.env.path())?,
         };
-        if mirror.vault_id != seal.vault_id()
-            || !mirror.incarnations.contains(&seal.incarnation())
+        if mirror.vault_id != seal.vault_id() || !mirror.incarnations.contains(&seal.incarnation())
         {
             return Err(refused("the page-seal mirror is another vault's"));
         }

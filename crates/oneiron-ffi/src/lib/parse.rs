@@ -5,12 +5,13 @@ use std::str;
 use oneiron::code_run::vault_read::ContextPackMediaQuery;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_MODEL_UNAVAILABLE,
-    MEMORY_CODE_NOT_FOUND, MemoryResult,
+    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE,
+    MEMORY_CODE_WORLD_RECIPIENT_LIMIT, MemoryResult,
 };
 use oneiron::{EdgeKind, EntityId, PackFormat};
 
 use super::guard::{with_optional_slice, with_required_slice};
-use super::types::{ENTITY_ID_LEN, MAX_FFI_DIMENSIONS, MAX_FFI_QUERY_BYTES, OneironStatus};
+use super::types::{ENTITY_ID_LEN, MAX_FFI_QUERY_BYTES, OneironStatus};
 
 pub(super) fn string_from_required(ptr: *const u8, len: usize) -> Result<String, OneironStatus> {
     with_required_slice(ptr, len, |bytes| {
@@ -68,13 +69,6 @@ pub(super) fn validate_query_len(query: &str) -> Result<(), OneironStatus> {
     Ok(())
 }
 
-pub(super) fn validate_dimensions(dimensions: usize) -> Result<(), OneironStatus> {
-    if dimensions > MAX_FFI_DIMENSIONS {
-        return Err(OneironStatus::InvalidArg);
-    }
-    Ok(())
-}
-
 pub(super) fn validate_vector_len(len: usize, expected: usize) -> Result<(), OneironStatus> {
     if len != expected {
         return Err(OneironStatus::InvalidArg);
@@ -92,13 +86,17 @@ pub(super) fn engine<T>(result: Result<T, oneiron::Error>) -> Result<T, OneironS
 
 /// A bound handle's typed refusal as a status (OF-063): a malformed input
 /// is `InvalidArg`, an id or ref naming no record is `NotFound`, a model
-/// this library does not serve is `ModelUnavailable`, and every other
-/// refusal (the actor, its grants, the owner gate) is `EngineError`.
+/// this library does not serve is `ModelUnavailable`, a world's recipient
+/// limit is `WorldRecipientLimit`, its unverifiable placement is
+/// `WorldPlacementUnverifiable`, and every other refusal (the actor, its
+/// grants, the owner gate) is `EngineError`.
 pub(super) fn memory_result<T>(result: MemoryResult<T>) -> Result<T, OneironStatus> {
     result.map_err(|error| match error.code.as_str() {
         MEMORY_CODE_BAD_REQUEST => OneironStatus::InvalidArg,
         MEMORY_CODE_NOT_FOUND | MEMORY_CODE_INVENTED_REFERENCE => OneironStatus::NotFound,
         MEMORY_CODE_MODEL_UNAVAILABLE => OneironStatus::ModelUnavailable,
+        MEMORY_CODE_WORLD_RECIPIENT_LIMIT => OneironStatus::WorldRecipientLimit,
+        MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => OneironStatus::WorldPlacementUnverifiable,
         _ => OneironStatus::EngineError,
     })
 }

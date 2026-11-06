@@ -28,11 +28,11 @@
 //! a bodyless shell; the signed revoke act in the authority log is what
 //! still names it (FIX 5732, 5733).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authority::{
-    ActSurface, AgentGrantAct, AgentGrantActRef, AgentGrantChange, AuthorityOp,
-    authority_entry_hash, decode_authority_log_entry_body,
+    ActSurface, AgentGrantAct, AgentGrantActRecord, AgentGrantActRef, AgentGrantChange,
+    AuthorityOp, authority_entry_hash, decode_authority_log_entry_body,
 };
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
@@ -47,9 +47,9 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
 
 use super::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    RepoAccessBounds, Scope, ScopeAxis, decode_federation_grant_body, encode_federation_grant_body,
-    own_device_residence_scope,
+    FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
+    FederationGrantScope, RepoAccessBounds, Scope, ScopeAxis, decode_federation_grant_body,
+    encode_federation_grant_body, own_device_residence_scope,
 };
 
 /// The one-tap revoke command every agent grant carries.
@@ -96,6 +96,36 @@ pub(crate) struct AgentGrantRevokeOutcome {
     pub(crate) agent: Option<EntityId>,
     /// The signed record of this revoke; `None` for a repeat.
     pub(crate) act: Option<AgentGrantActRef>,
+}
+
+/// Signed mint fields and withdrawals retained for the registry's audit view.
+#[derive(Default)]
+struct LoggedOwnerGrants {
+    mints: BTreeMap<EntityId, (AgentGrantActRecord, u64)>,
+    owner_revoked: BTreeSet<EntityId>,
+    membership_revoked: BTreeSet<EntityId>,
+}
+
+impl LoggedOwnerGrants {
+    fn membership_withdrew(&self, grant: EntityId, kind: FederationGrantKind) -> bool {
+        self.membership_revoked.contains(&grant)
+            && self.mints.get(&grant).is_some_and(|(record, _)| {
+                matches!(
+                    &record.change,
+                    AgentGrantChange::Mint {
+                        grant_kind: FederationGrantKind::Access,
+                        ..
+                    } if kind == FederationGrantKind::Access
+                ) || matches!(
+                    &record.change,
+                    AgentGrantChange::Mint {
+                        grant_kind: FederationGrantKind::GitPush,
+                        git_push_bounds: Some(_),
+                        ..
+                    } if kind == FederationGrantKind::GitPush
+                )
+            })
+    }
 }
 
 impl Vault {
@@ -189,6 +219,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -210,7 +241,8 @@ impl Vault {
     /// The owner revokes the agent grant `grant_ref`: his signed act, then
     /// the row's delete, in one writer, so every grant reader stops counting
     /// it. A grant this door already revoked (its revoke act stands in the
-    /// authority log) answers unchanged and signs nothing.
+    /// authority log), or whose signed mint a counted membership withdrawal
+    /// names, answers unchanged and signs nothing.
     ///
     /// # Errors
     /// An owner refusal; `EntityNotFound` for an id that names no live
@@ -233,9 +265,14 @@ impl Vault {
                     body,
                 } => body,
                 LiveEntityRow::Live { .. } => return Err(Error::EntityNotFound),
-                // Deleted or gone: a repeat when his revoke act names it.
+                // Deleted or gone: an owner revoke or a matching membership withdrawal.
                 LiveEntityRow::DeletedShell | LiveEntityRow::Absent
-                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref) =>
+                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref)
+                        || self.membership_withdrew_owner_grant_in_txn(
+                            txn,
+                            grant_ref,
+                            FederationGrantKind::Access,
+                        )? =>
                 {
                     return Ok(AgentGrantRevokeOutcome {
                         agent: None,
@@ -250,11 +287,23 @@ impl Vault {
                 .ok()
                 .filter(|grant| grant.owner_agent)
                 .ok_or(Error::EntityNotFound)?;
+            let acknowledged_topology = crate::identity_topology::acknowledged_grant_seals_in_txn(
+                &self.store,
+                txn,
+                grant_ref,
+            )
+            .unwrap_or_else(|error| {
+                tracing::debug!(%error, "topology observations unavailable; revoke still lands");
+                BTreeSet::new()
+            });
             let act = self.append_agent_grant_act_in_txn(
                 txn,
                 owner,
                 surface,
-                AgentGrantAct::Revoke { grant: grant_ref },
+                AgentGrantAct::Revoke {
+                    grant: grant_ref,
+                    acknowledged_topology,
+                },
             )?;
             // The withdrawal stays known here and reaches its peers, in this
             // writer (FIX-LIST 5107, 10772).
@@ -294,13 +343,74 @@ impl Vault {
             let AuthorityOp::AgentGrantAct(record) = &entry.op else {
                 continue;
             };
-            if matches!(record.change, AgentGrantChange::Revoke)
+            if matches!(record.change, AgentGrantChange::Revoke { .. })
                 && fold.valid_entries.contains(&authority_entry_hash(&entry)?)
             {
                 revoked.insert(record.grant);
             }
         }
         Ok(revoked)
+    }
+
+    /// A counted host withdrawal repeats only for the matching signed owner mint.
+    pub(crate) fn membership_withdrew_owner_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: EntityId,
+        kind: FederationGrantKind,
+    ) -> Result<bool> {
+        Ok(self
+            .logged_owner_grants_in_txn(txn)?
+            .membership_withdrew(grant, kind))
+    }
+
+    fn logged_owner_grants_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<LoggedOwnerGrants> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut grants = LoggedOwnerGrants::default();
+        for id in self
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
+        {
+            let id = id?;
+            let Some(row) = self.store.port_entity_record(txn, &id)? else {
+                continue;
+            };
+            if row.entity_type != ENTITY_TYPE_AUTHORITY_LOG || row.body.is_empty() {
+                continue;
+            }
+            let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
+                continue;
+            };
+            if !matches!(
+                &entry.op,
+                AuthorityOp::AgentGrantAct(_)
+                    | AuthorityOp::SlipGrantRevoke { .. }
+                    | AuthorityOp::MembershipExecution(_)
+            ) || !fold.valid_entries.contains(&authority_entry_hash(&entry)?)
+            {
+                continue;
+            }
+            match entry.op {
+                AuthorityOp::AgentGrantAct(record) => match &record.change {
+                    AgentGrantChange::Mint { .. } => {
+                        grants.mints.insert(record.grant, (record, row.learned_at));
+                    }
+                    AgentGrantChange::Revoke { .. } => {
+                        grants.owner_revoked.insert(record.grant);
+                    }
+                },
+                AuthorityOp::SlipGrantRevoke { grant_ref } => {
+                    grants.membership_revoked.insert(grant_ref);
+                }
+                // A membership change no host issuer signed, signed later
+                // by its carrier (FIX 12335), withdraws each Grant it names.
+                AuthorityOp::MembershipExecution(record) => {
+                    grants.membership_revoked.extend(record.withdrawn_grants);
+                }
+                _ => {}
+            }
+        }
+        Ok(grants)
     }
 
     /// Every live agent grant of this vault, in id order. A row that does
@@ -323,8 +433,8 @@ impl Vault {
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing
-    /// ones, or every live one with `include_revoked` (an expired grant
-    /// shows as revoked). A row re-put at a positively withdrawn Grant's id
+    /// ones, or every live one and signed revoked mint with `include_revoked`
+    /// (an expired grant shows as revoked). A row re-put at a withdrawn Grant's id
     /// (FIX-LIST 5107) stands for nothing and shows as revoked, with its
     /// revoke action, so the owner still finds it and revokes it.
     pub(crate) fn agent_grant_registry_rows_in_txn(
@@ -334,6 +444,7 @@ impl Vault {
     ) -> Result<Vec<crate::consent::ConsentRegistryRow>> {
         let now = self.instant_in_txn(txn)?.secs();
         let mut rows = Vec::new();
+        let mut shown = BTreeSet::new();
         for standing in agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0 {
             let withdrawn =
                 crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id);
@@ -347,7 +458,43 @@ impl Vault {
                     agent_grant.confers = false;
                 }
             }
+            shown.insert(standing.id);
             rows.push(row);
+        }
+        if include_revoked {
+            let logged = self.logged_owner_grants_in_txn(txn)?;
+            for (id, (record, created_at)) in &logged.mints {
+                if shown.contains(id)
+                    || !(logged.owner_revoked.contains(id)
+                        || logged.membership_withdrew(*id, FederationGrantKind::Access))
+                {
+                    continue;
+                }
+                let AgentGrantChange::Mint {
+                    member,
+                    scope,
+                    expires_at,
+                    repo_bounds,
+                    grant_kind: FederationGrantKind::Access,
+                    ..
+                } = &record.change
+                else {
+                    continue;
+                };
+                rows.push(crate::consent::ConsentRegistryRow::from_agent_grant_fields(
+                    *id,
+                    scope,
+                    crate::consent::ConsentRegistryAgentGrant {
+                        agent: *member,
+                        delegated_by: record.act.owner,
+                        expires_at: *expires_at,
+                        repo_bounds: repo_bounds.clone(),
+                        confers: false,
+                    },
+                    crate::consent::ConsentGrantStatus::Revoked,
+                    *created_at,
+                ));
+            }
         }
         Ok(rows)
     }

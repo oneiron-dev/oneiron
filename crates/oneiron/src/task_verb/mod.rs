@@ -23,6 +23,7 @@ mod ask_world_hold;
 mod attendee_answer;
 mod board_task;
 mod comm_widen;
+mod contribution_pair;
 pub(crate) use board_task::board_task_for_id;
 pub use comm_widen::CommWidenRevokeReceipt;
 mod brief;
@@ -92,6 +93,7 @@ mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
+pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
@@ -118,6 +120,12 @@ mod training_swap_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use contribution_pair::{
+    CONTRIBUTION_PAIR_QUESTION_TYPE, ask_contribution_pair, coach_owner_conversation_in,
+    contribution_pair_ask_permitted_in, contribution_pair_erase_targets_in_txn,
+    contribution_pair_question_permitted_in, is_contribution_pair_ask_intent,
+    retire_contribution_pair_asks_in,
+};
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use training_offer_ask::{
     OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
@@ -129,8 +137,9 @@ pub(crate) use training_swap_ask::{
 };
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
-    TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
-    task_is_blocked_in, task_stored_brief_in, task_text_with_source_in,
+    TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
+    leader_task_brief_in, task_binding, task_is_blocked_in, task_stored_brief_in,
+    task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -394,7 +403,7 @@ pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage}
 pub use linear_store::VaultLinearTaskStore;
 pub(crate) use linear_store::{
     drop_mirror_link_in, forget_task_mirror, linear_effect_state_in_txn, linear_issue_task_in,
-    mark_mirror_dirty_in, note_task_write, put_mirror_link_in,
+    mark_mirror_dirty_in, put_mirror_link_in,
 };
 pub(crate) use mirror_edit::prove_task_owner_in;
 
@@ -460,10 +469,6 @@ pub use ask_types::{
     TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
-
-// The lift sweep's typed acceptance for this module's authored side
-// tables (FIX 2680), named by their declarations.
-pub(crate) use self::linear_store::linear_pull_cursor_accepts_masked;
 
 use crate::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};

@@ -43,8 +43,8 @@ use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
-    BlobArtifactInput, BlobVersionView, EntityView, ImageViewRequest, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+    BlobArtifactInput, BlobVersionAppendOutcome, EntityView, ImageViewRequest,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
@@ -57,11 +57,13 @@ use crate::server::SyncServer;
 pub(crate) mod hook;
 mod model_calls;
 
-/// This thread's verdict actor for the model-call capture in
-/// `BigModel::decide` (FIX 12742): the principal [`run_verdict`] bound while
-/// the verdict answers, `None` outside that scope, where the capture is
-/// skipped and never guessed.
-pub(crate) use model_calls::actor as verdict_actor;
+/// This thread's caller for the model-call capture in `BigModel::decide`
+/// (FIX 12516/12742), bound while a verdict, graph or artifact decision
+/// answers. Outside a capture scope it is `None`, never guessed.
+pub(crate) use model_calls::caller as model_call_context;
+/// Binds the capture caller [`model_call_context`] reads back (FIX
+/// 12516/12742), on the decision's blocking thread.
+pub(crate) use model_calls::scoped as with_model_call_context;
 
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
@@ -226,6 +228,9 @@ impl HeldImage {
 /// run line bills when a room's root spend scope funds the run (FIX 3574),
 /// as the host bound it; `None` bills the vault owner. `evidence_read`
 /// holds the rows the evidence refs and images resolved to, once read.
+/// `session_ref` is the bound session the model-call capture attributes
+/// (FIX 12516/12742), `None` only at unbound sources; the scope binds it
+/// with `principal` for [`model_call_context`] on this blocking thread.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the caller's verdict"
@@ -240,6 +245,7 @@ pub(crate) fn run_verdict(
     request: &AiVerdictRequest,
     payer: Option<&PayerPerson>,
     evidence_read: &mut Vec<EntityId>,
+    session_ref: Option<&str>,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
@@ -253,7 +259,7 @@ pub(crate) fn run_verdict(
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
         WriteActor::new(principal, class),
     );
-    let answered = model_calls::scoped(principal, || {
+    let answered = model_calls::scoped(principal, session_ref, || {
         on_caller_meter(&meter, || {
             on_caller_payer(payer, || {
                 answer_verdict(
@@ -638,6 +644,14 @@ fn kept(reader: &Memory<'_>, handle: &str, image: DecisionImage) -> DecisionImag
         image.image.media_type.clone(),
         &image.image.bytes,
     );
+    let stored = match stored {
+        Ok(BlobVersionAppendOutcome::Landed(version)) => Ok(version),
+        Ok(BlobVersionAppendOutcome::Proposed(proposal)) => {
+            tracing::warn!(proposal_ref = %proposal.proposal_ref, %handle, "the decision screenshot waits as a proposal; its pin stays on its run");
+            return image;
+        }
+        Err(error) => Err(error),
+    };
     let artifact = match stored.map(|version| EntityId::from_hex(&version.artifact_ref)) {
         Ok(Ok(artifact)) => artifact,
         Ok(Err(_)) => return image,
@@ -664,7 +678,7 @@ pub(crate) fn keep_screenshot(
     name: String,
     media_type: String,
     bytes: &[u8],
-) -> MemoryResult<BlobVersionView> {
+) -> MemoryResult<BlobVersionAppendOutcome> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
@@ -717,13 +731,10 @@ fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionIma
     };
     let mut pulled = oneiron::memory::pull_image(lane, &request, true)?.value;
     let image = pulled.image.take().ok_or_else(internal)?;
-    let asset = EntityId::from_hex(&pulled.asset_ref).map_err(|_| internal())?;
+    let evidence = pulled.evidence.take().ok_or_else(internal)?;
     readable(DecisionImage {
         name: IMAGE.to_owned(),
-        evidence: EvidenceVersion {
-            id: asset,
-            body_hash: *blake3::hash(&image.bytes).as_bytes(),
-        },
+        evidence,
         image,
         frame: None,
     })

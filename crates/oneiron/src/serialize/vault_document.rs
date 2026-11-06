@@ -21,14 +21,14 @@ use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_f
 use crate::Vault;
 use crate::batch::export::{
     ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
-    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDiaryHold, ExportDiaryRead,
-    ExportEdge, ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
-    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRowBirth, ExportRun,
-    ExportRunOutput, ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity,
-    ExportSnapshotEntityBody, ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger,
-    RecordSpool, SideRowBytes, VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT,
-    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocumentManifest, WholeVaultExportReceipt,
-    archive_slot_rows,
+    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDeterminism,
+    ExportDiaryHold, ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportEntity,
+    ExportEpochFloor, ExportManifest, ExportPack, ExportPackSource, ExportReaderFold,
+    ExportResultBody, ExportRowBirth, ExportRun, ExportRunBinding, ExportRunOutput,
+    ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
+    ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
+    VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
+    WholeVaultDocumentManifest, WholeVaultExportReceipt, archive_slot_rows,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -101,7 +101,7 @@ impl<'v> DocumentWriter<'v> {
     ) -> Result<Self> {
         let birth_sources = agent_ids
             .iter()
-            .filter_map(|id| crate::agent_def::birth_source_id(id).ok())
+            .filter_map(|id| crate::store::agent_birth_identity::birth_source_id(id).ok())
             .collect();
         let mut writer = Self {
             vault,
@@ -258,6 +258,20 @@ impl<'v> DocumentWriter<'v> {
     pub(crate) fn run(&mut self, run: ExportSnapshotRun) -> Result<()> {
         let hex = crate::entity_id::bytes_to_hex_lower;
         let row = ExportRun {
+            bindings: run
+                .bindings
+                .into_iter()
+                .map(|(binding, withheld)| ExportRunBinding {
+                    name: binding.name,
+                    path: binding.path,
+                    handle: withheld.is_none().then_some(binding.handle),
+                    withheld: withheld.map(str::to_owned),
+                })
+                .collect(),
+            determinism: run.determinism.map(|determinism| ExportDeterminism {
+                frozen_unix_ms: determinism.frozen_unix_ms,
+                rng_seed: hex(&determinism.rng_seed),
+            }),
             receipts: run
                 .receipts
                 .iter()
@@ -425,7 +439,7 @@ impl<'v> DocumentWriter<'v> {
             &self.skills,
             &self.knowledge,
             &tail.agent_fork_hashes,
-            crate::agent_def::KnowledgeFormat::CURRENT,
+            crate::batch::export::agent_knowledge_format::KnowledgeFormat::CURRENT,
         )?;
         for bundle in &bundles {
             self.ledger

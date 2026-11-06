@@ -278,7 +278,8 @@ impl Vault {
     /// or a settling trace reads as settled, and `None` alone as never
     /// marked under the configured checkpoint. An unarmed vault has none.
     pub fn tagging_marker(&self, turn: &EntityId) -> Result<Option<AttemptRecord>> {
-        let Some(tagging) = self.config.tagging.as_ref() else {
+        let armed = self.tagging_marker_config();
+        let Some(tagging) = armed.as_ref() else {
             return Ok(None);
         };
         let queue = AttemptQueue::from_store(&self.store);
@@ -296,7 +297,8 @@ pub(crate) fn mark_turn_in_txn(
     turn: EntityId,
     work: ExtractionWork,
 ) -> Result<()> {
-    let Some(tagging) = vault.config.tagging.as_ref() else {
+    let marker = vault.tagging_marker_config();
+    let Some(tagging) = marker.as_ref() else {
         return Ok(());
     };
     // Stamped from the store clock without persisting its floor, at every
@@ -342,7 +344,7 @@ pub(crate) fn mark_on_publication_in_txn(
     entity: &EntityId,
     entity_type: u8,
 ) -> Result<()> {
-    if vault.config.tagging.is_none() {
+    if vault.tagging_marker_config().is_none() {
         return Ok(());
     }
     match entity_type {

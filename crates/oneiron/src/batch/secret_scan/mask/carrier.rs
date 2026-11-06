@@ -23,10 +23,11 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
-use crate::secret_custody::{KnownValues, masked_file_in_txn};
 use crate::secret_record::CustodyWrite;
 use crate::side_table::SideTableDecl;
 use crate::store::Store;
+use crate::store::file_key_masks::masked_file_in_txn;
+use crate::store::known_value_index::KnownValues;
 
 /// Domain of the id a lifted carrier row's custody records name as where
 /// their keys were found.
@@ -256,6 +257,16 @@ pub(crate) fn carrier_texts_hit_in_txn(
     Ok(None)
 }
 
+/// The custody origin of `table`'s row `key` as a carrier, and the place its
+/// custody records name: one per row, whether a lift marked its texts or a
+/// writer's admission masked them (FIX 2372).
+pub(crate) fn carrier_origin(table: &SideTableDecl, key: &[u8]) -> Result<(EntityId, String)> {
+    Ok((
+        EntityId::derive(CARRIER_ORIGIN, &[table.name.as_bytes(), key])?,
+        format!("carrier:{}", table.name),
+    ))
+}
+
 /// [`mark_carrier_text_in_txn`] over each of `texts`, the stored texts of
 /// `table`'s row `key`, as one outcome. Each key's custody record names the
 /// row as where it was found.
@@ -266,8 +277,7 @@ pub(crate) fn mark_carrier_texts_in_txn(
     key: &[u8],
     texts: &[String],
 ) -> Result<CarrierText> {
-    let origin = EntityId::derive(CARRIER_ORIGIN, &[table.name.as_bytes(), key])?;
-    let place = format!("carrier:{}", table.name);
+    let (origin, place) = carrier_origin(table, key)?;
     let mut outcome = CarrierText::Clean;
     for text in texts {
         outcome = outcome.and(mark_carrier_text_in_txn(

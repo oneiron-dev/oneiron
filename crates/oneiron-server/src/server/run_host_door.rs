@@ -60,7 +60,7 @@ use oneiron::receipt::{
     QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};
+use oneiron::skill_attribution::{run_write_token_of_origin, with_run_write_token};
 use oneiron::task_verb::sdk::{
     self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest, BoardRefreshRequest,
     BoardSubscriptionRequest, ConnectorAnswerRequest, DescribeRequest, TaskWaveRequest,
@@ -82,7 +82,10 @@ use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 mod board_carrier;
 mod host_rows;
+mod media_step;
 mod resident_rows;
+
+pub(crate) use self::media_step::RunMediaStep;
 
 use self::host_rows::host_row;
 
@@ -121,6 +124,7 @@ pub(crate) struct RunHostDoor {
     /// The attempt the run's entry in flight serves (hex), which keys its
     /// media calls (FIX 2245); empty between entries and for a turn program.
     attempt: Mutex<Option<String>>,
+    media_step: Mutex<Option<RunMediaStep>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
     /// its key. Its rows' surfaces take it from the call's origin. `None`
@@ -143,6 +147,7 @@ impl RunHostDoor {
             line: Mutex::new(None),
             lease: Mutex::new(None),
             attempt: Mutex::new(None),
+            media_step: Mutex::new(None),
             server: Arc::clone(server),
             actor,
             runtime,
@@ -172,6 +177,12 @@ impl RunHostDoor {
         }
     }
 
+    /// The operator's own Git door base the run's checkouts point at (FIX
+    /// 7181); `None` keeps the run's own base.
+    pub(crate) fn git_door_base(&self) -> Option<String> {
+        self.server.config.git_door_base.clone()
+    }
+
     /// Binds the meter the run's next entry makes its model calls on, and
     /// the payer they bill, so its `ai.speech` spends there too, as its other
     /// model calls do (FIX 3194). `None` clears it once the entry ends.
@@ -197,6 +208,30 @@ impl RunHostDoor {
         *self.attempt.lock().unwrap_or_else(PoisonError::into_inner) = attempt;
     }
 
+    pub(crate) fn bind_media_step(&self, step: RunMediaStep) {
+        *self
+            .media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(step);
+    }
+
+    /// Takes the entry's binding after native execution, before its outcome settles.
+    pub(crate) fn take_media_trap(&self) -> bool {
+        self.media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .is_some_and(|step| step.trapped())
+    }
+
+    fn media_trapped(&self) -> bool {
+        self.media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(RunMediaStep::trapped)
+    }
+
     /// CUA E8b: what this run's browser reached for TASK `task`, kept as
     /// the agent's solved-run evidence when its done-means' browser checks
     /// hold on the page (`goal`, under the run's recorded `type_ref`), under
@@ -211,7 +246,7 @@ impl RunHostDoor {
         let memory = agent_memory(&self.server, self.actor, origin, InvocationId::mint());
         // FIX 10723: the capture writes for the run whose lease the origin
         // seals, as the run's own rows do (FIX 3103).
-        let run_writes = RunWriteToken::of_origin(origin);
+        let run_writes = run_write_token_of_origin(origin);
         with_run_write_token(run_writes.as_ref(), || {
             self.guests
                 .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
@@ -226,6 +261,14 @@ impl AgentVerbDoor for RunHostDoor {
         origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if self.media_trapped() {
+            return Err(oneiron::Error::DurableStepTrapped);
+        }
+        let media_step = self
+            .media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let line = self
             .line
             .lock()
@@ -275,7 +318,7 @@ impl AgentVerbDoor for RunHostDoor {
         let verb = call.verb;
         let input = call.input.clone();
         // FIX 3103: the row writes for the run whose lease the origin seals.
-        let run_writes = RunWriteToken::of_origin(&origin);
+        let run_writes = run_write_token_of_origin(&origin);
         let work = move || {
             // The run's speech is admitted after its lease's look, as the
             // entry's own model calls are (FIX 11747).
@@ -318,9 +361,10 @@ impl AgentVerbDoor for RunHostDoor {
                         input,
                         line.as_ref(),
                         attempt.as_deref(),
+                        media_step.as_ref(),
                     )
                 }
-                None => answer_as_agent(
+                None => answer_as_agent_in_step(
                     &server,
                     actor,
                     &origin,
@@ -330,6 +374,7 @@ impl AgentVerbDoor for RunHostDoor {
                     held,
                     line.as_ref(),
                     attempt.as_deref(),
+                    media_step.as_ref(),
                 ),
             })
         };
@@ -344,7 +389,11 @@ impl AgentVerbDoor for RunHostDoor {
             });
             receiver
         };
-        let Ok(answered) = receiver.recv() else {
+        let answered = receiver.recv();
+        if self.media_trapped() {
+            return Err(oneiron::Error::DurableStepTrapped);
+        }
+        let Ok(answered) = answered else {
             return Ok(Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
@@ -599,6 +648,27 @@ pub(crate) fn answer_as_agent(
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    answer_as_agent_in_step(
+        server, actor, origin, invocation, verb, input, held, line, attempt, None,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the agent's call"
+)]
+pub(super) fn answer_as_agent_in_step(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
     let turn = verb
@@ -628,6 +698,7 @@ pub(crate) fn answer_as_agent(
                     input,
                     line,
                     attempt,
+                    media_step,
                     &mut evidence,
                 )
             })

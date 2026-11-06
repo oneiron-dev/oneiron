@@ -102,7 +102,12 @@ fn install_shell(
 ) -> Result<EntityStep> {
     let store = &ctx.vault.store;
     if resident {
-        if crate::deletion::withdraw_received_record_in_txn(store, wtxn, id, cutoff.generation)? {
+        if crate::deletion::withdraw_received_record_in_txn(
+            &crate::secret_custody::CustodyWrite::of(ctx.vault),
+            wtxn,
+            id,
+            cutoff.generation,
+        )? {
             tracing::info!(
                 entity = %id.to_hex(),
                 "sync ingest: a Shell carrier withdrew the resident words of its generation"
@@ -125,6 +130,10 @@ fn install_shell(
         },
         header.learned_at,
     )?;
-    crate::ports::mark_received_withdrawn_in_txn(store, wtxn, id)?;
+    crate::ports::mark_received_withdrawn_in_txn(
+        &crate::secret_custody::CustodyWrite::of(ctx.vault),
+        wtxn,
+        id,
+    )?;
     Ok(EntityStep::Skip)
 }

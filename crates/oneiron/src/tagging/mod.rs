@@ -36,7 +36,7 @@
 //! ([`TaggingMode::Shadow`]) is the test switch: the marker settles and
 //! nothing else is written.
 
-mod body;
+use oneiron_base::message_body_fields as body;
 mod freshness;
 mod held;
 mod history;

@@ -384,7 +384,7 @@ fn publish_receipt(
         job_ref: None,
         trigger_ref: None,
         policy_trace: std::iter::once(gate_ref)
-            .chain(crate::receipt::gate_decision_receipt(gate).policy_trace)
+            .chain(crate::store::gate_receipt::gate_decision_receipt(gate).policy_trace)
             .collect(),
         fields,
     }
@@ -419,7 +419,7 @@ pub(crate) fn artifact_publish_receipts(
         let gate = admitted_gate(vault, txn, &admission)?;
         let receipt = publish_receipt(id, &admission, &gate);
         if query.matches(&receipt) {
-            crate::receipt::retain_newest_receipt(&mut receipts, receipt, query.limit);
+            crate::store::receipt_row::retain_newest_receipt(&mut receipts, receipt, query.limit);
         }
     }
     Ok(receipts)

@@ -34,7 +34,7 @@ pub use answer_scope::{
     read_question_in_lane, schedule_backfill_in_lane,
 };
 pub use answers::question_answers;
-pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
+pub(crate) use arrival::{project_arrivals_for_changes_in_txn, project_arrivals_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{
     ArtifactAskRecord, ArtifactAskStanding, ArtifactUnitReceipt, artifact_ask_records,
@@ -76,11 +76,12 @@ pub use refresh::{
     refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
-pub(crate) use response_custody::{typed_question_carriage, typed_question_owners};
+pub(crate) use response_custody::{typed_question_carriage, typed_question_copy_owners_in_txn};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
+pub(crate) use store::create_question_in_txn;
 pub(crate) use store::read_question_in_txn;
 pub use store::{
     create_question, create_question_with_lane, edit_question, edit_question_with_lane,

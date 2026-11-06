@@ -72,6 +72,9 @@ pub(crate) fn erase_reveal_actor_in_txn(
             continue;
         }
         if asked {
+            if let Some(collection) = row.collected.as_mut() {
+                collection.erase_person_output();
+            }
             row.actor = None;
             if row.reader == READER_AGENT {
                 row.connection = Some(format!("{READER_AGENT}:{ERASED_CALL_IDENTITY}"));

@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod admission_doors;
 mod affect_doors;
+mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
 #[path = "facade/generated/agent_verbs.rs"]
@@ -53,6 +54,7 @@ mod coach_offer_doors;
 mod code_doors;
 mod code_import_doors;
 mod code_run_doors;
+mod code_run_secret_lift_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
@@ -83,6 +85,7 @@ mod deck_creation_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
+mod drafter_doors;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;
@@ -137,6 +140,7 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;
+mod outbound_call_erase_doors;
 pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
@@ -185,11 +189,13 @@ mod skill_default_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
+pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod standing_doors;
 mod stream_recovery_doors;
 mod streamed_claims;
 mod summary_doors;
 mod support_grant_doors;
+mod sync_quarantine_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod trusted_contact_doors;
@@ -221,9 +227,9 @@ pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
-    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
-    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program,
+    ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
+    ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
@@ -327,6 +333,11 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
     unknown_verb(uri.path().trim_start_matches('/'))
 }
 
+/// The native producer's dependency rows, kept only while an in-process
+/// action receives this response. They do not release a held reply's body.
+#[derive(Clone)]
+struct FacadeResultRows(Option<Vec<EntityId>>);
+
 /// Every generated facade route ([`agent_verbs`]): the request's credential
 /// and headers are the call's context, its JSON body the verb's input, and
 /// the row runs in the facade's dispatch ([`call_verb`]), which the held
@@ -365,7 +376,12 @@ async fn facade_route(
             None => call_verb(&server, &call, verb, input).await,
         };
         match output {
-            Ok(output) => released_reply(&server, &auth, verb, output).into_response(),
+            Ok(output) => {
+                let rows = FacadeResultRows(output.rows.clone());
+                let mut response = released_reply(&server, &auth, verb, output).into_response();
+                response.extensions_mut().insert(rows);
+                response
+            }
             Err(refused) => refused.into_response(),
         }
     })

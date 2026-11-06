@@ -226,6 +226,7 @@ pub(crate) fn republish_step_start_in_txn(
     capsule.start = Some(ExecutorStepStart {
         body,
         digest: *blake3::hash(bytes).as_bytes(),
+        erased: false,
         ..start
     });
     CAPSULES.put(store, wtxn, &key, &capsule)?;
@@ -264,7 +265,7 @@ pub(crate) fn release_step_start_in_txn(
 /// The body `digest` once no descriptor holds it: an inline row of its
 /// own goes, a file to the collector. A row that holds its body on its own
 /// stays.
-fn drop_unheld_body_in_txn(
+pub(super) fn drop_unheld_body_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     digest: &[u8; 32],
@@ -393,6 +394,7 @@ pub(crate) fn republish_step_start_in_rows(
     capsule.start = Some(ExecutorStepStart {
         body: output.output_ref(),
         digest: *blake3::hash(bytes).as_bytes(),
+        erased: false,
         ..start
     });
     put_row(rows, row.to_vec(), CAPSULES.encode_value(&capsule)?);

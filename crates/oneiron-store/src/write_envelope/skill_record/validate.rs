@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use rmpv::Value;
 
-use oneiron_contracts::error::{Error, Result};
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::error::{Error, Result};
 
 use super::lifecycle::SkillLifecycle;
 use super::record::{
@@ -144,11 +144,7 @@ fn validate_dependencies(skill_id: &str, dependencies: &[SkillDependency]) -> Re
     Ok(())
 }
 
-pub fn validate_text_field(
-    text: &str,
-    max_bytes: usize,
-    context: &'static str,
-) -> Result<()> {
+pub fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
     if text.trim().is_empty() || text.len() > max_bytes {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(context)));
     }
@@ -159,10 +155,7 @@ pub fn validate_skill_update(prior: &SkillRecord, updated: &SkillRecord) -> Resu
     validate_skill_update_for_door(prior, updated, false)
 }
 
-pub fn validate_hub_sync_skill_update(
-    prior: &SkillRecord,
-    updated: &SkillRecord,
-) -> Result<()> {
+pub fn validate_hub_sync_skill_update(prior: &SkillRecord, updated: &SkillRecord) -> Result<()> {
     if prior.source != ClaimSource::Imported || updated.source != ClaimSource::Imported {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "hub sync only updates imported skills",
@@ -198,6 +191,11 @@ fn validate_skill_update_for_door(
     if prior.forked_from != updated.forked_from {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "forkedFrom lineage cannot change on update",
+        )));
+    }
+    if super::fork_parent_pin(prior)? != super::fork_parent_pin(updated)? {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "fork parent document and frontier cannot change on update",
         )));
     }
     if super::resident_of(prior)? != super::resident_of(updated)? {

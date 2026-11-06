@@ -1,6 +1,11 @@
 //! The engine hooks every store opens with.
 
-use crate::store::{StoreDeleteGuards, StoreScopeStamps};
+#[cfg(feature = "sync")]
+use crate::store::StoreSyncHooks;
+use crate::store::{
+    StoreActorScrubs, StoreDeleteGuards, StoreGateHooks, StoreProjectWrites, StoreRecordHooks,
+    StoreScopeStamps,
+};
 
 /// The engine hooks a store is assembled with. Every open door takes one as a
 /// required input; the type has no default, so no store exists without each
@@ -8,8 +13,32 @@ use crate::store::{StoreDeleteGuards, StoreScopeStamps};
 #[derive(Clone, Copy)]
 pub struct StoreHooks {
     /// The delete guards the store layer's delete paths run.
-    pub delete_guards: &'static dyn StoreDeleteGuards,
+    pub(crate) delete_guards: &'static dyn StoreDeleteGuards,
     /// The record-scope stamp hooks the store layer's write and erase paths
     /// run.
-    pub scope_stamps: &'static dyn StoreScopeStamps,
+    pub(crate) scope_stamps: &'static dyn StoreScopeStamps,
+    /// The project write hooks the store layer's batch put and import paths
+    /// run.
+    pub(crate) project_writes: &'static dyn StoreProjectWrites,
+    /// The identity-topology, federation and room hooks the store layer's
+    /// write, erase and read paths run.
+    pub(crate) record_hooks: &'static dyn StoreRecordHooks,
+    /// The actor scrubs of store-declared side tables whose eraser lives in
+    /// the engine.
+    pub(crate) actor_scrubs: &'static dyn StoreActorScrubs,
+    /// The gate hooks the store layer's open, write, erase and read paths
+    /// run.
+    pub(crate) gate_hooks: &'static dyn StoreGateHooks,
+    /// The sync hooks the store layer's write, erase and maintenance paths
+    /// run in a build with sync.
+    #[cfg(feature = "sync")]
+    pub(crate) sync_hooks: &'static dyn StoreSyncHooks,
+    /// The attempt queue operations the store layer's erase and cooperative
+    /// delivery paths run.
+    pub(crate) attempt_operations: &'static dyn crate::store::StoreAttemptOperations,
+    /// The voice bank response operations the store layer's response paths run.
+    #[cfg(unix)]
+    pub(crate) voice_bank_response: &'static dyn crate::store::StoreVoiceBankResponse,
+    /// The conversation and owner operations the core write doors run.
+    pub(crate) core_write_operations: &'static dyn crate::store::StoreCoreWriteOperations,
 }

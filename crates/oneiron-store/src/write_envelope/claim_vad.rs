@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::affect::{Vad, VadAnnotation};
+use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 pub const CLAIM_VAD_REAPPRAISAL_PREDICATE: &str = "affect.claim_vad";
 const CLAIM_VAD_KEY_VALENCE: &str = "valence";
 const CLAIM_VAD_KEY_AROUSAL: &str = "arousal";
@@ -19,6 +19,9 @@ const CLAIM_VAD_EVIDENCE_KEY_TURN: &str = "turn";
 const CLAIM_VAD_EVIDENCE_KEY_VAD: &str = "vad";
 const CLAIM_VAD_EVIDENCE_KEY_SOURCE: &str = "source";
 const CLAIM_VAD_EVIDENCE_KEY_ANNOTATED_AT: &str = "annotated_at";
+const CLAIM_VAD_EVIDENCE_KEY_FRESHNESS: &str = "freshness";
+const CLAIM_VAD_EVIDENCE_KEY_STALE: &str = "stale";
+const CLAIM_VAD_EVIDENCE_KEY_PENDING_RETAG: &str = "pending_retag";
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClaimVadTurnEvidence {
     pub turn_id: EntityId,
@@ -86,11 +89,15 @@ pub fn claim_vad_value(vad: Vad, turn_count: usize) -> Value {
         ),
     ])
 }
+/// The claim's VAD evidence: each turn it averaged, with the mood it read there.
+/// A mood derived from the turn's tags also says how current it is (FIX 10706): stale
+/// when read from text the turn no longer shows, and whether a retag is pending. An
+/// annotation written on the turn is its own source and says nothing more.
 pub fn claim_vad_evidence_value(evidence: &[ClaimVadTurnEvidence]) -> Value {
     let turns = evidence
         .iter()
         .map(|item| {
-            Value::Map(vec![
+            let mut entry = vec![
                 (
                     Value::from(CLAIM_VAD_EVIDENCE_KEY_TURN),
                     Value::Binary(item.turn_id.as_bytes().to_vec()),
@@ -107,7 +114,23 @@ pub fn claim_vad_evidence_value(evidence: &[ClaimVadTurnEvidence]) -> Value {
                     Value::from(CLAIM_VAD_EVIDENCE_KEY_ANNOTATED_AT),
                     Value::from(item.annotation.annotated_at),
                 ),
-            ])
+            ];
+            if let Some(freshness) = item.annotation.freshness {
+                entry.push((
+                    Value::from(CLAIM_VAD_EVIDENCE_KEY_FRESHNESS),
+                    Value::Map(vec![
+                        (
+                            Value::from(CLAIM_VAD_EVIDENCE_KEY_STALE),
+                            Value::from(freshness.stale),
+                        ),
+                        (
+                            Value::from(CLAIM_VAD_EVIDENCE_KEY_PENDING_RETAG),
+                            Value::from(freshness.pending_retag),
+                        ),
+                    ]),
+                ));
+            }
+            Value::Map(entry)
         })
         .collect();
 

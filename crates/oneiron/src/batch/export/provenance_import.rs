@@ -252,15 +252,30 @@ pub(super) fn restore<R: Read + Seek>(
         rows.push((row, id, body));
         after = Some(row_key);
     }
-    let loc = archive
-        .index
-        .get(Tag::MappedEdge, &subject)?
-        .ok_or_else(|| invalid("provenance subject edge missing from archive"))?;
-    let edge = mapped_edge(
-        &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
-        &archive.index,
-    )?;
-    stage_edge(vault, txn, &edge, &archive.index)?;
+    // Blind-review P1c (REVIEW-4389): an authored cut (FIX 7755) keeps its
+    // active provenance Claim while the subject edge is gone, so a
+    // whole-vault export carries the wrapper without its edge. When the edge
+    // row is absent but both endpoints survive as archived entities, the
+    // cohort restores without staging — and never recreates — the deleted
+    // link. Any other absence stays a fail-closed archive defect.
+    let cut = match archive.index.get(Tag::MappedEdge, &subject)? {
+        Some(loc) => {
+            let edge = mapped_edge(
+                &archive.spool.parse::<ExportEdge>(Loc::decode(&loc)?)?,
+                &archive.index,
+            )?;
+            stage_edge(vault, txn, &edge, &archive.index)?;
+            false
+        }
+        None => {
+            let source = id_at(&subject, 0)?;
+            let target = id_at(&subject, ENTITY_ID_LEN + 1)?;
+            if archive.entity(&source)?.is_none() || archive.entity(&target)?.is_none() {
+                return Err(invalid("provenance subject edge missing from archive"));
+            }
+            true
+        }
+    };
     let new_ids = rows
         .iter()
         .filter_map(|(_, id, _)| {
@@ -271,7 +286,48 @@ pub(super) fn restore<R: Read + Seek>(
             }
         })
         .collect::<std::result::Result<BTreeSet<_>, _>>()?;
-    let (inserted, unchanged) = restore_cohort(vault, txn, &rows)?;
+    // Typed puts can regenerate a cut link before or during this cohort.
+    // Preserve an existing link on a pre-existing source, not one minted
+    // by this import's earlier entity pass.
+    let cut_subject = if cut {
+        if subject.len() != EDGE_KEY_LEN {
+            return Err(invalid("archive cohort subject is not an edge"));
+        }
+        let kind = crate::edge::EdgeKind::try_from_u8(subject[ENTITY_ID_LEN])
+            .ok_or_else(|| invalid("archive cohort subject is not an edge"))?;
+        Some((
+            id_at(&subject, 0)?,
+            kind,
+            id_at(&subject, ENTITY_ID_LEN + 1)?,
+        ))
+    } else {
+        None
+    };
+    let preserve_subject_edge = match cut_subject {
+        Some((source, kind, target)) => {
+            !archive.index.contains(Tag::Inserted, source.as_bytes())?
+                && crate::ports::EdgeStoreRead::port_edge_get(
+                    &vault.store,
+                    txn,
+                    &source,
+                    kind,
+                    &target,
+                )?
+                .is_some()
+        }
+        None => false,
+    };
+    let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut)?;
+    if let Some((source, kind, target)) = cut_subject
+        && !preserve_subject_edge
+        && crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
+            .is_some()
+    {
+        vault
+            .batch_in()
+            .delete_edge(&source, kind, &target)
+            .apply(txn)?;
+    }
     if inserted != new_ids.len() {
         return Err(Error::InvariantViolation("provenance import count drift"));
     }
@@ -290,6 +346,7 @@ fn restore_cohort(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     rows: &[(ExportEntity, EntityId, ClaimBody)],
+    cut: bool,
 ) -> Result<(usize, usize)> {
     let mut inserted = 0;
     let mut unchanged = 0;
@@ -362,7 +419,7 @@ fn restore_cohort(
             };
             if closer_present && prior_live {
                 if let Some((prior, _, _)) = previous {
-                    vault.close_restored_tied_prior_in_txn(txn, &prior, id, row.learned_at)?;
+                    vault.close_restored_tied_prior_in_txn(txn, &prior, id, row.learned_at, cut)?;
                 }
                 previous = None;
             } else if !prior_live {
@@ -385,6 +442,7 @@ fn restore_cohort(
             },
             row.learned_at,
             explicit_prior.as_ref(),
+            cut,
         )?;
         inserted += 1;
         previous = Some((*id, row.learned_at, body.lifecycle));

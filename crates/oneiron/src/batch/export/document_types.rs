@@ -222,9 +222,40 @@ pub struct ExportRunResults {
 pub struct ExportRun {
     pub run_id: String,
     pub outputs: Vec<ExportRunOutput>,
+    /// The run's live result names. A binding whose occurrence was withheld
+    /// keeps its name and reason but no handle.
+    pub bindings: Vec<ExportRunBinding>,
+    /// Frozen nondeterministic inputs when the replay record supplied them.
+    /// Required on export and import; `null` means unknown, not zero.
+    #[serde(deserialize_with = "Option::<ExportDeterminism>::deserialize")]
+    pub determinism: Option<ExportDeterminism>,
     /// The run's fold receipts (ARCH-0079 #reader-forks), each beside the
     /// manifest of the occurrence it describes.
     pub receipts: Vec<ExportReaderFold>,
+}
+
+/// One archived result name and the occurrence it names: its path and its
+/// output handle. Same bytes under different paths are distinct
+/// occurrences, so the path is required. The handle is absent exactly when
+/// the occurrence's egress judgment withheld it; the name, path and reason
+/// still travel then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRunBinding {
+    pub name: String,
+    pub path: String,
+    pub handle: Option<String>,
+    pub withheld: Option<String>,
+}
+
+/// The replay record's frozen nondeterministic inputs. No bridge calls or
+/// checkpoints travel here; full replayability remains FIX 12543.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportDeterminism {
+    pub frozen_unix_ms: u64,
+    /// Lowercase hex, 64 characters.
+    pub rng_seed: String,
 }
 
 /// One fold receipt: the path of the folded occurrence in its run, and the
@@ -362,6 +393,15 @@ pub struct WholeVaultImportReceipt {
     /// withheld (their manifests stay in the archive only).
     pub imported_results: usize,
     pub withheld_results: usize,
+    /// Archived result names rebound to restored outputs, left unresolved, or
+    /// kept withheld by their occurrence's egress judgment.
+    pub bindings_bound: usize,
+    pub bindings_unresolved: usize,
+    pub bindings_withheld: usize,
+    /// Replay records written from restored outputs, or left untouched because
+    /// the existing record already carried the same archived facts.
+    pub records_rebuilt: usize,
+    pub records_skipped: usize,
     /// Custody records the owner's own archive carried, restored under their
     /// own ids, and those already here unchanged.
     pub restored_secrets: usize,

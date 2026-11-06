@@ -1,8 +1,8 @@
 //! Communication predicate, error, send-override and descriptor-row vocabulary.
 
-use oneiron_contracts::error::{Error, Result};
 use crate::write_envelope::claim_body::ClaimBody;
 use oneiron_contracts::claim::{ClaimLifecycleStatus, ClaimSource};
+use oneiron_contracts::error::{Error, Result};
 
 /// Current schema version for `comm.*` claim values and comm-owned records.
 pub const COMM_SCHEMA_VERSION: u64 = 1;
@@ -70,6 +70,23 @@ pub const KEY_VALID_TO: &str = "valid_to";
 /// Synced-truth field on a comm-owned PERSON body. `PARTY_INDEX_PREFIX` caches
 /// the lookup; THIS is what the cache is a cache of.
 pub const KEY_PARTY_KEY: &str = "party_key";
+
+/// Receipt token for a counterparty STOP opt-out.
+pub const COMM_OPT_OUT_REASON_STOP: &str = "counterparty_opt_out_stop";
+
+/// Receipt token for a counterparty unsubscribe opt-out.
+pub const COMM_OPT_OUT_REASON_UNSUBSCRIBE: &str = "counterparty_opt_out_unsubscribe";
+
+/// Receipt token for a counterparty block or friend-removal opt-out.
+pub const COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL: &str =
+    "counterparty_opt_out_block_or_friend_removal";
+
+/// The receipt vocabulary accepted by `comm.opt_out` claims, in reason order.
+pub const COMM_OPT_OUT_REASONS: [&str; 3] = [
+    COMM_OPT_OUT_REASON_STOP,
+    COMM_OPT_OUT_REASON_UNSUBSCRIBE,
+    COMM_OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
+];
 
 /// Typed error for communication projector and consent operations.
 #[derive(Debug, thiserror::Error)]
@@ -256,11 +273,7 @@ pub fn is_comm_claim_predicate(predicate: &str) -> bool {
 /// Replication carries rulings the owner's own devices already admitted; a
 /// federated import (restamped `Imported`) is another vault's word and is
 /// refused even there.
-pub fn guard_send_override_put(
-    body: &ClaimBody,
-    typed_door: bool,
-    replicated: bool,
-) -> Result<()> {
+pub fn guard_send_override_put(body: &ClaimBody, typed_door: bool, replicated: bool) -> Result<()> {
     let imported = body.source == Some(ClaimSource::Imported);
     if body.predicate == PREDICATE_COMM_SEND_OVERRIDE
         && body.lifecycle == ClaimLifecycleStatus::Active

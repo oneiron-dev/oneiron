@@ -26,7 +26,7 @@ use crate::error::{ClaimError, Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ppr;
-use crate::registry::ENTITY_TYPE_MODEL;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_MODEL};
 
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
@@ -127,6 +127,103 @@ impl Vault {
         self.write_edge_provenance(claim_id, subject, body, actor_class, learned_at, None)
     }
 
+    /// Writes an `edge.provenance` Claim for an EXISTING structural edge
+    /// (FIX 7755: an explicitly authored structural tie): the same atomic
+    /// write as [`Vault::put_edge_provenance`] — write-once id, subject-edge
+    /// existence (no upsert), D13 actor validation, D14 precedence,
+    /// implicit supersession — except the subject keeps its 12-byte value.
+    /// A structural value carries no hot flags, so no flag restamp runs; the
+    /// actor-stamped Claim the batch stages is the canonical fact, and its
+    /// `ClaimOf` edge carries the graph invalidation. The plain
+    /// [`Vault::put_edge`] path is unchanged: it still stages anonymous
+    /// adjacency rows, and [`Vault::put_edge_provenance`] still rejects
+    /// structural subjects for non-authored writes.
+    ///
+    /// The edge must already exist (put it via [`Vault::put_edge`] first);
+    /// a semantic subject belongs to [`Vault::put_edge_provenance`] instead.
+    /// Nothing is written on any typed failure.
+    pub fn put_structural_edge_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        actor_class: EdgeActorClass,
+        learned_at: u64,
+    ) -> Result<()> {
+        if edge_value_layout_for_kind(subject.kind, false) != EdgeValueLayout::Structural {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "structural provenance door requires a structural subject kind",
+            )));
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            self.write_edge_provenance_inner(
+                wtxn,
+                EdgeProvenanceWrite {
+                    claim_id,
+                    subject,
+                    body,
+                    actor_class,
+                    learned_at,
+                    explicit_prior: None,
+                    scope_project: None,
+                    imported_evidence: None,
+                    generated_evidence: None,
+                },
+                true,
+                false,
+            )
+        })
+    }
+
+    /// Cuts an EXISTING structural edge with its curator attached (FIX 7755:
+    /// an explicitly authored structural cut): one write transaction writes
+    /// the caller's `edge.provenance` Claim for `subject` exactly like
+    /// [`Vault::put_structural_edge_provenance`] (the edge must exist for
+    /// the Claim to attach to), then deletes the edge's adjacency rows
+    /// through the batch delete door, so every delete guard still runs. The
+    /// Claim stays readable as the cut's actor-stamped canonical fact; the
+    /// edge is gone. Returns whether the edge existed (always true when the
+    /// Claim write succeeded, since that door requires the edge).
+    ///
+    /// A semantic subject belongs to the semantic lifecycle instead; nothing
+    /// is written on any typed failure.
+    pub fn delete_structural_edge_with_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        actor_class: EdgeActorClass,
+        learned_at: u64,
+    ) -> Result<bool> {
+        if edge_value_layout_for_kind(subject.kind, false) != EdgeValueLayout::Structural {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "structural provenance door requires a structural subject kind",
+            )));
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            self.write_edge_provenance_inner(
+                wtxn,
+                EdgeProvenanceWrite {
+                    claim_id,
+                    subject,
+                    body,
+                    actor_class,
+                    learned_at,
+                    explicit_prior: None,
+                    scope_project: None,
+                    imported_evidence: None,
+                    generated_evidence: None,
+                },
+                true,
+                false,
+            )?;
+            self.batch_in()
+                .delete_edge(&subject.source, subject.kind, &subject.target)
+                .apply(wtxn)?;
+            Ok(true)
+        })
+    }
+
     /// Explicitly supersedes the live `edge.provenance` Claim
     /// `prior_claim_id` with the NEWER Claim `new_claim_id` for the SAME
     /// EdgeRef (retractionRules SUPERSEDE + D14): one write transaction
@@ -168,6 +265,7 @@ impl Vault {
         prior_id: &EntityId,
         closer_id: &EntityId,
         close_at: u64,
+        without_edge: bool,
     ) -> Result<()> {
         let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
         if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
@@ -200,6 +298,13 @@ impl Vault {
         // stamped.
         let closer = self.load_provenance_claim_in_txn(wtxn, closer_id)?;
         let subject = prior.subject;
+        // Structural values have no hot flags; cut imports must leave any
+        // pre-existing subject edge alone, just like the retract path.
+        if without_edge
+            || edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural
+        {
+            return Ok(());
+        }
         let Some(edge) =
             self.store
                 .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
@@ -270,7 +375,9 @@ impl Vault {
     /// start) → [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody); subject edge missing →
     /// [`Error::EdgeNotFound`].
     pub fn retract_edge_provenance(&self, claim_id: &EntityId, now: u64) -> Result<()> {
-        self.with_write_txn_grouped(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
+        self.with_write_txn_grouped(|wtxn| {
+            self.retract_edge_provenance_in_txn(wtxn, claim_id, now, false)
+        })
     }
 
     pub(crate) fn retract_edge_provenance_in_txn(
@@ -278,6 +385,7 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
         now: u64,
+        without_edge: bool,
     ) -> Result<()> {
         let claim = self.load_provenance_claim_in_txn(wtxn, claim_id)?;
         if claim.wrapper.lifecycle != ClaimLifecycleStatus::Active {
@@ -290,12 +398,14 @@ impl Vault {
             closed_claim_put_payload(&claim, &retracted, ClaimLifecycleStatus::Retracted)?;
 
         // The subject edge must still exist — the retraction KEEPS it and
-        // only refreshes the two flag bytes.
+        // only refreshes the two flag bytes. A cut restore skips this: the
+        // cut deleted the edge and only the claim's lifecycle change lands.
         let subject = claim.subject;
-        if self
-            .store
-            .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
-            .is_none()
+        if !without_edge
+            && self
+                .store
+                .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+                .is_none()
         {
             return Err(Error::EdgeNotFound);
         }
@@ -335,11 +445,21 @@ impl Vault {
             data,
         )?;
         crate::batch::apply_owner_bound_claim_puts(self, wtxn, vec![op], vec![binding], true)?;
-        restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
-        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
-        // The edge bytes changed without an edge BatchOp in this txn, so the
-        // graph version is bumped explicitly (apply_ops does it for edge ops).
-        crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
+        // Blind-review P1: a structural subject keeps its 12-byte value — no
+        // hot flags to restamp — so only the claim's own lifecycle change
+        // lands; the edge bytes, PPR and graph version stay put.
+        // A cut restore never recreates the deleted link: no flag refresh,
+        // no invalidation, no version bump on the missing edge.
+        if !without_edge
+            && edge_value_layout_for_kind(subject.kind, false) != EdgeValueLayout::Structural
+        {
+            restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
+            ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+            // The edge bytes changed without an edge BatchOp in this txn, so
+            // the graph version is bumped explicitly (apply_ops does it for
+            // edge ops).
+            crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
+        }
         Ok(())
     }
 
@@ -425,6 +545,7 @@ impl Vault {
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: body,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -479,6 +600,50 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         write: EdgeProvenanceWrite<'_>,
     ) -> Result<()> {
+        self.write_edge_provenance_inner(wtxn, write, false, false)
+    }
+
+    /// Owning restore inlet for validated archive records (blind-review P1c,
+    /// REVIEW-4389): `allow_structural` is true only for an archived wrapper
+    /// whose subject is structural — it was authored through the structural
+    /// door, so its restore replays that same path. Every ordinary write
+    /// keeps the static-kind rejection via
+    /// [`Self::write_edge_provenance_in_txn`].
+    pub(crate) fn restore_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+        allow_structural: bool,
+    ) -> Result<()> {
+        self.write_edge_provenance_inner(wtxn, write, allow_structural, false)
+    }
+
+    /// Owning restore inlet for an archived cut wrapper (blind-review P1c,
+    /// REVIEW-4389): the FIX 7755 cut kept the actor-stamped Claim while its
+    /// subject edge is gone, so the restore replays the claim chain without
+    /// the edge-existence check and without restamping (never recreating)
+    /// the deleted link. `allow_structural` rides as in
+    /// [`Self::restore_edge_provenance_in_txn`].
+    pub(crate) fn restore_cut_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+        allow_structural: bool,
+    ) -> Result<()> {
+        self.write_edge_provenance_inner(wtxn, write, allow_structural, true)
+    }
+
+    /// FIX 7755: [`Self::write_edge_provenance_in_txn`] with an explicit
+    /// authored-structural inlet. `allow_structural` is true only on the new
+    /// structural doors above; every existing caller keeps the static-kind
+    /// rejection for structural subjects.
+    fn write_edge_provenance_inner(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: EdgeProvenanceWrite<'_>,
+        allow_structural: bool,
+        without_edge: bool,
+    ) -> Result<()> {
         let EdgeProvenanceWrite {
             claim_id,
             subject,
@@ -517,8 +682,14 @@ impl Vault {
         validate_edge_provenance_value(&value)?;
 
         // Provenance only attaches to SEMANTIC kinds — a static property of
-        // the kind, checked before any I/O.
-        if edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural {
+        // the kind, checked before any I/O. FIX 7755 keeps this rejection for
+        // every existing (non-authored-structural) write; the explicit
+        // authored-structural doors above set `allow_structural` and persist
+        // an actor-stamped claim for a structural subject without restamping
+        // its 12-byte value (which carries no hot flags).
+        if edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural
+            && !allow_structural
+        {
             return Err(Error::Claim(ClaimError::ProvenanceOnStructuralEdge {
                 kind: subject.kind as u8,
             }));
@@ -572,6 +743,27 @@ impl Vault {
                 (Value::from("derived_evidence"), evidence),
             ]));
         }
+        // Blind-review P1 (FIX 7757): the constructor's scope_facet is the
+        // subject's substrate id — a derived id, not a stored FACET — so the
+        // CLAIM birth edge the put now stamps would fail InvalidFacet for an
+        // ordinary NOTE/ASSET/TASK source (only PERSON writes materialize a
+        // substrate facet). Give the engine-generated wrapper a real stored
+        // birth facet before the put: its source's birth facet when that
+        // names a stored FACET, else the vault default (whose owner-substrate
+        // the put's own owner door materializes).
+        let source_facet =
+            crate::federation::record_scope::birth_facet(&self.store, wtxn, subject.source)?;
+        claim_body.scope_facet = match source_facet {
+            Some(facet)
+                if self
+                    .store
+                    .port_entity_record(wtxn, &facet)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_FACET) =>
+            {
+                facet
+            }
+            _ => crate::claim::default_facet_in(&self.store, wtxn)?,
+        };
         // The write-time validated actor_class is persisted as the record's
         // BODY key (set above, ONE-1138); the wrapper's `evid` stays empty —
         // evidence purity, no legacy `{"actor_class": u8}` map.
@@ -590,12 +782,13 @@ impl Vault {
             return Err(Error::Claim(ClaimError::ProvenanceClaimIdInUse));
         }
 
-        // Subject edge must exist — no upsert.
-
-        if self
-            .store
-            .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
-            .is_none()
+        // Subject edge must exist — no upsert. A cut restore skips this:
+        // the FIX 7755 cut deleted the edge and only its Claims land here.
+        if !without_edge
+            && self
+                .store
+                .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+                .is_none()
         {
             return Err(Error::EdgeNotFound);
         }
@@ -804,7 +997,18 @@ impl Vault {
         }
 
         // Re-stamp the subject edge (both directions, identical bytes) and
-        // invalidate the PPR caches its endpoints feed.
+        // invalidate the PPR caches its endpoints feed. A structural subject
+        // (FIX 7755, `allow_structural` only) keeps its 12-byte value: the
+        // actor-stamped Claim above is the canonical fact, and the `ClaimOf`
+        // edge the batch just staged already invalidated and versioned the
+        // graph, so no flag restamp runs here.
+        // A cut restore never recreates the deleted link: no flag restamp,
+        // no invalidation, no version bump on the missing edge.
+        if without_edge
+            || edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural
+        {
+            return Ok(());
+        }
         restamp_edge_flags(&self.store, wtxn, subject, flags)?;
         ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
 

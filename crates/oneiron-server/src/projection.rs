@@ -105,8 +105,75 @@ pub fn project_entity_parts(
     body: &[u8],
     view: View,
 ) -> Value {
+    project_entity_fields(
+        id,
+        entity_type,
+        updated_at,
+        decode_body_fields(entity_type, body),
+        view,
+    )
+}
+
+/// Projects only a native asset ladder body, after the scoped read admitted it.
+/// ImageFormBody's base64 pixels are binary content, not credential text; all
+/// of its other fields still pass through the ordinary release filter.
+pub(crate) fn project_hydrated_asset_parts(
+    id: &EntityId,
+    updated_at: u64,
+    asset: &oneiron::memory::HydratedAsset,
+    view: View,
+) -> Option<Value> {
+    let oneiron::memory::HydratedAsset::Served { body, form, .. } = asset else {
+        return None;
+    };
+    let entity_type = oneiron::registry::ENTITY_TYPE_ASSET;
+    let fields = match form.rung() {
+        oneiron::receipt::ServedRung::Full | oneiron::receipt::ServedRung::Thumbnail => {
+            hydrated_image_fields(body, view)
+        }
+        _ => None,
+    };
+    Some(match fields {
+        Some(fields) => project_entity_fields(id, entity_type, updated_at, fields, view),
+        None => project_entity_parts(id, entity_type, updated_at, body, view),
+    })
+}
+
+fn hydrated_image_fields(body: &[u8], view: View) -> Option<Map<String, Value>> {
+    let mut cursor = body;
+    let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
+    };
+    if !cursor.is_empty() {
+        return None;
+    }
+    // This is the field of the native ImageFormBody, not a stored-body allowlist.
+    let index = fields
+        .iter()
+        .position(|(key, value)| key.as_str() == Some("bytes") && value.as_str().is_some())?;
+    let (_, pixels) = fields.remove(index);
+    let pixels = pixels.as_str()?;
+    let mut metadata = Vec::new();
+    rmpv::encode::write_value(&mut metadata, &rmpv::Value::Map(fields)).ok()?;
+    match oneiron::batch::export::redacted_memory_body(&metadata) {
+        Value::Object(mut fields) => {
+            if !matches!(view, View::Summary) {
+                fields.insert("bytes".to_owned(), Value::String(pixels.to_owned()));
+            }
+            Some(fields)
+        }
+        value => Some(Map::from_iter([("body".to_owned(), value)])),
+    }
+}
+
+fn project_entity_fields(
+    id: &EntityId,
+    entity_type: u8,
+    updated_at: u64,
+    fields: Map<String, Value>,
+    view: View,
+) -> Value {
     let id_hex = id.to_hex();
-    let fields = decode_body_fields(entity_type, body);
     let label = label_from_fields(&fields).unwrap_or_else(|| id_hex.clone());
 
     match view {
@@ -130,6 +197,17 @@ pub(crate) struct BodyBudget<'a> {
     vault: &'a Vault,
     bound: usize,
     remaining: usize,
+}
+
+/// In-hand facts for an omitted-body marker, without retaining its raw body.
+pub(crate) struct PreparedOmittedBody {
+    id: EntityId,
+    entity_type: u8,
+    updated_at: u64,
+    view: View,
+    mode: ReadMode,
+    body_len: usize,
+    content_hash: u8,
 }
 
 impl<'a> BodyBudget<'a> {
@@ -216,6 +294,45 @@ impl<'a> BodyBudget<'a> {
         view: View,
         mode: ReadMode,
     ) -> Value {
+        self.finish_omitted(Self::prepare_omitted(
+            id,
+            entity_type,
+            updated_at,
+            body,
+            view,
+            mode,
+        ))
+    }
+
+    /// Captures only in-hand facts; no vault lookup or body decoding occurs.
+    pub(crate) fn prepare_omitted(
+        id: &EntityId,
+        entity_type: u8,
+        updated_at: u64,
+        body: &[u8],
+        view: View,
+        mode: ReadMode,
+    ) -> PreparedOmittedBody {
+        PreparedOmittedBody {
+            id: *id,
+            entity_type,
+            updated_at,
+            view,
+            mode,
+            body_len: body.len(),
+            content_hash: oneiron::batch::short_id_content_hash(body),
+        }
+    }
+
+    /// Resolves the original marker ref after the scoped read has closed.
+    pub(crate) fn finish_omitted(&self, prepared: PreparedOmittedBody) -> Value {
+        let PreparedOmittedBody {
+            id,
+            entity_type,
+            updated_at,
+            view,
+            ..
+        } = prepared;
         let id_hex = id.to_hex();
         let mut object = match view {
             View::Summary => {
@@ -243,7 +360,7 @@ impl<'a> BodyBudget<'a> {
                 object
             }
         };
-        object.insert("bodyOmitted".to_owned(), self.marker(id, body, mode));
+        object.insert("bodyOmitted".to_owned(), self.marker(&prepared));
         Value::Object(object)
     }
 
@@ -252,25 +369,29 @@ impl<'a> BodyBudget<'a> {
     /// id with the omitted body's own content hash, pinned to its revision
     /// when the read was. A row with no short id gives its hex id, read whole
     /// by `GET /api/entity/{id}?view=full`.
-    fn marker(&self, id: &EntityId, body: &[u8], mode: ReadMode) -> Value {
+    fn marker(&self, prepared: &PreparedOmittedBody) -> Value {
+        let PreparedOmittedBody {
+            id,
+            mode,
+            body_len,
+            content_hash: hash,
+            ..
+        } = prepared;
         let short = oneiron::retrieval_depth::short_ref_or_hex(self.vault, id)
             .unwrap_or_else(|_| id.to_hex());
         let reference = match short.split_once(':') {
-            Some((name, _)) => {
-                let hash = oneiron::batch::short_id_content_hash(body);
-                match mode {
-                    ReadMode::Pinned(revision) => {
-                        format!("{name}:{hash:02x}@{}", revision.to_hex())
-                    }
-                    _ => format!("{name}:{hash:02x}"),
+            Some((name, _)) => match mode {
+                ReadMode::Pinned(revision) => {
+                    format!("{name}:{hash:02x}@{}", revision.to_hex())
                 }
-            }
+                _ => format!("{name}:{hash:02x}"),
+            },
             None => short,
         };
         json!({
             "code": "PROJECTION_BYTES_EXCEEDED",
             "maxBytes": self.bound,
-            "bodyBytes": body.len(),
+            "bodyBytes": body_len,
             "ref": reference,
         })
     }
