@@ -230,7 +230,7 @@ impl TurnProgramRuntime for ServerTurnPrograms {
         // unmetered agent run's does.
         let door = RunHostDoor::new(&server, request.actor, self.serve.clone(), code_run)
             .with_waking_proof(request.proof.cloned());
-        door.bind_meter(provider.host_meter().map(|guard| (guard, None)));
+        door.bind_meter(provider.host_meter().map(|guard| (guard, None)), None);
         Some(TurnProgramHost {
             runtime: provider.runtime(),
             backend: Arc::new(ProviderBackend(provider)),

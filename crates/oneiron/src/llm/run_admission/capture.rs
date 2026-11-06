@@ -68,6 +68,14 @@ impl RunReceiptSink for CapturedSink {
         self.sink.record(receipt);
     }
 
+    fn media_future_returned(
+        &self,
+        instance: crate::EntityId,
+        snapshot: &super::super::ProviderTokenSnapshot,
+    ) {
+        self.sink.media_future_returned(instance, snapshot);
+    }
+
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.sink.budget_hit(seat, guard, denied);
     }

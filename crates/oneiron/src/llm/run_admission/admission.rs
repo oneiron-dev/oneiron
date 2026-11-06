@@ -681,6 +681,12 @@ impl RunInner {
         admitted_under.unwrap_or_else(|| self.lock_declaration().revision)
     }
 
+    pub(super) fn media_future_returned(&self) {
+        let snapshot = self.guard.provider_token_snapshot();
+        self.receipts
+            .media_future_returned(self.instance, &snapshot);
+    }
+
     /// `host.budget.hit` through the run's sink, once `guard` refused.
     pub(super) fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.receipts.budget_hit(seat, guard, denied);

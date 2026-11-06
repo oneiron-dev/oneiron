@@ -325,3 +325,33 @@ that returns before run construction creates no entry or future-return record.
 Original sources, context, errors, payer checks and financial booking stay in
 place. These partial captures still do not prove all physical use, close a
 scope or supply measured RSI settlement.
+
+## Scoped speech captures
+
+The resident entry binds its speech line with that same entry's guard, payer
+and shared `LeaseLine`. The line's native scope and optional executed attempt
+come from that supplied lease state, not from a prior door binding or a hex
+replay key. The observation sink owns the same server vault. Speech keeps the
+entry's existing once-only booking ledger; it does not open another one.
+Unscoped entries and turn programs keep their original funded line.
+
+Construction records that the scoped speech line was bound. It does not mean
+that the entry invoked speech, admitted a permit or sent provider bytes. Actual
+permit observations still come from the original receipts, forwarded first.
+The native progress and released-progress media gates record future return
+only after their invoked backend future returns and the original dispatch
+receipt is handled. Both an answer and a backend error are returns. A release
+refusal after backend invocation is a return too, not evidence of a send.
+
+A gate preflight or open error, replayed answer, replay follower or unsupported
+ladder lookup does not reach this marker. Dropping the future before it returns
+also leaves return unknown. No outer door answer or permit drop supplies a
+return. The settlement-capture wrapper forwards the observation without adding
+a settlement. Existing charges, errors, admission and money booking remain
+unchanged, and observation write failures still only warn.
+
+These are partial historical observations, not speech-token measurements,
+provider coverage, a per-attempt total, run or scope closure, or measured RSI
+settlement. Speech adapters that report no explicit token count remain unknown.
+Other native sources and job or stream lifecycles still need their own real
+source and return edges.

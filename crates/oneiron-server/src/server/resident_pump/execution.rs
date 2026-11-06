@@ -610,8 +610,7 @@ fn enter_run(
         )
         .map_err(text)?
         .enter();
-    door.bind_meter(line);
-    door.bind_lease(lease);
+    door.bind_meter(line, lease);
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
@@ -633,8 +632,7 @@ fn enter_run(
         planned,
         status.input.definition.models.clone(),
     );
-    door.bind_meter(None);
-    door.bind_lease(None);
+    door.bind_meter(None, None);
     door.bind_attempt(None);
     entered
 }
