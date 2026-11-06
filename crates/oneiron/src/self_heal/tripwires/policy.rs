@@ -103,9 +103,9 @@ pub struct TripwirePolicySource {
 }
 
 /// The tripwire policy one pass applied (FIX 10096): its four effective
-/// bounds, each with its origin, the scope they cover, and every trusted
-/// manifest row that supplied them, sorted by id. Signed with the pass's
-/// detector run.
+/// bounds, each with its origin, the scope they cover, every trusted
+/// manifest row that supplied them, sorted by id, and the pass's own id
+/// (FIX 10817). Signed with the pass's detector run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TripwirePolicyReceipt {
     /// The scope the policy covers.
@@ -121,6 +121,13 @@ pub struct TripwirePolicyReceipt {
     /// Every trusted manifest row the bounds came from, by id; none for the
     /// compiled fallback.
     pub sources: Vec<TripwirePolicySource>,
+    /// The pass that applied it, minted from the vault clock as the pass
+    /// resolves its policy (FIX 10817): two passes under the same policy that
+    /// found the same events sign two runs, each kept in its own row, while
+    /// every run of one pass names the same pass. `None` only on a receipt
+    /// signed before passes had ids, which verifies as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass: Option<EntityId>,
 }
 
 impl TripwirePolicyReceipt {
@@ -166,6 +173,7 @@ impl ResolvedTripwireBounds {
                 sources: origin
                     .map(|origin| origin.sources.clone())
                     .unwrap_or_default(),
+                pass: None,
             },
         }
     }
@@ -182,10 +190,12 @@ impl Vault {
         if policy.diagnostics().loaded_manifest_forces_fail_closed() {
             return Ok(None);
         }
-        let resolved = ResolvedTripwireBounds::resolve(
+        let mut resolved = ResolvedTripwireBounds::resolve(
             policy.diagnostic_bounds,
             policy.diagnostic_bounds_origin.as_ref(),
         );
+        // One resolve opens one pass: every run it signs names this id.
+        resolved.receipt.pass = Some(self.store.clock.entity_id()?);
         for threshold in [
             resolved.bounds.consent_depth,
             resolved.bounds.actor_writes,

@@ -610,6 +610,11 @@ impl Memory<'_> {
                     .export(loro::ExportMode::shallow_snapshot(&through))
                     .map_err(|_| invalid("NOTE history purge failed"))?;
                 let shallow = NoteDocument::load(note, &snapshot)?;
+                let selected = doc
+                    .doc
+                    .frontiers_to_vv(&through)
+                    .ok_or(invalid("NOTE purge frontier unavailable"))?;
+                super::proposals::purge_stored_history(self.vault(), txn, note, &selected)?;
                 super::storage::snapshot(self.vault(), txn, note, &shallow.doc, false)?;
                 let slot = DocumentSlot::of(super::storage::slot(self.vault(), txn, note)?);
                 self.vault().store.port_document_shallow_since_put(
