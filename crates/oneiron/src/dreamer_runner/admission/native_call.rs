@@ -9,7 +9,7 @@ use crate::dreamer_wake::owed::WakeOwedCall;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
-use oneiron_model::llm::BudgetMeterRange;
+use oneiron_model::llm::{BudgetGuardId, BudgetMeterRange};
 
 mod net;
 mod observations;
@@ -28,12 +28,14 @@ struct NativeCallObligation {
     line: String,
     step_hash: [u8; 32],
     boot: [u8; 16],
+    first_admission_guard_id: BudgetGuardId,
     lease: String,
     reserved_units: u64,
     admitted_at: u64,
     invoice: NativeCallInvoice,
     terminal_claims: Vec<EntityId>,
     meter: NativeCallMeter,
+    meter_source: NativeMeterSource,
     gross_coverage: NativeGrossCoverage,
     net_response: NativeNetResponse,
     net_coverage: NativeNetCoverage,
@@ -61,6 +63,14 @@ enum NativeCallMeter {
         start_used_units: u64,
         end_used_units: u64,
     },
+}
+
+/// The guard of the first stored meter observation, not payment authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum NativeMeterSource {
+    Unknown,
+    Observed { guard_id: BudgetGuardId },
 }
 
 /// A real aggregate settlement included this lease's native meter interval.
@@ -127,18 +137,21 @@ pub(crate) fn retain_native_call_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     step_hash: [u8; 32],
     admitted: &WakeOwedCall,
+    guard_id: BudgetGuardId,
 ) -> Result<()> {
     validate_budget_id(&admitted.line)?;
     let row = NativeCallObligation {
         line: admitted.line.clone(),
         step_hash,
         boot: admitted.boot,
+        first_admission_guard_id: guard_id,
         lease: admitted.lease.clone(),
         reserved_units: admitted.reserved_units,
         admitted_at: admitted.at,
         invoice: NativeCallInvoice::Admitted,
         terminal_claims: Vec::new(),
         meter: NativeCallMeter::Unknown,
+        meter_source: NativeMeterSource::Unknown,
         gross_coverage: NativeGrossCoverage::Unknown,
         net_response: NativeNetResponse::Unknown,
         net_coverage: NativeNetCoverage::Unknown,
@@ -147,9 +160,12 @@ pub(crate) fn retain_native_call_in_txn(
     };
     if let Some(existing) = CALLS.get(&vault.store, &*wtxn, &admitted.origin)? {
         let mut original = existing;
+        // A repeat keeps the first source without adding a guard-id gate.
+        original.first_admission_guard_id = row.first_admission_guard_id;
         original.invoice = NativeCallInvoice::Admitted;
         original.terminal_claims.clear();
         original.meter = NativeCallMeter::Unknown;
+        original.meter_source = NativeMeterSource::Unknown;
         original.gross_coverage = NativeGrossCoverage::Unknown;
         original.net_response = NativeNetResponse::Unknown;
         original.net_coverage = NativeNetCoverage::Unknown;
@@ -415,6 +431,7 @@ pub(crate) fn record_native_call_meter_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     origin: AdmittedCallId,
     lease_id: &str,
+    guard_id: BudgetGuardId,
     range: BudgetMeterRange,
 ) -> Result<()> {
     let Some(mut row) = CALLS.get(&vault.store, &*wtxn, &origin)? else {
@@ -432,6 +449,7 @@ pub(crate) fn record_native_call_meter_in_txn(
     match row.meter {
         NativeCallMeter::Unknown => {
             row.meter = settled;
+            row.meter_source = NativeMeterSource::Observed { guard_id };
             CALLS.put(&vault.store, wtxn, &origin, &row)
         }
         _ if row.meter == settled => Ok(()),
@@ -481,6 +499,11 @@ pub(super) fn record_native_gross_settlement_in_txn(
             if row.gross_coverage != NativeGrossCoverage::Unknown && row.gross_coverage != coverage
             {
                 return Err(invalid_dreamer_runner("native aggregate coverage differs"));
+            }
+            if row.meter == NativeCallMeter::Unknown {
+                row.meter_source = NativeMeterSource::Observed {
+                    guard_id: native.guard_id(),
+                };
             }
             row.meter = meter;
             row.gross_coverage = coverage.clone();

@@ -4,6 +4,18 @@ use super::ledger::{LeaseRecord, LeaseState};
 use super::{BudgetGuard, BudgetLeaseState, BudgetRead};
 use crate::llm::BudgetLease;
 
+/// The issuing guard's accounting source, never an admission or paid receipt.
+/// Clones share it; a fresh or restored guard issues a fresh value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct BudgetGuardId([u8; 16]);
+
+impl BudgetGuardId {
+    pub(super) fn new() -> Self {
+        Self(uuid::Uuid::now_v7().into_bytes())
+    }
+}
+
 /// One native lease's actual contribution to this guard's global meter.
 /// The interval is immutable after its first settlement, and may be empty.
 /// It is not the native NET invoice, a per-row total, or a paid fact.
@@ -16,6 +28,7 @@ pub struct BudgetMeterRange {
 /// Accounting data only: neither funding authority nor a durable paid receipt.
 #[derive(Debug, Clone)]
 pub struct BudgetAccountingSnapshot {
+    pub guard_id: BudgetGuardId,
     pub read: BudgetRead,
     /// One entry per requested lease, in the same order. A foreign or unknown
     /// lease has no state on this guard, even if its public id matches.
@@ -46,6 +59,7 @@ impl BudgetGuard {
             })
             .unzip();
         BudgetAccountingSnapshot {
+            guard_id: state.guard_id,
             read,
             leases,
             meter_ranges,
