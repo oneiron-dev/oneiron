@@ -2,6 +2,7 @@
 
 use oneiron_contracts::entity_id::EntityId;
 
+pub use crate::output_requests::AttributionOutputReadRequests;
 pub use crate::read_position::AttributionJudgmentReadPosition;
 pub use crate::read_position::SkillEditProposalReadPosition;
 

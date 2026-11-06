@@ -25,13 +25,14 @@ use crate::model_decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionSweepReport, ReceiptAttributionSource,
-    run_task_attribution_sweep_with_decisions,
+    run_task_attribution_sweep_with_output_requests,
 };
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 
 // A paired eval measurement's job, queued per request (FIX 574).
 mod eval_measurement;
+mod skill_discovery;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
 // Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
@@ -348,7 +349,14 @@ impl Vault {
         decisions: Option<&AttributionDecisions<'_>>,
     ) -> Result<AttributionSweepReport> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISCOVERY_FACET)?;
-        run_task_attribution_sweep_with_decisions(self, limit, source, decisions)
+        let requests = skill_discovery::output_requests(&attempt.status.payload.input);
+        run_task_attribution_sweep_with_output_requests(
+            self,
+            limit,
+            source,
+            decisions,
+            requests.as_ref(),
+        )
     }
 
     /// Judge-swap upkeep as the Coach under a leased `coach.judge_swap`

@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_optimize::union_source_rows;
+use oneiron_skill_attribution::output_requests::AttributionOutputReadRequests;
 
 use super::codec::{
     CURSOR, EDIT_PROPOSAL, EVIDENCE, EvidenceRow, JUDGMENT, evidence_after,
@@ -117,6 +118,42 @@ pub fn run_attribution_projector_with_positions(
     judgment_position: Option<&AttributionJudgmentReadPosition>,
     proposal_position: Option<&SkillEditProposalReadPosition>,
 ) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_requested(
+        vault,
+        since_cursor,
+        decisions,
+        judgment_position,
+        proposal_position,
+        None,
+    )
+}
+
+/// Routes the original pass with separate placement requests for each evidence
+/// sequence. Missing keys remain unknown; held outputs never adopt a request.
+pub fn run_attribution_projector_with_output_requests(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    output_requests: &AttributionOutputReadRequests,
+) -> Result<Vec<AttributionJudgment>> {
+    run_attribution_projector_requested(
+        vault,
+        since_cursor,
+        decisions,
+        None,
+        None,
+        Some(output_requests),
+    )
+}
+
+fn run_attribution_projector_requested(
+    vault: &Vault,
+    since_cursor: u64,
+    decisions: Option<&AttributionDecisions<'_>>,
+    judgment_position: Option<&AttributionJudgmentReadPosition>,
+    proposal_position: Option<&SkillEditProposalReadPosition>,
+    output_requests: Option<&AttributionOutputReadRequests>,
+) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
     let mut judgments = Vec::new();
     // Each judgment's judge revision and decision receipts, in step.
@@ -199,7 +236,11 @@ pub fn run_attribution_projector_with_positions(
             subject: Some(subject),
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
-            read_position: judgment_position.cloned(),
+            read_position: output_requests
+                .map_or(judgment_position, |requests| {
+                    requests.judgments.get(&sequence)
+                })
+                .cloned(),
         });
         stamps.push((revision, trace.receipts));
     }
@@ -256,7 +297,14 @@ pub fn run_attribution_projector_with_positions(
                 AttributionLane::Attempt,
                 &judgment.sequence.to_string(),
             )?;
-            mint_edit_proposal_with_position_in_txn(vault, wtxn, judgment, proposal_position)?;
+            mint_edit_proposal_with_position_in_txn(
+                vault,
+                wtxn,
+                judgment,
+                output_requests.map_or(proposal_position, |requests| {
+                    requests.proposals.get(&judgment.sequence)
+                }),
+            )?;
         }
         for sequence in &settled_environment {
             delete_unclear_in_txn(vault, wtxn, AttributionLane::Attempt, &sequence.to_string())?;
