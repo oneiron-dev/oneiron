@@ -90,13 +90,18 @@ struct RunHouseGate<'a> {
 }
 
 impl DecisionReadGate for RunHouseGate<'_> {
+    fn send_guard(&self) -> Option<&(dyn Fn() -> bool + Sync)> {
+        self.run.send_guard().map(|guard| guard as _)
+    }
+
     fn read(
         &self,
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
         super::run_native_read(&self.run, || {
-            let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
+            let refused =
+                |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
             // The host's own work: its turn comes while no caller waits for one,
             // and the wait ends with the caller's work time (FIX 9526). A turn
             // that never came admits nothing and pays nothing.
@@ -362,12 +367,27 @@ impl SystemOneRung {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
-        let asked = super::run_native_read(&run, || {
-            self.runtime.block_on(self.seat.ask_recorded(
+        let asked = super::run_native_read(&run, || match run.send_guard() {
+            Some(guard) => {
+                let release = || {
+                    if guard() {
+                        Ok(())
+                    } else {
+                        Err(oneiron::llm::FatalLlmError::Auth.into())
+                    }
+                };
+                self.runtime.block_on(self.seat.ask_recorded_released(
+                    request,
+                    permit.lease(),
+                    call.deadline.decision_time_left(),
+                    &release,
+                ))
+            }
+            None => self.runtime.block_on(self.seat.ask_recorded(
                 request,
                 permit.lease(),
                 call.deadline.decision_time_left(),
-            ))
+            )),
         });
         // Observe only after the original settlement attempt. Its failure
         // still wins over the provider result exactly as before.

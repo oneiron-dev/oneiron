@@ -108,13 +108,19 @@ impl BigModel {
             self.runtime.block_on(async {
                 match &self.answerer {
                     Answerer::Seat(_) => ladder
-                        .generate_recorded_by(&run, request, None, &|| true, deadline)
+                        .generate_recorded_by(&run, request, None, &|| run.may_send(), deadline)
                         .await
                         .map(|(response, binding)| {
                             (response, Some(binding.rung.model.clone()), binding)
                         }),
                     Answerer::Model(_) => ladder
-                        .generate_exact_recorded_by(&run, request, None, &|| true, deadline)
+                        .generate_exact_recorded_by(
+                            &run,
+                            request,
+                            None,
+                            &|| run.may_send(),
+                            deadline,
+                        )
                         .await
                         .map(|(response, binding)| (response, None, binding)),
                 }

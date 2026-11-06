@@ -33,9 +33,9 @@ use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
-    BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
-    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
-    LlmUsage, RetryableLlmError,
+    BudgetLease, CacheDigest, DispatchRelease, FatalLlmError, LabelReadFailure, LabelReadModel,
+    LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage,
+    LlmOutputUsage, LlmResult, LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
 use oneiron_driver::WorkerLease;
@@ -43,7 +43,7 @@ use serde_json::{Value as JsonValue, json};
 
 use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
 use super::catalog::engine_model_id;
-use super::http::{HttpFailure, KeyStyle, ProviderHttp};
+use super::http::{HttpFailure, HttpReleaseError, KeyStyle, ProviderHttp};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use crate::config::models::{
     DecisionReadRecipe, DecisionReadSettings, ModelsConfig, ProbeQuestions, ProviderConfig,
@@ -309,6 +309,9 @@ struct DecisionReader {
     permitted: bool,
 }
 
+/// Present only for a call whose handle carries a credential check.
+type ReadRelease<'a> = (DispatchRelease<'a>, &'a BudgetLease);
+
 impl DecisionReader {
     fn new(
         model: &ModelId,
@@ -351,7 +354,7 @@ impl DecisionReader {
             .await
     }
 
-    async fn ids(&self) -> LlmResult<Arc<TokenIds>> {
+    async fn ids(&self, release: Option<ReadRelease<'_>>) -> LlmResult<Arc<TokenIds>> {
         if let Some(ids) = self
             .ids
             .lock()
@@ -362,9 +365,9 @@ impl DecisionReader {
         }
         let mut labels = Vec::with_capacity(self.recipe.tokens().len());
         for token in self.recipe.tokens() {
-            labels.push(self.token_id(token, false).await?);
+            labels.push(self.token_id(token, false, release).await?);
         }
-        let eos = self.token_id(self.recipe.eos(), true).await?;
+        let eos = self.token_id(self.recipe.eos(), true, release).await?;
         let distinct: BTreeSet<u64> = labels.iter().copied().collect();
         // Two labels on one token, or a label on the end token, cannot be read apart.
         if distinct.len() != labels.len() || distinct.contains(&eos) {
@@ -377,16 +380,33 @@ impl DecisionReader {
 
     /// The one token `text` is; a verbalizer of more tokens cannot be read at
     /// one position.
-    async fn token_id(&self, text: &str, special: bool) -> LlmResult<u64> {
+    async fn token_id(
+        &self,
+        text: &str,
+        special: bool,
+        release: Option<ReadRelease<'_>>,
+    ) -> LlmResult<u64> {
         let body = json!({"content": text, "add_special": false, "parse_special": special});
         let headers = BTreeMap::new();
-        let sent = self.http.post_json(TOKENIZE_PATH, &headers, &body);
+        let sent = async {
+            match release {
+                Some((release, lease)) => self
+                    .http
+                    .post_json_released(TOKENIZE_PATH, &headers, &body, release, lease)
+                    .await
+                    .map_err(released),
+                None => self
+                    .http
+                    .post_json(TOKENIZE_PATH, &headers, &body)
+                    .await
+                    .map_err(transport),
+            }
+        };
         // Read whole on the served vault's chat-reply line (FIX 11412).
         let reply = match self.host.get() {
             Some(host) => super::http::holding_chat_replies(&host.budgets, sent).await,
             None => sent.await,
-        }
-        .map_err(transport)?;
+        }?;
         status(reply.status)?;
         match reply
             .body
@@ -412,6 +432,7 @@ impl DecisionReader {
         prompt: JsonValue,
         eos: u64,
         n_probs: u64,
+        release: Option<ReadRelease<'_>>,
     ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
         let body = json!({
             "prompt": prompt,
@@ -426,16 +447,30 @@ impl DecisionReader {
             "logit_bias": [[eos, EOS_BIAS]],
         });
         let execution = execution_mode(&body);
-        let reply = self
-            .http
-            .post_json_within(
-                COMPLETION_PATH,
-                &BTreeMap::new(),
-                &body,
-                self.max_response_bytes,
-            )
-            .await
-            .map_err(transport)?;
+        let reply = match release {
+            Some((release, lease)) => self
+                .http
+                .post_json_within_released(
+                    COMPLETION_PATH,
+                    &BTreeMap::new(),
+                    &body,
+                    self.max_response_bytes,
+                    release,
+                    lease,
+                )
+                .await
+                .map_err(released)?,
+            None => self
+                .http
+                .post_json_within(
+                    COMPLETION_PATH,
+                    &BTreeMap::new(),
+                    &body,
+                    self.max_response_bytes,
+                )
+                .await
+                .map_err(transport)?,
+        };
         status(reply.status)?;
         Ok((reply.body, execution))
     }
@@ -448,11 +483,12 @@ impl DecisionReader {
         &self,
         prompts: &[String],
         questions: &[LabelReadout<'_>],
+        release: Option<ReadRelease<'_>>,
     ) -> LlmResult<LabelReadResponse> {
-        let ids = self.ids().await?;
+        let ids = self.ids(release).await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
         let (first, first_mode) = self
-            .complete(prompt_array, ids.eos, self.recipe.n_probs())
+            .complete(prompt_array, ids.eos, self.recipe.n_probs(), release)
             .await?;
         let replies = answers(first, prompts.len())?;
         let mut readouts = Vec::with_capacity(prompts.len());
@@ -468,7 +504,7 @@ impl DecisionReader {
             {
                 let answering = self.answering(&reply).await;
                 spent = Some(usage(&reply, answering.as_ref(), mode.as_ref())?);
-                (reply, mode) = self.complete(json!(prompt), ids.eos, full).await?;
+                (reply, mode) = self.complete(json!(prompt), ids.eos, full, release).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
@@ -492,6 +528,39 @@ impl DecisionReader {
             readouts,
             usage: pack_usage(reads),
         })
+    }
+
+    fn read_with_release(
+        &self,
+        request: &LabelReadRequest<'_>,
+        release: Option<ReadRelease<'_>>,
+    ) -> LlmResult<LabelReadResponse> {
+        // Before the state renders or the tokenizer and completion are asked.
+        if !self.permitted {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if request.questions.is_empty() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let prompts = request
+            .questions
+            .iter()
+            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(refused)?;
+        let read = async {
+            let _worker = self.hold_worker().await?;
+            self.read_pack(&prompts, request.questions, release).await
+        };
+        // One bound for the tokenizer and completion waits: the decision's work cutoff.
+        match request.work_until {
+            Some(until) => self.runtime.block_on(async {
+                tokio::time::timeout_at(until.into(), read)
+                    .await
+                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            }),
+            None => self.runtime.block_on(read),
+        }
     }
 
     /// Waits for the rung's managed worker to be ready and holds it for the
@@ -549,32 +618,23 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        // Before the state renders or the tokenizer and completion are asked.
-        if !self.permitted {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        if request.questions.is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let prompts = request
-            .questions
-            .iter()
-            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(refused)?;
-        let read = async {
-            let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions).await
+        self.read_with_release(request, None)
+    }
+
+    fn read_while(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LabelReadResponse> {
+        let release = || {
+            if may_send() {
+                Ok(())
+            } else {
+                Err(FatalLlmError::Auth.into())
+            }
         };
-        // One bound for the tokenizer and completion waits: the decision's work cutoff.
-        match request.work_until {
-            Some(until) => self.runtime.block_on(async {
-                tokio::time::timeout_at(until.into(), read)
-                    .await
-                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
-            }),
-            None => self.runtime.block_on(read),
-        }
+        self.read_with_release(request, Some((&release, lease)))
     }
 }
 
@@ -810,6 +870,13 @@ fn status(code: u16) -> LlmResult<()> {
     }
 }
 
+fn released(failure: HttpReleaseError) -> LlmError {
+    match failure {
+        HttpReleaseError::Transport(failure) => transport(failure),
+        HttpReleaseError::Release(error) => error,
+    }
+}
+
 fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
@@ -821,6 +888,5 @@ fn transport(failure: HttpFailure) -> LlmError {
         }
     }
 }
-
 #[cfg(test)]
 pub(crate) mod tests;

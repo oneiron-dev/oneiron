@@ -43,6 +43,11 @@ pub enum GatedRead {
 /// caller's own clock (FIX 9526): a gate whose admission waits stops waiting when its work
 /// time ends, and returns [`GatedRead::NotStarted`]; it never starts a clock of its own.
 pub trait DecisionReadGate: Send + Sync {
+    /// The admitted call's credential check, when it carries one.
+    fn send_guard(&self) -> Option<&(dyn Fn() -> bool + Sync)> {
+        None
+    }
+
     fn read(
         &self,
         deadline: &RetrievalDeadline,
@@ -276,7 +281,10 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 work_until: Some(Instant::now() + deadline.decision_time_left()),
             };
             sent_request = Some(request);
-            GatedRead::Read(self.reader.read(&request, lease))
+            GatedRead::Read(match self.gate.send_guard() {
+                Some(guard) => self.reader.read_while(&request, lease, guard),
+                None => self.reader.read(&request, lease),
+            })
         })?;
         let (read, gate_run) = match gated {
             GatedRead::NotStarted => {
