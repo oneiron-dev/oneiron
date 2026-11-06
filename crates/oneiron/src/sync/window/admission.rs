@@ -74,6 +74,41 @@ pub(in crate::sync) fn validate_window_update_with_staged_worlds(
     validate_window_update(doc, update, Some(key), Some(vault), staged)
 }
 
+/// [`validate_window_update_with_staged_worlds`] without its write: it
+/// refuses what that door refuses and stages none of the cutoffs `update`
+/// carries. A device runs it before a sealed envelope's capsule installs
+/// (FIX 10474); the import that follows runs the door itself.
+pub(in crate::sync) fn check_window_update_with_staged_worlds(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+) -> Result<()> {
+    check_window_update(doc, update, Some(key), Some(vault), staged).map(drop)
+}
+
+/// [`validate_window_update_residence_with_vault`] without its write, as
+/// [`check_window_update_with_staged_worlds`] is (FIX 10474).
+pub(in crate::sync) fn check_window_update_residence_with_vault(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    update: &[u8],
+    key: &crate::sync::WindowKey,
+) -> Result<()> {
+    check_window_update(doc, update, Some(key), Some(vault), &HashMap::new()).map(drop)
+}
+
+/// [`validate_promotion_snapshot`] without its write, as
+/// [`check_window_update_with_staged_worlds`] is (FIX 10474).
+pub(in crate::sync) fn check_promotion_snapshot(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<()> {
+    check_window_update(doc, snapshot, None, Some(vault), &HashMap::new()).map(drop)
+}
+
 fn validate_window_update(
     doc: &LoroDoc,
     update: &[u8],
@@ -81,6 +116,26 @@ fn validate_window_update(
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
+    let cutoffs = check_window_update(doc, update, key, vault, staged)?;
+    // OF-013: a cutoff another machine of this vault carries is staged before
+    // the update reaches the live window, so its entity doors refuse the
+    // withdrawn body from the first import on.
+    if let Some(vault) = vault {
+        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
+    }
+    Ok(())
+}
+
+/// Every refusal of [`validate_window_update`]; returns the withdrawn
+/// cutoffs and epoch floors `update` carries, for the caller to stage.
+/// Nothing here writes.
+fn check_window_update(
+    doc: &LoroDoc,
+    update: &[u8],
+    key: Option<&crate::sync::WindowKey>,
+    vault: Option<&crate::Vault>,
+    staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
+) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
     let decode_error = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "window locality admission",
@@ -488,13 +543,7 @@ fn validate_window_update(
             }
         }
     }
-    // OF-013: a cutoff another machine of this vault carries is staged before
-    // the update reaches the live window, so its entity doors refuse the
-    // withdrawn body from the first import on.
-    if let Some(vault) = vault {
-        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
-    }
-    Ok(())
+    Ok(cutoffs)
 }
 
 fn check_edge_residence(
