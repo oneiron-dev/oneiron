@@ -242,12 +242,14 @@ fn read_log(
     // its own. The plan's evidence and words, and the raw pins, are read
     // under it.
     let scoped = vault.scoped_read(memory.read_key()?);
-    // FIX 5032: the summaries that stand, and the raw turns read.
-    let plan = plan_chat_log(memory, &scoped, conversation, cut)?;
     // FIX 6188: grant time is persisted before the snapshot, never inside it,
     // so a grant that has expired is judged expired for these reads.
     scoped.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // FIX 5032: the summaries that stand, judged in this one snapshot that
+    // the raw pins, the window and the SESSION are read in too, and the raw
+    // turns read.
+    let plan = plan_chat_log(memory, &scoped, &txn, conversation, cut)?;
     // The lines, summaries in place, then the raw cap. `raws` holds each raw
     // turn read, in order.
     let mut raws: Vec<&ReadTurn> = Vec::new();
