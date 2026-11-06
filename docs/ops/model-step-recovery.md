@@ -172,7 +172,10 @@ request hash, run instance or model-call index. The initial packed read and its
 full-vocabulary retries keep their existing single permit and settlement.
 
 The permit keeps the actual issuing guard and opaque lease, not a reconstructed
-public lease id. Its settlement capture attaches that handle only to the captured
+public lease id. That same newly allocated coordinate and actual lease are also
+registered once with the original admitted line's shared native-token inventory;
+registration neither allocates another invocation nor creates a financial row.
+Its settlement capture attaches that handle only to the captured
 runtime receipt clones, after settlement. The host's ordinary receipt sink still
 gets the original receipt without the handle. Serialization omits the runtime
 attachment because guard and lease tokens do not survive serialization. Missing
