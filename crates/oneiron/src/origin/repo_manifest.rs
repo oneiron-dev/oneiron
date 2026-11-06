@@ -279,6 +279,49 @@ fn code_anchor_live(vault: &Vault, txn: &heed::RoTxn<'_>, code: &EntityId) -> Re
     ))
 }
 
+/// The portable id that stands for the repository at `repo` in `txn`
+/// (FIX 12761): the one standing id among the live CODE entities whose
+/// stored locator names the same repository (`RepoRef::same_repository`,
+/// commit ignored). `None` when none stands for it, or when two distinct
+/// standing ids do (two PROJECT anchors of one location): no first row is
+/// picked. A CODE row that is not live or whose locator does not parse
+/// names nothing. It reads only; it never mints or repairs.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn standing_portable_id_for_location_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    repo: &crate::codebase::RepoRef,
+) -> Result<Option<RepoPortableId>> {
+    let mut found: Option<[u8; 32]> = None;
+    for row in BY_CODE.iter_from(&vault.store, txn, &[])? {
+        let (code, portable) = row?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CODE_ARTIFACT,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &code)?
+        else {
+            continue;
+        };
+        let Some(located) = crate::code_artifact::decode_code_artifact_body(&body)
+            .ok()
+            .and_then(|artifact| crate::codebase::RepoRef::parse(&artifact.repo_ref).ok())
+        else {
+            continue;
+        };
+        if !located.same_repository(repo) {
+            continue;
+        }
+        match found {
+            None => found = Some(portable),
+            Some(seen) if seen == portable => {}
+            Some(_) => return Ok(None),
+        }
+    }
+    Ok(found.map(RepoPortableId))
+}
+
 /// Removes every repo manifest anchored at erased CODE entity `id`: the
 /// standing manifest, every alias of it, and their minted markers, with the
 /// CODE index row (FIX 6870). Registered in `deletion/derived_rows.rs`, so it
@@ -475,57 +518,70 @@ impl Vault {
             None => None,
         };
         self.with_write_txn_grouped(|txn| {
-            if !code_anchor_live(self, txn, &carried.code)? {
-                return Ok(RepoManifestMerge::Waiting);
+            self.merge_carried_repo_manifest_in_txn(txn, carried, &resolved_for, served)
+        })
+    }
+
+    /// Merges a carried manifest in the caller's writer, with the held repo's
+    /// origin identity resolved before that writer opened.
+    #[cfg(feature = "sync")]
+    pub(crate) fn merge_carried_repo_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        carried: &RepoManifest,
+        resolved_for: &Option<(Option<String>, EntityId)>,
+        served: Option<EntityId>,
+    ) -> Result<RepoManifestMerge> {
+        if !code_anchor_live(self, txn, &carried.code)? {
+            return Ok(RepoManifestMerge::Waiting);
+        }
+        let key = carried.portable.0;
+        if let Some(held) = MANIFESTS.get(&self.store, txn, &key)? {
+            if held.code != carried.code || held.minted_at != carried.minted_at {
+                return Ok(RepoManifestMerge::Conflict);
             }
-            let key = carried.portable.0;
-            if let Some(held) = MANIFESTS.get(&self.store, txn, &key)? {
-                if held.code != carried.code || held.minted_at != carried.minted_at {
-                    return Ok(RepoManifestMerge::Conflict);
-                }
-                if !carried.replaces(&held)? {
-                    return Ok(RepoManifestMerge::Held);
-                }
-                // The held copy moved since the repo was resolved: wait for
-                // the next pass to resolve it again.
-                if resolved_for.as_ref() != Some(&(held.origin_name.clone(), held.code)) {
-                    return Ok(RepoManifestMerge::Unproven);
-                }
-                // Where this host serves the repo, a copy keeps the served
-                // name, so refresh and later merges still judge it here.
-                if served.is_some() && carried.origin_name != held.origin_name {
-                    return Ok(RepoManifestMerge::Unproven);
-                }
-                let origin = match served {
-                    Some(repo_id) => self.origin_authority_in_txn(txn, repo_id)?,
-                    None => None,
-                };
-                if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
-                    return Ok(RepoManifestMerge::Unproven);
-                }
-            } else if self
-                .authority_view_readonly_in_txn(txn)?
-                .origin_cut_standing(carried.portable.as_bytes())?
-                != OriginCutStanding::NoCut
-                && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
-            {
-                // Once the owner cut the repo, a first copy is proven as a
-                // replacement is (FIX 15740); before any cut it is adopted.
+            if !carried.replaces(&held)? {
+                return Ok(RepoManifestMerge::Held);
+            }
+            // The held copy moved since the repo was resolved: wait for
+            // the next pass to resolve it again.
+            if resolved_for.as_ref() != Some(&(held.origin_name.clone(), held.code)) {
                 return Ok(RepoManifestMerge::Unproven);
             }
-            MANIFESTS.put(&self.store, txn, &key, carried)?;
-            let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
-                Some(standing) if standing == key => false,
-                Some(standing) => MANIFESTS
-                    .get(&self.store, txn, &standing)?
-                    .is_none_or(|other| carried.mints_before(&other)),
-                None => true,
-            };
-            if stands {
-                BY_CODE.put(&self.store, txn, &carried.code, &key)?;
+            // Where this host serves the repo, a copy keeps the served
+            // name, so refresh and later merges still judge it here.
+            if served.is_some() && carried.origin_name != held.origin_name {
+                return Ok(RepoManifestMerge::Unproven);
             }
-            Ok(RepoManifestMerge::Adopted)
-        })
+            let origin = match served {
+                Some(repo_id) => self.origin_authority_in_txn(txn, repo_id)?,
+                None => None,
+            };
+            if !self.repo_manifest_writer_proven_in_txn(txn, carried, origin.as_ref())? {
+                return Ok(RepoManifestMerge::Unproven);
+            }
+        } else if self
+            .authority_view_readonly_in_txn(txn)?
+            .origin_cut_standing(carried.portable.as_bytes())?
+            != OriginCutStanding::NoCut
+            && !self.repo_manifest_writer_proven_in_txn(txn, carried, None)?
+        {
+            // Once the owner cut the repo, a first copy is proven as a
+            // replacement is (FIX 15740); before any cut it is adopted.
+            return Ok(RepoManifestMerge::Unproven);
+        }
+        MANIFESTS.put(&self.store, txn, &key, carried)?;
+        let stands = match BY_CODE.get(&self.store, txn, &carried.code)? {
+            Some(standing) if standing == key => false,
+            Some(standing) => MANIFESTS
+                .get(&self.store, txn, &standing)?
+                .is_none_or(|other| carried.mints_before(&other)),
+            None => true,
+        };
+        if stands {
+            BY_CODE.put(&self.store, txn, &carried.code, &key)?;
+        }
+        Ok(RepoManifestMerge::Adopted)
     }
 
     /// Signs `manifest` as this machine, the refs writer that writes it, in
