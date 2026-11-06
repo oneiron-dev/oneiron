@@ -12,6 +12,14 @@ pub(super) struct RequestExclusions {
     ids: Mutex<HashSet<EntityId>>,
 }
 
+pub(super) enum SuppressedSearchRows {
+    Count(usize),
+    Candidates {
+        pipeline: HashSet<EntityId>,
+        excluded: HashSet<EntityId>,
+    },
+}
+
 impl RequestExclusions {
     pub(super) fn count(&self) -> Result<usize> {
         Ok(self
@@ -19,6 +27,14 @@ impl RequestExclusions {
             .lock()
             .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
             .len())
+    }
+
+    pub(super) fn snapshot_ids(&self) -> Result<HashSet<EntityId>> {
+        Ok(self
+            .ids
+            .lock()
+            .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
+            .clone())
     }
 }
 
@@ -133,13 +149,16 @@ impl ScopedRead<'_> {
             .gate_candidates(&admitted)
             .search(query, vector, None, limit)
             .run_for_pack()?;
-        self.filter_search_results(
+        self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )
     }
@@ -198,13 +217,16 @@ impl ScopedRead<'_> {
             pipeline = pipeline.query_affect(vad);
         }
         let results = pipeline.limit(limit).run_for_pack()?;
-        self.filter_search_results(
+        self.filter_search_results_with_suppression(
             results.scores,
             limit,
             requested,
             &filter,
             &policy,
-            results.read_suppressed.saturating_add(excluded.count()?),
+            SuppressedSearchRows::Candidates {
+                pipeline: results.read_suppressed_candidates,
+                excluded: excluded.snapshot_ids()?,
+            },
             &results.revisions,
         )
     }
@@ -299,6 +321,31 @@ impl ScopedRead<'_> {
         previously_suppressed: usize,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        self.filter_search_results_with_suppression(
+            results,
+            limit,
+            requested,
+            filter,
+            policy,
+            SuppressedSearchRows::Count(previously_suppressed),
+            revisions,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "final scoring admission conjoins plan authority, fresh authority and source frontiers"
+    )]
+    pub(super) fn filter_search_results_with_suppression(
+        &self,
+        results: Vec<ScoredEntity>,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        filter: &ResolvedRetrievalFilter,
+        policy: &PolicyManifestResolution,
+        mut previously_suppressed: SuppressedSearchRows,
+        revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let txn = self.grant_read_txn()?;
         // The scoring txn may have completed before a revocation. The final
         // read must satisfy BOTH the plan authority and this fresh snapshot.
@@ -314,6 +361,13 @@ impl ScopedRead<'_> {
         let ceiling_held = HeldAuthority::for_request(None);
         let mut value = Vec::new();
         let mut suppressed = 0;
+        if let SuppressedSearchRows::Candidates { pipeline, excluded } = &mut previously_suppressed
+        {
+            for result in &results {
+                pipeline.remove(&result.id);
+                excluded.remove(&result.id);
+            }
+        }
         for result in results {
             let id = result.id;
             let admitted = self.admit_in(&txn, &result.id, || {
@@ -359,6 +413,20 @@ impl ScopedRead<'_> {
                 value.push(row);
             }
         }
+        let previously_suppressed = match previously_suppressed {
+            SuppressedSearchRows::Count(count) => count,
+            SuppressedSearchRows::Candidates { pipeline, excluded } => pipeline
+                .union(&excluded)
+                .filter(|&id| {
+                    self.within_ceilings_in(&txn, id, &ceilings, &ceiling_held)
+                        .unwrap_or(false)
+                        && self
+                            .admit_in(&txn, id, || Ok(None::<()>))
+                            .map(|admitted| admitted.suppression() > 0)
+                            .unwrap_or(false)
+                })
+                .count(),
+        };
         let mut receipt = self.receipt_for(requested, policy, filter, previously_suppressed);
         receipt.restrict_with(&self.receipt_for(
             requested,

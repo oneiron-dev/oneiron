@@ -441,8 +441,13 @@ pub fn read_checkpoint_frontier(
 /// runtime on a foreign agent's behalf, and stamping a fresh actor per capture
 /// would scatter one durable responsibility across unrelated ids.
 pub(super) fn byoa_runtime_actor() -> ByoaResult<WriteActor> {
+    derived_agent(BYOA_RUNTIME_ACTOR_DOMAIN)
+}
+
+/// The Agent actor whose id `domain` derives.
+fn derived_agent(domain: &[u8]) -> ByoaResult<WriteActor> {
     Ok(WriteActor::new(
-        entity_id_from_hash_material(BYOA_RUNTIME_ACTOR_DOMAIN, &[])?,
+        entity_id_from_hash_material(domain, &[])?,
         EdgeActorClass::Agent,
     ))
 }
@@ -457,14 +462,29 @@ pub(super) fn ensure_byoa_runtime_actor(
     learned_at: u64,
 ) -> ByoaResult<WriteActor> {
     let actor = byoa_runtime_actor()?;
+    ensure_derived_agent_in_txn(vault, wtxn, BYOA_RUNTIME_ACTOR_DOMAIN, occurred, learned_at)?;
+    Ok(actor)
+}
+
+/// Materializes the stable Agent PERSON `domain` derives, as
+/// [`ensure_byoa_runtime_actor`] does for the runtime's own: only the
+/// canonical PERSON body, the domain's bytes, may own the id, and check and
+/// create share `wtxn`.
+pub(super) fn ensure_derived_agent_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    domain: &[u8],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> ByoaResult<WriteActor> {
+    let actor = derived_agent(domain)?;
     if let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, &actor.entity_ref())? {
         crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
         let raw = vault
             .get_raw_in(wtxn, &actor.entity_ref())?
             .ok_or_else(|| invalid(ERR_RUNTIME_ACTOR_COLLISION))?;
         if entity_type != crate::registry::ENTITY_TYPE_PERSON
-            || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                != Some(BYOA_RUNTIME_ACTOR_DOMAIN)
+            || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) != Some(domain)
         {
             return Err(invalid(ERR_RUNTIME_ACTOR_COLLISION));
         }
@@ -476,7 +496,7 @@ pub(super) fn ensure_byoa_runtime_actor(
                 crate::registry::ENTITY_TYPE_PERSON,
                 occurred,
                 learned_at,
-                BYOA_RUNTIME_ACTOR_DOMAIN,
+                domain,
             )
             .apply(wtxn)?;
     }

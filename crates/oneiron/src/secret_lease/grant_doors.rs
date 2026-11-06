@@ -62,6 +62,14 @@ struct GrantAsk<'a> {
     registered: Option<FileIdentity>,
 }
 
+/// How a mint names the custody record it grants on: a caller's handle, or
+/// a declared custody name a run host read (FIX 10624).
+#[derive(Clone, Copy)]
+enum GrantRecord<'a> {
+    Handle(&'a str),
+    Name(&'a str),
+}
+
 impl Vault {
     /// Mints a grant on the secret `handle` names for `caller`, to `target`.
     ///
@@ -93,11 +101,66 @@ impl Vault {
         not_after: Option<u64>,
         delivery: &mut dyn SecretHostDelivery,
     ) -> Result<SecretGrantMinted> {
+        self.mint_secret_grant_on(
+            caller,
+            GrantRecord::Handle(handle),
+            target,
+            ttl_secs,
+            not_after,
+            delivery,
+        )
+    }
+
+    /// [`Self::mint_secret_grant`] on the live custody record the name
+    /// `name` resolves to, for a run host that reads a declared name (a
+    /// repo secret manifest's entry) and holds no handle (FIX 10624). Every
+    /// admission is the same: the binding, the rung, the floor and the
+    /// door policy decide, never the name.
+    ///
+    /// # Errors
+    /// [`SecretError::SecretRefNotFound`] when no live record holds `name`;
+    /// otherwise as [`Self::mint_secret_grant`].
+    pub fn mint_secret_grant_for_name(
+        &self,
+        caller: &SecretGrantCaller,
+        name: &str,
+        target: SecretGrantTarget,
+        ttl_secs: Option<u64>,
+        not_after: Option<u64>,
+        delivery: &mut dyn SecretHostDelivery,
+    ) -> Result<SecretGrantMinted> {
+        self.mint_secret_grant_on(
+            caller,
+            GrantRecord::Name(name),
+            target,
+            ttl_secs,
+            not_after,
+            delivery,
+        )
+    }
+
+    fn mint_secret_grant_on(
+        &self,
+        caller: &SecretGrantCaller,
+        record: GrantRecord<'_>,
+        target: SecretGrantTarget,
+        ttl_secs: Option<u64>,
+        not_after: Option<u64>,
+        delivery: &mut dyn SecretHostDelivery,
+    ) -> Result<SecretGrantMinted> {
         let holder = caller.holder();
         let (target, effector) = self.route_grant(&holder, target, &*delivery)?;
         let mut wtxn = self.store.env.write_txn()?;
         let now = self.instant_in_write_txn(&mut wtxn)?;
-        let (_, custody) = handle_record_in_txn(&self.store, &wtxn, handle)?;
+        let custody = match record {
+            GrantRecord::Handle(handle) => handle_record_in_txn(&self.store, &wtxn, handle)?.1,
+            GrantRecord::Name(name) => resolve_secret_ref_in_txn(&self.store, &wtxn, name)?
+                .ok_or_else(|| {
+                    Error::Secret(SecretError::SecretRefNotFound {
+                        name: name.to_owned(),
+                    })
+                })?,
+        };
         let rec = live_record_in_txn(&self.store, &wtxn, &custody)?;
         let stamped = self.stamp_grant_in_txn(
             &mut wtxn,

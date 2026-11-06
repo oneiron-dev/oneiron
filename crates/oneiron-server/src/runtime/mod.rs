@@ -22,8 +22,8 @@ pub mod seat_login;
 mod secret_destinations;
 pub mod staged_input;
 pub use self::secret_destinations::{
-    RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX, SecretDestination, SecretDestinations,
-    ServedSecretDelivery,
+    OwnSecretDelivery, RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX, SecretDestination,
+    SecretDestinations, ServedSecretDelivery,
 };
 
 pub use self::config::RuntimeConfig;
