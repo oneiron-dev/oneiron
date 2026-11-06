@@ -55952,8 +55952,50 @@
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ApnsDeviceAddress"
+     ],
+     "path": "src/outbound/served_sink/apns/address.rs",
+     "purpose": "A registered device's complete APNs address, separate from send authority",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ApnsAppConfig",
+      "ApnsEnvironment"
+     ],
+     "path": "src/outbound/served_sink/apns/mod.rs",
+     "purpose": "APNs alert delivery through a live T0 key and the normal outbound ledger",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/served_sink/apns/session.rs",
+     "purpose": "APNs auth sessions: one finite configured app, topic and environment per pool",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -55988,8 +56030,8 @@
      "purpose": "What a served host hands its served sinks beyond the vault (OF-187): where each provider's API is, and the…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
-      "fn": 9,
+      "crate-vis": 6,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -91453,7 +91495,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 64,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92099,7 +92141,7 @@
    },
    "over_bar": 167,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6476,
+   "source_files": 6479,
    "test_files": 895
   },
   "oneiron-android": {
@@ -119779,6 +119821,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ApnsConfig"
+     ],
+     "path": "src/config/apns.rs",
+     "purpose": "`[apns]`: the Apple push applications this host sends through",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BackupConfig",
       "BackupConfigOverride"
      ],
@@ -120167,7 +120222,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 16,
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -120353,7 +120408,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OutputLimitField",
@@ -124987,7 +125042,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "fn": 13,
       "re-export": 1,
       "struct": 1
@@ -125341,7 +125396,7 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -125394,7 +125449,7 @@
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -125547,7 +125602,7 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 7,
       "struct": 1
      }
@@ -125762,7 +125817,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 41
      }
     },
     {
@@ -129316,7 +129371,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -129750,9 +129805,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1632,
+   "source_files": 1633,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
