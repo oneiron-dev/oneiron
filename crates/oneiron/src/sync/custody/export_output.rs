@@ -22,8 +22,10 @@
 //!   rechecked in the writer that keeps it, with or without the request's
 //!   result folded there (FIX 12312). Only the recipient machine opens it;
 //!   no install that keeps or relays it can.
-//! - A copy past one row rides in numbered parts by these same rules, and
-//!   is joined before it is judged (FIX 12063, `parts`).
+//! - A copy past one row rides in numbered parts by these same rules, each
+//!   part signed by its holder with the key that signed the result and
+//!   proven alone, and is joined before it is judged (FIX 12063, 12373,
+//!   `parts`).
 
 pub(super) mod parts;
 
@@ -199,7 +201,7 @@ impl ExportOutputBatch {
                 due.push(output);
             }
         }
-        for output in parts::joined_copies(doc, rows) {
+        for output in parts::joined_copies(doc, &fold, rows) {
             if !fold.export_supplement_imported(&output.request)
                 && relayed_export_output_due_in_txn(vault, txn, &fold, &output)?
             {

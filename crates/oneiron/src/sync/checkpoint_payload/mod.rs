@@ -40,6 +40,7 @@
     reason = "a build without the KS7-5 port leaves some of these unread"
 )]
 
+mod author_carrier;
 mod classify;
 mod documents;
 mod frame;
