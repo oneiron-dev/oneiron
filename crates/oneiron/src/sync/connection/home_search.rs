@@ -154,6 +154,27 @@ impl HomeSearch {
     }
 }
 
+impl HomeSearch {
+    pub(crate) async fn default_claim_vector(
+        &self,
+        id: crate::EntityId,
+    ) -> crate::Result<Option<crate::embed::home_vectors::ReceivedHomeClaimVector>> {
+        // Unlike an opened-item search, this derivation read is also used by
+        // an All device. The machine proof, not a selector, grants this read.
+        crate::sync::client::default_claim_vector(&self.vault, &self.config, id).await
+    }
+}
+
+impl Vault {
+    pub(crate) fn embedding_home(&self) -> Option<Arc<HomeSearch>> {
+        self.home_search
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .search
+            .upgrade()
+    }
+}
+
 impl Drop for HomeSearch {
     /// The connection let go: the vault keeps the mode it ran, so a device
     /// that syncs only what it opened still answers as one with no home to

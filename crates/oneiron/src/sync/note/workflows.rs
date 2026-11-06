@@ -283,7 +283,7 @@ impl Stored {
             let Some(raw) = NOTE_PROPOSAL_DOC.get(&judge.vault.store, judge.txn, &key)? else {
                 return Ok(false);
             };
-            let Ok(text) = crate::note::documents::proposal_text(note, &raw) else {
+            let Ok(text) = crate::note::documents::stored_proposal_text(note, &raw) else {
                 return Ok(false);
             };
             rows.docs.insert((note, waiting.fork), text);
@@ -447,7 +447,7 @@ impl State {
             {
                 self.docs.insert(
                     (note, fork),
-                    crate::note::documents::proposal_text(note, &raw)?,
+                    crate::note::documents::stored_proposal_text(note, &raw)?,
                 );
             }
         }
