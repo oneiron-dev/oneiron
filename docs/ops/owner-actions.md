@@ -2015,6 +2015,14 @@ bundle upkeep last did on this install, each part with its time:
 - `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
   counted them.
 - `relay_failure`: the last relay that failed, and its error.
+- `unmerged_uploads`: for each home, the last upload this install assembled for it, by the slot
+  or by a publication you asked for, when that upload carries a world section this install may
+  read unchanged because it did not open, decode or merge here. Each names the home, the
+  generation, and per section the world, the window whose merge failed, the stage and the
+  error's kind. The erased-actor cleanup did not run on that section. The upload keeps the
+  section and still publishes; the section is yours to repair. A tick that uploads nothing leaves
+  this part; only a later upload for the same home replaces it. Left out when no upload carries
+  such a section.
 - `grant`: the last kit grant answered here.
 
 A part with no observation yet says `unobserved`, which is not zero. The counts are what the
