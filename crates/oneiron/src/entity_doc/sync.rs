@@ -221,7 +221,7 @@ pub(crate) fn join_sync_update_in_txn(
         && !before.includes_vv(&whole.oplog_vv())
         && !born_alike(entity, &h, &before, &whole)?
     {
-        return match succession_in_txn(vault, txn, entity, h, &doc, whole)? {
+        return match succession_in_txn(vault, txn, entity, h, &doc, whole, false)? {
             Some(Succeeded::Taken) => Ok(true),
             Some(Succeeded::Held) => Ok(false),
             Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
@@ -265,7 +265,10 @@ enum Succeeded {
 /// is this vault's own; a MESSAGE's successor comes with its window head and
 /// its incarnation instead (`carried`). The sync plane names no shared
 /// incarnation, so a history is held here where the two versions share an
-/// operation. `None` where no proof relates them.
+/// operation. Only a door with the owner's authority replaces history here,
+/// `privileged`: a STATE, never a peer's UPDATE, whose writer holds a text
+/// grant and no restore of its own, and whose proof alone certifies nothing.
+/// `None` where no proof relates them, or the door may not take one.
 fn succession_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -273,6 +276,7 @@ fn succession_in_txn(
     mut h: Head,
     old: &EntityDoc,
     whole: LoroDoc,
+    privileged: bool,
 ) -> Result<Option<Succeeded>> {
     let held = old.doc.oplog_vv();
     let theirs = whole.oplog_vv();
@@ -282,6 +286,9 @@ fn succession_in_txn(
         .and_then(|succeeds| VersionVector::decode(&succeeds.version).ok());
     if replaced_here.is_some_and(|replaced| shares(&replaced, &theirs)) {
         return Ok(Some(Succeeded::Held));
+    }
+    if !privileged {
+        return Ok(None);
     }
     let Some(proof) = Succession::read(&whole) else {
         return Ok(None);
@@ -340,7 +347,7 @@ pub(crate) fn take_sync_successor_in_txn(
     if theirs.is_empty() || held.includes_vv(&theirs) || theirs.includes_vv(&held) {
         return Ok(None);
     }
-    match succession_in_txn(vault, txn, entity, h, &old, staged.fork())? {
+    match succession_in_txn(vault, txn, entity, h, &old, staged.fork(), true)? {
         Some(Succeeded::Taken) => Ok(Some(true)),
         Some(Succeeded::Held) => Ok(Some(false)),
         Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
