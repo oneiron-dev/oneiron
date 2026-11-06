@@ -402,9 +402,9 @@ impl Vault {
                     match crate::receipt::attempt_pack_receipt_in_txn(&self.store, txn, receipt) {
                         Ok(Some(receipt)) => receipt,
                         Ok(None) | Err(Error::CorruptedIndex(_)) => continue,
-                        Err(Error::Store(crate::error::StoreError::SideTableRow { table, .. }))
-                            if table == crate::side_table::ATTEMPT_PACK_RECEIPT.name =>
-                        {
+                        Err(Error::Store(crate::error::StoreError::SideTableRow {
+                            table, ..
+                        })) if table == crate::side_table::ATTEMPT_PACK_RECEIPT.name => {
                             continue;
                         }
                         Err(error) => return Err(error),
