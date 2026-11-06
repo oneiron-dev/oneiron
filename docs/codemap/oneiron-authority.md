@@ -50,7 +50,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/residence.rs` | src | m | 2 struct · 2 enum · 5 fn · 4 const · 5 crate-vis | ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
 | `src/authority/seat_claim_binding.rs` | src | s | 1 struct · 1 fn · 1 const | SeatClaimSlipBinding | FIX 10624: the seat claim a seat-child slip carries, signed in its claims beside `grant_ref` and… |
-| `src/authority/slip_claims.rs` | src | s | 2 struct · 5 fn · 1 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
+| `src/authority/slip_claims.rs` | src | s | 2 struct · 5 fn · 2 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | m | 2 fn · 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/support_delegation.rs` | src | s | 1 struct · 1 enum · 5 fn · 5 const | SupportDelegation, SupportRepair | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
 | `src/authority/trusted_contact_binding.rs` | src | s | 1 struct · 1 fn | TrustedContactSlipBinding | FIX 4325: the trusted-contact binding a contact-bound slip carries, signed in its claims beside `grant_ref`… |
