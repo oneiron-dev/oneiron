@@ -948,6 +948,23 @@ fn stage_context_pack_retrieval_run_finalize(
         memory.materialized(0, bytes);
         memory.shrink(surfaced_breakdown_bytes);
     }
+    let replaced_replay_bytes = memory.as_deref_mut().map_or(0, |memory| {
+        let mut bytes = record
+            .empty_reason
+            .as_ref()
+            .map_or(0, |reason| reason.capacity() as u64);
+        if pack_config.is_some() {
+            bytes = bytes.saturating_add(
+                record
+                    .replay_inputs
+                    .as_ref()
+                    .and_then(|inputs| inputs.config.get("pack"))
+                    .map_or(0, super::state::known_value_backing_bytes),
+            );
+        }
+        memory.materialized(0, bytes);
+        bytes
+    });
     record.empty_reason = empty_reason;
     if let Some(pack_config) = pack_config
         && let Some(inputs) = record.replay_inputs.as_mut()
@@ -955,6 +972,7 @@ fn stage_context_pack_retrieval_run_finalize(
         inputs.config["pack"] = pack_config;
     }
     if let Some(memory) = memory.as_deref_mut() {
+        memory.shrink(replaced_replay_bytes);
         let bytes = record
             .empty_reason
             .as_ref()

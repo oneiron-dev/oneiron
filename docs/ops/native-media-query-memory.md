@@ -221,9 +221,9 @@ uses the same lower capacity calculation as the original and provisional
 owners, but measures this decoded record after its last mutation. Its actual
 string and array capacities and object-key strings include any moved pack
 metadata and newly inserted pack key. No extra input copy is made or charged.
-The old decoded empty-reason string and replaced pack metadata have already
-dropped and are not counted. Absent replay inputs add no replay backing, and
-an unbound finalizer performs no added walk.
+That postmutation count excludes the old decoded empty-reason string and
+replaced pack metadata, which have already dropped. Absent replay inputs add
+no replay backing, and an unbound finalizer performs no added walk.
 
 The same lease also records two old decoded buffers before their existing
 replacements: the result-ID vector, and the top-level score vector with each
@@ -275,6 +275,21 @@ error, the original payload still drops before the same lease. An unstarted
 write retains both in the same owner. Synchronous session-overlay and admitted
 finalizers keep their existing input handling; this pre-queue charge applies
 only to the canonical detached write.
+
+Before those original empty-reason and pack replacements, the same optional
+lease also records the old decoded empty-reason string's actual capacity. If a
+pack value will be assigned, it records only the replaced old pack value's known
+string, array-slot and object-key backing through the same lower calculation.
+The surrounding config's retained pack key is not part of this discarded value.
+A missing replacement or missing replay inputs adds no old-pack charge.
+
+After both original assignments have dropped their old values, the lease
+releases only that remembered old backing before the unchanged current-record
+measurement. Those discarded decoded buffers are distinct from the canonical
+finalizer inputs, original capture and provisional clone. No old charge is
+released while its buffer is live or retained as part of the final record.
+An unbound finalizer adds no walk. This remains post-allocation accounting, not
+construction-peak, config-map, number-internal or full-working-set coverage.
 
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
