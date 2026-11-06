@@ -31,6 +31,7 @@ pub(crate) async fn spawn(
     native: Option<PathBuf>,
     stats: Option<StatsRoute>,
     llama_metrics: Option<super::super::llama_metrics::MetricsRoute>,
+    slot: &super::super::launch_manifest::LaunchSlot,
 ) -> io::Result<Box<dyn RunningWorker>> {
     let spec = ExecSpec {
         program: program.to_owned(),
@@ -143,6 +144,13 @@ pub(crate) async fn spawn(
         return Err(io::Error::other(exit.description));
     }
     worker.native = native;
+    if let Some(record) = slot
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .as_mut()
+    {
+        record.native_peer = Some(worker.native_peer());
+    }
     let worker = Arc::new(worker);
     let watched = Arc::clone(&worker);
     tokio::spawn(async move {

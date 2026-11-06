@@ -243,7 +243,9 @@ pub(super) fn require_document_base(
     snapshot: &StoredRepoSnapshot,
 ) -> Result<()> {
     let repo = RepoRef::parse(&row.repo)?;
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
+    // The repository's code-document identity, as the landing door resolves
+    // it (FIX 12761).
+    let scope = vault.resolve_repo_identity(&repo)?.as_str().to_owned();
     if row.is_file_bundle() {
         return require_bundle_document_bases(vault, row, snapshot, &scope);
     }
@@ -255,12 +257,47 @@ pub(super) fn require_document_base(
         .map_or(b"".as_slice(), |entry| entry.content.as_slice());
     let old = std::str::from_utf8(old).map_err(|_| invalid("reviewed code requires UTF-8"))?;
     let new = std::str::from_utf8(content).map_err(|_| invalid("reviewed code requires UTF-8"))?;
+    require_document_edit(vault, row, &scope, path, old, new, true)
+}
+
+/// A composed member's read-only preflight (FIX 4360). Its path's first
+/// member checked the live document; this member's prefix text exists only
+/// in memory until the members before it land. Only a receipt it already
+/// has is checked here: it must be the sealed `S -> C` edit.
+pub(super) fn require_stacked_document(
+    vault: &Vault,
+    row: &RepoProposal,
+    staged: &str,
+    composed: &str,
+) -> Result<()> {
+    let repo = RepoRef::parse(&row.repo)?;
+    let scope = vault.resolve_repo_identity(&repo)?.as_str().to_owned();
+    let (path, _) = row.ordinary_file()?;
+    require_document_edit(vault, row, &scope, path, staged, composed, false)
+}
+
+/// The document check of one reviewed edit `old -> new`: a receipt it has
+/// binds this proposal's identity and edit; without one, and with `live`,
+/// the document still holds `old`.
+fn require_document_edit(
+    vault: &Vault,
+    row: &RepoProposal,
+    scope: &str,
+    path: &str,
+    old: &str,
+    new: &str,
+    live: bool,
+) -> Result<()> {
     if old == new {
         return Ok(());
     }
-    let session = vault.open_code_document(&scope, path, old, row.session)?;
+    let receipt = vault.code_file_edit_receipt(row.id)?;
+    if receipt.is_none() && !live {
+        return Ok(());
+    }
+    let session = vault.open_code_document(scope, path, old, row.session)?;
     let class = row.document_class()?;
-    match vault.code_file_edit_receipt(row.id)? {
+    match receipt {
         None if session.text() != old => Err(Error::ConcurrentWrite(
             "document changed since stack review",
         )),

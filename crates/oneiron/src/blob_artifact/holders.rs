@@ -47,6 +47,32 @@ pub(super) fn artifact_hashes(
     Ok(hashes)
 }
 
+/// A hold on the artifact, any payload ASSET or any retained version
+/// claim keeps the selected artifact whole, before an erase stages bodies.
+pub(crate) fn artifact_payload_held_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    hashes: &[ContentHash],
+) -> Result<bool> {
+    if crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+        return Ok(true);
+    }
+    for hash in hashes {
+        let asset = blob_artifact_asset_entity_id(hash)?;
+        if crate::store::legal_hold::held_in_txn(store, txn, asset.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    for row in VERSIONS.iter_from(store, txn, artifact.as_bytes())? {
+        let (_, version) = row?;
+        if crate::store::legal_hold::held_in_txn(store, txn, version.claim_id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    super::references::artifact_claim_held_in_txn(store, txn, artifact)
+}
+
 /// The content hashes the stored record `raw` at `id` holds: an artifact's own bytes, or the one
 /// hash a byte carrier stores ([`carrier_content_hash`]). Any other record holds none.
 pub(crate) fn held_content_hashes_in_txn(

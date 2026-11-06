@@ -59,6 +59,7 @@ pub enum RetryOrdinal {
 /// Pathology deeper than the bound is intentionally undetectable: the
 /// bounded-read law outranks completeness.
 pub(super) fn retry_lineage_walk(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     current: &AttemptRecord,
     limit: NonZeroU16,
@@ -79,6 +80,9 @@ pub(super) fn retry_lineage_walk(
             }));
         }
 
+        let retained_failures = crate::agent_dispatch::AgentDispatcher::new(vault)
+            .workflow_tool_failure_count(&cursor)?;
+        ordinal = ordinal.saturating_add(u16::try_from(retained_failures).unwrap_or(u16::MAX));
         if ordinal >= limit.get() {
             return Ok(RetryOrdinal::AtLimit(limit));
         }
@@ -120,7 +124,7 @@ pub(crate) fn retry_lineage_ordinal(
             "failure card lineage requires a stored Failed attempt".to_owned(),
         ));
     }
-    retry_lineage_walk(&queue, &current, limit)
+    retry_lineage_walk(vault, &queue, &current, limit)
 }
 
 /// The healer's read-only view of one failure. Its identifiers are context;
