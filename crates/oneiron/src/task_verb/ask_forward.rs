@@ -11,7 +11,8 @@
 //! intent's result. The result is a second immutable TASK companion, signed
 //! with the group's issuer key, which the transport carries back. A pending
 //! intent is not an answer: the replica reports it pending until that result
-//! reads there.
+//! reads there. A hard erase of the holder retires their intents and those
+//! intents' results (`erase`).
 //!
 //! Entry: [`Memory::tasks_answer_forward`] on the replica;
 //! [`drain_ask_forward_intents`] at the admitting node.
@@ -33,6 +34,9 @@ use crate::registry::ENTITY_TYPE_TASK;
 use crate::{EntityId, Vault};
 
 mod consume;
+mod erase;
+
+pub(crate) use erase::retire_holder_ask_forward_rows_in_txn;
 
 /// Subkind of a relayed intent's TASK companion record.
 pub(super) const INTENT: &str = "tasks.ask_forward_intent";
