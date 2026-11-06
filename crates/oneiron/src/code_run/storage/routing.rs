@@ -132,11 +132,12 @@ impl SessionBinding<'_> {
         limit: usize,
         reader: ScopedReadActorKey,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         self.answered(|| {
             self.session
                 .read_context(&self.route, reader)?
-                .search_text(query, limit, claims)
+                .search_text(query, limit, claims, filter)
         })
     }
 
@@ -433,16 +434,18 @@ impl<'a> ExecutorStorage<'a> {
         limit: usize,
         reader: ScopedReadActorKey,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         match self {
             Self::Canonical(vault) => Ok(vault
                 .scoped_read(reader)
                 .with_claim_status(claims)
+                .with_read_filter(filter)
                 .filter_scored_entities(vault.search_text(query, limit)?)?
                 .value),
             // A room's narrowed search reads the room's view on the key's
             // lane, each posting admitted in the scan (WILL L11-01).
-            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims),
+            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims, filter),
         }
     }
 

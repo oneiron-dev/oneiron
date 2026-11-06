@@ -140,4 +140,18 @@ impl ReadFilterInput {
             min_salience: self.min_salience,
         }
     }
+
+    /// This input and `other` asked together, as [`RetrievalFilter::meet`]
+    /// joins them: the result only narrows either.
+    #[must_use]
+    pub fn meet(&self, other: &Self) -> Self {
+        let met = self.to_filter().meet(&other.to_filter());
+        Self {
+            entity_types: met.entity_types,
+            max_sensitivity_band: met.max_sensitivity_band,
+            include_stale: met.include_stale,
+            min_confidence: met.min_confidence,
+            min_salience: met.min_salience,
+        }
+    }
 }

@@ -747,6 +747,7 @@ fn served_both_ways(
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .unwrap()
         .value;
@@ -954,6 +955,7 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .unwrap()
         .value;
@@ -1033,6 +1035,7 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .unwrap()
         .value;

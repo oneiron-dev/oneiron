@@ -386,6 +386,7 @@ fn commit_batch_gating_is_per_element() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .expect("list");
     assert_eq!(claims.len(), 2);
@@ -832,6 +833,7 @@ fn claim_retract_preserves_readable_history() {
             predicate: Some("profile.name".to_owned()),
             lifecycle: Some("retracted".to_owned()),
             limit: 10,
+            filter: None,
         })
         .expect("list retracted");
     assert_eq!(claims.len(), 1);

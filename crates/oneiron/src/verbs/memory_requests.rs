@@ -17,6 +17,18 @@ pub struct ClaimRefRequest {
     pub claim_ref: String,
 }
 
+/// `vault.claims.history` input: one claim's supersession timeline, under
+/// the caller's retrieval filter (FIX 3977). Writes keep [`ClaimRefRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimHistoryRequest {
+    pub claim_ref: String,
+    /// The caller's retrieval filter: it narrows the versions the timeline
+    /// reads.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
+}
+
 /// Retraction by exact claim or by subject and predicate, never a hard delete.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -179,6 +191,7 @@ pub(super) fn forget_claims(
                     predicate: Some(request.predicate),
                     lifecycle: Some("active".to_owned()),
                     limit: usize::MAX,
+                    filter: None,
                 })?
                 .value
                 .into_iter()

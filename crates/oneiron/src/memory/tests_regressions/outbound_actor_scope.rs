@@ -202,6 +202,7 @@ fn outbound_calendar_read_returns_its_receipt() {
     super::super::tests::grant_world_reads(&vault, &agent.to_hex(), world);
     let request = crate::CalendarReadRequest {
         event_ref: event.to_hex(),
+        filter: None,
     };
 
     let owned = facade_for(&vault, owner)

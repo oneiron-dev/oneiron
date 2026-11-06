@@ -150,7 +150,7 @@ async fn ask_home(
 ) -> Option<ResidenceAnswer> {
     let caller = oneiron::memory::HomeRecallCaller::admitted(owner_grade, forwarded, locality);
     // A refused or late ask leaves the local page, marked incomplete.
-    match home_text::ask_home_text(&vault, &caller, &query, limit, due).await {
+    match home_text::ask_home_text(&vault, &caller, &query, limit, None, due).await {
         home_text::HomeText::Whole => None,
         home_text::HomeText::LocalOnly => Some(ResidenceAnswer::local_only()),
         home_text::HomeText::Answered { search, .. } => Some(search.into()),

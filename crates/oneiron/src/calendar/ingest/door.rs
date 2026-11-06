@@ -159,6 +159,7 @@ pub fn move_instance_as_owner(
         .ok_or_else(|| MemoryError::not_found("series master is absent or not admitted"))?;
     let visible = memory.calendar_read(&CalendarReadRequest {
         event_ref: master.to_hex(),
+        filter: None,
     })?;
     if visible.value.is_none()
         || !memory.calendar_instance_admitted(master, &input.uid, input.original_start_utc)?
@@ -216,6 +217,7 @@ pub fn move_instance_as_owner(
     ) {
         let current = memory.calendar_read(&CalendarReadRequest {
             event_ref: target.to_hex(),
+            filter: None,
         })?;
         if current.value.as_ref().is_none_or(|view| {
             view.start_utc != Some(input.start_utc) || view.end_utc != Some(input.end_utc)

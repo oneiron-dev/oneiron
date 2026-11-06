@@ -23052,7 +23052,7 @@ async fn execute_agent_verb_row_on(
             mcp_agent_verb_output(output, source)
         }
         "vault.claims.history" => {
-            let input: oneiron::task_verb::sdk::ClaimRefRequest =
+            let input: oneiron::task_verb::sdk::ClaimHistoryRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_claims_history(&memory, input)
                 .map_err(mcp_facade_error)?;

@@ -51,6 +51,10 @@ pub struct CoreContextPackRequest {
     /// Retrieval and serialization budget controls.
     #[serde(default)]
     pub budget: Option<ContextPackBudgetControls>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// read's scoped lane admits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<crate::gate::ReadFilterInput>,
 }
 
 /// A task placement: a type-tree node and the tree version it is placed in.

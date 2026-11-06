@@ -115,6 +115,10 @@ pub struct OffRecordRecallRequest {
     pub query: String,
     /// Items to return, as `vault.recall` counts them.
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): the room's overlay and base
+    /// are both read under it.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// `vault.off_record.notes.create`'s input: one NOTE, as

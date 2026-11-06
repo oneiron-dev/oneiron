@@ -75,7 +75,7 @@ pub struct ClaimView {
 }
 
 /// Filter for [`Memory::claim_list`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClaimListFilter {
     /// Restrict to claims on this subject (short-id ref or hex).
     pub subject_ref: Option<String>,
@@ -85,6 +85,10 @@ pub struct ClaimListFilter {
     pub lifecycle: Option<String>,
     /// Maximum results (required; no unbounded scans).
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): it narrows the claims the
+    /// list reads, never the subject it names.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// One BM25 hit (engine index scores, never re-ranked app-side).
@@ -273,6 +277,15 @@ impl Memory<'_> {
         &self,
         filter: &ClaimListFilter,
     ) -> MemoryResult<ScopedReadResult<Vec<ClaimView>>> {
+        if let Some(read_filter) = &filter.filter {
+            // Bind the caller's filter on this call's handle once, so the
+            // list's lane meets it (FIX 3977).
+            let bound = ClaimListFilter {
+                filter: None,
+                ..filter.clone()
+            };
+            return self.with_read_filter(Some(read_filter)).claim_list(&bound);
+        }
         if filter.limit == 0 {
             return Err(MemoryError::bad_request(
                 "claim_list limit must be at least 1",

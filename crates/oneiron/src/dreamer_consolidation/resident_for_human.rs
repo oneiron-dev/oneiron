@@ -146,6 +146,7 @@ fn human_context(
         predicate: None,
         lifecycle: Some(crate::ClaimLifecycleStatus::Active.as_str().to_owned()),
         limit: usize::MAX,
+        filter: None,
     }) {
         Ok(read) => read.value,
         Err(error) => return unread(error.code),

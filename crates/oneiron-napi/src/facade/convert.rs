@@ -228,6 +228,7 @@ pub(super) fn forget_active_matches(
             predicate: Some(predicate.to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: FORGET_PAGE_SIZE,
+            filter: None,
         })?;
         if matches.value.is_empty() {
             break;

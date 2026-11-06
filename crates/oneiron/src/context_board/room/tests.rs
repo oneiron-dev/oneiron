@@ -170,6 +170,7 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
         predicate: Some("note.topic".into()),
         lifecycle: None,
         limit: 10,
+        filter: None,
     };
     let refs = |listed: crate::memory::MemoryResult<
         crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>,
@@ -742,6 +743,7 @@ fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
         predicate: Some("note.topic".into()),
         lifecycle: None,
         limit: 10,
+        filter: None,
     };
     // What one room turn reads: the room's notes, each note by id, and the
     // room's own history.
@@ -1208,6 +1210,7 @@ fn p7_follows_a_conversation_summary_to_the_turns_it_covers() -> Result<()> {
             predicate: Some(predicate.into()),
             lifecycle: None,
             limit: 10,
+            filter: None,
         };
         turn.claim_list(&filter)
             .expect("claim list")

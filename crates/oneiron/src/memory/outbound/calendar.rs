@@ -47,7 +47,13 @@ impl Memory<'_> {
         &self,
         req: &CalendarReadRequest,
     ) -> MemoryResult<ScopedReadResult<Option<CalendarEventView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let request = req
+            .filter
+            .as_ref()
+            .map(crate::memory::ReadFilterInput::to_filter);
+        let lane = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_read_filter(request.as_ref());
         Ok(crate::calendar::read_event_scoped(&lane, req)?)
     }
 
@@ -56,7 +62,13 @@ impl Memory<'_> {
         &self,
         req: &CalendarSearchRequest,
     ) -> MemoryResult<ScopedReadResult<Vec<CalendarEventView>>> {
-        let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let request = req
+            .filter
+            .as_ref()
+            .map(crate::memory::ReadFilterInput::to_filter);
+        let lane = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_read_filter(request.as_ref());
         validate_calendar_range(req.range)?;
         Ok(crate::calendar::search_events_scoped(&lane, req)?)
     }

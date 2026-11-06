@@ -5132,7 +5132,7 @@ export_facade! {
     crate::codec::lift_record("vault.claims.read_filtered", &output)
 };
 "vault.claims.history" => fn vault_claims_history(&self, claim_ref: String) -> ClaimViews = |client| {
-    let input: oneiron::task_verb::sdk::ClaimRefRequest = claim_ref.lower()?;
+    let input: oneiron::task_verb::sdk::ClaimHistoryRequest = claim_ref.lower()?;
     let output = client.vault_claims_history(&input)?;
     Lift::lift(output)
 };

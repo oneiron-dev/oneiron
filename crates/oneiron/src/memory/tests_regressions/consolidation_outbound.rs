@@ -138,6 +138,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
             predicate: Some("companion.summary.window".to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: 10,
+            filter: None,
         })
         .expect("list");
     assert_eq!(listed.len(), 1);
@@ -280,6 +281,7 @@ fn seed_claims_force_proposed_with_per_element_receipts() {
             predicate: None,
             lifecycle: Some("active".to_owned()),
             limit: 10,
+            filter: None,
         })
         .expect("list");
     assert_eq!(listed.len(), 2);

@@ -149,6 +149,7 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
             predicate: None,
             lifecycle: Some("active".into()),
             limit: 100,
+            filter: None,
         })
         .expect("list claims");
     assert!(
@@ -310,6 +311,7 @@ fn receiving_room_replica_hides_claim_arriving_after_real_tombstone() -> Result<
                 predicate: None,
                 lifecycle: Some("active".into()),
                 limit: 10,
+                filter: None,
             })
             .expect("list peer claims")
             .iter()
