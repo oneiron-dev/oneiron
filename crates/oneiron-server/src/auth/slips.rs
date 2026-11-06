@@ -158,7 +158,7 @@ impl CoreAuth {
         // This also refuses one-shot instruments before a consuming operation.
         let auth = Self::from_slip_token(token, proof, vault)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
-        vault
+        let verified = vault
             .admit_capability_slip_request(
                 &slip,
                 proof.timestamp,
@@ -166,14 +166,21 @@ impl CoreAuth {
                 proof.nonce.as_bytes(),
             )
             .map_err(|_| ApiError::unauthorized())?;
+        let mut admitted_auth = Self::from_verified(verified, slip.caveats.is_empty())?;
+        admitted_auth.instrument = auth.instrument;
+        admitted_auth.invocation_slip = auth.invocation_slip;
+        admitted_auth.facets_owner_exempt = admitted_auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| RevokedTokenJtis::credential_facets_owner_exempt(vault, proof));
         // A fresh proof, used here once: the connection it came on is no
         // longer a stranger's. The read-only check above does not say so,
         // since a replay passes it and is refused only here.
         crate::http_listener::authenticated();
         // Its body, if it has one, now counts under this slip in the owner's
         // connection-pool pressure check (FIX 7656).
-        super::body_credential::attach_slip(&auth);
-        Ok(auth)
+        super::body_credential::attach_slip(&admitted_auth);
+        Ok(admitted_auth)
     }
     pub(super) fn from_verified(
         verified: VerifiedSlip,
