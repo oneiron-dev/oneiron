@@ -202,6 +202,8 @@ pub struct HostSelfDispatcher<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct ExecutorCallSite<'h> {
     pub(crate) run_id: EntityId,
+    /// The native executor behind the call, not a shared action's replay id.
+    pub(crate) executor_run: Option<EntityId>,
     /// The call's bridge position.
     pub(crate) seq: u64,
     /// The first bridge position of the step the call belongs to.

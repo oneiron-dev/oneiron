@@ -68,6 +68,7 @@ impl HostSelfDispatcher<'_> {
         }
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
+                .with_executor_run(site.and_then(|site| site.executor_run))
                 .with_model_provider(self.model_provider());
         let parked = SelfCall::AgentVerb(call.clone());
         let invocation = self.verb_invocation(&parked, site)?;
