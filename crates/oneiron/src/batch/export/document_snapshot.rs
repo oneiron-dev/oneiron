@@ -782,7 +782,12 @@ impl Vault {
                 determinism,
                 receipts,
             })?;
-            runs.push(run_id);
+            // A run whose replies an erase took before this export carries
+            // its masked manifest and no live result, so it is no source
+            // its release must find standing; a run captured live is one.
+            if self.code_run_results_stand_in_txn(rtxn, &run_id)? != Some(false) {
+                runs.push(run_id);
+            }
         }
         Ok(runs)
     }
