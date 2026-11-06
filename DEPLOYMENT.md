@@ -526,12 +526,11 @@ chat slot. The SDK posts to `/v1/seat/model/<slot>/v1/messages` or
 custody door for each call and sends the request through the credential
 broker. The CLI never holds the key. The reference works only from this
 device and only while the run's claim holds. A request that names another
-model or asks for a stream is refused. With this slot the CLI calls the
-provider on the key, not on the person's own login. The table is empty by
-default, so no seat is offered the door.
-
-This slice relays whole replies only. A CLI that streams by default does not
-work through the door yet.
+model is refused. A request with `stream: true` gets the provider's events
+as they come, the key stripped from them. Messages also takes Claude Code's
+`?beta=true`; the door takes no other query. With this slot the CLI calls
+the provider on the key, not on the person's own login. The table is empty
+by default, so no seat is offered the door.
 
 ```toml
 [runtime.seat_model_providers.anthropic]
