@@ -170,7 +170,7 @@ impl CoreAuth {
         admitted_auth.facets_owner_exempt = admitted_auth
             .verified_slip
             .as_ref()
-            .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
+            .is_some_and(|proof| RevokedTokenJtis::credential_facets_owner_exempt(vault, proof));
         // A fresh proof, used here once: the connection it came on is no
         // longer a stranger's. The read-only check above does not say so,
         // since a replay passes it and is refused only here.
