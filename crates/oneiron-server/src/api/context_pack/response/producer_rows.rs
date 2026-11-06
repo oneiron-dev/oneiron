@@ -43,9 +43,11 @@ impl CoreContextPackResponse {
     /// `None` when a returned record carries words read from rows the
     /// response does not keep: a MESSAGE's or TURN's reaction lines, which
     /// count reaction claims, or a TURN's text, which its messages hold.
-    /// Its rows are then not all known. `None` too when an id does not
-    /// parse.
-    pub(crate) fn producer_rows(&self) -> Option<Vec<oneiron::EntityId>> {
+    /// Its rows are then not all known. `None` too when a signal's id does
+    /// not parse. A served row whose id does not parse is the error
+    /// [`Self::served_rows`] returns.
+    pub(crate) fn producer_rows(&self) -> oneiron::Result<Option<Vec<oneiron::EntityId>>> {
+        let mut rows = self.served_rows()?;
         let composed_from_unlisted_rows = |entity: &super::CoreContextEntity| {
             let Some(fields) = entity.fields.as_ref() else {
                 return false;
@@ -63,9 +65,8 @@ impl CoreContextPackResponse {
             .chain(&self.neighbors)
             .any(composed_from_unlisted_rows)
         {
-            return None;
+            return Ok(None);
         }
-        let mut rows = self.served_rows().ok()?;
         rows.extend(self.replay_admits());
         for handle in &self.instruction_files {
             rows.push(handle.code_artifact_id);
@@ -84,11 +85,14 @@ impl CoreContextPackResponse {
         );
         for signal in &self.signals {
             for id in [&signal.reaction, &signal.message, &signal.by] {
-                rows.push(oneiron::EntityId::from_hex(id).ok()?);
+                let Ok(id) = oneiron::EntityId::from_hex(id) else {
+                    return Ok(None);
+                };
+                rows.push(id);
             }
         }
         rows.sort_unstable();
         rows.dedup();
-        Some(rows)
+        Ok(Some(rows))
     }
 }
