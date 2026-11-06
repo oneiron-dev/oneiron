@@ -148,11 +148,11 @@ impl ContributionForkModel for ExactFork<'_> {
         let Ok(call) = runtime.admit_seat_bound(self.vault, CHAT_ROLE, request) else {
             return Ok(None);
         };
-        // Its rung puts its route prompt first, once: the replay runs only
-        // while that is the prompt the capsule's call was answered under.
-        if call.ladder.exact_prompt() != Some(binding.prompt.as_deref()) {
+        // The captured rung's prompt is frozen input, not the model's
+        // current standalone prompt (an owner fallback may use another).
+        let Some(ladder) = call.ladder.for_replay_binding(binding) else {
             return Ok(None);
-        }
+        };
         let run_id = format!("coach-contribution-fork:{}", EntityId::now().to_hex());
         let guard = self.vault.policy_budget_guard(
             run_id.clone(),
@@ -165,7 +165,7 @@ impl ContributionForkModel for ExactFork<'_> {
         let may_send = || !clock.decision_time_left().is_zero();
         let response = self
             .handle
-            .block_on(call.ladder.generate_exact_within(
+            .block_on(ladder.generate_exact_within(
                 &run,
                 call.request,
                 None,
