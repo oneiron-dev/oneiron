@@ -7,6 +7,7 @@ pub use types::{
     CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict,
 };
 
+use crate::git_wire::path_text::git_path_os_str;
 use oneiron_base::error::CodeError;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
@@ -29,12 +30,16 @@ pub fn safe_entry_path(root: &Path, relative: &str) -> Result<PathBuf> {
 }
 
 /// The one resolver: `final_entry` refuses a symlink at the last component too.
+/// `relative` is a Git path's text, so a name outside UTF-8 resolves to its
+/// own bytes (FIX 21326).
 fn resolve_without_links(root: &Path, relative: &str, final_entry: bool) -> Result<PathBuf> {
     if relative.is_empty() || relative.contains('\\') {
         return Err(invalid("contract path must be a relative file path"));
     }
+    let relative = git_path_os_str(relative)
+        .map_err(|_| invalid("contract path must be a relative file path"))?;
     let mut path = root.to_path_buf();
-    let mut components = Path::new(relative).components().peekable();
+    let mut components = Path::new(&*relative).components().peekable();
     while let Some(component) = components.next() {
         let Component::Normal(name) = component else {
             return Err(invalid("contract path contains a non-normal component"));
