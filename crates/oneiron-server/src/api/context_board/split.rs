@@ -56,7 +56,9 @@ pub(super) fn split_board(
     let mut sections = Vec::with_capacity(frame.sections.len() + 1);
     let mut parts = Vec::with_capacity(frame.sections.len() + 1);
     for section in frame.sections {
-        if section.name() == SKILLS_SECTION {
+        // A SKILLS section the actor's layout folded keeps its one line
+        // whole, in the state part (BOARD-LAYOUT).
+        if section.name() == SKILLS_SECTION && !section.is_folded() {
             let (loaded, found) = split_skills_section(section).map_err(board_frame_error)?;
             sections.push(loaded);
             parts.push(BoardPart::State);
@@ -131,12 +133,15 @@ fn part_sources(
 /// served board records: no cursor moves, no changed line is acknowledged,
 /// no hook block is delivered, no row is observed. A candidate for the next
 /// turn's prepared tail, never served as a board; the turn renders its own,
-/// and only an identical beginning of its tokens reuses this one. `None`
-/// when the read is refused or fails.
+/// and only an identical beginning of its tokens reuses this one. It renders
+/// under the cap and the board layout the turn's own board renders under:
+/// those of `layout_actor`, the answering agent (BOARD-LAYOUT). `None` when
+/// the read is refused or fails.
 pub(crate) async fn next_state_part(
     server: &std::sync::Arc<crate::server::SyncServer>,
     auth: &crate::auth::CoreAuth,
     conversation: Option<oneiron::EntityId>,
+    layout_actor: Option<oneiron::EntityId>,
 ) -> Option<String> {
     use oneiron::context_board::PeopleView;
     auth.require(crate::auth::CoreScope::Read).ok()?;
@@ -182,9 +187,29 @@ pub(crate) async fn next_state_part(
     reads
         .fold_own_changes(&read, own, auth.locality(), &mut changed, 16)
         .ok()?;
-    let (people, resident) = super::board::board_people(server, auth, &read, None)
-        .await
-        .ok()?;
+    // The budget, cap and layout the turn's own board renders under.
+    let budget = BoardBudgetRequest {
+        harness_default_tok: standing.as_ref().map_or_else(
+            || super::board_cap_tok(&server.vault, crate::mcp::MCP_BOARD_BUDGET_TOK),
+            |prefix| {
+                super::board_cap_tok(&server.vault, prefix.other_context_tokens)
+                    .min(prefix.other_context_tokens)
+            },
+        ),
+        caller_limit_tok: None,
+        explicit_override_tok: None,
+    };
+    let cap_tok = oneiron::context_board::resolve_board_budget(budget).cap_tok;
+    let layout = super::hydrate_layout_selection(server, auth, true, layout_actor).ok()?;
+    let (people, resident) = super::board::board_people(
+        server,
+        auth,
+        &read,
+        None,
+        layout.layout.share_tok("people", cap_tok),
+    )
+    .await
+    .ok()?;
     let mut parts = super::board::board_parts(
         server,
         auth,
@@ -195,6 +220,9 @@ pub(crate) async fn next_state_part(
         &reads,
         &PeopleView::new(&people, &resident),
         &hook_pins,
+        None,
+        &layout,
+        cap_tok,
     )
     .ok()?;
     if let Some((section, _)) =
@@ -202,6 +230,8 @@ pub(crate) async fn next_state_part(
     {
         parts.sections.push(section);
     }
+    let laid_out =
+        oneiron::context_board::apply_board_layout(&parts.sections, &layout.layout, cap_tok);
     let split = split_board(
         &SplitFrame {
             header: &BoardBlockHeader {
@@ -209,18 +239,10 @@ pub(crate) async fn next_state_part(
                 epoch: 0,
                 scope: parts.scope.clone(),
             },
-            sections: &parts.sections,
+            sections: &laid_out.sections,
             you: parts.you.as_deref(),
             changes: &changed,
-            budget: BoardBudgetRequest {
-                harness_default_tok: standing
-                    .as_ref()
-                    .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
-                        prefix.other_context_tokens
-                    }),
-                caller_limit_tok: None,
-                explicit_override_tok: None,
-            },
+            budget,
         },
         &SplitInputs {
             memories: None,

@@ -7,15 +7,16 @@
 //! only `previous_response_id` is removed. No other retry exists here.
 
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
 use serde_json::Value as JsonValue;
 use tokio::io::AsyncWrite;
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+use tokio_tungstenite::{Connector, connect_async_tls_with_config};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
@@ -29,6 +30,7 @@ const PREVIOUS_NOT_FOUND: &str = "previous_response_not_found";
 const SOCKET_LIMIT: &str = "websocket_connection_limit_reached";
 
 pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
+    ws_tls: &Arc<rustls::ClientConfig>,
     call: &CallHeader,
     checked: Result<Url, Refusal>,
     body: Zeroizing<Vec<u8>>,
@@ -119,7 +121,16 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
         )
         .await;
     };
-    let connected = tokio::time::timeout(OPEN_TIMEOUT.min(left), connect_async(request)).await;
+    let connected = tokio::time::timeout(
+        OPEN_TIMEOUT.min(left),
+        connect_async_tls_with_config(
+            request,
+            None,
+            false,
+            Some(Connector::Rustls(Arc::clone(ws_tls))),
+        ),
+    )
+    .await;
     let (mut socket, _) = match connected {
         Ok(Ok(connected)) => connected,
         Ok(Err(WsError::Http(response))) => {

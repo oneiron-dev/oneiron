@@ -55,6 +55,7 @@ impl Vault {
                 id,
                 gate.as_ref()
                     .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor),
+                reason,
                 |txn| reverify_deletion_authority_before_publication(gate.as_ref(), txn),
             )?
         {

@@ -27,11 +27,13 @@ mod machine_proof;
 mod managed_person;
 mod managed_request;
 mod operator_credential;
+mod seat_credential_helper;
+mod seat_model_door;
 mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
 };
-pub(crate) use client_address::ClientAddress;
+pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality, proved_peer};
 pub(crate) use machine_proof::{
@@ -45,6 +47,10 @@ pub(crate) use managed_request::{
 pub(crate) use operator_credential::{
     OPERATOR_HOLDER, OperatorCredential, operator_slip_claims, verified_operator,
 };
+pub(crate) use seat_credential_helper::{
+    SEAT_CREDENTIAL_HELPER_PATH, SEAT_SLIP_HEADER, seat_credential_helper_routes,
+};
+pub(crate) use seat_model_door::seat_model_door_routes;
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
