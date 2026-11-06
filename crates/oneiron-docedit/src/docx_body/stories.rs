@@ -73,7 +73,14 @@ pub fn read_docx_body(bytes: &[u8], limits: ArchiveLimits) -> Result<DocxRead, D
     crate::within(limits, || {
         preflight_with_limits(bytes, limits)?;
         let document = Document::parse(bytes)?;
-        read_document(&document)
+        let mut read = read_document(&document)?;
+        for (story, (_, source)) in read.stories.iter_mut().zip(story_blocks(&document)) {
+            story.blocks.extend(super::cells::descendant_table_blocks(
+                source,
+                matches!(&story.scope, DocxStoryScope::Comment { .. }),
+            )?);
+        }
+        Ok(read)
     })
 }
 
