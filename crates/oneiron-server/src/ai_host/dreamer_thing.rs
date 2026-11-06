@@ -161,12 +161,14 @@ impl ThingChildHost for ServedThingChildHost {
             return Ok(ThingChildStart::Unavailable(THING_CHILD_LOAN_REFUSED));
         };
         let seat = server.reader_runner.seats().seat_with_parent(
+            &oneiron::code_run::ReaderJobs::canonical(vault),
+            oneiron::code_run::ReaderActor::of(actor),
             parent_run,
             None,
             CallerLocality::OnDevice,
             self.route.window,
             Some(&parent),
-        );
+        )?;
         let task = scoped_child_task(parent_run, &intent_key)?;
         let (calls, received) = tokio::sync::mpsc::unbounded_channel();
         let stop = ScopedChildStop::default();
