@@ -25,7 +25,10 @@ a connection that is already queued or accepted.
 
 This is a trusted local primitive, not app port admission or a public preview
 endpoint. Callers still own declared-port selection, session lifetime, and
-existing owner/invite/share and revocation handling. The single stdio
-`SessionTransport` is unchanged. A Firecracker host still needs a separate
+existing owner/invite/share and revocation handling. The stdio fields of
+`SessionTransport` are unchanged. On Linux its existing `SessionLease` exposes
+the same independent stream capability after `GuestSession::into_transport`.
+Backends without that capability answer `Unsupported`; they do not silently
+reuse stdio or fall back to host TCP. A Firecracker host still needs a separate
 host-to-guest stream transport and matching guest integration; its keepalive
 and Fetch channels do not implement this ingress API.
