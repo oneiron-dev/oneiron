@@ -33,7 +33,9 @@ impl Vault {
             &ModelRegistryRow,
         ) -> Result<bool>,
     {
-        self.with_write_txn_grouped(|txn| {
+        // The host keeps its native quote guard through commit. This is an
+        // opaque host callback, not an audited lock-free group-commit member.
+        self.with_write_txn(|txn| {
             let policy =
                 crate::settings::stock_autoapprove::stock_autoapprove_policy_in_txn(self, txn)?;
             let Some(revision) = policy.revision.filter(|_| policy.enabled) else {
