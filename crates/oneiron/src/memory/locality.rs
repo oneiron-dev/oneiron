@@ -24,6 +24,7 @@ pub struct ProducerRows(std::sync::Mutex<ProducerListing>);
 struct ProducerListing {
     rows: Vec<EntityId>,
     unknown: bool,
+    drained: bool,
 }
 
 impl ProducerRows {
@@ -43,6 +44,16 @@ impl ProducerRows {
         (!listing.unknown).then_some(listing.rows)
     }
 
+    /// The rows listed so far when the answer is a drained call's saved
+    /// one whose rows its door listed (FIX 21054): the rows that run read,
+    /// which this retry did not read again. `None` for a fresh answer, or a
+    /// drained one whose rows are unknown. The set is kept.
+    #[must_use]
+    pub fn drained_rows(&self) -> Option<Vec<EntityId>> {
+        let listing = self.listing();
+        (listing.drained && !listing.unknown).then(|| listing.rows.clone())
+    }
+
     /// Lists `rows` as producers of the answer being read.
     pub(crate) fn list(&self, rows: impl IntoIterator<Item = EntityId>) {
         self.listing().rows.extend(rows);
@@ -52,6 +63,7 @@ impl ProducerRows {
     /// producers of that answer; `None` marks the listing unknown.
     fn list_saved(&self, saved: Option<Vec<EntityId>>) {
         let mut listing = self.listing();
+        listing.drained = true;
         match saved {
             Some(rows) => listing.rows.extend(rows),
             None => listing.unknown = true,
