@@ -527,14 +527,13 @@ impl MetadataRows {
                     }
                 }
                 let value = decode_document_metadata_value(bytes)?;
-                crate::ports::validate_metadata_shape(field, &value)?;
                 self.scan = Some(MetadataValueScan::new(value));
             }
             if !self
                 .scan
                 .as_mut()
                 .expect("decoded metadata value")
-                .advance()?
+                .advance(field)?
             {
                 return Ok(false);
             }
@@ -613,17 +612,28 @@ enum MetadataValueFrame {
 
 struct MetadataValueScan {
     frames: Vec<MetadataValueFrame>,
+    shape_tag_next: Option<usize>,
 }
 
 impl MetadataValueScan {
     fn new(value: rmpv::Value) -> Self {
         Self {
             frames: vec![MetadataValueFrame::Value(value)],
+            shape_tag_next: Some(0),
         }
     }
 
-    fn advance(&mut self) -> Result<bool> {
+    fn advance(&mut self, field: &str) -> Result<bool> {
         use MetadataValueFrame as Frame;
+        if let Some(tag_next) = &mut self.shape_tag_next {
+            let Frame::Value(value) = self.frames.first().expect("unscanned metadata root") else {
+                unreachable!("metadata shape precedes all leaf scans");
+            };
+            if !crate::ports::advance_metadata_shape(field, value, tag_next)? {
+                return Ok(false);
+            }
+            self.shape_tag_next = None;
+        }
         match self.frames.pop().expect("pending metadata value") {
             Frame::Value(rmpv::Value::String(text)) => {
                 crate::ports::scan_metadata_string(&text)?;
