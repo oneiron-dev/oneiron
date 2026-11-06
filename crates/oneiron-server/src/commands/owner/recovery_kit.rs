@@ -41,6 +41,7 @@ use crate::owner::local_owner;
 use crate::owner::recovery_kit::{self as view, kit_id};
 use crate::owner::vault_key::{WrapView, hex, secret32};
 
+mod authority_recover;
 mod authority_recovery;
 mod custody;
 mod issue;
@@ -80,6 +81,7 @@ pub fn recovery_kit(command: RecoveryKitCommand) -> anyhow::Result<()> {
         RecoveryKitCommand::Issue(args) => issue::issue(*args),
         RecoveryKitCommand::IssueVaultKey(args) => issue::issue_vault_key(*args),
         RecoveryKitCommand::EnrollAuthority(args) => authority_recovery::enroll(*args),
+        RecoveryKitCommand::RecoverAuthority(args) => authority_recover::recover(*args),
         RecoveryKitCommand::Confirm(args) => confirm(*args),
         RecoveryKitCommand::Restore(args) => restore(*args),
         RecoveryKitCommand::PadAccess(args) => live::pad_access(*args),
