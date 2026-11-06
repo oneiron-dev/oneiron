@@ -7,6 +7,8 @@ use super::*;
 mod preferences;
 mod write;
 
+pub(in crate::memory) use self::write::{BatchClaim, BatchRefusal};
+
 impl Memory<'_> {
     // ── internals ───────────────────────────────────────────────────────
 
@@ -126,6 +128,22 @@ impl MemoryKey<'_> {
         }
         let question = |value: &serde_json::Value| value.get(MULTI_CARDINALITY_VALUE_KEY).cloned();
         question(&msgpack_value_to_json(&body.value)) == question(&self.input.value)
+    }
+
+    /// Whether `other` is this same key (FIX 9403): two elements of one
+    /// atomic batch on it replace in their batch order.
+    fn same_key(&self, other: &MemoryKey<'_>) -> bool {
+        if self.subject != other.subject
+            || self.input.predicate != other.input.predicate
+            || self.world != other.world
+            || self.relationship != other.relationship
+            || self.input.scope != other.input.scope
+        {
+            return false;
+        }
+        !MULTI_CARDINALITY_PREDICATES.contains(&self.input.predicate.as_str())
+            || self.input.value.get(MULTI_CARDINALITY_VALUE_KEY)
+                == other.input.value.get(MULTI_CARDINALITY_VALUE_KEY)
     }
 }
 

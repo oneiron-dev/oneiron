@@ -96,7 +96,7 @@ impl HostSelfDispatcher<'_> {
         // The halt rule and the door rule inside the bracket: a run whose
         // participant left the room hears `NotInRoom`, never their verdict.
         // The off-record rule reads the whole call: an anonymous room tells
-        // its four room reads from every other verb by it (FIX 5166).
+        // its five room reads from every other verb by it (FIX 5166).
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(&call)?;
             // A reader child reads its source and reports; a scoped child

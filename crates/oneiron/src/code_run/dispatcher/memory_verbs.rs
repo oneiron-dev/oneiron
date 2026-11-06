@@ -44,7 +44,7 @@ impl HostSelfDispatcher<'_> {
     ///
     /// An anonymous room keeps no memory (ARCH-0052), so it serves only a
     /// call that keeps nothing: the run's own search, a context descriptor,
-    /// and the four reads its room's view answers (FIX 5166). The rule reads
+    /// and the five reads its room's view answers (FIX 5166). The rule reads
     /// the whole `call`, not only its effect: an `AgentVerb` read passes
     /// only when [`Self::room_session_read`] routes it to
     /// `dispatch_session_read`, never because its verb writes nothing.
@@ -136,7 +136,7 @@ impl HostSelfDispatcher<'_> {
             // DOOR-127: a claim put and a fixture claim stage in the room's
             // overlay (`OffRecordSession::stage_session_claim`). A verb
             // forward reaches `dispatch_agent_verb`, which writes a NOTE or a
-            // claim into the room, reads the four session reads through its
+            // claim into the room, reads the five session reads through its
             // view, and refuses every other verb, whose door runs against
             // the canonical vault.
             SelfEffect::MemoryPutClaim

@@ -22,7 +22,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::types::{ShadowRunResult, ShadowStatus};
-use crate::batch::secret_scan::{BodySpool, SpoolAdmission, admit_spool_in_txn, admit_typed};
+use crate::batch::secret_scan::{
+    AdmissionCustody, BodySpool, SpoolAdmission, admit_spool_in_txn, admit_typed,
+};
 use crate::error::GateError;
 use crate::secret_custody::KnownValues;
 use crate::{EntityId, Error, Result, Vault};
@@ -60,7 +62,8 @@ impl ShadowAdmission {
         let at = (ARM_PLACE, self.run.as_bytes().as_slice());
         let mut wtxn = vault.store.env.write_txn()?;
         let known = KnownValues::shared_in_writer(&vault.store, &wtxn)?;
-        let admitted = admit_spool_in_txn(&vault, &mut wtxn, at, spool, (known.as_ref(), false))?;
+        let custody = AdmissionCustody::vault(&vault);
+        let admitted = admit_spool_in_txn(custody, &mut wtxn, at, spool, (known.as_ref(), false))?;
         if matches!(admitted, SpoolAdmission::Copy(_)) {
             wtxn.commit()?;
         }
@@ -88,8 +91,9 @@ impl ShadowAdmission {
 
 /// The prompt and wait copies `result` publishes inline, admitted by the
 /// side-row wall under `vault`'s custody in one writer (FIX 5718 part 3):
-/// each model receipt's expected route prompt and a waiting arm's wait
-/// prompt. Each is a copy of a row its source admitted, so the wall mostly
+/// each model receipt's expected rung, which names its route prompt by ref
+/// only (FIX 6255), and a waiting arm's wait prompt. Each is a copy of a
+/// row its source admitted, so the wall mostly
 /// finds nothing. A copy the wall cannot place is published as it was, as
 /// before (an Ask-first stop). The type feedback of the program the arm
 /// ran takes the same writer (FIX 10389).
