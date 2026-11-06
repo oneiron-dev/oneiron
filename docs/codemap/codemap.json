@@ -5101,7 +5101,7 @@
      "purpose": "FIX 10624: the credential of an official CLI a seat host runs under one claimed BYOA attempt (ARCH-0069 T1…",
      "surface": {
       "crate-vis": 1,
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -6880,7 +6880,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -7246,6 +7246,16 @@
       "crate-vis": 11,
       "fn": 4,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/evidence_import.rs",
+     "purpose": "FIX 7777: the whole-vault import's MESSAGE orchestration",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -11486,7 +11496,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarIcsImportReceipt",
@@ -11549,7 +11559,7 @@
      "path": "src/calendar/ingest/mod.rs",
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 2,
       "re-export": 3
      }
@@ -11582,6 +11592,16 @@
      "purpose": "Shared ICS-poll and connector property admission through their existing gates",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ingest/turn.rs",
+     "purpose": "The vault's one calendar admission turn (FIX 4797)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -20999,7 +21019,7 @@
      "path": "src/connector_key/events/paced.rs",
      "purpose": "Connector event wakes a full count-bound budget window paces (FIX 8686)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -26456,7 +26476,7 @@
      "path": "src/dispatch_byoa/seat_secrets.rs",
      "purpose": "The secrets a seat run declares, and the holder its T1 grants are minted for (FIX 10624; ARCH-0069's custody…",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -28157,13 +28177,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/sieve_attempt/typing_batch.rs",
+     "purpose": "A TURN's typing-only spans, read in packs (FIX 14711)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/sieve_decisions.rs",
      "purpose": "The sieve's typed questions (OF-498a)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -32337,7 +32367,7 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -32361,6 +32391,16 @@
      "purpose": "Who carries a spent span (FIX 7498): the nightly child whose branch holds the span's TURN, never the nightly…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/recipes/typing_batch.rs",
+     "purpose": "Typing-only rungs read per TURN (FIX 14711)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -35487,6 +35527,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/local_discard.rs",
+     "purpose": "The owner's discard of a world copy takes each entity's own document payload off this install (FIX 14534…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -35527,7 +35577,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 2,
       "re-export": 11
      }
@@ -48735,7 +48785,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 40,
       "re-export": 69
      }
@@ -50900,6 +50950,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/archive.rs",
+     "purpose": "Archive restore of witnessed MESSAGE rows (FIX 7777)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -50947,7 +51007,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 5
      }
     },
@@ -51957,7 +52017,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "re-export": 19
      }
     },
@@ -52451,6 +52511,16 @@
      "path": "src/note/live_body_tests.rs",
      "purpose": "Live read projections share a document frontier and keep raw birth bytes intact",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/local_discard.rs",
+     "purpose": "The owner's discard of a world copy takes a NOTE's review workflow text off this install (FIX 14534, Engine…",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -56631,7 +56701,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 13
      }
@@ -60752,7 +60822,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 15,
+      "crate-vis": 17,
       "re-export": 8
      }
     },
@@ -60838,6 +60908,16 @@
      "purpose": "Public validation and codec entry points for canonical snapshots",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/canonical/validation_work.rs",
+     "purpose": "Ordered canonical validation groups shared by synchronous and turn-based recovery",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -62053,7 +62133,7 @@
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -73416,7 +73496,7 @@
      "path": "src/store/local_replica/member_removal.rs",
      "purpose": "One member's local leaves for the replica tear: its index, projection, vector and edge rows, then its entity…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -90628,7 +90708,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 181,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90684,7 +90764,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91041,7 +91121,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91083,7 +91163,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91139,7 +91219,7 @@
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91426,7 +91506,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 366,
+     "files": 367,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91468,7 +91548,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -91643,7 +91723,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92142,7 +92222,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6479,
+   "source_files": 6487,
    "test_files": 895
   },
   "oneiron-android": {
@@ -118218,7 +118298,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
@@ -118343,6 +118423,16 @@
      "purpose": "The host operator's own credential (FIX 1814, Engine ruling 10-29): a slip apart from the host's root, for…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/seat_credential_helper.rs",
+     "purpose": "`POST /v1/seat/credential-helper` (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim): the value a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -118634,6 +118724,7 @@
       "ApiCommand",
       "Cli",
       "Command",
+      "CredentialHelperArgs",
       "DeviceCommand",
       "DeviceEnrolArgs",
       "DreamerCommand",
@@ -118667,7 +118758,7 @@
       "enum": 11,
       "fn": 4,
       "re-export": 20,
-      "struct": 20
+      "struct": 21
      }
     },
     {
@@ -119147,7 +119238,7 @@
       "const": 1,
       "crate-vis": 12,
       "fn": 13,
-      "re-export": 26,
+      "re-export": 27,
       "struct": 1
      }
     },
@@ -119168,7 +119259,7 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "fn": 1
      }
     },
@@ -119180,6 +119271,16 @@
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/credential_helper.rs",
+     "purpose": "`oneiron credential-helper` (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim): the git credential…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -127125,7 +127226,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -127168,6 +127269,25 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "HelperDestination",
+      "HelperReplyDelivery",
+      "HelperRunEnd",
+      "SeatHelperEnv",
+      "SeatHelperRun",
+      "SeatHelperRuns"
+     ],
+     "path": "src/runtime/seat_helpers.rs",
+     "purpose": "The credential-helper destinations of a seat run (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim)",
+     "surface": {
+      "const": 5,
+      "fn": 15,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/runtime/seat_host.rs",
      "purpose": "The served seat host (FIX 4552, DOOR-124): the run host that runs the official signed-in CLIs (`claude`…",
@@ -127183,6 +127303,16 @@
      "purpose": "The one identity a claimed seat run holds everything under (FIX 9319, FIX 9320): its claimed fence",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_host/helper_run.rs",
+     "purpose": "A seat run's credential helper (FIX 10624 step 2; ARCH-0069 T1, the credential-helper shim): begun before…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -127528,8 +127658,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 38,
-      "fn": 16,
+      "crate-vis": 39,
+      "fn": 17,
       "re-export": 1,
       "struct": 1
      }
@@ -129295,7 +129425,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -129365,7 +129495,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 66,
+     "files": 67,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -129708,7 +129838,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 29,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -129808,7 +129938,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1633,
+   "source_files": 1637,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -137600,7 +137730,7 @@
      "path": "src/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
-      "const": 3,
+      "const": 5,
       "enum": 2,
       "fn": 4,
       "struct": 1
