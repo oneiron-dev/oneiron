@@ -265,8 +265,10 @@ pub struct StoreReceiptTree {
     pub inputs: Vec<String>,
 }
 
-/// How a program names one of its run's results.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a program names one of its run's results. A step's read context
+/// keeps the reference each read of another run's result was made by (FIX
+/// 6352).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JsResultRef {
     /// A name the run bound (`r7`).
     Name(String),

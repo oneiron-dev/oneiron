@@ -2,11 +2,12 @@
 //! (ARCH-0079 #reader-forks): the source a parent delegates to its child,
 //! and the finding a child reports to its parent.
 //!
-//! Each descriptor carries the origins of its result (FIX 7084): the worlds
-//! and row scopes the read-world ledger of the run that made it held when
-//! the descriptor was made, or `None` when they are unknown. A later read of
-//! the result by another run notes these frozen origins. It never reads the
-//! source run's ledger as it stands then.
+//! Each descriptor carries the origins of its result (FIX 7084): the worlds,
+//! the row scopes and the rows whose scopes conflicted that the read-world
+//! ledger of the run that made it held when the descriptor was made, or
+//! `None` when they are unknown. A later read of the result by another run
+//! notes these frozen origins. It never reads the source run's ledger as it
+//! stands then.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,13 +73,19 @@ impl ReaderFindingRef {
 
 /// The origins of one run's results as its read-world ledger held them when
 /// a descriptor of one of them was made (FIX 7084): every world a row served
-/// to the run sat in, and the scope of each served row whose every proof
-/// agrees. A row with no such proof has no entry. The union is conservative:
-/// it may hold more than the one result used.
+/// to the run sat in, the scope of each served row whose every proof agrees,
+/// and each served row whose proofs disagree. A row with no proof is in
+/// neither. The union is conservative: it may hold more than the one result
+/// used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResultOrigins {
     pub worlds: BTreeSet<EntityId>,
     pub row_scopes: BTreeMap<EntityId, Scope>,
+    /// The served rows whose proofs gave different scopes (FIX 7084): no
+    /// scope of them is proved, whatever another proof says. A row here has
+    /// no scope in `row_scopes`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub conflicted_rows: BTreeSet<EntityId>,
 }
 
 impl ResultOrigins {
@@ -99,7 +106,9 @@ impl ResultOrigins {
 
 /// A union of origins while it is built (FIX 7084): every world added, and
 /// each row's scope while every scope added for the row is the same. A row
-/// added under two different scopes has no scope, whatever is added after.
+/// added under two different scopes, or added as conflicted, has no scope,
+/// whatever is added after, and the origins the union finishes as hold it
+/// as conflicted.
 #[derive(Debug, Default)]
 pub(crate) struct OriginsUnion {
     worlds: BTreeSet<EntityId>,
@@ -129,18 +138,30 @@ impl OriginsUnion {
         }
     }
 
-    /// Adds every world and row scope of `origins`.
+    /// Adds `row` as conflicted: proofs of it gave different scopes, so it
+    /// has no scope, whatever is added after.
+    pub(crate) fn add_conflicted_row(&mut self, row: EntityId) {
+        self.row_scopes.remove(&row);
+        self.conflicted.insert(row);
+    }
+
+    /// Adds every world, row scope and conflicted row of `origins`.
     pub(crate) fn add(&mut self, origins: &ResultOrigins) {
         self.worlds.extend(origins.worlds.iter().copied());
+        for row in &origins.conflicted_rows {
+            self.add_conflicted_row(*row);
+        }
         for (row, scope) in &origins.row_scopes {
             self.add_row_scope(*row, scope);
         }
     }
 
+    /// The origins the union holds, its conflicted rows with them.
     pub(crate) fn finish(self) -> ResultOrigins {
         ResultOrigins {
             worlds: self.worlds,
             row_scopes: self.row_scopes,
+            conflicted_rows: self.conflicted,
         }
     }
 }

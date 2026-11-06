@@ -348,7 +348,13 @@ impl RecordingJsHost<'_, '_> {
             None => self.occurrence_rows(&found.output, callable),
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
         };
-        match self.withholds_rows(rows.clone())? {
+        let withheld = self.withholds_rows(rows.clone())?;
+        // A read of another run's result keeps its row check's answer, a
+        // refusal too, for a shadow arm to answer the read by (FIX 6352).
+        if found.rows.is_some() {
+            self.observe_retained_read(&target.reference, callable, withheld);
+        }
+        match withheld {
             Ok(false) => {}
             Ok(true) => return Ok(Err(result_refusal("result_withheld"))),
             Err(code) => return Ok(Err(result_refusal(code))),
