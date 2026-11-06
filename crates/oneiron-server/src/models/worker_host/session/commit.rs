@@ -212,7 +212,7 @@ async fn advance(
         }
     };
     let (head, message) = (commit.head, commit.message);
-    let kept = Arc::clone(&authority);
+    let checkpoint_authority = Arc::clone(&authority);
     let rechecked = tokio::task::spawn_blocking(move || {
         (
             authority.recheck(&commit),
@@ -234,7 +234,7 @@ async fn advance(
         .filter(|_| matches!(admitted, Admitted::Granted(_)))
         .map(|scope| {
             Arc::new(Basis {
-                authority: Arc::clone(&kept),
+                authority: Arc::clone(&checkpoint_authority),
                 scope,
                 head,
                 message,
@@ -357,7 +357,7 @@ async fn advance(
             conversation,
             source,
             dispatch_lease,
-            authority: kept,
+            authority: checkpoint_authority,
             head,
             message,
         });
