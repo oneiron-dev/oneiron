@@ -32,10 +32,19 @@ impl crate::server::SyncServer {
         let registry = self
             .shared_envs
             .get()
-            .ok_or_else(|| anyhow::anyhow!("this host has no installed shared-env registry"))?;
-        registry
-            .bootstrap_one(acceptance, entry, target_serve)
-            .await
+            .ok_or_else(|| anyhow::anyhow!("this host has no installed shared-env registry"))?
+            .clone();
+        let acceptance = Arc::clone(acceptance);
+        let entry = entry.clone();
+        let target_serve = target_serve.clone();
+        // Keep the admitted join and shutdown lock through native import and
+        // registry insertion even when the app drops its result waiter.
+        tokio::spawn(async move {
+            registry
+                .bootstrap_one(&acceptance, &entry, &target_serve)
+                .await
+        })
+        .await?
     }
 }
 

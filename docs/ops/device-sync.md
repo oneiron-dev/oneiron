@@ -296,7 +296,9 @@ remote sync round.
 The registry uses the same startup admission, freeze and lease wiring for this join. Shutdown
 waits for an in-flight join, then starts no later join. An app using the Rust `EmbeddedEngine`
 can call its `bootstrap_shared_env` method with those same original inputs and receives the
-same separate results. The method uses only the actual current serve run's server, published
+same separate results. Dropping a result waiter does not drop an already-admitted join: its
+original import and insertion continue under the same registry shutdown lock and admission,
+which shutdown awaits. The method uses only the actual current serve run's server, published
 after its shared-env registry is installed and before the app's ready callback. It releases the
 engine's state lock before awaiting import or insertion; stopped, stopping or ended runs cannot
 start a join through this entry. Each wake publishes its own server, and the access slot holds
