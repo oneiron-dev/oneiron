@@ -8,12 +8,12 @@ use oxc_parser::Parser;
 use oxc_semantic::{NodeId, Semantic, SemanticBuilder, SymbolId};
 use oxc_span::{GetSpan, SourceType, Span};
 
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoIdentity, RepoRef};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 
-use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint, repo_identity_key};
+use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint};
 use super::types::{
     CodeChunk, CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision,
     CodeSymbolSource,
@@ -21,6 +21,7 @@ use super::types::{
 
 pub(super) fn derive_cjs_graph(
     repo: &RepoRef,
+    identity: &RepoIdentity,
     commit_hash: Option<String>,
     sources: &[CodeSymbolSource<'_>],
 ) -> Result<CodeSymbolGraph> {
@@ -28,7 +29,7 @@ pub(super) fn derive_cjs_graph(
     let mut edges = Vec::new();
     let mut modules = BTreeMap::new();
     let mut imports = Vec::new();
-    let session = format!("cjs:{}", repo_identity_key(repo));
+    let session = format!("cjs:{}", identity.as_str());
     for source in sources
         .iter()
         .filter(|source| source.path.ends_with(".cjs"))
@@ -49,7 +50,7 @@ pub(super) fn derive_cjs_graph(
         }
         let semantic = built.semantic;
         let module = output.append(
-            repo,
+            identity,
             source,
             "<module>",
             "module",
@@ -76,7 +77,7 @@ pub(super) fn derive_cjs_graph(
             let name = semantic.scoping().symbol_name(symbol);
             let ordinal = ordinals.entry((name.to_owned(), kind)).or_default();
             let id = output.append(
-                repo,
+                identity,
                 source,
                 name,
                 kind,
@@ -189,7 +190,13 @@ pub(super) fn derive_cjs_graph(
         }
     }
     CodeSymbolGraph::new(
-        CodeSymbolManifest::new(repo.clone(), commit_hash, output.chunks, output.symbols)?,
+        CodeSymbolManifest::new(
+            repo.clone(),
+            identity.clone(),
+            commit_hash,
+            output.chunks,
+            output.symbols,
+        )?,
         edges,
     )
 }
@@ -234,7 +241,7 @@ impl CjsSymbols {
     #[allow(clippy::too_many_arguments)]
     fn append(
         &mut self,
-        repo: &RepoRef,
+        identity: &RepoIdentity,
         source: &CodeSymbolSource<'_>,
         name: &str,
         kind: &str,
@@ -278,7 +285,7 @@ impl CjsSymbols {
             Some(session.to_owned()),
         )
         .on_document(source.document, ordinal);
-        let id = code_symbol_entity_id(repo, &revision)?;
+        let id = code_symbol_entity_id(identity, &revision)?;
         self.symbols.push(revision);
         Ok(id)
     }
