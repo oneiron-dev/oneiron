@@ -175,8 +175,10 @@ impl SessionStoreView<'_> {
         &self,
         wtxn: &mut RwTxn<'_>,
         finalize: RetrievalRunFinalize<'_>,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
-        stage_context_pack_retrieval_run_finalize(self, wtxn, finalize)
+        let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
+        stage_context_pack_retrieval_run_finalize(self, wtxn, finalize, memory.as_mut())
     }
 
     /// Session sibling of `Store::delete_retrieval_run`, used to discard a
@@ -219,6 +221,45 @@ impl ProvisionalRetrievalRun {
                 .store(true, std::sync::atomic::Ordering::Release);
         }
         staged
+    }
+}
+
+struct DetachedRetrievalRunFinalize {
+    run_id: RetrievalRunId,
+    elapsed_us: u64,
+    total_in_scope: usize,
+    claims_suppressed: usize,
+    surfaced_result_ids: Vec<[u8; 16]>,
+    empty_reason: Option<String>,
+    pack_config: Option<serde_json::Value>,
+    memory: Option<crate::host_memory::MemoryLease>,
+}
+
+impl DetachedRetrievalRunFinalize {
+    fn stage(mut self, core: &StoreCore, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let finalize = RetrievalRunFinalize {
+            run_id: self.run_id,
+            elapsed_us: self.elapsed_us,
+            total_in_scope: self.total_in_scope,
+            claims_suppressed: self.claims_suppressed,
+            surfaced_result_ids: &self.surfaced_result_ids,
+            empty_reason: self.empty_reason,
+            pack_config: self.pack_config,
+        };
+        if let Err(error) = stage_retained_context_pack_retrieval_run_finalize(
+            &core.canonical_dbs(),
+            wtxn,
+            finalize,
+            self.memory.as_mut(),
+        ) {
+            stage_retrieval_run_delete(&core.canonical_dbs(), wtxn, self.run_id)?;
+            tracing::warn!(
+                write = "context-pack retrieval run, finalize",
+                %error,
+                "a detached write failed; its provisional run is discarded"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -429,6 +470,7 @@ impl Store {
     pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
         finalize: RetrievalRunFinalize<'_>,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
@@ -445,32 +487,19 @@ impl Store {
             pack_config,
         } = finalize;
         let surfaced_result_ids = surfaced_result_ids.to_vec();
+        let finalize = DetachedRetrievalRunFinalize {
+            run_id,
+            elapsed_us,
+            total_in_scope,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+            pack_config,
+            memory: memory.map(crate::host_memory::MachineMemory::empty_lease),
+        };
         self.group_write_detached(DetachedWrite::of_core(
             "context-pack retrieval run, finalize",
-            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| {
-                let finalize = RetrievalRunFinalize {
-                    run_id,
-                    elapsed_us,
-                    total_in_scope,
-                    claims_suppressed,
-                    surfaced_result_ids: &surfaced_result_ids,
-                    empty_reason,
-                    pack_config,
-                };
-                if let Err(error) = stage_retained_context_pack_retrieval_run_finalize(
-                    &core.canonical_dbs(),
-                    wtxn,
-                    finalize,
-                ) {
-                    stage_retrieval_run_delete(&core.canonical_dbs(), wtxn, run_id)?;
-                    tracing::warn!(
-                        write = "context-pack retrieval run, finalize",
-                        %error,
-                        "a detached write failed; its provisional run is discarded"
-                    );
-                }
-                Ok(())
-            },
+            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| finalize.stage(core, wtxn),
         ));
         Ok(())
     }
@@ -481,6 +510,7 @@ impl Store {
         &self,
         finalize: RetrievalRunFinalize<'_>,
         admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
+        memory: Option<&crate::host_memory::MachineMemory>,
     ) -> Result<()> {
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
@@ -490,7 +520,8 @@ impl Store {
 
         self.write_in_group(|wtxn| {
             admit(wtxn)?;
-            stage_retained_context_pack_retrieval_run_finalize(self, wtxn, finalize)
+            let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
+            stage_retained_context_pack_retrieval_run_finalize(self, wtxn, finalize, memory.as_mut())
         })
     }
 
@@ -747,6 +778,7 @@ fn stage_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     finalize: RetrievalRunFinalize<'_>,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     let RetrievalRunFinalize {
         run_id,
@@ -802,7 +834,17 @@ fn stage_context_pack_retrieval_run_finalize(
         inputs.config["pack"] = pack_config;
     }
     super::turn_index::put(target, wtxn, &record)?;
-    RETRIEVAL_RUN.put(target, wtxn, &run_id, &record)?;
+    if let Some(memory) = memory {
+        let row = RETRIEVAL_RUN.stage(&run_id, &record)?;
+        memory.materialized(
+            0,
+            row.value_capacity_bytes()
+                .saturating_add(row.key_capacity_bytes()),
+        );
+        row.put(target, wtxn)?;
+    } else {
+        RETRIEVAL_RUN.put(target, wtxn, &run_id, &record)?;
+    }
     if let Some(trace) = &record.trace {
         put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id)?;
     }
@@ -817,12 +859,13 @@ fn stage_retained_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     finalize: RetrievalRunFinalize<'_>,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     let run_id = finalize.run_id;
     if RETRIEVAL_RUN_PROVISIONAL.contains(target, wtxn, &run_id)? {
         super::retention::require_prune_retrieval_runs(target, wtxn, 1)?;
     }
-    stage_context_pack_retrieval_run_finalize(target, wtxn, finalize)?;
+    stage_context_pack_retrieval_run_finalize(target, wtxn, finalize, memory)?;
     if RETRIEVAL_RUN.contains(target, wtxn, &run_id)? {
         super::retention::put_retrieval_age(
             target,

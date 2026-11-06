@@ -21,19 +21,23 @@ pub(super) fn finalize_context_pack_telemetry(
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
     pack_config: Option<serde_json::Value>,
+    memory: Option<&crate::host_memory::MachineMemory>,
 ) -> Result<Option<RetrievalRunId>> {
     let Some(run_id) = telemetry_run_id else {
         return Ok(None);
     };
-    match telemetry.finalize(RetrievalRunFinalize {
-        run_id,
-        elapsed_us,
-        total_in_scope,
-        claims_suppressed,
-        surfaced_result_ids,
-        empty_reason,
-        pack_config,
-    }) {
+    match telemetry.finalize(
+        RetrievalRunFinalize {
+            run_id,
+            elapsed_us,
+            total_in_scope,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+            pack_config,
+        },
+        memory,
+    ) {
         Ok(()) => Ok(Some(run_id)),
         Err(error) => {
             discard_failed_context_pack_telemetry(telemetry, Some(run_id));
