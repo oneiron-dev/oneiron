@@ -310,6 +310,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TEXT_BM25_FIELD_SCHEMA_HASH, CONTENT),
     (&t::TEXT_INDEX_SCHEMA_VERSION, CONTENT),
     // A restore never replays a GPU dispatch or rolls back an owner's model swap.
+    (&t::TRAINING_PACK_QUESTION_HEAD, LIVE),
+    (&t::TRAINING_PACK_QUESTION_TRIAL, LIVE),
     (&t::TRAINING_PACK_ROLE, LIVE),
     (&t::TRAINING_PACK_RUN, LIVE),
     (&t::TRAINING_PACK_SWAP, LIVE),

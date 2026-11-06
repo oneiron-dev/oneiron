@@ -395,6 +395,18 @@ impl DecisionHost {
         self
     }
 
+    /// The owner's bound question heads in front of whatever the Local slot
+    /// holds (FIX 3864): a yes/no call on a question a head is bound to, with
+    /// the head's input as its state, reaches that head; every other call
+    /// reaches the seat as before, or steps past an empty slot as before.
+    fn with_question_heads(mut self, vault: &Arc<Vault>) -> Self {
+        let inner = self.ladder.local.take();
+        self.ladder.local = Some(Arc::new(
+            crate::ai_host::training_pack::QuestionHeadRung::new(Arc::clone(vault), inner),
+        ));
+        self
+    }
+
     /// The System One seat on its rung, its measurements sent on `runtime`.
     fn with_system_one(
         mut self,
