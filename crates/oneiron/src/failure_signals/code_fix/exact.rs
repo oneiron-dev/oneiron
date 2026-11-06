@@ -365,10 +365,13 @@ fn attempt_request(
         // secret in it or in its route prompt: its sent identity and its
         // stored hash then differ.
         let as_sent = capsule.as_sent();
+        // The route prompt reads before the request (FIX 6255): a prompt
+        // that does not read latches the call, so no step row's copy and no
+        // rebuilt baseline stands in for it.
+        let Ok(rung) = replay_rung(vault, &capsule)? else {
+            return Ok((prompt_unavailable(vault, attempt, &capsule)?, None));
+        };
         if let Some(request) = capsule_request(vault, &capsule)? {
-            let Ok(rung) = replay_rung(vault, &capsule)? else {
-                return Ok((prompt_unavailable(vault, attempt, &capsule)?, None));
-            };
             return Ok((
                 ExactReplay::of(Some(ExactReplayRequest {
                     request,
@@ -528,10 +531,11 @@ fn pinned_attempt_request(
         return Ok(ExactReplay::Erased);
     }
     let as_sent = again.as_sent();
+    // The route prompt reads before the request, as at choose (FIX 6255).
+    let Ok(rung) = replay_rung(vault, &again)? else {
+        return prompt_unavailable(vault, attempt, chosen);
+    };
     if let Some(request) = capsule_request(vault, &again)? {
-        let Ok(rung) = replay_rung(vault, &again)? else {
-            return prompt_unavailable(vault, attempt, chosen);
-        };
         return Ok(ExactReplay::of(Some(ExactReplayRequest {
             request,
             rung,
