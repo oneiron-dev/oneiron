@@ -80,6 +80,23 @@ pub(in crate::gate) fn dreamer_run_id_from_write_envelope(
     dreamer_run_id_from_provenance(envelope.provenance().value())
 }
 
+/// The actual promotion attempt named beside a Dreamer run. This is a replay
+/// coordinate, not proof that the attempt exists, has ended or may retry.
+pub(super) fn dreamer_attempt_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<[u8; 16]> {
+    dreamer_run_id_from_write_envelope(envelope)?;
+    let Value::Map(entries) = envelope.provenance().value() else {
+        return None;
+    };
+    entries.iter().find_map(|(key, value)| {
+        if key.as_str() != Some("job_id") {
+            return None;
+        }
+        let bytes = crate::deletion::parse_hex::<16>(value.as_str()?)?;
+        let attempt = crate::store::attempt_id::AttemptId::from_bytes(&bytes).ok()?;
+        Some(*attempt.as_bytes())
+    })
+}
+
 fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
     let Value::Map(entries) = value else {
         return None;
