@@ -391,6 +391,15 @@ pub trait JsCodeModeHost {
         None
     }
 
+    /// Takes the typed `step_deadline` stop of the step this host answers
+    /// (FIX 7703): its runtime ended the step at a safe point once the
+    /// step's time allowance was spent, after every host call it admitted
+    /// had settled. The step neither finished nor failed. Only the runtime
+    /// calls this; no guest import reaches it. A host that runs the same
+    /// program again from its recorded calls keeps the stop; this default
+    /// keeps nothing, and the step's outcome reads as not done.
+    fn stopped_at_step_deadline(&mut self) {}
+
     /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
     /// stop (FIX 600). A host that runs the nested step overrides it and
     /// runs that step under a child of `cancel`, so a stop of the caller
