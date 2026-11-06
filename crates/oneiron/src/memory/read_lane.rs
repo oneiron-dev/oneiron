@@ -46,6 +46,32 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// The queue-exhaust Owner's reader, retaining this handle's actual
+    /// credential, destination and room ceiling. It never changes the
+    /// ordinary read key's owner-binding rule.
+    pub(crate) fn queue_check_owner_read_lane(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let actor = owner.actor_for_read(self.vault)?;
+        if actor != self.actor || self.actor_class != crate::edge::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "queue-check Owner proof does not belong to this caller",
+                &[],
+            ));
+        }
+        let key = self
+            .vault
+            .queue_check_owner_read_key(owner, self.read_proof.as_ref(), self.host_action.as_ref())?
+            .for_destination(&self.destination);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
     /// credential grants its actor no read (FIX 6068, 1223): a writer with
     /// none is held to the bounds of what its credential may write to

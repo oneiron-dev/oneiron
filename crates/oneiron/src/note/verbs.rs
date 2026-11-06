@@ -438,8 +438,17 @@ impl Vault {
         let rewrite = replacement.is_some();
         let mut fork = replacement.unwrap_or(candidate);
         fork.head = self.store.clock.entity_id()?;
-        store_doc(self, txn, &fork)?;
-        super::proposals::remember_fork(self, txn, &doc, &fork, actor.entity_ref(), rewrite)?;
+        super::operations::record_fork_authorship(&fork, edit, actor, stamp)?;
+        let stored = store_doc(self, txn, &fork)?;
+        super::proposals::remember_fork(
+            self,
+            txn,
+            &doc,
+            &fork,
+            actor.entity_ref(),
+            rewrite,
+            stored,
+        )?;
         Ok(if authorized {
             NoteProgramEditOutcome::RewriteFork { fork: fork.head }
         } else {

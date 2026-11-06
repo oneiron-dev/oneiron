@@ -61,6 +61,7 @@ pub(super) fn invalid_request(
 pub(super) fn engine_absent(method: VaultReadMethod, field: &str) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
+        legal_hold: None,
         method,
         engine_code: NOT_FOUND_ENGINE_CODE.to_owned(),
         message: format!("{field} was not found"),
@@ -75,12 +76,20 @@ pub(super) fn named_row(
     slots: Vec<crate::claim::NamedSlot>,
 ) -> VaultReadResult<Option<crate::claim::ReadRow>> {
     match slots.into_iter().next() {
-        Some(Err(refusal)) => Err(VaultReadError::Engine {
-            narrowing: None,
-            method,
-            engine_code: USE_RESTRICTED_ENGINE_CODE.to_owned(),
-            message: refusal.to_string(),
-        }),
+        Some(Err(refusal)) => {
+            let message = refusal.to_string();
+            let legal_hold = match refusal {
+                crate::Error::LegalHold(notice) => Some(notice),
+                _ => None,
+            };
+            Err(VaultReadError::Engine {
+                narrowing: None,
+                legal_hold,
+                method,
+                engine_code: USE_RESTRICTED_ENGINE_CODE.to_owned(),
+                message,
+            })
+        }
         Some(Ok(row)) => Ok(row),
         None => Ok(None),
     }
@@ -92,6 +101,7 @@ pub(super) fn engine_failure(
 ) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
+        legal_hold: None,
         method,
         engine_code: INTERNAL_ENGINE_CODE.to_owned(),
         message: error.to_string(),
