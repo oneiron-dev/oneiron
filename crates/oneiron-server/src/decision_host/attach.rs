@@ -84,6 +84,7 @@ impl SyncServer {
             .clone()
             .with_system_one(
                 models.decisions.system_one.as_ref(),
+                self.ai.models(),
                 models.raw_budget_units,
                 posture,
                 tokio::runtime::Handle::current(),
