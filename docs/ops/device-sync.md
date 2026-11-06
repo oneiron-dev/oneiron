@@ -317,3 +317,29 @@ the existing native copy scope for validation and import. They do not authentica
 the raw snapshot or grant a read. Missing or malformed optional copy data leaves
 the ordinary import intact. This does not provide immediate vector fill when no
 eligible native home copy is available.
+
+## Optional CLAIM copies on window updates
+
+The home's direct and broadcast `UPDATE` and `REPLACEMENT` sends can carry
+optional home CLAIM copies in their existing window-pad envelope. Preparation
+uses that envelope's actual projected payload and the current window document
+as partial-update context. It walks carried CLAIM occurrences, not the context's
+current winners.
+
+Client and server window sends share the native copy holder and required-prefix
+logic. The server adds copies only when the complete encoded copy blob fits in
+spare space in the original required frames. Frame count and every required
+prefix length remain unchanged; no copy-only frame or send is added. Receipt
+bindings still describe the canonical payload and required pads, not the copies.
+
+Native source and recipient evidence stays with the selected frames through the
+existing socket wait. After readiness, control-frame drain and fresh revocation
+checks, the final send rechecks the actual vault, proved peer, source rows and
+keys. A miss discards only the optional suffix. The required envelope id and part
+offsets remain consistent even when that suffix is omitted. Raw deliveries,
+including those to an unknown peer, keep their existing behavior.
+
+The existing receiver opens copies against the original envelope before native
+import. Missing or malformed copies do not delay or repeat canonical delivery.
+This path reuses eligible native copies; it does not provide immediate vector
+fill when no such copy exists and does not change any timer, limit or setting.

@@ -23,6 +23,7 @@ use crate::ports::{WindowAddress, WindowDeletionRows};
 use loro::{LoroDoc, Subscription};
 
 mod admission;
+pub(crate) mod claim_frames;
 mod device_only;
 mod egress;
 mod forward;
@@ -52,6 +53,7 @@ pub(in crate::sync) use self::admission::{
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
+pub use self::claim_frames::{PreparedSyncFrame, WindowClaimCopyRelease};
 pub use self::device_only::{
     UpdateVerdict, Withhold, export_withheld, export_withheld_for, raw_update_verdict,
     raw_update_verdict_for, selector_update_verdict_for_peer,

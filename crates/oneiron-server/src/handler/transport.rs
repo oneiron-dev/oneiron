@@ -16,6 +16,20 @@ use super::protocol_close::ProtocolRefusal;
 use crate::auth::RevokedTokenJtis;
 use crate::protocol::close_codes;
 
+enum ClaimCopyRelease {
+    Promotion(oneiron::sync::window::PreparedPromotionClaimCopies),
+    Window(oneiron::sync::window::WindowClaimCopyRelease),
+}
+
+impl ClaimCopyRelease {
+    fn is_current(&self, vault: &oneiron::Vault, peer: oneiron::authority::PeerMachine) -> bool {
+        match self {
+            Self::Promotion(copies) => copies.is_current(vault, peer),
+            Self::Window(copies) => copies.is_current(vault, peer),
+        }
+    }
+}
+
 /// Out-buffer size an outbound frame must exceed before the WebSocket codec
 /// writes it straight to the socket, in bytes.
 ///
@@ -506,10 +520,25 @@ where
         vault: &oneiron::Vault,
         peer: oneiron::authority::PeerMachine,
     ) -> bool {
-        let optional = promotion
-            .for_required(&data)
-            .map(|(candidate, copies)| (candidate, copies, vault, peer));
+        let optional = promotion.for_required(&data).map(|(candidate, copies)| {
+            (candidate, ClaimCopyRelease::Promotion(copies), vault, peer)
+        });
         self.send_binary_inner(data, optional).await
+    }
+
+    pub(super) async fn send_window_claim_frame(
+        &mut self,
+        data: Vec<u8>,
+        candidate: Vec<u8>,
+        copies: oneiron::sync::window::WindowClaimCopyRelease,
+        vault: &oneiron::Vault,
+        peer: oneiron::authority::PeerMachine,
+    ) -> bool {
+        self.send_binary_inner(
+            data,
+            Some((candidate, ClaimCopyRelease::Window(copies), vault, peer)),
+        )
+        .await
     }
 
     async fn send_binary_inner(
@@ -517,7 +546,7 @@ where
         data: Vec<u8>,
         optional: Option<(
             Vec<u8>,
-            oneiron::sync::window::PreparedPromotionClaimCopies,
+            ClaimCopyRelease,
             &oneiron::Vault,
             oneiron::authority::PeerMachine,
         )>,

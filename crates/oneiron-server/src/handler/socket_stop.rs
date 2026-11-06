@@ -66,6 +66,25 @@ impl StoppingTransport {
             .unwrap_or(false)
     }
 
+    /// Optional window copies share the required frame's engine-stop wait.
+    #[must_use]
+    pub(super) async fn send_window_claim_frame(
+        &mut self,
+        data: Vec<u8>,
+        candidate: Vec<u8>,
+        copies: oneiron::sync::window::WindowClaimCopyRelease,
+        vault: &oneiron::Vault,
+        peer: oneiron::authority::PeerMachine,
+    ) -> bool {
+        self.stop
+            .until(
+                self.transport
+                    .send_window_claim_frame(data, candidate, copies, vault, peer),
+            )
+            .await
+            .unwrap_or(false)
+    }
+
     /// [`GuardedTransport::send_unguarded_close_frame`], given up once the
     /// engine stops.
     pub(super) async fn send_unguarded_close_frame(&mut self, close: WsMessage) {
