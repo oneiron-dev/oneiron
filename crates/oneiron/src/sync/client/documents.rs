@@ -42,6 +42,10 @@ impl SyncClient {
                     .insert(frame.entity);
                 return Ok(Vec::new());
             }
+            // A publication's receipt is the home's to give (FIX 4748).
+            document_sub_tags::ARTIFACT_RECEIPT if self.peer_session.is_some() => {
+                return Ok(Vec::new());
+            }
             document_sub_tags::ARTIFACT_RECEIPT => {
                 self.accept_artifact_receipt(frame.entity, frame.payload)
                     .map_err(storage)?;
@@ -120,6 +124,9 @@ impl SyncClient {
             }
         }
         match frame.kind {
+            // A peer's acknowledgment clears no journal row: the rows stay
+            // until the home covers them (FIX 4748).
+            document_sub_tags::ACK if self.peer_session.is_some() => Ok(Vec::new()),
             document_sub_tags::ACK => {
                 doc.acknowledge(frame.payload).map_err(storage)?;
                 let settled = (|| -> Result<bool, TransportError> {
