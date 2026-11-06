@@ -2979,7 +2979,7 @@ export_facade! {
 "vault.claims.settle" => fn vault_claims_settle(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
     let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.settle", input)?;
     let output = client.vault_claims_settle(&input)?;
-    crate::codec::lift_record("vault.claims.settle", &output)
+    crate::codec::lift_claim_settlement("vault.claims.settle", output)
 };
 "vault.craft_candidates" => fn vault_craft_candidates(&self, input: CraftCandidatesRequest) -> CraftCandidatesView = |client| {
     let input: oneiron::actor_claims::CraftCandidatesRequest = crate::codec::lower_record("vault.craft_candidates", input)?;
@@ -5119,7 +5119,7 @@ export_facade! {
 "vault.claims.read_filtered" => fn vault_claims_read_filtered(&self, input: ClaimFilteredReadRequest) -> ScopedReadResultOptionalClaimView = |client| {
     let input: oneiron::memory::ClaimFilteredReadRequest = crate::codec::lower_record("vault.claims.read_filtered", input)?;
     let output = client.vault_claims_read_filtered(&input)?;
-    crate::codec::lift_record("vault.claims.read_filtered", &output)
+    crate::codec::lift_scoped_claim("vault.claims.read_filtered", output)
 };
 "vault.claims.history" => fn vault_claims_history(&self, claim_ref: String) -> ClaimViews = |client| {
     let input: oneiron::task_verb::sdk::ClaimRefRequest = claim_ref.lower()?;
@@ -5234,7 +5234,7 @@ export_facade! {
 "vault.ingest.ag_ui.read" => fn vault_ingest_ag_ui_read(&self, input: AgUiFileReadInput) -> AgUiFileRead = |client| {
     let input: oneiron::ingest::AgUiFileReadInput = crate::codec::lower_record("vault.ingest.ag_ui.read", input)?;
     let output = client.vault_ingest_ag_ui_read(&input)?;
-    crate::codec::lift_record("vault.ingest.ag_ui.read", &output)
+    crate::codec::lift_ag_ui_file_read("vault.ingest.ag_ui.read", output)
 };
 "vault.claims.admit" => fn vault_claims_admit(&self, input: AdmitImportedClaimInput) -> CommitReceipt = |client| {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
@@ -5634,7 +5634,7 @@ export_facade! {
 "vault.claims.vet" => fn vault_claims_vet(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
     let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.vet", input)?;
     let output = client.vault_claims_vet(&input)?;
-    crate::codec::lift_record("vault.claims.vet", &output)
+    crate::codec::lift_claim_settlement("vault.claims.vet", output)
 };
 "vault.claims.vetting" => fn vault_claims_vetting(&self, input: ClaimProposalReviewRequest) -> ClaimProposalReview = |client| {
     let input: oneiron::memory::ClaimProposalReviewRequest = crate::codec::lower_record("vault.claims.vetting", input)?;
@@ -5649,7 +5649,7 @@ export_facade! {
 "vault.memory.signal_extraction.result" => fn vault_memory_signal_extraction_result(&self, input: SignalExtractionResultRequest) -> Option<SignalExtractionResult> = |client| {
     let input: oneiron::memory::SignalExtractionResultRequest = crate::codec::lower_record("vault.memory.signal_extraction.result", input)?;
     let output = client.vault_memory_signal_extraction_result(&input)?;
-    crate::codec::lift_record("vault.memory.signal_extraction.result", &output)
+    crate::codec::lift_signal_extraction_result("vault.memory.signal_extraction.result", output)
 };
 "vault.claims.seed" => fn vault_claims_seed(&self, input: ScopedCommitRequest) -> Vec<WireCommitOutcome> = |client| {
     let input: oneiron::memory::ScopedCommitRequest = crate::codec::lower_record("vault.claims.seed", input)?;

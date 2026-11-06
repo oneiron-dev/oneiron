@@ -426,3 +426,23 @@ questions, roles, answers and other finite fields keep the original whole-record
 codec and per-verb diagnostics. These conversions do not change native execution,
 secret handling, queue behavior, authority, inputs, typed clients, hooks or public
 records. They do not prove end-to-end depth, memory or runtime bounds.
+
+## Scoped claim, settlement and extraction outputs
+
+The filtered claim read, claim settlement and vetting results, and optional
+signal-extraction result consume each nested claim's required value and optional
+scope with the existing owned claim JSON conversion. Every claim is consumed
+before the first conversion error. The original whole-result codec handles the
+finite remainder, then restores the leaves in order. Required null values stay
+present; missing and null optional scopes stay absent. Read receipts, settlement
+warnings, source citations, prospective hints, job state and provenance are kept.
+
+## AG-UI observation output JSON
+
+The AG-UI file read consumes each present source observation's optional outcome
+JSON before converting the result, then restores outcomes in order. Missing
+sources, empty observations and absent or null outcomes keep their old shape.
+Original mappings, repair links, source JSONL and read receipts are unchanged.
+Neither conversion changes native reads, validation, inputs, clients, hooks,
+authority or public records. Neither proves end-to-end depth, memory or runtime
+bounds.
