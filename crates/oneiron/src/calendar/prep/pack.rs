@@ -183,6 +183,7 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
 pub(crate) fn build_prep_pack_scoped(
     read: &crate::claim::ScopedRead<'_>,
     request: &PrepBuildRequest,
+    telemetry: Option<&crate::off_record::SessionRetrievalTelemetry<'_>>,
 ) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
     if !prep_is_eligible(&request.event, request.policy) {
         return Ok(crate::claim::ScopedReadResult {
@@ -198,8 +199,13 @@ pub(crate) fn build_prep_pack_scoped(
                     _: &heed::RoTxn<'_>,
                     _: &EntityId|
      -> Result<bool> { Ok(true) };
-    let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
-        .reading(read.store_read())
+    let builder = prep_context_builder(read.vault(), &request.event, request.fired_at)
+        .reading(read.store_read());
+    let builder = match telemetry {
+        Some(telemetry) => builder.in_session(telemetry),
+        None => builder,
+    };
+    let (scoped, _) = builder
         .authority_filter(filter.clone())
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
