@@ -1,6 +1,9 @@
-import { afterAll, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
-import { defineFile } from "./support/run.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
+import { PublicHttpError } from "./support/clients.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { defineFile, LIMITS } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -8,7 +11,7 @@ const suite = defineFile(import.meta, { profile, slots: 1 });
 afterAll(suite.flush);
 
 /**
- * Authority and consent, in plan order. All nine COMPLETE flows are blocked.
+ * Authority and consent, in plan order. Eight flows remain TODO; GATE-09 exercises the authorized write burst.
  * suite.todo registers real test.todo cases and mandatory BLOCKED report rows.
  * Do not turn a partial claim write or a schema lookup into passing coverage.
  *
@@ -263,25 +266,351 @@ suite.todo(test, "GATE-08", "waits on typed owner critical-claim confirmation ce
 
 // GATE-09 — No fixed burst refusal should work.
 // ARCH-0044 #part-a/C5; ARCH-0040 #mcp-actor-ceilings. OF-294/487/520.
-// Existing public GET /v1/owner/wire-health -> {checks: HealthCheck[]} and
-// POST /wire-health/outcome {unit, outcome: bot|valid_burst} -> {fact} are real.
-// Missing: owner threshold-row read/edit for this self-hosted fixture. The
-// WireTelemetry.set_thresholds Rust method and managed-host messages are NOT a
-// public owner call. Never write a private counter/key or patch a config file.
-// Waiting shape: per-actor/per-verb detection rows + window -> policy receipt;
-// crossing -> typed health question -> ladder verdict or durable held ask.
-// Send exactly 40 distinct authorized ordinary writes with Promise.all, retaining
-// every intent's receipt/error; never retry a refused write. Read all 40 values
-// (no top-k recall as a completeness oracle). Every intent is accepted or has a
-// documented durable queue entry, never dropped or refused for a fixed rate.
-// Await PUBLIC health observation (not sleep/private tick); a known granted actor
-// is valid_burst at the rule rung. Check question, verdict and receipt association.
-// The fixture's threshold 5 and window 1 s are explicit owner test policy, not
-// engine defaults. Do not assert universal Idempotency-Key support for upserts:
-// canon's 24-hour keyed consume-once contract is the MESSAGE-APPEND surface.
-type Gate09ThresholdRows = { window_secs: number; per_verb: number; per_actor: number };
-type Gate09HealthState =
+// The fixture's owner policy applies only after public subject setup. Keep every
+// burst outcome, read every exact subject, and observe a real rule answer without
+// manually answering the health question. The paired owner is a known granted
+// actor; this fixture does not require an agent principal.
+// These owner-HTTP shapes have no generated Facade equivalent. Sources:
+// oneiron-server/src/wire_health.rs (HealthCheck, CheckState, AnsweredBy),
+// wire_health/evidence.rs (crossing summary), and api/owner_routes/wire_health_routes.rs.
+type Gate09NativeCrossed = { actors: string[]; verbs: string[] };
+type Gate09NativeCrossing = {
+  window: [number, number];
+  seq: number;
+  per_verb: number;
+  per_actor: number;
+  verbs: { verb: string; calls: number }[];
+  actors: { actor: string; calls: number }[];
+  crossed: Gate09NativeCrossed;
+};
+type Gate09NativeCheckState =
   | { state: "held" }
-  | { state: "asked"; question: Ref; unit: Ref }
-  | { state: "answered"; answer: "bot" | "valid_burst"; question: Ref; unit: Ref };
-suite.todo(test, "GATE-09", "waits on typed owner wire-health detection threshold read/edit for an authorized 40-write burst");
+  | { state: "asked"; question: string; unit: string }
+  | {
+      state: "answered";
+      answer: string;
+      probability: number | null;
+      by: unknown;
+      at: number;
+      question: string;
+      unit: string;
+    }
+  | { state: "superseded"; by: string; question: string | null; unit: string | null };
+type Gate09NativeHealthCheck = {
+  subject: string;
+  source: string;
+  crossing: Gate09NativeCrossing;
+  first_raised: number;
+  last_raised: number;
+  crossings: number;
+  state: Gate09NativeCheckState;
+  asked_in: string | null;
+};
+type Gate09NativeHealthList = { checks: Gate09NativeHealthCheck[] };
+// Exact upsert wire key: METHOD plus MatchedPath.
+// Source: api/facade.rs:3 (one route per verb at /v1/core/facade/<verb>),
+// api/routes.rs:275-277 (nest at /v1/core/facade),
+// wire_telemetry/http.rs:12-13 (verb is METHOD plus MatchedPath).
+const GATE09_UPSERT_VERB = "POST /v1/core/facade/vault.claims.upsert";
+function gate09IsBurst(
+  check: Gate09NativeHealthCheck,
+  baseline: Set<string>,
+  ownerHex: string,
+  upsertVerb: string,
+): boolean {
+  if (baseline.has(check.subject)) return false;
+  if (check.source !== "wire") return false;
+  return check.crossing.crossed.actors.includes(ownerHex) &&
+    check.crossing.crossed.verbs.includes(upsertVerb);
+}
+function gate09IsRuleBy(by: unknown): boolean {
+  // Native AnsweredBy::Ladder(DecisionRung::Rule) reads {"ladder":"rule"}
+  // (wire_health.rs:83-85, model_decision/types.rs:11-12).
+  if (typeof by !== "object" || by === null || Array.isArray(by)) return false;
+  const record = by as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return keys.length === 1 && record.ladder === "rule";
+}
+function gate09IsCoverBy(by: unknown): boolean {
+  // Native AnsweredBy::Cover reads "cover" (wire_health.rs:88-91).
+  return by === "cover";
+}
+function gate09IsDirectRuleValidBurst(check: Gate09NativeHealthCheck): boolean {
+  // GrantRule Choice(valid_burst) probability Some(1.0) (wire_health.rs:271-279);
+  // ask binds question.id.to_hex() and bound.unit.to_hex() (wire_health.rs:367);
+  // EntityId::to_hex is 32-char lowercase hex (entity_id.rs). Presence only, no hex regex.
+  const st = check.state;
+  return st.state === "answered" &&
+    st.answer === "valid_burst" &&
+    gate09IsRuleBy(st.by) &&
+    typeof st.question === "string" && st.question.length > 0 &&
+    typeof st.unit === "string" && st.unit.length > 0 &&
+    st.probability === 1.0;
+}
+function gate09TerminalRule(
+  start: Gate09NativeHealthCheck,
+  bySubject: Map<string, Gate09NativeHealthCheck>,
+): Gate09NativeHealthCheck | null {
+  // Cover cites earlier answer question/unit (evidence.rs:350-372);
+  // Superseded.by names successor subject (wire_health.rs:110-119, evidence.rs:374-387).
+  // Cycle-safe via visited sets, no cap number.
+  const visited = new Set<string>();
+  const seenQU = new Set<string>();
+  let current: Gate09NativeHealthCheck | undefined = start;
+  while (current) {
+    if (visited.has(current.subject)) return null;
+    visited.add(current.subject);
+    const st = current.state;
+    if (st.state === "answered") {
+      if (st.answer !== "valid_burst") return null;
+      if (typeof st.question !== "string" || st.question.length === 0) return null;
+      if (typeof st.unit !== "string" || st.unit.length === 0) return null;
+      if (gate09IsRuleBy(st.by)) {
+        if (st.probability !== 1.0) return null;
+        return current;
+      }
+      if (gate09IsCoverBy(st.by)) {
+        if (st.probability !== 1.0) return null;
+        const key = `${st.question}\0${st.unit}`;
+        if (seenQU.has(key)) return null;
+        seenQU.add(key);
+        let found: Gate09NativeHealthCheck | undefined;
+        for (const c of bySubject.values()) {
+          const cs = c.state;
+          if (cs.state === "answered" &&
+            cs.answer === "valid_burst" &&
+            cs.question === st.question &&
+            cs.unit === st.unit &&
+            gate09IsRuleBy(cs.by) &&
+            cs.probability === 1.0) {
+            found = c;
+            break;
+          }
+        }
+        if (!found) return null;
+        current = found;
+        continue;
+      }
+      return null;
+    }
+    if (st.state === "superseded") {
+      const next = bySubject.get(st.by);
+      if (!next) return null;
+      current = next;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+suite.test(test, "GATE-09", "No fixed burst refusal should work", async () => {
+  const engine = await EngineFixture.start({ id: "GATE-09", profile });
+  let primaryFailed = false;
+  let primary: unknown;
+  try {
+    const catalog = await loadFixtures();
+    const scenarios = await catalog.readJson<{
+      scenarios: Record<string, {
+        owner_threshold_rows: FacadeInput<"vault.wire_health.thresholds.set">;
+        writes: {
+          count: number;
+          concurrency: number;
+          distinct_subjects: boolean;
+          predicate: string;
+          source: string;
+          value_prefix: string;
+        };
+      }>;
+    }>("gate-authority-consent-scenarios");
+    const g09 = scenarios.scenarios["GATE-09"];
+    if (!g09) throw new Error("Missing GATE-09 fixture scenario");
+    const COUNT = g09.writes.count;
+    await engine.requireHttpDoor("/v1/core/facade/vault.wire_health.thresholds.get", "POST");
+    await engine.requireHttpDoor("/v1/core/facade/vault.wire_health.thresholds.set", "POST");
+    const ownerHex = engine.pairedActor.principalRef;
+    const occurred = 1769947200; // Public setup input, existing explicit time from memory.test.ts setup.
+    const conversation = await engine.client.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    } satisfies FacadeInput<"vault.conversations.create">);
+    const scope = await ownerBaseClaimScope(engine.client, ownerHex);
+    const persons: { idHex: string; entityRef: string; value: string }[] = [];
+    for (let i = 0; i < COUNT; i++) {
+      const name = `Courtyard Burst Person ${i}`;
+      const witness = await engine.client.call("vault.witness", {
+        conversation_ref: conversation.id,
+        occurred_at: occurred,
+        messages: [{
+          author: "user", message_type: "text",
+          content: `This distinct person is ${name}.`,
+          is_visible: true, order: 0,
+        }],
+      } satisfies FacadeInput<"vault.witness">);
+      const turn = await engine.client.call("vault.get", {
+        entity_ref: witness.turn_short_id,
+      } satisfies FacadeInput<"vault.get">);
+      if (turn.value?.kind !== "TURN" || !turn.value.id_hex) {
+        throw new Error("witnessed TURN missing");
+      }
+      const created = await engine.client.call("vault.people.create", {
+        identity: { name },
+        identity_evidence_refs: [turn.value.id_hex],
+        occurred_at: occurred,
+      } satisfies FacadeInput<"vault.people.create">);
+      expect(created.person.id_hex).not.toBe(ownerHex);
+      const got = await engine.client.call("vault.get", {
+        entity_ref: created.person.entity_ref,
+      } satisfies FacadeInput<"vault.get">);
+      expect(got.value?.kind).toBe("PERSON");
+      persons.push({
+        idHex: created.person.id_hex,
+        entityRef: created.person.entity_ref,
+        value: `${g09.writes.value_prefix} ${i}`,
+      });
+    }
+    expect(new Set(persons.map((p) => p.idHex)).size).toBe(COUNT);
+    await engine.artifacts.json("gate09-persons.json", persons);
+    const before = await engine.client.call("vault.wire_health.thresholds.get", {
+    } satisfies FacadeInput<"vault.wire_health.thresholds.get">);
+    const baseline = (await engine.client.request<Gate09NativeHealthList>(
+      "GET", "/v1/owner/wire-health",
+    )).body;
+    const baselineSubjects = new Set(baseline.checks.map((c) => c.subject));
+    await engine.artifacts.json("gate09-health-baseline.json", baseline);
+    const receipt = await engine.client.call("vault.wire_health.thresholds.set", {
+      window_secs: g09.owner_threshold_rows.window_secs,
+      per_verb: g09.owner_threshold_rows.per_verb,
+      per_actor: g09.owner_threshold_rows.per_actor,
+    } satisfies FacadeInput<"vault.wire_health.thresholds.set">);
+    expect(receipt.thresholds).toEqual(g09.owner_threshold_rows);
+    const reread = await engine.client.call("vault.wire_health.thresholds.get", {
+    } satisfies FacadeInput<"vault.wire_health.thresholds.get">);
+    expect(reread).toEqual(g09.owner_threshold_rows);
+    await engine.artifacts.json("gate09-thresholds.json", { before, receipt, reread });
+    type UpsertInput = FacadeInput<"vault.claims.upsert">;
+    type UpsertResult = FacadeResult<"vault.claims.upsert">;
+    const inputs: UpsertInput[] = persons.map((p) => ({
+      predicate: g09.writes.predicate,
+      subject_ref: p.idHex,
+      value: p.value,
+      confidence: 1, // Ordinary user_stated, matches memory.test.ts canonical translation.
+      source: g09.writes.source,
+      scope,
+      occurred_at: occurred,
+    } satisfies UpsertInput));
+    const settled: PromiseSettledResult<UpsertResult>[] = await Promise.allSettled(
+      inputs.map((input) => engine.client.call("vault.claims.upsert", input)),
+    );
+    expect(settled).toHaveLength(COUNT);
+    const fulfilled: { index: number; receipt: UpsertResult }[] = [];
+    const rejected: {
+      index: number;
+      httpStatus: number | null;
+      code: string;
+      message: string;
+      body: unknown;
+    }[] = [];
+    settled.forEach((row, index) => {
+      if (row.status === "fulfilled") {
+        fulfilled.push({ index, receipt: row.value });
+      } else {
+        const reason = row.reason;
+        if (reason instanceof PublicHttpError) {
+          const code = reason.error?.code ?? `HTTP_${reason.reply.status}`;
+          const message = reason.error?.message ?? reason.message;
+          rejected.push({
+            index, httpStatus: reason.reply.status, code, message, body: reason.reply.body,
+          });
+        } else {
+          rejected.push({
+            index, httpStatus: null, code: "UNKNOWN",
+            message: reason instanceof Error ? reason.message : String(reason), body: null,
+          });
+        }
+      }
+    });
+    // Keep all outcomes before a later audit read can fail. A rejected input
+    // cannot be matched to PendingWrite by an index or an arbitrary error string.
+    await engine.artifacts.json("gate09-burst-outcomes.json", { inputs, fulfilled, rejected });
+    expect(fulfilled.length + rejected.length).toBe(COUNT);
+    if (rejected.length > 0) {
+      throw new Error(
+        `GATE-09 burst has ${rejected.length} rejections; owner ordinary writes expect all ${COUNT} accepted; see gate09-burst-outcomes.json`,
+      );
+    }
+    for (const row of fulfilled) {
+      expect(row.receipt.receipt_ref.length).toBeGreaterThan(0);
+      expect(row.receipt.claim_short_id.length).toBeGreaterThan(0);
+    }
+    const pending = await engine.client.call("vault.writes.pending", {
+      limit: 1000,
+    } satisfies FacadeInput<"vault.writes.pending">);
+    const receiptsPage = await engine.client.call("vault.receipts", {
+      limit: 1000,
+    } satisfies FacadeInput<"vault.receipts">);
+    await engine.artifacts.json("gate09-burst-audit.json", { pending, receipts: receiptsPage.receipts });
+    let lastHealth = baseline;
+    let answered: Gate09NativeHealthList;
+    try {
+      answered = await awaitPublic(
+        async () => {
+          lastHealth = (await engine.client.request<Gate09NativeHealthList>(
+            "GET", "/v1/owner/wire-health",
+          )).body;
+          return lastHealth;
+        },
+        (list) => {
+          const bySubject = new Map<string, Gate09NativeHealthCheck>();
+          for (const row of list.checks) bySubject.set(row.subject, row);
+          const burst = list.checks.filter((c) => gate09IsBurst(c, baselineSubjects, ownerHex, GATE09_UPSERT_VERB));
+          if (burst.length < 1) return false;
+          let hasDirect = false;
+          for (const c of burst) {
+            if (gate09IsDirectRuleValidBurst(c)) hasDirect = true;
+            const terminal = gate09TerminalRule(c, bySubject);
+            if (!terminal) return false;
+            if (!gate09IsBurst(terminal, baselineSubjects, ownerHex, GATE09_UPSERT_VERB)) return false;
+          }
+          return hasDirect;
+        },
+        { label: "burst wire checks answered valid_burst at rule rung", timeoutMs: LIMITS.flowMs },
+      );
+    } catch (error) {
+      await engine.artifacts.json("gate09-health-observed.json", lastHealth).catch(() => {});
+      throw error;
+    }
+    await engine.artifacts.json("gate09-health-answered.json", answered);
+    const burstChecks = answered.checks.filter((c) => gate09IsBurst(c, baselineSubjects, ownerHex, GATE09_UPSERT_VERB));
+    expect(burstChecks.length).toBeGreaterThanOrEqual(1);
+    for (const check of burstChecks) {
+      expect(check.crossing.per_verb).toBe(g09.owner_threshold_rows.per_verb);
+      expect(check.crossing.per_actor).toBe(g09.owner_threshold_rows.per_actor);
+      expect(check.crossing.verbs.some((v) => v.verb === GATE09_UPSERT_VERB && v.calls > g09.owner_threshold_rows.per_verb)).toBe(true);
+      expect(check.crossing.actors.some((a) => a.actor === ownerHex && a.calls > g09.owner_threshold_rows.per_actor)).toBe(true);
+      expect(check.state.state).not.toBe("asked");
+    }
+    const readbacks: { index: number; subject: string; expected: string; found: unknown }[] = [];
+    for (let i = 0; i < persons.length; i++) {
+      const p = persons[i]!;
+      const list = await engine.client.call("vault.claims.list", {
+        subject_ref: p.idHex, predicate: g09.writes.predicate, limit: 1000,
+      } satisfies FacadeInput<"vault.claims.list">);
+      expect(list.value).toHaveLength(1);
+      expect(list.value[0]!.subject_ref).toBe(p.idHex);
+      expect(list.value[0]!.predicate).toBe(g09.writes.predicate);
+      expect(list.value[0]!.value).toBe(p.value);
+      readbacks.push({ index: i, subject: p.idHex, expected: p.value, found: list.value[0]!.value });
+    }
+    await engine.artifacts.json("gate09-exact-readbacks.json", readbacks);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    try { await engine.close(); } catch (cleanup) {
+      if (primaryFailed) {
+        throw new AggregateError([primary, cleanup], `${String(primary)}; cleanup: ${String(cleanup)}`);
+      }
+      throw cleanup;
+    }
+    if (primaryFailed) throw primary;
+  }
+});

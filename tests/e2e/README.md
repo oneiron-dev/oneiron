@@ -135,13 +135,27 @@ For the public embedding/tagger adapters, use typed options:
 - `capabilities`: required host capabilities from the prepared inventory.
 - `ready(client)`: optional predicate of **public reads**, observed within 10s
   after health/pairing. Use it for the requested provider/organ readiness.
-- `requireHttpDoor(path, method)`: checks an existing typed route's binding in
-  authenticated OpenAPI. It does not turn a missing designed door into a call.
+- `requireHttpDoor(path, method)`: checks non-facade endpoint bindings against
+  the startup OpenAPI snapshot, refreshed only after a fixture restart. OpenAPI
+  is a partial facade projection, not the facade contract. Generated facade SDK
+  types and actual typed calls establish facade availability.
 
 Readiness observations may repeat. Mutations and failed public calls are never
 silently retried. A bind collision is an explicit failure, not a hidden retry.
 Fresh ephemeral reservations reduce collisions; pairing proves the answering
 server owns this fixture's bootstrap link.
+
+## Request and startup diagnostics
+
+HTTP, CLI and SDK calls persist redacted request-start records before the call,
+with a step id, operation, path and start time. Completion/error records carry
+that id. SDK batches also write per-operation markers inside the native process.
+Fixture startup emits stage-start markers before init, bootstrap, launch, pairing
+and schema discovery, including before a second vault has a launch artifact.
+An unmatched request-start identifies a call that has no captured completion;
+it is not a causal diagnosis. No credential, request body or SDK value is logged.
+Unexpected deterministic embedding inputs are recorded with a digest and redacted
+text; they still fail the strict vector fixture until explicitly authored.
 
 ## Public clients
 
@@ -331,11 +345,13 @@ plan completion additionally requires all 242 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
-Bun 1.3.4's JUnit is sent to `/dev/stdout` (a pipe), parsed in memory, and checked
-against registered IDs. The owned file process artifact retains redacted stdout/stderr,
-including the JUnit, up to the process reader's existing bounds. `fileDiagnostics` in the
-aggregate records JUnit presence, case/match/unknown/duplicate counts, file exit/signal,
-and registration errors. A harness error remains a FAIL but does not replace an existing
+Bun 1.3.4 writes JUnit to a real per-file `.junit.xml` outfile under the protected
+report directory. The runner reads that file and checks it against registered IDs;
+subprocess stdout is not a JUnit outfile. A separate `.junit.json` artifact carries a
+redacted XML copy for export. The original XML stays local to the fleet job. Owned file
+process artifacts retain bounded, redacted stdout/stderr separately. `fileDiagnostics`
+in the aggregate records JUnit presence, case/match/unknown/duplicate counts, file
+exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
 per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
 recorded separately as `cleanupError`, preserving an earlier reason.
 
