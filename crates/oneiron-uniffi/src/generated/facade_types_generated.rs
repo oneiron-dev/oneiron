@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4579 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
+// UniFFI census: 1263 facade rows, 4582 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -23046,6 +23046,52 @@ pub struct FederationBurstReviewReceipt {
     pub batches: Vec<FederationBurstReceipt>,
 }
 
+/// `oneiron_authority::authority::federation_pact::FederationPactStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FederationPactStatus {
+    #[serde(rename = "Active")]
+    Active,
+    #[serde(rename = "Suspended")]
+    Suspended,
+    #[serde(rename = "Promoted")]
+    Promoted,
+    #[serde(rename = "Disconnected")]
+    Disconnected,
+    #[serde(rename = "Dissolved")]
+    Dissolved,
+}
+
+/// `oneiron::authority::federation_status::FederationPactInactiveReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FederationPactInactiveReason {
+    #[serde(rename = "scope_commitment_mismatch")]
+    ScopeCommitmentMismatch,
+}
+
+/// `oneiron::authority::federation_status::FederationPactStatusRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationPactStatusRow {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "status")]
+    pub status: FederationPactStatus,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(
+        rename = "inactive_reason",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub inactive_reason: Option<FederationPactInactiveReason>,
+}
+
+/// `oneiron::authority::federation_status::FederationStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationStatus {
+    #[serde(rename = "pacts")]
+    pub pacts: Vec<FederationPactStatusRow>,
+}
+
 /// `oneiron::verbs::federation::ConnectIdentity`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectIdentity {
@@ -23171,21 +23217,6 @@ pub struct NarrowConnect {
     pub epoch: u64,
     #[serde(rename = "outbound")]
     pub outbound: FederationDirectionScope,
-}
-
-/// `oneiron_authority::authority::federation_pact::FederationPactStatus`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum FederationPactStatus {
-    #[serde(rename = "Active")]
-    Active,
-    #[serde(rename = "Suspended")]
-    Suspended,
-    #[serde(rename = "Promoted")]
-    Promoted,
-    #[serde(rename = "Disconnected")]
-    Disconnected,
-    #[serde(rename = "Dissolved")]
-    Dissolved,
 }
 
 /// `oneiron::verbs::federation::ConnectPactReceipt`.

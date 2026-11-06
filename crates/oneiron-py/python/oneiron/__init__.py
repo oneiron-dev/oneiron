@@ -2699,6 +2699,9 @@ class Oneiron:
         @property
         def burst(self) -> "Oneiron._VaultFederationBurstVerbs":
             return Oneiron._VaultFederationBurstVerbs(self._client)
+        def status(self, spec):
+            """The owner reads this install's pact activation, consent epoch and local inactivity reason."""
+            return json.loads(_translate(lambda: self._client.vault_federation_status(json.dumps(spec))))
         @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs":
             return Oneiron._VaultFederationConnectVerbs(self._client)

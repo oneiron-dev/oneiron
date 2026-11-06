@@ -6,7 +6,7 @@ use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// A local reason a pact does not confer access, beyond its folded status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FederationPactInactiveReason {
     /// The folded scope differs from the signed commitment under the live opening.
@@ -14,7 +14,7 @@ pub enum FederationPactInactiveReason {
 }
 
 /// One pact as this install's current authority view admits it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FederationPactStatusRow {
     /// The pact id, in lowercase hexadecimal.
     pub pact: String,
@@ -27,7 +27,7 @@ pub struct FederationPactStatusRow {
 }
 
 /// All pacts in one read-only authority snapshot, in ascending pact-id order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FederationStatus {
     pub pacts: Vec<FederationPactStatusRow>,
 }
@@ -41,7 +41,21 @@ impl Vault {
     /// must admit its caller before exposing the result.
     pub fn federation_status(&self) -> Result<FederationStatus> {
         let txn = self.store.env.read_txn()?;
-        let view = self.authority_view_readonly_in_txn(&txn)?;
+        self.federation_status_in_txn(&txn)
+    }
+
+    /// The owner's status read, revalidated in the snapshot it returns.
+    pub fn federation_status_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<FederationStatus> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        self.federation_status_in_txn(&txn)
+    }
+
+    fn federation_status_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<FederationStatus> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
         let mismatched = view.scope_commitment_mismatches();
         Ok(FederationStatus {
             pacts: view
