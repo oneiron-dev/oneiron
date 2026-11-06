@@ -160,6 +160,13 @@ pub const COACH_FOLD_SUGGESTIONS_FACET: &str = "coach.fold_suggestions";
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
 pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
+/// The unclear-note clustering (ARCH-0056 §5 #unclear, FIX 7824): each
+/// recurring `no_label_fits` note put to the host's ladder as a same-pattern
+/// choice within its scope, and a Proposed label for a pattern whose notes
+/// come from enough distinct outcomes (see [`super::attribution_labels`]).
+pub const COACH_ATTRIBUTION_LABELS_FACET: &str = "coach.attribution_labels";
+/// Predicate of the Coach's Proposed attribution label, its subject the Coach.
+pub const COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE: &str = "coach.attribution_label.proposal";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Predicate of the Coach's Proposed think-threshold row.
@@ -181,7 +188,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 20] = [
+const HOST_FACETS: [&str; 21] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -197,6 +204,7 @@ const HOST_FACETS: [&str; 20] = [
     COACH_FORK_PROMOTE_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
     COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_ATTRIBUTION_LABELS_FACET,
     COACH_WEAVE_DIGEST_SETTINGS_FACET,
     COACH_RESEARCH_SELECT_FACET,
     // The feedback sweep (OF-420): the inbox and each bound GitHub source,

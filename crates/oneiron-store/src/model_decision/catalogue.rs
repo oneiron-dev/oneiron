@@ -96,6 +96,15 @@ pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Whether one unclear attribution note describes the same missing label as a
+/// pattern the Coach already holds for its scope, a new one, or none (FIX
+/// 7824). Keyed by the scope and the note.
+pub const ATTRIBUTION_PATTERN: QuestionFamily = QuestionFamily {
+    name: "skill_attribution.unclear_pattern",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// A campaign arm's taste over a blind input: a `[0, 1]` score and an audit-only usefulness
 /// reading. Keyed by field.
 pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
@@ -465,6 +474,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     REACTION_MEANING,
     SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
+    ATTRIBUTION_PATTERN,
     CAMPAIGN_TASTE,
     CAMPAIGN_COMPLAINT_PAUSE,
     SEAT_PICK,
