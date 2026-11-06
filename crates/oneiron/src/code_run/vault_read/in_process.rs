@@ -57,6 +57,7 @@ pub const MEDIA_UNAVAILABLE_ENGINE_CODE: &str = "EMBEDDER_UNAVAILABLE";
 fn media_unavailable(method: VaultReadMethod) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
+        legal_hold: None,
         method,
         engine_code: MEDIA_UNAVAILABLE_ENGINE_CODE.to_owned(),
         message: "this host serves no ai.embed rung for media; retry without media".to_owned(),

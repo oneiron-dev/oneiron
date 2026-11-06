@@ -182,7 +182,6 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let anchor = self.admit_entity_in(&txn, &policy, &filter, center)?;
-        let mut suppressed = anchor.suppression();
         let mut neighbors = Vec::new();
         if anchor.visible() && limit > 0 {
             'scan: for direction in [EdgeDirection::Out, EdgeDirection::In] {
@@ -211,7 +210,6 @@ impl ScopedRead<'_> {
                         || Ok(ReadAdmission::Visible(())),
                         || self.admit_entity_in(&txn, &policy, &filter, &peer),
                     )?;
-                    suppressed += admitted.suppression();
                     let Some(edge) = admitted.into_option() else {
                         continue;
                     };
@@ -228,7 +226,7 @@ impl ScopedRead<'_> {
                 }
             }
         }
-        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        let receipt = self.receipt_for(None, &policy, &filter, 0);
         Ok(ScopedReadResult {
             value: project(&txn, anchor.visible().then_some(neighbors))?,
             receipt,
@@ -256,7 +254,6 @@ impl ScopedRead<'_> {
         // One held authority for the tree's node reads in this txn (FIX 7462).
         let held = HeldAuthority::for_request(None);
         let anchor = self.admit_entity_in(&txn, &policy, &filter, root)?;
-        let mut suppressed = anchor.suppression();
         let mut tree = None;
         if anchor.visible()
             && let Some(row) = self.entity_raw_with_mode_held_in(
@@ -294,7 +291,6 @@ impl ScopedRead<'_> {
                     usize::MAX,
                     true,
                 )?;
-                suppressed += admitted.suppressed;
                 // Inbound views carry the child in `edge.target`.
                 let mut children: Vec<EntityId> = admitted
                     .edges
@@ -326,7 +322,7 @@ impl ScopedRead<'_> {
             }
             tree = Some(nodes);
         }
-        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        let receipt = self.receipt_for(None, &policy, &filter, 0);
         Ok(ScopedReadResult {
             value: project(&txn, tree)?,
             receipt,

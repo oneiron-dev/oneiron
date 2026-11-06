@@ -42,6 +42,7 @@ mod anchor;
 mod backlog;
 mod credentials;
 mod exit;
+mod image_release;
 mod ledger_io;
 mod network;
 mod provision;
@@ -52,6 +53,7 @@ mod snapshot;
 
 pub use self::anchor::VmAnchorHostIo;
 pub use self::exit::VmExitWatch;
+pub use self::image_release::{VmImageMeasurement, VmImageReleaseObservation};
 pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
 pub use self::runner::{VaultVmRun, run_vault_vm};
 use self::snapshot::SnapshotLease;
@@ -147,6 +149,12 @@ pub struct VaultVmConfig {
     /// with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
+    /// The node's shared model bundles, in a root-owned read-only ext4 image.
+    /// Attached after the config drive and before a restore source, mounted
+    /// at `/models`, and admitted by the existing shared-model-root policy.
+    /// Without it the guest keeps its ordinary per-vault model paths.
+    #[serde(default)]
+    pub model_disk: Option<PathBuf>,
     /// The vault's provision binding (FIX 6308): the UID its engine runs as,
     /// its derivation owner, `vault_disk`'s filesystem UUID and its fscrypt
     /// key's identifier. Required: a profile without a valid one never boots,
@@ -234,6 +242,7 @@ pub struct VaultVm {
     /// The bound snapshot custody's unlock this driver holds, until the
     /// VMM generation it backs is reaped (FIX 9497).
     snapshot_lease: Option<SnapshotLease>,
+    image_release: Option<VmImageReleaseObservation>,
 }
 
 impl VaultVm {
@@ -281,6 +290,7 @@ impl VaultVm {
             outbox,
             anchor,
             snapshot_lease: None,
+            image_release: None,
         })
     }
 
@@ -473,7 +483,10 @@ impl VaultVm {
     /// profile's restore source drive read-only after the others, when it
     /// names one.
     async fn boot_vmm(&mut self, with_source: bool) -> anyhow::Result<()> {
+        // A failed or cancelled attempt must not retain an older boot's evidence.
+        self.image_release = None;
         provision::check_vault_disk(&self.config)?;
+        self.observe_image_release().await;
         self.spawn_vmm().await?;
         let config = &self.config;
         let mut boot_args = config.boot_args.clone();
@@ -488,6 +501,14 @@ impl VaultVm {
         }
         if config.config_disk.is_some() {
             boot_args.push_str(" oneiron.config=1");
+        }
+        if config.model_disk.is_some() {
+            boot_args.push_str(" oneiron.models=");
+            boot_args.push_str(if config.config_disk.is_some() {
+                "/dev/vdd"
+            } else {
+                "/dev/vdc"
+            });
         }
         if config.artifact_origin {
             boot_args.push_str(" oneiron.artifact_origin=1");
@@ -534,7 +555,19 @@ impl VaultVm {
             )
             .await?;
         }
-        // After them, `/dev/vdc` or `/dev/vdd` in the guest.
+        // The model drive follows config on both ordinary and restore boots.
+        if let Some(model_disk) = &config.model_disk {
+            self.api(
+                "PUT",
+                "/drives/models",
+                json!({
+                    "drive_id": "models", "path_on_host": model_disk,
+                    "is_root_device": false, "is_read_only": true,
+                }),
+            )
+            .await?;
+        }
+        // After config and models, `/dev/vdc`, `/dev/vdd` or `/dev/vde`.
         if let Some(source) = config.restore_source_disk.as_ref().filter(|_| with_source) {
             self.api(
                 "PUT",

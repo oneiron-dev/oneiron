@@ -150,3 +150,12 @@ pub(crate) fn erase_centroid_source_in_txn(
     }
     Ok(())
 }
+
+/// Runs the source scrub through the accepted erase writer after its
+/// hard-delete marker is installed.
+pub(crate) fn erase_centroid_source_as_in_txn(
+    mut erase: crate::deletion::ActorErasureWriter<'_, '_>,
+) -> Result<()> {
+    let (vault, txn, actor) = erase.parts();
+    erase_centroid_source_in_txn(vault, txn, &actor)
+}

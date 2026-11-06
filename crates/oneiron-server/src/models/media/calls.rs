@@ -5,7 +5,7 @@
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::llm::media::MediaReplayKey;
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
     Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer,
@@ -162,28 +162,54 @@ impl MediaRuntime {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let key = replay.as_ref().filter(|_| voices.is_none());
-        if let Some(key) = key
-            && let Some(answer) = self.replay_answer(key)
-        {
-            return answer;
-        }
-        let kept = key.map(|_| request.clone());
-        let ladder = self.ladder(&request)?;
-        match ladder
-            .media_released(run, request, None, voices, release, admitted)
-            .await?
-        {
-            MediaAnswer::Done(response) => {
-                if let (Some(key), Some(kept)) = (key, &kept) {
-                    self.keep_replay_answer(key, kept, &response, None, None);
+        let leader = if let Some(key) = key {
+            if let Some(answer) = self.replay_answer(key) {
+                return answer;
+            }
+            match self.replay_runs.claim(key) {
+                super::run_replay::Claim::Leader(leader) => Some(leader),
+                super::run_replay::Claim::Follower(follower) => {
+                    drop(request);
+                    return self.follow_replay(key, follower, admitted).await;
                 }
-                Ok(response)
             }
-            // Only a job operation is submitted.
-            MediaAnswer::Job(mut job) => {
-                job.settle_failed();
-                Err(FatalLlmError::InvalidRequest.into())
+        } else {
+            None
+        };
+        let local_admitted = AtomicBool::new(false);
+        let admitted = admitted.or_else(|| leader.as_ref().map(|_| &local_admitted));
+        let answer = async {
+            if let Some(key) = key
+                && let Some(answer) = self.replay_answer(key)
+            {
+                return answer;
             }
+            let kept = key.map(|_| request.clone());
+            let ladder = self.ladder(&request)?;
+            match ladder
+                .media_released(run, request, None, voices, release, admitted)
+                .await?
+            {
+                MediaAnswer::Done(response) => {
+                    if let (Some(key), Some(kept)) = (key, &kept) {
+                        self.keep_replay_answer(key, kept, &response, None, None);
+                    }
+                    Ok(response)
+                }
+                // Only a job operation is submitted.
+                MediaAnswer::Job(mut job) => {
+                    job.settle_failed();
+                    Err(FatalLlmError::InvalidRequest.into())
+                }
+            }
+        }
+        .await;
+        match leader {
+            Some(leader) => leader.finish(
+                answer,
+                admitted.is_some_and(|admitted| admitted.load(Ordering::Acquire)),
+            ),
+            None => answer,
         }
     }
 
