@@ -322,6 +322,10 @@ pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
 /// derived from the predecessor's client id and device key.
 pub const DEVICE_SUCCESSION_TARGET: &[u8] = b"oneiron/device-succession-target/v1";
 
+/// A lexical query hint CLAIM (`claim::lexical_query_hint_claim_id`, FIX 9597).
+/// Parts: the target claim (16 bytes), the normalized query (UTF-8).
+pub const LEXICAL_QUERY_HINT: &[u8] = b"oneiron.lexical-query-hint.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 60] = [

@@ -572,12 +572,6 @@ fn resolve_lexical_query_hint_record(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LexicalQueryHintResolution> {
-    if !id
-        .as_bytes()
-        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-    {
-        return Ok(LexicalQueryHintResolution::NonHint);
-    }
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
         return Ok(LexicalQueryHintResolution::NonHint);
     };
@@ -602,12 +596,16 @@ fn resolve_lexical_query_hint_record(
     if !body.stale {
         return Ok(LexicalQueryHintResolution::DeadHint);
     }
-    let Some(target) = crate::claim::lexical_query_hint_target(&body)
+    // A hint body under any id but its own derived one is a dead hint, never
+    // the CLAIM's own searchable content.
+    let Some(hint) = crate::claim::canonical_lexical_query_hint(id, &body)
         .map_err(|_| corrupted("lexical query hint claim"))?
     else {
         return Ok(LexicalQueryHintResolution::DeadHint);
     };
-    Ok(LexicalQueryHintResolution::Live { target })
+    Ok(LexicalQueryHintResolution::Live {
+        target: hint.target,
+    })
 }
 
 fn lexical_query_hint_target_is_live_claim(
