@@ -121,7 +121,9 @@ impl BudgetGuard {
     /// unmetered lease that reserves nothing ([`Self::admit_local`]) before
     /// any paid policy, row cap or capacity is read, so a full or exhausted
     /// paid line never holds it. Every other call reserves on the paid line,
-    /// its purpose's policy rows capping it.
+    /// its purpose's policy rows capping it. A door whose host-bound ladder
+    /// may send the call to a paid offer on this device admits it through
+    /// [`Self::admit_paid_for_request`] instead (FIX 14889).
     ///
     /// This low-level door trusts the request it is given (FIX 8998): its
     /// `envelope.locality` must be host-bound (the seat, route or offer that
@@ -139,6 +141,23 @@ impl BudgetGuard {
         {
             return self.admit_local();
         }
+        let mut state = self.lock_state();
+        let reserve_units = state.reserve_units;
+        let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;
+        Ok(state.metered_admission(lease))
+    }
+
+    /// Admits one call of `request` as paid work, whatever its locality
+    /// (FIX 14889): it reserves on the paid line, its purpose's policy rows
+    /// capping it, as [`Self::admit_for_request`] does for a call off the
+    /// device. For a door whose host-bound ladder may send the call to a paid
+    /// offer on this device (a paid provider's managed worker over its native
+    /// channel), which the request's on-device locality alone would admit
+    /// unmetered. The door decides from that ladder, never from caller JSON.
+    pub fn admit_paid_for_request(
+        &self,
+        request: &LlmRequest,
+    ) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
         let reserve_units = state.reserve_units;
         let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;
