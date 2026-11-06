@@ -424,10 +424,8 @@ pub(crate) fn store_doc(
         for pin in &pins {
             crate::batch::secret_scan::scan_write_payload(pin.quote_text.as_bytes())?;
         }
-        for text in canonical.field_texts()? {
-            crate::batch::secret_scan::scan_write_payload(text.as_bytes())?;
-        }
     }
+    admit_value_fields_in_txn(&vault.store, txn, &canonical.metadata()?)?;
     let found = canonical.title()?;
     let original = doc.text();
     let (mut text, mut title) = (original.clone(), found.clone());
@@ -657,6 +655,29 @@ impl Vault {
         }
         load_doc(self, &txn, note)
     }
+}
+
+/// Each editable field other than the title, its whole encoded value read
+/// by the write door's structured payload rules, under the owner's scan
+/// switch (FIX 7784): no writer on this host masks these fields, so a hit
+/// refuses, as a citation's quote does. Every door that persists a NOTE
+/// document or value calls it; loads stay shape-only.
+pub(crate) fn admit_value_fields_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    metadata: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    if crate::batch::secret_scan::secret_scan_mode_in_txn(store, txn)?
+        != crate::batch::secret_scan::SecretScanMode::On
+    {
+        return Ok(());
+    }
+    for (field, bytes) in metadata {
+        if field != super::document::TITLE {
+            crate::batch::secret_scan::scan_write_payload(bytes)?;
+        }
+    }
+    Ok(())
 }
 
 /// Proposal content is a value, never an authenticated document snapshot.
