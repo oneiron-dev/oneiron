@@ -24,6 +24,15 @@
 //! included. The craft notes its request shows are pinned by revision too
 //! (FIX 8135): a reuse finds each still standing as it was shown, and erasing
 //! one drops the breakpoints that show it, and only those.
+//!
+//! A row also holds the answering agent's instructions and the words read
+//! for its reader (FIX 5033). Erasing the agent's definition drops every
+//! breakpoint it answered. A hard erase of an actor drops every breakpoint
+//! read as it or answered by it. A keep re-checks, in its own write, that
+//! no record its row binds is gone, so a late keep never brings a row back.
+//! Keeping a generation forgets the older generations of the same MESSAGE
+//! that no read addresses. No age, count or size bound applies across a
+//! conversation.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,11 +42,11 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{Memory, RoomTurnHandle};
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::secret_custody::CustodyWrite;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault, WriteActor};
 use oneiron_model::llm::LlmRequest;
@@ -143,12 +152,18 @@ impl ChatBreakpoint {
     }
 }
 
-/// Keeps `seed` as the breakpoint of `message`'s stream `generation`, beside
-/// every other generation's: a Continue's new generation and a Retry's new
-/// reply each keep their own, and the source's stays as it was. The row is
+/// Keeps `seed` as the breakpoint of `message`'s stream `generation`. A
+/// Continue's new generation keeps its own beside its source's, and a
+/// Retry's new reply keeps its own beside its source reply's. The row is
 /// what the side-row wall stores. A generation keeps its row once: kept
 /// before its call was sent (FIX 5028), the terminal's keep confirms it and
 /// writes nothing again.
+///
+/// The same write re-checks the records the seed binds (FIX 5033). When one
+/// is gone, nothing is kept: its erase already took the rows that hold it,
+/// and a reuse finds the breakpoint missing. The write then forgets each
+/// other generation of `message` that is neither its latest terminal's nor
+/// its stream's in flight: no read addresses it again.
 ///
 /// # Errors
 ///
@@ -161,12 +176,122 @@ pub fn keep_chat_breakpoint(
 ) -> Result<()> {
     let key = (seed.conversation, message, generation);
     vault.with_write_txn_grouped(|txn| {
-        if BREAKPOINTS.contains(&vault.store, &*txn, &key)? {
+        if !BREAKPOINTS.contains(&vault.store, &*txn, &key)?
+            && !seed_binds_gone_in_txn(vault, txn, message, &seed)?
+        {
+            BREAKPOINTS.admit(vault, txn, &key, &mut seed)?;
+            BREAKPOINTS.put(vault, txn, &key, &seed)?;
+        }
+        forget_superseded_in_txn(vault, txn, seed.conversation, message, Some(generation))
+    })
+}
+
+/// Forgets the generations of `message` in `conversation` that no read
+/// addresses (FIX 5033). A reply's terminal calls it once it confirms the
+/// seed its generation kept before its call was sent: the generation the
+/// reply continued is no longer the latest. A write opens only when a row
+/// is to go.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn forget_superseded_chat_breakpoints(
+    vault: &Vault,
+    conversation: EntityId,
+    message: EntityId,
+) -> Result<()> {
+    {
+        let txn = vault.store.env.read_txn()?;
+        if superseded_generations_in_txn(vault, &txn, conversation, message, None)?.is_empty() {
             return Ok(());
         }
-        BREAKPOINTS.admit(vault, txn, &key, &mut seed)?;
-        BREAKPOINTS.put(vault, txn, &key, &seed)
+    }
+    vault.with_write_txn_grouped(|txn| {
+        forget_superseded_in_txn(vault, txn, conversation, message, None)
     })
+}
+
+/// Whether a record `seed` binds is missing or gone in `txn` (FIX 5033).
+/// The answering agent's definition, the conversation, each turn and
+/// MESSAGE it was read from, each summary it holds and each craft note it
+/// shows must be stored and not deleted. The reader, the reply MESSAGE and
+/// the conversation's HEAD must not be deleted; a Retry's MESSAGE that has
+/// not landed yet is not.
+fn seed_binds_gone_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+    seed: &ChatBreakpoint,
+) -> Result<bool> {
+    let read = seed
+        .sources
+        .iter()
+        .flat_map(|span| std::iter::once(span.turn).chain(span.messages.iter().copied()));
+    let craft = seed
+        .craft_entries
+        .iter()
+        .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+        .filter_map(|entry| EntityId::from_hex(&entry.reference).ok());
+    let stored: Vec<EntityId> = [seed.agent, seed.conversation]
+        .into_iter()
+        .chain(read)
+        .chain(seed.summaries.iter().copied())
+        .chain(craft)
+        .collect();
+    for id in &stored {
+        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)? {
+            return Ok(true);
+        }
+    }
+    let named: Vec<EntityId> = [seed.reader, message]
+        .into_iter()
+        .chain(seed.branch)
+        .chain(stored)
+        .collect();
+    crate::llm::owner_gone_in_txn(vault, txn, &named)
+}
+
+/// The generations of `message` in `conversation` whose rows no read
+/// addresses (FIX 5033): neither `kept`, nor the MESSAGE's latest
+/// terminal's, which [`chat_breakpoint`] reads, nor its stream's in flight
+/// or recoverable, which its lifecycle releases. While a stream seed that
+/// does not decode stands, every generation is held.
+fn superseded_generations_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    conversation: EntityId,
+    message: EntityId,
+    kept: Option<EntityId>,
+) -> Result<Vec<EntityId>> {
+    let Some(held) = crate::memory::message_stream_held_generations_in_txn(vault, txn, &message)?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut prefix = conversation.as_bytes().to_vec();
+    prefix.extend_from_slice(message.as_bytes());
+    Ok(BREAKPOINTS
+        .scan_keys(&vault.store, txn, &prefix)?
+        .into_iter()
+        .map(|(_, _, generation)| generation)
+        .filter(|generation| kept != Some(*generation) && !held.contains(generation))
+        .collect())
+}
+
+/// Forgets, in the caller's write, each row of `message` in `conversation`
+/// that [`superseded_generations_in_txn`] names, with the custody it lifted.
+fn forget_superseded_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    conversation: EntityId,
+    message: EntityId,
+    kept: Option<EntityId>,
+) -> Result<()> {
+    let superseded = superseded_generations_in_txn(vault, txn, conversation, message, kept)?;
+    let write = CustodyWrite::of(vault);
+    for generation in superseded {
+        forget_chat_breakpoint_in_txn(&write, txn, &(conversation, message, generation))?;
+    }
+    Ok(())
 }
 
 /// Drops the breakpoint of `message`'s stream `generation` in
@@ -315,10 +440,11 @@ fn craft_entry_stands_in(
 
 /// Drops the breakpoints an erase of `id` covers: every one of the
 /// conversation `id` is, or that its TURN, MESSAGE or landed summary belongs
-/// to, and, for a CLAIM, each one whose request shows it as craft (FIX
-/// 8135), every other prefix kept as it was. A source whose conversation
-/// does not resolve drops every breakpoint, since one may hold its words.
-/// Registered in `deletion/derived_rows.rs`.
+/// to; for a CLAIM, each one whose request shows it as craft (FIX 8135); for
+/// an AGENT_DEF, each one that agent answered, since its request holds the
+/// agent's instructions (FIX 5033). Every other prefix is kept as it was. A
+/// source whose conversation does not resolve drops every breakpoint, since
+/// one may hold its words. Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_chat_breakpoints_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -339,6 +465,9 @@ pub(crate) fn erase_chat_breakpoints_in_txn(
         ENTITY_TYPE_SUMMARY => Ok(crate::compaction::conversation_receipt_in(store, txn, id)?
             .and_then(|receipt| receipt.evidence().map(|evidence| evidence.conversation))),
         ENTITY_TYPE_CLAIM => return erase_craft_breakpoints_in_txn(write, txn, id),
+        ENTITY_TYPE_AGENT_DEF => {
+            return forget_breakpoints_where_in_txn(write, txn, |seed| seed.agent == *id);
+        }
         _ => return Ok(()),
     };
     match conversation {
@@ -371,19 +500,54 @@ fn erase_craft_breakpoints_in_txn(
     txn: &mut heed::RwTxn<'_>,
     claim: &EntityId,
 ) -> Result<()> {
-    let store = write.store;
     let reference = claim.to_hex();
-    let shown: Vec<_> = BREAKPOINTS
-        .scan(store, &*txn)?
-        .into_iter()
-        .filter(|(_, seed)| {
-            seed.craft_entries
-                .iter()
-                .any(|entry| entry.kind == ManifestKind::ActorClaim && entry.reference == reference)
-        })
-        .map(|(key, _)| key)
-        .collect();
-    for key in &shown {
+    forget_breakpoints_where_in_txn(write, txn, |seed| {
+        seed.craft_entries
+            .iter()
+            .any(|entry| entry.kind == ManifestKind::ActorClaim && entry.reference == reference)
+    })
+}
+
+/// The hard erase of `actor` drops every breakpoint read as it or answered
+/// by it (FIX 5033): its row holds the words read for that reader and the
+/// agent's instructions. CHAT_BREAKPOINT's actor scrub, so marker-only
+/// replay and checkpoint restore run it too.
+pub(crate) fn scrub_chat_breakpoint_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    forget_breakpoints_where_in_txn(&CustodyWrite::of(vault), txn, |seed| {
+        seed.reader == *actor || seed.agent == *actor
+    })
+}
+
+/// Drops each breakpoint `covered` selects, with the custody its row lifted
+/// (FIX 5033). A row that does not decode goes too: it may hold the words
+/// the erase takes, and no reuse reads it.
+fn forget_breakpoints_where_in_txn(
+    write: &CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    covered: impl Fn(&ChatBreakpoint) -> bool,
+) -> Result<()> {
+    let mut keys = Vec::new();
+    for row in BREAKPOINTS.iter_raw_from(write.store, &*txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, EntityId, EntityId) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if BREAKPOINTS
+            .decode_value(&bytes)
+            .ok()
+            .is_none_or(|seed| covered(&seed))
+        {
+            keys.push(key);
+        }
+    }
+    for key in &keys {
         forget_chat_breakpoint_in_txn(write, txn, key)?;
     }
     Ok(())

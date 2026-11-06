@@ -7,7 +7,8 @@
 //! and sends no fallback while the seed still stands, so no restart reads a
 //! prefix that did not answer. A reply that never starts, or saves no
 //! receipt, keeps none. Once the reply is saved, its terminal confirms the
-//! seed; one whose early keep failed is kept then.
+//! seed; one whose early keep failed is kept then. Either way the older
+//! generations of the reply's MESSAGE that no read addresses go (FIX 5033).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +17,8 @@ use futures_util::StreamExt;
 use oneiron::attempt_queue::ManifestEntry;
 use oneiron::compaction::ChatLog;
 use oneiron::conversation::{
-    ChatBreakpoint, ChatBreakpointRung, forget_chat_breakpoint, keep_chat_breakpoint,
+    ChatBreakpoint, ChatBreakpointRung, forget_chat_breakpoint, forget_superseded_chat_breakpoints,
+    keep_chat_breakpoint,
 };
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MessageStreamHandle, MessageStreamReceipt};
@@ -130,6 +132,28 @@ impl SeedSlot {
                 tracing::warn!(kind = ?error.kind(), "a chat reply's breakpoint was not dropped");
                 false
             }
+        }
+    }
+
+    /// Forgets the older generations of the reply's MESSAGE that no read
+    /// addresses once its terminal confirms its seed (FIX 5033). A forget
+    /// that fails leaves them for the MESSAGE's next keep.
+    fn forget_superseded(&self) {
+        let Some(seed) = &self.seed else {
+            return;
+        };
+        let forgotten = crate::server::blocking(|| {
+            forget_superseded_chat_breakpoints(
+                &self.vault,
+                seed.conversation,
+                self.handle.message_id(),
+            )
+        });
+        if let Err(error) = forgotten {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a chat reply's superseded breakpoints were not forgotten"
+            );
         }
     }
 }
@@ -339,7 +363,8 @@ fn first_or_today(
 /// 5028), when its own captured call answered it and `saved` is its own
 /// generation's receipt. A seed kept before its call was sent stands
 /// confirmed, or stays gone where an erase took it with its conversation's
-/// words since; one whose early keep failed is kept now. A reply its call
+/// words since, and the generations it superseded go (FIX 5033); one whose
+/// early keep failed is kept now, and its keep forgets them. A reply its call
 /// did not answer, or that saved no receipt, keeps none. A breakpoint that
 /// is not kept leaves the reply's actions to run as they always did.
 pub(in crate::api::ai::chat) fn keep(
@@ -358,6 +383,7 @@ pub(in crate::api::ai::chat) fn keep(
         return;
     }
     if slot.kept.load(Ordering::Acquire) {
+        slot.forget_superseded();
         return;
     }
     let Some(seed) = slot.seed.clone() else {
