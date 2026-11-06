@@ -34,6 +34,7 @@
 //! open without those proofs. Organization routing selects one such vault;
 //! it never adds cross-vault reads or replaces the vault's membership policy.
 
+mod allocation;
 mod args;
 mod attested_routes;
 mod backup_facts;
