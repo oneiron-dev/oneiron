@@ -175,6 +175,8 @@ pub struct SyncServerConfig {
     /// `[merge_queue]`: the queue checker's executor (FIX 6868). `None` is
     /// isolated and unconfigured.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
+    /// Explicit failure healer for served agent runs; None keeps human-only escalation.
+    pub agent_failure_healer: Option<oneiron::failure_ladder::healer_dispatch::HealerSlot>,
     /// The organ builds this server runs as first party, by blake3 (64 lowercase
     /// hex), from `--trusted-organ-build` alone (FIX 7644), which a vault VM's
     /// init passes from its config drive's list (FIX 7889). Listing a digest is
@@ -252,6 +254,7 @@ impl Default for SyncServerConfig {
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
+            agent_failure_healer: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
             hosted_private_origins: std::collections::BTreeSet::new(),
         }
@@ -265,6 +268,7 @@ impl SyncServerConfig {
     }
 
     pub fn validate(&self) -> Result<(), oneiron::Error> {
+        super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
         if self.ephemeral_timeout_ms <= 0 {
             return Err(oneiron::Error::sync_protocol(
                 oneiron::SyncProtocolValidation::InvalidConfig {
@@ -387,8 +391,8 @@ pub struct ServeConfig {
     /// The `[failure_signals]` section: the publisher this deployment's
     /// failure signals go to.
     pub failure_signals: FailureSignalsConfig,
-    /// The `[self_heal]` section: the model-graded detectors over retrieval
-    /// telemetry.
+    /// The `[self_heal]` section: model-graded detectors over retrieval telemetry
+    /// and explicit failure-healer routing for served agent runs.
     pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
@@ -650,6 +654,7 @@ impl ServeConfig {
             // supervisor's.
             ingress: IngressAuth::Configured,
             merge_queue: self.merge_queue.clone(),
+            agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             // Managed boot alone sets it (FIX 7657).
             hosted_private_origins: std::collections::BTreeSet::new(),

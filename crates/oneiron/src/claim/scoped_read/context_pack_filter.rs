@@ -39,6 +39,18 @@ impl ScopedRead<'_> {
         critical: &PackCriticalAccounting,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
     ) -> Result<ScopedReadReceipt> {
+        self.filter_context_pack_critical_projected_under(pack, critical, disclosure, |_, _| Ok(()))
+            .map(|(receipt, ())| receipt)
+    }
+
+    /// Keeps a dependent projection in the final pack filter's snapshot.
+    pub(crate) fn filter_context_pack_critical_projected_under<T>(
+        &self,
+        pack: &mut ContextPack,
+        critical: &PackCriticalAccounting,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+        project: impl FnOnce(&heed::RoTxn<'_>, &ContextPack) -> Result<T>,
+    ) -> Result<(ScopedReadReceipt, T)> {
         let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
         // One authority fold for this read snapshot, not one per claim in a
@@ -50,8 +62,10 @@ impl ScopedRead<'_> {
             .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
         let result = (|| {
             // One relationship authority for every row this filter checks in
-            // its snapshot, not one per row (FIX 11648).
-            let held = HeldAuthority::default();
+            // its snapshot, not one per row (FIX 11648). Its filter resolved
+            // with no request, so A judges a row B refuses under each of the
+            // reader's own live Grants' floors alone (FIX 7528).
+            let held = HeldAuthority::for_request(None);
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {
@@ -156,7 +170,14 @@ impl ScopedRead<'_> {
                 });
             }
             crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
-            Ok(self.receipt_for(None, &policy, &filter, suppressed))
+            let projected = project(&rtxn, pack)?;
+            // The pack's receipt reports the candidates its search ranked,
+            // the key's own rows and its own live Grants' (FIX 7528).
+            let candidates = self.candidate_filter_in(&rtxn, &policy, &filter, None);
+            Ok((
+                self.receipt_for(None, &policy, &candidates, suppressed),
+                projected,
+            ))
         })();
         self.end_recall_plan()?;
         result

@@ -17,7 +17,7 @@ use crate::temporal::TimeRange;
 
 use super::brief::{
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief, optimize_brief_bound_at,
+    optimize_brief_bound_at, optimize_brief_with_read_at,
 };
 use super::dials::{invalid, validate_text};
 use super::gate::{SKILL_EDIT_CYCLE_MAX_BYTES, SkillEditCycle};
@@ -201,6 +201,8 @@ fn run_skill_optimize_bound(
             "skill optimization must run under the Coach authority",
         ));
     }
+    let memory = vault.memory(authority.actor, crate::EdgeActorClass::System);
+    let source_read = super::coach_read::CoachReadRequest::from_memory(&memory);
     let candidates = match resident {
         Some(resident) => super::selection::optimize_candidates_for_resident(vault, &resident)?,
         None => optimize_candidates(vault)?,
@@ -209,13 +211,14 @@ fn run_skill_optimize_bound(
         .into_iter()
         .find(|candidate| target.is_none_or(|target| candidate.skill == target))
     else {
-        return affirm_healthy_skill(vault, resident, target);
+        return affirm_healthy_skill(vault, resident, target, &source_read);
     };
-    let brief = optimize_brief_bound_at(
+    let brief = optimize_brief_with_read_at(
         vault,
         &candidate,
         owner.map(crate::write_envelope::WriteActor::entity_ref),
         learned_at,
+        Some(&source_read),
     )?;
     let (desc, rationale) = match author.draft(&brief)? {
         SkillEditDraft::Decline { rationale } => {
@@ -556,6 +559,7 @@ fn affirm_healthy_skill(
     vault: &Vault,
     resident: Option<EntityId>,
     target: Option<EntityId>,
+    source_read: &super::coach_read::CoachReadRequest,
 ) -> Result<SkillOptimizeOutcome> {
     let Some(candidate) = affirm_candidates(vault, resident)?
         .into_iter()
@@ -568,7 +572,13 @@ fn affirm_healthy_skill(
             affirmed_receipts: Vec::new(),
         });
     };
-    let brief = optimize_brief(vault, &candidate)?;
+    let brief = optimize_brief_with_read_at(
+        vault,
+        &candidate,
+        None,
+        crate::unix_seconds_now(),
+        Some(source_read),
+    )?;
     let txn = vault.store.env.read_txn()?;
     let affirmed_receipts =
         crate::skill_reliability::attributed_outcome_results(vault, &txn, &candidate.skill)?

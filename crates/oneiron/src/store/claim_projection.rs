@@ -257,7 +257,7 @@ type PredicateRow = Result<(([u8; 32], EntityId), String)>;
 /// `after`, in id order. A walk that pages through every page reads each claim
 /// once, however long the list, without a whole-list ceiling.
 pub(crate) fn claim_ids_for_predicate_page_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     predicate: &str,
     after: Option<EntityId>,
