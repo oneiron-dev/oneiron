@@ -45,7 +45,8 @@ use super::{
 };
 use crate::code_run::shadow_runner::{
     PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowDeterminism, ShadowStatus,
-    ShadowUnavailable, ShadowUnavailableReason as Reason, prepare_shadow_step_source,
+    ShadowStepRun, ShadowUnavailable, ShadowUnavailableReason as Reason,
+    prepare_shadow_step_source,
 };
 use crate::code_sandbox::SANDBOX_WIT_WORLD_NAME;
 use crate::compaction::output::OutputRef;
@@ -376,6 +377,19 @@ pub fn execute_contribution_fork(
         live: Arc::new(|| false),
     };
     let run = run_shadow_step(step, response, runtime, store, cancel, &feedback)?;
+    executed_run(step, run, runtime_pin, store)
+}
+
+/// What `run`, a program run of `step` on the component pinned at
+/// `runtime_pin`, left, read back whole from `store`: unavailable for the
+/// shadow runner's own reason, a recorded call answered without the
+/// response its live guest read, a step left open, or a body marked or gone.
+fn executed_run(
+    step: &PreparedShadowStep,
+    run: ShadowStepRun,
+    runtime_pin: [u8; 32],
+    store: &ShadowBodyStore,
+) -> Ran<ExecutedFork> {
     let status = match run.status {
         ShadowStatus::Unavailable { unavailable } => return Ok(Err(unavailable)),
         ShadowStatus::StepComplete { done } => Some(ExecutedStepStatus::StepComplete { done }),
