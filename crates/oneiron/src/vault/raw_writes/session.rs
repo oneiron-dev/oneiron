@@ -42,7 +42,7 @@ use crate::memory::Memory;
 use crate::off_record::OffRecordSession;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
-use crate::store::SessionStoreView;
+use crate::store::{RoomGateDecision, SessionStoreView};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use oneiron_contracts::affect::Vad;
@@ -50,6 +50,7 @@ use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::memory::MemoryResult;
 
 mod composed_reads;
+mod credential_read;
 
 /// One raw write as its room stages it.
 pub(super) enum RawOp<'a> {
@@ -143,10 +144,12 @@ impl Memory<'_> {
         let source_run = crate::skill_attribution::current_run_write_token();
         let mut entries = Vec::with_capacity(ops.len());
         let mut agent_puts = Vec::new();
+        // Each staged claim's gate decision, kept beside it (FIX 9967).
+        let mut decisions = Vec::new();
         for op in ops {
             let (row, occurred, learned_at, op) = match *op {
                 RawOp::Put(put) => {
-                    self.admit_staged_put(&session, put)?;
+                    decisions.extend(self.admit_staged_put(&session, put)?);
                     if put.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
                         agent_puts.push(put);
                     }
@@ -248,6 +251,14 @@ impl Memory<'_> {
                     }
                 }
             }
+            // Each claim's gate decision, in the segment that stages the
+            // claim: never in base, and gone with the room (FIX 9967).
+            if !decisions.is_empty() {
+                let view = session.read_view()?;
+                for decision in &decisions {
+                    crate::store::stage_room_gate_decision_in_txn(&view, wtxn, decision)?;
+                }
+            }
             Ok(())
         });
         staged.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))?;
@@ -336,20 +347,21 @@ impl Memory<'_> {
 
     /// The refusals a put meets on base before its room stages it: the
     /// public raw-put door's, and a claim's gate on base policy under its
-    /// caller's envelope, whose decision is not kept.
+    /// caller's envelope, whose decision it answers for the room to stage
+    /// beside the claim (FIX 9967).
     fn admit_staged_put(
         &self,
         session: &OffRecordSession<'_>,
         put: RawEntityPut<'_>,
-    ) -> MemoryResult<()> {
+    ) -> MemoryResult<Option<RoomGateDecision>> {
         crate::batch::validate_staged_raw_put(put.entity_type, put.data, put.learned_at)?;
         if put.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && let Some(envelope) = self.raw_claim_envelope(put.data)?
         {
             let body = crate::claim::validate_claim_body_and_decode(put.data, false)?;
-            session.session_gate_check(put.id, &body, &envelope)?;
+            return Ok(session.session_gate_decision(put.id, &body, &envelope)?);
         }
-        Ok(())
+        Ok(None)
     }
 
     /// `put` on `batch`, its claim under its verified caller's envelope.
@@ -578,7 +590,8 @@ fn staged_claims(
 }
 
 /// The claim gate's unresolved-record-reference refusal, as the base batch
-/// words it; the room keeps no gate decision, so none is receipted.
+/// words it; the refused write stages nothing in the room, its claims'
+/// decisions included, so none is receipted.
 fn unresolved_reference() -> Error {
     Error::Gate(GateError::GateWriteRejected {
         outcome: "deny",

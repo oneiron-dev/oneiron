@@ -38,16 +38,6 @@ impl crate::vault::Vault {
         actor_key: ScopedReadActorKey,
         view: &'a crate::store::SessionStoreView<'a>,
     ) -> ScopedRead<'a> {
-        // Every row the room staged carries the position its write staged
-        // beside it (`record_scope::stage_session_position`), and a missing
-        // one is not inferred (WILL L11-01). A credential that reads only
-        // some worlds reads the room's rows while the room placed each of
-        // them itself; a room that restages or hides a base row, or holds a
-        // row it could not place, keeps it on base alone: the room's rows
-        // have no name and no count for it (DEC-0005).
-        let placed = !actor_key.has_world_ceiling()
-            || crate::federation::record_scope::room_rows_placed(view);
-        let session_view = placed.then_some(view);
         ScopedRead {
             vault: self,
             actor_key,
@@ -56,7 +46,11 @@ impl crate::vault::Vault {
             audience_cache: Mutex::new(Default::default()),
             room_ceiling: Mutex::new(None),
             room_ceilings_built: AtomicUsize::new(0),
-            session_view,
+            // Every key reads the room. A credential that reads only some
+            // worlds places each row the room serves alone (FIX 5161, Sol
+            // R22): a row it cannot place is absent for it, and the rest of
+            // the room still reads (`ScopedRead::room_row_placed_in`).
+            session_view: Some(view),
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
@@ -315,8 +309,7 @@ impl<'a> ScopedRead<'a> {
         self.vault
     }
 
-    /// Whether this read sees a room's rows: false outside a room, and for
-    /// a credential that reads base alone in one.
+    /// Whether this read sees a room's rows: false outside a room.
     pub(crate) fn reads_room(&self) -> bool {
         self.session_view.is_some()
     }
@@ -333,17 +326,34 @@ impl<'a> ScopedRead<'a> {
 
     /// Both canonical and session reads use the same ports. A session adapter
     /// composes overlay union base without changing policy admission. An LFS
-    /// chunk no published object holds yet is no record a scoped read finds.
+    /// chunk no published object holds yet is no record a scoped read finds,
+    /// and neither is a room row this read cannot place
+    /// ([`Self::room_row_placed_in`]).
     pub(super) fn entity_record_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityRecord>> {
+        Ok(match self.entity_record_loaded_in(txn, id)? {
+            LoadedRecord::Placed(row) => Some(row),
+            LoadedRecord::Absent | LoadedRecord::Unplaced(_) => None,
+        })
+    }
+
+    /// [`Self::entity_record_in`], telling a room row this read cannot place
+    /// from a row that is not there (review P1 #5926). A gate that needs
+    /// every part of a whole refuses the whole for an unplaced part.
+    pub(super) fn entity_record_loaded_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<LoadedRecord> {
         let record = match self.session_view {
             Some(view) => view.port_entity_record(txn, id)?,
             None => self.vault.port_entity_record(txn, id)?,
         };
-        match record {
+        Ok(match record {
+            None => LoadedRecord::Absent,
             Some(row)
                 if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                     &self.vault.store,
@@ -352,9 +362,34 @@ impl<'a> ScopedRead<'a> {
                     row.entity_type,
                 )? =>
             {
-                Ok(None)
+                LoadedRecord::Absent
             }
-            record => Ok(record),
+            Some(row) if !self.room_row_placed_in(txn, id, row.entity_type, &row.body)? => {
+                LoadedRecord::Unplaced(row)
+            }
+            Some(row) => LoadedRecord::Placed(row),
+        })
+    }
+
+    /// Whether the body `data` of `kind` this read's room serves for `id`
+    /// stands at a position this read may place it by (FIX 5161, Sol R22).
+    /// Only a credential that reads some worlds places room rows; every
+    /// other read, and every read outside a room, takes each row as it
+    /// stands. A row that cannot be placed is absent: no name and no count
+    /// (DEC-0005). A caller that loads a room row by another path asks this
+    /// too.
+    pub(super) fn room_row_placed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        data: &[u8],
+    ) -> Result<bool> {
+        match self.session_view {
+            Some(view) if self.actor_key.has_world_ceiling() => {
+                crate::federation::record_scope::room_row_placed(view, txn, *id, kind, data)
+            }
+            _ => Ok(true),
         }
     }
 
@@ -450,6 +485,39 @@ impl ScopedRead<'_> {
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    /// A code-memory payload projection counts only a readable, non-opaque row.
+    pub(crate) fn code_memory_payload_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> usize {
+        let readable = (|| {
+            if self.admit_in::<()>(txn, id, || Ok(None))?.suppression() == 0 {
+                return Ok(false);
+            }
+            let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+                return Ok(false);
+            };
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            // A header-only CLAIM cannot enter the nested shell reader here.
+            if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
+                return Ok(false);
+            }
+            let policy = self.policy_manifest_in(txn)?;
+            let floor = self.actor_retrieval_floor(&policy)?;
+            self.is_entity_raw_readable_held_in(
+                txn,
+                &policy,
+                id,
+                &raw,
+                &floor,
+                &super::access_gate::HeldAuthority::for_request(None),
+            )
+        })();
+        usize::from(readable.unwrap_or(false))
     }
 
     /// Whether this read's credential is live in `txn` and the worlds the
@@ -610,4 +678,15 @@ fn owner_proof_holds_in(
     owner: &crate::consent::AuthenticatedOwner,
 ) -> Result<()> {
     owner.revalidate_in_txn(vault, txn).map(drop)
+}
+
+/// A row a scoped read loads by id ([`ScopedRead::entity_record_loaded_in`]).
+pub(super) enum LoadedRecord {
+    /// No row, or no record a scoped read finds (an unpublished LFS chunk).
+    Absent,
+    /// A row the room serves that this read cannot place (FIX 5161): absent
+    /// for this read, yet present.
+    Unplaced(EntityRecord),
+    /// A row this read takes as it stands.
+    Placed(EntityRecord),
 }

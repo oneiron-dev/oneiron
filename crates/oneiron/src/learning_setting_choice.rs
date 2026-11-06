@@ -376,6 +376,28 @@ fn rows_in_order(
     Ok(out)
 }
 
+/// The first owner model pin in the spawn's actual scopes. A fixed value
+/// applies before model evidence is read; seeds remain model priors, never
+/// fixed overrides.
+///
+/// # Errors
+///
+/// Storage errors or a row that does not decode.
+pub(crate) fn owner_spawn_model_pin_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    scopes: &[SettingScope],
+) -> Result<Option<ModelId>> {
+    Ok(rows_in_order(store, txn, scopes, SpawnChoice::Model)?
+        .into_iter()
+        .find_map(|(row, _)| match row {
+            SpawnOverride::Pin {
+                value: ChoiceValue::Model(model),
+            } => Some(model),
+            _ => None,
+        }))
+}
+
 /// Lays the owner's choices under one spawn's need: each field takes the
 /// first row in [`rows_in_order`] it admits. A field the call pinned keeps
 /// the call's pin; a field the call seeded keeps its seed unless an owner
@@ -497,6 +519,33 @@ fn lay<T>(
     let (value, source) = found?;
     *field = Some(value);
     Some(source)
+}
+
+/// Read the owner's budget beneath an unplanned spawn with no explicit cap.
+/// The caller keeps its original request identity and admits this same result
+/// through the ordinary launch budget path; this is not a spend grant.
+pub(crate) fn owner_spawn_budget_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &crate::task_type::TaskTypeRef,
+) -> Result<Option<u64>> {
+    let type_ref = crate::learning::TypeRef::from(type_ref);
+    let scopes = read_scopes_in_txn(vault, txn, project, Some(&type_ref))?;
+    let mut budget = None;
+    let _ = lay(
+        &mut budget,
+        rows_in_order(&vault.store, txn, &scopes, SpawnChoice::Budget)?,
+        |value| match value {
+            ChoiceValue::Budget(units) => Some(units),
+            _ => None,
+        },
+        |_| true,
+    );
+    Ok(crate::agent_dispatch::resolved_budget_ask(
+        budget.as_ref(),
+        None,
+    ))
 }
 
 impl LivePlanRequest<'_> {

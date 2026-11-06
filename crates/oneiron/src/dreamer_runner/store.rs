@@ -528,11 +528,19 @@ impl<'a> DreamerRunnerStore<'a> {
         reader: crate::claim::WeaveDigestReader,
         scheduled_for: u64,
         rendered_at: u64,
+        report_revision: crate::EntityId,
+        enqueued_at: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let input = crate::claim::weave_lens_attempt_input(reader, scheduled_for, rendered_at);
+        let input = crate::claim::weave_lens_attempt_input(
+            reader,
+            scheduled_for,
+            rendered_at,
+            report_revision,
+        );
         let dedupe = format!(
-            "{DREAMER_WEAVE_LENS_ATTEMPT_KIND}:{}:{scheduled_for}:{rendered_at}",
-            reader.id().to_hex()
+            "{DREAMER_WEAVE_LENS_ATTEMPT_KIND}:{}:{scheduled_for}:{rendered_at}:{}",
+            reader.id().to_hex(),
+            report_revision.to_hex()
         );
         self.enqueue_kind_in_txn(
             wtxn,
@@ -544,7 +552,7 @@ impl<'a> DreamerRunnerStore<'a> {
             },
             Some(dedupe),
             None,
-            rendered_at,
+            enqueued_at,
         )
     }
 
