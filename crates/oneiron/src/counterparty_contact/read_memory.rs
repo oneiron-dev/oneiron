@@ -214,7 +214,56 @@ impl CounterpartyContactRead {
     }
 }
 
+/// Only the validated fields used by contact existence and interlocutor reads.
+pub(crate) struct CounterpartyContactLabelRead {
+    counterparty: ClaimStringRead,
+    state: CounterpartyContactState,
+}
+
+impl CounterpartyContactLabelRead {
+    pub(super) fn from_staged_head(
+        counterparty: ClaimValueRead,
+        scalars: CounterpartyContactScalarHeads,
+        notes_validation: crate::Result<()>,
+    ) -> crate::Result<Self> {
+        let state = scalars.decode_label_state(&counterparty, notes_validation)?;
+        Ok(Self {
+            counterparty: counterparty
+                .try_into_string()
+                .unwrap_or_else(|_| unreachable!("validated contact counterparty")),
+            state,
+        })
+    }
+
+    pub(super) fn fold_fields(&mut self) -> (&str, &mut CounterpartyContactState) {
+        (&self.counterparty, &mut self.state)
+    }
+
+    pub(crate) fn status(&self) -> CounterpartyContactStatus {
+        self.state.status
+    }
+
+    pub(crate) fn first_touch(&self) -> CounterpartyFirstTouch {
+        self.state.first_touch
+    }
+
+    pub(crate) fn into_counterparty_value(self) -> ClaimValueRead {
+        self.counterparty.into_value()
+    }
+}
+
 impl Vault {
+    /// Answers contact existence after full canonical validation and opt-out folding.
+    pub fn has_counterparty_contact_with_memory(
+        &self,
+        id: &EntityId,
+        memory: ClaimScopeReadMemory<'_>,
+    ) -> std::result::Result<bool, ClaimBodyReadError> {
+        let rtxn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        self.get_counterparty_contact_label_with_memory_in_txn(&rtxn, id, Some(memory))
+            .map(|record| record.is_some())
+    }
+
     /// Retains canonical head values on the supplied line without materializing
     /// unused relationship sets or copying the returned strings and notes.
     pub fn get_counterparty_contact_with_memory(

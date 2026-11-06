@@ -6,6 +6,7 @@ use super::codec::{
 };
 use super::lifecycle::{
     comm_fold_error, counterparty_contact_in_claims_in_txn,
+    counterparty_contact_label_with_memory_in_claims_in_txn,
     counterparty_contact_with_memory_in_claims_in_txn, live_counterparty_contact_heads_in_txn,
     rematerialize_contact_cache_in_txn, rematerialize_party_contact_cache_in_txn,
     supersede_family_owned_claim_in_txn,
@@ -332,6 +333,21 @@ impl Vault {
     ) -> std::result::Result<Option<super::CounterpartyContactRead>, ClaimBodyReadError> {
         if let Some(record) =
             counterparty_contact_with_memory_in_claims_in_txn(self, rtxn, id, memory)?
+        {
+            return Ok(Some(record));
+        }
+        self.reject_non_contact_row_in_txn(rtxn, id)?;
+        Ok(None)
+    }
+
+    pub(crate) fn get_counterparty_contact_label_with_memory_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        memory: Option<ClaimScopeReadMemory<'_>>,
+    ) -> std::result::Result<Option<super::CounterpartyContactLabelRead>, ClaimBodyReadError> {
+        if let Some(record) =
+            counterparty_contact_label_with_memory_in_claims_in_txn(self, rtxn, id, memory)?
         {
             return Ok(Some(record));
         }

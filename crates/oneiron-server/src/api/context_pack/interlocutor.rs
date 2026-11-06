@@ -129,8 +129,8 @@ pub(crate) fn resolve_core_interlocutor_set(
             let contact = if readable {
                 match memory {
                     Some(memory) => vault
-                        .get_counterparty_contact_with_memory(&principal_id, memory)
-                        .map(|record| record.map(|_| ())),
+                        .has_counterparty_contact_with_memory(&principal_id, memory)
+                        .map(|exists| exists.then_some(())),
                     None => vault
                         .get_counterparty_contact(&principal_id)
                         .map(|record| record.map(|_| ()))

@@ -73,8 +73,8 @@ that same field validator.
 A memory-bound contact lookup returns an opaque `CounterpartyContactRead`, not
 an unguarded `CounterpartyContactRecord`. The common field decoder validates by
 borrow, using the record's same scalar invariants and note checks. The read keeps
-the original counterparty value and notes array, including their actual backing
-and guards, until its last use. It returns strings by borrow and notes through a
+the original counterparty string backing and notes array, including their actual
+backing and guards, until its last use. It returns strings by borrow and notes through a
 borrowed iterator; it does not allocate a second string or a typed notes vector.
 Only the eight scalar fields are copied. The party opt-out fold runs through the
 same store hook on the actual counterparty and scalar state, and still changes
@@ -476,17 +476,22 @@ native decoding behavior. Strings and invalid UTF-8 move the same byte backing.
 The DOM holder lives through canonical validation. After the top-level iterator
 has dropped its keys, discarded fields and container backing, it measures the
 remaining predicate, value, evidence, scope, session tag and raw relationship
-backing. Splitting the value's allocated charge creates its existing private
-payload holder without changing the shared ledger or making another admission.
-Other live DOM inputs stay held through history selection and typed relationship
-allocation; that allocation's floor includes both disjoint holders. Decode
-errors and allocation refusals keep their distinct native result variants.
+backing. Splitting the value's and predicate's allocated charges creates their private
+field holders without changing the shared ledger or making another admission.
+Remaining DOM inputs stay held through history selection and typed relationship
+allocation; that allocation's floor includes the original total across these
+separate holders. The full-body terminal then transfers the evidence, scope and
+session-tag backing into another trailing holder. Those fields drop before their
+holder. The value-head terminal drops its unused metadata with the DOM instead.
+A final history projection records these fields' actual capacities after
+allocation; it does not pre-admit the history decoder. Decode errors and
+allocation refusals keep their distinct native result variants.
 
 This reserves requested backing, not an allocator's unobservable excess capacity
 before allocation. Excess capacity is recorded after allocation. It is not a
-hard allocation-bound or multi-holder FIFO-progress proof. History projection,
-returned full-body fields other than the guarded value, later typed copies and
-other consumers still need their own allocation and last-use custody. No new
+hard allocation-bound or multi-holder FIFO-progress proof. History projection
+scratch, later typed copies and other consumers still need their own allocation
+and last-use custody. No new
 memory cap, deadline, default, wire format or refusal policy is introduced.
 
 
@@ -584,3 +589,26 @@ held-state list. Removing the raw row copy does not admit the decoded history
 allocations or establish the contact collector's retained-input/FIFO progress
 and typed-output custody.
 
+
+## Contact existence and label projections
+
+The server principal-contact existence check and core `ContactRef` label resolver
+use a private contact projection. They keep the selected counterparty string and
+its original lease, plus scalar state. Neither consumer needs notes after their
+validation. The shared collector runs the original notes wire-type and content
+checks, retains their exact typed result, then drops the notes array and its
+lease before the next canonical claim read. Later reads pin only the input still
+held by this projection.
+
+Every original canonical read, current/history selection, live-head filter and
+party opt-out fold still runs. Later read errors precede duplicate, missing and
+field errors. The staged notes result surfaces at its original field position,
+before state validation. The immutable notes already passed the same content
+check, so the full decoder's repeated final pass cannot add another failure.
+
+The public full memory-bound reader still retains its complete notes iterator.
+Ordinary record APIs still return an owned `Vec<String>`. This projection does
+not replace either capability or allocate a second notes vector. It removes only
+unused notes backing from these two callers. Counterparty input, canonical
+decoding and history allocations can still remain live across later memory
+waits. Full retained-input FIFO progress and typed-notes output remain open.
