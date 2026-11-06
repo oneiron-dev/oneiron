@@ -167,6 +167,27 @@ impl BoardLayoutSettings {
     }
 }
 
+/// An actor's erase removes the owner's override of that agent's board
+/// layout alone (FIX 3520); the other layers stay. A restore or a replayed
+/// erase runs it again and finds nothing to remove.
+pub(crate) fn erase_board_layout_agent_override_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let Some(mut settings) = BOARD_LAYOUT_SETTINGS.get(&vault.store, &*txn, &())? else {
+        return Ok(());
+    };
+    let before = settings.agent_override_layouts.len();
+    settings
+        .agent_override_layouts
+        .retain(|agent| agent.agent != *actor);
+    if settings.agent_override_layouts.len() != before {
+        BOARD_LAYOUT_SETTINGS.put(&vault.store, txn, &(), &settings)?;
+    }
+    Ok(())
+}
+
 /// The owner's board layout settings in `txn`, absent read empty.
 pub(crate) fn board_layout_settings_in_txn(
     vault: &Vault,
