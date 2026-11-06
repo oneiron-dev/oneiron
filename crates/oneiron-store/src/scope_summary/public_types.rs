@@ -77,4 +77,3 @@ pub struct SummaryRegenerateRequest {
 pub struct SummaryProposalRequest {
     pub proposal_ref: String,
 }
-

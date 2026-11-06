@@ -7,10 +7,11 @@ use super::*;
 impl RecordingJsHost<'_, '_> {
     /// The fold receipt `input` names, computed here from the jobs it names
     /// (ARCH-0079 #reader-forks): its source resolved and read-checked, each
-    /// task this run's child over that source, `read` the ranges of the done
-    /// ones, `partial` the ones that settled short, with their reasons,
-    /// `unread` the source's range less both, and each summary of its tree
-    /// resolved as a read of it is. Its `folded` occurrence is filled in once
+    /// task this run's child over that source. Completed read children count
+    /// their delegated ranges; a scoped finding alone proves no byte coverage.
+    /// `partial` names the children that settled short, with their reasons,
+    /// `unread` is the source range not covered by read children; each tree
+    /// summary is resolved as a read of it is. Its `folded` occurrence is filled in once
     /// the body is stored. Beside it, every occurrence it names, whose taint
     /// the folded body inherits. A refusal is the reply the guest gets.
     pub(super) fn fold_receipt(
@@ -52,10 +53,14 @@ impl RecordingJsHost<'_, '_> {
             else {
                 return Ok(Err(result_refusal("receipt_task_not_own")));
             };
+            let covers_source = match &job.kind {
+                ReaderJobKind::Read => true,
+                ReaderJobKind::ScopedAgent { .. } => false,
+                _ => return Ok(Err(result_refusal("receipt_task_other_source"))),
+            };
             let delegated = &job.binding.source;
             let (start, end) = delegated.range;
-            if job.kind != ReaderJobKind::Read
-                || delegated.owner != source.occurrence.owner
+            if delegated.owner != source.occurrence.owner
                 || delegated.path != source.occurrence.path
                 || start < source_range.0
                 || end > source_range.1
@@ -73,11 +78,15 @@ impl RecordingJsHost<'_, '_> {
             };
             let reason = match &job.state {
                 ReaderJobState::Done if occurrence.is_some() => {
-                    read.push(delegated.range);
+                    if covers_source {
+                        read.push(delegated.range);
+                    }
                     None
                 }
                 ReaderJobState::Partial { reason } if occurrence.is_some() => {
-                    short.push(delegated.range);
+                    if covers_source {
+                        short.push(delegated.range);
+                    }
                     partial.push(ReceiptPartial {
                         task,
                         reason: reason.clone(),

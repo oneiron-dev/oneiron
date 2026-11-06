@@ -155,6 +155,7 @@ pub(crate) fn open_shared(
     options: &OpenOptions,
 ) -> Result<Arc<SharedVault>, MemoryError> {
     REGISTRY.check_pid()?;
+    let options = &resolved_open_options(options);
     if let Some(dimensions) = options.dimensions {
         check_dimensions(dimensions)?;
     }
@@ -220,6 +221,18 @@ pub(crate) fn open_shared(
     Ok(shared)
 }
 
+/// I9 compares the effective device class and every other declared option.
+fn resolved_open_options(options: &OpenOptions) -> OpenOptions {
+    OpenOptions {
+        device_class: Some(
+            options
+                .device_class
+                .unwrap_or(oneiron::authority::MachineDeviceClass::Computer),
+        ),
+        ..options.clone()
+    }
+}
+
 /// Takes the lease and opens the store, in that order.
 fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVault, MemoryError> {
     let mut config = VaultConfig::default();
@@ -258,6 +271,7 @@ pub(crate) fn attach_shared(
     options: &OpenOptions,
 ) -> Result<Arc<SharedVault>, MemoryError> {
     REGISTRY.check_pid()?;
+    let options = &resolved_open_options(options);
     if let Some(dimensions) = options.dimensions {
         check_dimensions(dimensions)?;
     }

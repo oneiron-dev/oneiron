@@ -357,6 +357,21 @@ fn names(_: &Path, (): &()) -> Result<bool> {
     Ok(true)
 }
 
+impl Store {
+    /// Whether this handle's own directory still sits at its vault's path
+    /// (FIX 12772; REVIEW-5620): a restore's swap exchanges the two
+    /// directories, and a handle any process opened before it keeps the one
+    /// moved aside, whose clock the replacement never read. A handle opened
+    /// without its directory's descriptor has nothing to compare and counts
+    /// as in place.
+    pub(crate) fn sits_at_its_path(&self) -> Result<bool> {
+        if self.owner.env._bound_root_dir.is_none() {
+            return Ok(true);
+        }
+        names(self.env.path(), &opened_directory(self)?)
+    }
+}
+
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.
 fn sync_parent(path: &Path) -> std::io::Result<()> {
     match path.parent() {
