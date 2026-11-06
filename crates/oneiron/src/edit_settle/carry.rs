@@ -427,6 +427,7 @@ impl Vault {
                 &proposal.run_ref,
                 head.version,
                 head.content_hash,
+                None,
             )?
         } else {
             None
