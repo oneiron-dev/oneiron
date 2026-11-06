@@ -123,11 +123,14 @@ impl SecretDestinations {
             );
         }
         let registered = RunSecretDestinations {
-            slots: Arc::new(Mutex::new(slots)),
+            slots: Arc::new(Mutex::new(HeldSlots {
+                slots,
+                closed: false,
+            })),
         };
         let earlier = lock(&self.runs).insert(run, registered.clone());
         if let Some(earlier) = earlier {
-            earlier.clear();
+            earlier.close();
         }
         Ok(registered)
     }
@@ -137,7 +140,7 @@ impl SecretDestinations {
     pub fn retire(&self, run: AttemptId) {
         let retired = lock(&self.runs).remove(&run);
         if let Some(retired) = retired {
-            retired.clear();
+            retired.close();
         }
     }
 
@@ -154,7 +157,7 @@ impl SecretDestinations {
             runs.remove(&run);
         }
         drop(runs);
-        own.clear();
+        own.close();
     }
 
     /// The delivery the `self.secrets.*` doors hand the engine: the
@@ -175,7 +178,16 @@ impl SecretDestinations {
 /// One run's destinations and what each holds. Clones share them.
 #[derive(Clone, Default)]
 pub struct RunSecretDestinations {
-    slots: Arc<Mutex<BTreeMap<String, Slot>>>,
+    slots: Arc<Mutex<HeldSlots>>,
+}
+
+/// A registration's destinations, and whether it is closed: once its run is
+/// retired or replaced, every clone of it refuses a delivery, under the same
+/// lock as the slots, so a mint still in flight cannot refill them.
+#[derive(Default)]
+struct HeldSlots {
+    slots: BTreeMap<String, Slot>,
+    closed: bool,
 }
 
 /// One destination and the bytes delivered into it.
@@ -188,9 +200,9 @@ struct Slot {
 
 impl fmt::Debug for RunSecretDestinations {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let slots = lock(&self.slots);
+        let held_slots = lock(&self.slots);
         f.debug_map()
-            .entries(slots.iter().map(|(name, slot)| {
+            .entries(held_slots.slots.iter().map(|(name, slot)| {
                 let held = if slot.value.is_some() {
                     "filled"
                 } else {
@@ -207,7 +219,7 @@ impl RunSecretDestinations {
     /// A host calls it as it builds each process for the run, before the
     /// variables it removes, so a variable it removes stays removed.
     pub fn apply_env(&self, command: &mut Command) {
-        for slot in lock(&self.slots).values() {
+        for slot in lock(&self.slots).slots.values() {
             // Delivery admits only text with no NUL byte.
             // FIX 7954: the slot's first half is the delivering grant's id.
             if let Some(text) = slot
@@ -221,9 +233,27 @@ impl RunSecretDestinations {
     }
 
     fn effector(&self, destination: &str) -> Option<String> {
-        lock(&self.slots)
+        let held = lock(&self.slots);
+        if held.closed {
+            return None;
+        }
+        held.slots
             .get(destination)
             .map(|slot| slot.effector.clone())
+    }
+
+    /// Whether `destination` is one of these destinations.
+    #[must_use]
+    pub fn names(&self, destination: &str) -> bool {
+        lock(&self.slots).slots.contains_key(destination)
+    }
+
+    /// The delivery for the grants run `run`'s host mints for it itself
+    /// (FIX 10624): their bytes land in these destinations only, never in
+    /// another registration the run's attempt names by then.
+    #[must_use]
+    pub fn own_delivery(&self, run: AttemptId) -> OwnSecretDelivery<'_> {
+        OwnSecretDelivery { run, own: self }
     }
 
     fn fill(&self, grant: &EntityId, destination: &str, value: &[u8]) -> Result<()> {
@@ -233,8 +263,14 @@ impl RunSecretDestinations {
                 "an environment variable holds text with no NUL byte",
             ));
         }
-        let mut slots = lock(&self.slots);
-        let slot = slots.get_mut(destination).ok_or_else(|| {
+        let mut held = lock(&self.slots);
+        if held.closed {
+            return Err(refused(
+                destination,
+                "the run's registration is retired; it takes no more deliveries",
+            ));
+        }
+        let slot = held.slots.get_mut(destination).ok_or_else(|| {
             refused(
                 destination,
                 "the caller's run host registered no such destination",
@@ -249,6 +285,7 @@ impl RunSecretDestinations {
         // FIX 7954: only this grant's copy clears; a newer one stays, absent
         // for this grant.
         let taken = lock(&self.slots)
+            .slots
             .get_mut(destination)
             .and_then(|slot| slot.value.take_if(|(id, _)| id == grant));
         match taken {
@@ -257,10 +294,62 @@ impl RunSecretDestinations {
         }
     }
 
-    fn clear(&self) {
-        for slot in lock(&self.slots).values_mut() {
+    /// Drops what each destination holds and refuses every later delivery
+    /// into this registration, through any of its clones.
+    fn close(&self) {
+        let mut held = lock(&self.slots);
+        held.closed = true;
+        for slot in held.slots.values_mut() {
             slot.value = None;
         }
+    }
+}
+
+/// The [`SecretHostDelivery`] of one run's own registration
+/// ([`RunSecretDestinations::own_delivery`], FIX 10624): a grant held for
+/// that run fills these destinations and withdraws from them; one held for
+/// another run is refused, by name.
+#[derive(Debug, Clone, Copy)]
+pub struct OwnSecretDelivery<'a> {
+    run: AttemptId,
+    own: &'a RunSecretDestinations,
+}
+
+impl SecretHostDelivery for OwnSecretDelivery<'_> {
+    fn destination_effector(
+        &self,
+        holder: &SecretGrantHolder,
+        destination: &str,
+    ) -> Option<String> {
+        if holder.run() != Some(self.run) {
+            return None;
+        }
+        self.own.effector(destination)
+    }
+
+    fn deliver(
+        &mut self,
+        holder: &SecretGrantHolder,
+        grant: &EntityId,
+        destination: &str,
+        value: &[u8],
+    ) -> Result<()> {
+        if holder.run() != Some(self.run) {
+            return Err(refused(destination, "the grant is held for another run"));
+        }
+        self.own.fill(grant, destination, value)
+    }
+
+    fn withdraw(
+        &mut self,
+        holder: &SecretGrantHolder,
+        grant: &EntityId,
+        destination: &str,
+    ) -> Result<SecretCleanup> {
+        if holder.run() != Some(self.run) {
+            return Ok(SecretCleanup::Absent);
+        }
+        Ok(self.own.withdraw(grant, destination))
     }
 }
 
