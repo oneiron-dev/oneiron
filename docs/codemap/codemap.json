@@ -123,7 +123,7 @@
      "path": "src/access_grant/context.rs",
      "purpose": "Relationship read authority built from live grants and stored membership evidence",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 11,
       "fn": 3,
       "struct": 3
      }
@@ -156,7 +156,7 @@
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 6
      }
     },
@@ -14576,7 +14576,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -14894,7 +14894,7 @@
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
       "crate-vis": 13,
-      "fn": 5,
+      "fn": 6,
       "re-export": 1
      }
     },
@@ -115248,7 +115248,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/memory_reason.rs",
@@ -115264,7 +115264,7 @@
      "path": "src/api/memory_reason/answer_admission.rs",
      "purpose": "The reasoning read's answer boundary (OF-063, Engine ruling 1231): a deep composition crosses the engine's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -115274,7 +115274,77 @@
      "path": "src/api/memory_reason/deep_admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/evidence.rs",
+     "purpose": "Retained citable evidence on the process memory line",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/host/call.rs",
+     "purpose": "Native role calls with request-scoped accounting and session-private receipts",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/host/composition.rs",
+     "purpose": "Whole-row composition passes with separate citation and producer cohorts",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/host/frame.rs",
+     "purpose": "Best-effort sizing from all sampled model rows; never a provider bound",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/host/mod.rs",
+     "purpose": "Request-scoped production memory reasoning over the configured model roles",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/host/sources.rs",
+     "purpose": "Pinned cohort reads and per-destination source admission",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/host/usage.rs",
+     "purpose": "Reported token facts, kept separate from the native line's charged units",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -126170,7 +126240,7 @@
      "path": "src/projection.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 7,
       "struct": 1
@@ -127163,7 +127233,7 @@
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -128494,7 +128564,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 681,
+     "files": 688,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -129012,9 +129082,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 51,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1612,
+   "source_files": 1619,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

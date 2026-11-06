@@ -111,6 +111,7 @@ impl ScopedRead<'_> {
                 let mut seen = HashSet::new();
                 // One relationship authority for every peer (FIX 11648).
                 let retrievable = self.recall_candidates_in(txn, &policy, &filter);
+                let floor_held = super::access_gate::HeldAuthority::for_request(None);
                 for edge in edges {
                     let edge = edge?;
                     let peer = edge.target;
@@ -128,7 +129,22 @@ impl ScopedRead<'_> {
                         || Ok(super::admission::ReadAdmission::Visible(())),
                         || self.admit_entity_in(txn, &policy, &filter, &peer),
                     )?;
-                    suppressed += admitted.suppression();
+                    if admitted.suppression() > 0
+                        && self
+                            .actor_retrieval_floor(&policy)
+                            .and_then(|floor| {
+                                self.is_entity_retrievable_held_in(
+                                    txn,
+                                    &policy,
+                                    &floor,
+                                    &peer,
+                                    &floor_held,
+                                )
+                            })
+                            .unwrap_or(false)
+                    {
+                        suppressed += 1;
+                    }
                     if !admitted.visible() || !seen.insert(peer) {
                         continue;
                     }
