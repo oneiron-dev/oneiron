@@ -29,6 +29,7 @@ mod outputs;
 mod sized;
 
 use outputs::{Called, Replied, finish};
+pub use sized::LentRegion;
 pub use sized::{CallMeasure, CallSize};
 use sized::{OneCall, Run};
 
@@ -54,6 +55,12 @@ struct Resolved {
     hash: Hash32,
     len: u64,
     held: Held,
+}
+
+/// One input lent as bytes, or already copied into its call-owned region.
+pub(super) enum Lent {
+    Bytes(Option<OrganInput>, LentInput),
+    Region(LentRegion),
 }
 
 /// The engine side of the organ protocol.
@@ -387,14 +394,27 @@ impl OrganHost {
         asks: &AskHandlers<'_>,
         cancel: &MeshCancel,
     ) -> Result<OrganOutcome, HostError> {
-        cancel.scope(|| shutdown::settle(self.run(vault, call, inputs, asks, Run::Warm)))
+        cancel.scope(|| {
+            shutdown::settle(
+                self.run(
+                    vault,
+                    call,
+                    inputs
+                        .into_iter()
+                        .map(|(of, input)| Lent::Bytes(of, input))
+                        .collect(),
+                    asks,
+                    Run::Warm,
+                ),
+            )
+        })
     }
 
     fn run(
         &self,
         vault: &Vault,
         call: OrganCall,
-        lent: Vec<(Option<OrganInput>, LentInput)>,
+        lent: Vec<Lent>,
         asks: &AskHandlers<'_>,
         mut how: Run<'_>,
     ) -> Result<OrganOutcome, HostError> {
@@ -406,7 +426,12 @@ impl OrganHost {
         // longer one, up to `Duration::MAX`, waits that long and never
         // overflows the clock.
         let longest = Duration::from_millis(u64::from(u32::MAX));
-        let deadline = begun + call.deadline.min(longest);
+        let fixed_deadline = how.until().is_some();
+        let deadline = how
+            .until()
+            .map_or(begun + call.deadline.min(longest), |until| {
+                until.min(begun + longest)
+            });
         self.unload_idle();
         if self.grant_revoked(&call.grant) {
             return Err(HostError::Revoked);
@@ -438,8 +463,11 @@ impl OrganHost {
             .iter()
             .map(|input| self.resolve(vault, &slot.spec, *input))
             .collect::<Result<Vec<_>, _>>()?;
-        for (of, input) in lent {
-            inputs.push(self.lend(&slot.spec, input, of)?);
+        for input in lent {
+            inputs.push(match input {
+                Lent::Bytes(of, input) => self.lend(&slot.spec, input, of)?,
+                Lent::Region(input) => input.resolve(&slot.spec)?,
+            });
         }
         let frames = self.budget.room(self.floor.clone());
         let process = if how.fresh() {
@@ -480,7 +508,15 @@ impl OrganHost {
             &call.grant,
             inline_max,
         );
-        let exchanged = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline);
+        let exchanged = self.exchange(
+            &slot,
+            &process,
+            &call,
+            &inputs,
+            &mut asked,
+            deadline,
+            fixed_deadline,
+        );
         how.measured(&process);
         // The deadline as the exchange's waits for room moved it: the
         // outputs count on from there (FIX 8020).
@@ -530,6 +566,7 @@ impl OrganHost {
         inputs: &[Resolved],
         asked: &mut CallAsks<'_>,
         deadline: Instant,
+        fixed_deadline: bool,
     ) -> Result<Exchanged, HostError> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let (wire_inputs, fds) = wire_inputs(inputs);
@@ -552,6 +589,7 @@ impl OrganHost {
             },
             asks: asked,
             deadline,
+            fixed_deadline,
             grace,
         };
         match process.call(wire, &fds, wait) {
@@ -697,8 +735,10 @@ impl OrganHost {
 }
 
 /// Bytes a local caller lent: no vault version stands behind them.
-fn unvouched(lent: Vec<LentInput>) -> Vec<(Option<OrganInput>, LentInput)> {
-    lent.into_iter().map(|input| (None, input)).collect()
+fn unvouched(lent: Vec<LentInput>) -> Vec<Lent> {
+    lent.into_iter()
+        .map(|input| Lent::Bytes(None, input))
+        .collect()
 }
 
 fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {

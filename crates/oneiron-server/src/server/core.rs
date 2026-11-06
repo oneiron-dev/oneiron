@@ -141,6 +141,9 @@ pub struct SyncServer {
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
+    /// Dedicated shared environments retained for leave checks and their own
+    /// housekeeping (FIX 2051, FIX 11136); installed once at serve startup.
+    pub(crate) shared_envs: std::sync::OnceLock<crate::shared_envs::SharedEnvRegistry>,
     /// The live sockets of proven machines and the custody carrier leaf-key
     /// requests relayed between them, in memory only (FIX 11785).
     pub(crate) leaf_keys: crate::handler::LeafKeyRelay,
@@ -155,6 +158,8 @@ pub struct SyncServer {
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
+    /// Each client address's unanswered pairing redemptions (FIX 12477).
+    pub(crate) pairing_backoff: crate::api::PairingRedeemBackoff,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -383,7 +388,8 @@ impl SyncServer {
                 runs,
                 Arc::clone(self.wire_telemetry.limit_questions()),
             )
-            .with_reader_seats(self.reader_runner.seats()),
+            .with_reader_seats(self.reader_runner.seats())
+            .with_git_door_base(self.config.git_door_base.clone()),
         );
         // Reader children run on the same provider and pool.
         self.reader_runner.bind_host(Arc::clone(&host));
@@ -774,6 +780,38 @@ impl SyncServer {
     /// assert sync_state durability).
     pub fn vault(&self) -> &Arc<oneiron::Vault> {
         &self.vault
+    }
+
+    /// Installs this serve's dedicated shared environments once. A second
+    /// installation is a startup bug, logged without replacing the first.
+    pub(crate) fn install_shared_envs(&self, registry: crate::shared_envs::SharedEnvRegistry) {
+        if self.shared_envs.set(registry).is_err() {
+            tracing::warn!("shared environments were installed twice; keeping the first registry");
+        }
+    }
+
+    /// Every retained shared environment handle, active and left alike, for
+    /// the existing housekeeping task to walk sequentially (FIX 11136).
+    pub(crate) fn shared_vault_handles(&self) -> Vec<Arc<oneiron::Vault>> {
+        self.shared_envs
+            .get()
+            .map_or_else(Vec::new, |registry| registry.vault_handles())
+    }
+
+    /// The earliest wake any retained shared environment asks for, so a
+    /// managed host does not sleep through a left env's owed collection.
+    pub(crate) fn shared_housekeeping_wake_at(&self) -> Option<u64> {
+        self.shared_envs
+            .get()
+            .and_then(|registry| registry.housekeeping_wake_at())
+    }
+
+    /// Drops shared lanes before their vault handles. Active leave checks
+    /// and housekeeping passes retain their own Arcs and finish first.
+    pub(crate) async fn stop_shared_envs(&self) {
+        if let Some(registry) = self.shared_envs.get() {
+            registry.stop().await;
+        }
     }
 
     /// `caller`'s turn to run one piece of task work on this vault (`can`,
