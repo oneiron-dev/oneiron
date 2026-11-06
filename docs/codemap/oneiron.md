@@ -1218,7 +1218,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/access_gate.rs` | src | m | 19 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | m | 1 struct · 10 fn · 1 re-export · 47 crate-vis | ScopedReadActorKey | Authenticated identity carried by a scoped read |
 | `src/claim/scoped_read/actor_key/weave_admin.rs` | src | s | 1 crate-vis | — | The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key… |
-| `src/claim/scoped_read/admission.rs` | src | m | 8 fn · 23 crate-vis | — | — |
+| `src/claim/scoped_read/admission.rs` | src | m | 8 fn · 24 crate-vis | — | — |
 | `src/claim/scoped_read/admission/audience.rs` | src | s | 6 crate-vis | — | The audience conjunct of a scoped read: device-local worlds, private threads, an unbound agent's own entry… |
 | `src/claim/scoped_read/admission/room_ceiling.rs` | src | s | 2 crate-vis | — | A room turn's ceiling as each row's snapshot refreshes it, and the peer reads a room or audience conjoins… |
 | `src/claim/scoped_read/agent_grants.rs` | src | s | 8 crate-vis | — | FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner… |
