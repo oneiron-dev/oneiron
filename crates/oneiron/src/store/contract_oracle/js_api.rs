@@ -22,6 +22,7 @@ pub struct JsPublicNames {
 enum Binding {
     Local(String),
     CommonJsValue,
+    DefaultValue,
     From { request: String, name: String },
     Namespace(String),
 }
@@ -33,6 +34,7 @@ enum Origin {
     External(String, String, String),
     ExternalNamespace(String, String),
     CommonJsValue(String),
+    DefaultValue(String),
 }
 
 #[derive(Default)]
@@ -61,7 +63,7 @@ pub fn js_public_names(root: &Path, entry_name: &str, entry: &str) -> Result<JsP
             .bindings
             .values()
             .filter_map(|binding| match binding {
-                Binding::Local(_) | Binding::CommonJsValue => None,
+                Binding::Local(_) | Binding::CommonJsValue | Binding::DefaultValue => None,
                 Binding::From { request, .. } | Binding::Namespace(request) => {
                     Some(request.clone())
                 }
@@ -190,10 +192,22 @@ fn read_module(root: &Path, file: &str) -> Result<Module> {
                 .find(|(_, span)| Some(**span) == export.export_name.span())
                 .map(|(name, _)| name.to_string())
         };
-        if let (Some(exported), Some(local)) = (exported, export.local_name.name()) {
-            module
-                .bindings
-                .insert(exported, Binding::Local(local.to_string()));
+        if let Some(exported) = exported {
+            let binding = if export.local_name.is_default() {
+                // `export default expression` captures a value; it is not the
+                // live local binding of `export { local as default }`.
+                Binding::DefaultValue
+            } else {
+                match export.local_name.name() {
+                    Some(local) => Binding::Local(local.to_string()),
+                    None if export.export_name.is_default() => Binding::DefaultValue,
+                    None => {
+                        module.unresolved.insert(format!("local:{exported}"));
+                        continue;
+                    }
+                }
+            };
+            module.bindings.insert(exported, binding);
         }
     }
     let mut imports = BTreeMap::new();
@@ -296,6 +310,9 @@ fn resolve_binding(
             }
             Some(Binding::CommonJsValue) => {
                 origins.insert(Origin::CommonJsValue(file));
+            }
+            Some(Binding::DefaultValue) => {
+                origins.insert(Origin::DefaultValue(file));
             }
             Some(Binding::Namespace(request)) => {
                 let origin = if let Some(target) = &module.targets[request] {

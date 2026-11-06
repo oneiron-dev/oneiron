@@ -23,7 +23,8 @@ No source code is executed by export extraction.
 Oxc 0.152 parses `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts` and `.tsx`
 using its extension-specific source mode. Its normalized explicit export names
 include named declarations, destructured bindings, aliases, string names,
-TypeScript type exports, default exports and namespace exports. Private symbols
+TypeScript type exports, default exports (including anonymous expressions,
+functions and classes) and namespace exports. Private symbols
 and side-effect imports do not become public names.
 
 Names are `js:<entry-name>::<export-name>`. The declared entry name, not an
@@ -56,7 +57,9 @@ export. Rebinding `exports` does not replace the module value. Replacing
 `module.exports` detaches its old `exports` alias; an explicit reassignment to the
 current module value reconnects it. Whole object-literal replacements contribute
 static own keys and replace the preceding declared keys. A colon `__proto__`
-property sets a prototype, not an own key.
+property sets a prototype, not an own key. A direct `.__proto__` assignment is
+unresolved unless a preceding literal already established that own key; the
+inherited prototype setter alone does not certify an export.
 
 CommonJS supplies a `default` whole-module value. This name is present for explicit
 CommonJS source modes, or when a recognized direct wrapper export establishes

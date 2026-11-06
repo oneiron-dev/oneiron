@@ -80,7 +80,15 @@ pub(super) fn collect(
         commonjs = true;
         match target {
             Target::Property(Some(name)) => {
-                module.bindings.insert(name.clone(), Binding::Local(name));
+                if name == "__proto__" && !module.bindings.contains_key(&name) {
+                    // Usually the inherited prototype setter, not an own key.
+                    // An own key from an earlier literal remains a real export.
+                    module
+                        .unresolved
+                        .insert("commonjs:prototype-assignment".to_owned());
+                } else {
+                    module.bindings.insert(name.clone(), Binding::Local(name));
+                }
             }
             Target::Property(None) => {
                 module.unresolved.insert("commonjs:computed-key".to_owned());
