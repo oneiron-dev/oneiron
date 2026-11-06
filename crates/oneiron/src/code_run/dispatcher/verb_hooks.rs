@@ -327,7 +327,17 @@ impl HostSelfDispatcher<'_> {
 /// invocation, so the same call made later resumes it. A skip, or a result
 /// hidden, is a typed refusal.
 fn stopped(effect: SelfEffect, stop: VerbHookStop) -> SelfDispatchOutcome {
-    match stop {
+    let hook_notice = matches!(
+        &stop,
+        VerbHookStop::Completed {
+            hook_notice: Some(true),
+            ..
+        } | VerbHookStop::CompletedWithError {
+            hook_notice: Some(true),
+            ..
+        }
+    );
+    let mut outcome = match stop {
         VerbHookStop::Pending { invocation, ask } => {
             // An owner policy write keeps no wait in its record.
             let group = EntityId::from_hex(&ask)
@@ -353,11 +363,16 @@ fn stopped(effect: SelfEffect, stop: VerbHookStop) -> SelfDispatchOutcome {
         VerbHookStop::CompletedWithError {
             invocation, code, ..
         } => denied(effect, VERB_HOOK_COMPLETED, vec![invocation, code]),
+    };
+    if hook_notice && let SelfDispatchOutcome::Denied(result) = &mut outcome {
+        result.hook_notice = Some(json!(crate::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY));
     }
+    outcome
 }
 
 fn denied(effect: SelfEffect, outcome: &str, reason_codes: Vec<String>) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect,
         outcome: outcome.to_owned(),
         reason_codes,

@@ -25,9 +25,17 @@ replay does not rerun the verb just to recreate the notice.
 
 ## Scope and deployment
 
-This path covers successful calls through the MCP code-mode verb door. It does
-not add notices to HTTP success bodies, other native verb-door implementations,
-or code-mode error and stopped-call paths.
+A saved native hook completion that supplied a positive notice also keeps the
+existing content-free summary beside its recorded code-mode denial. Both saved
+results and saved errors use this path. The original denial kind, code and
+reason codes stay unchanged, as does the refusal seen by JavaScript. The same
+`meta.hook_notices` collector returns this summary without rerunning the hook.
+Absent metadata remains unknown.
+
+This path covers successful calls through the MCP code-mode verb door and the
+saved native hook completions described above. It does not add notices to HTTP
+success bodies, other native verb-door implementations, ordinary code-mode
+refusals, or errors without a supplied notice source.
 
 Update the engine and server together. The guest WIT, JavaScript bootstrap and
 component artifacts do not change for this host-side path.

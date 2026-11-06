@@ -309,6 +309,7 @@ impl HostSelfDispatcher<'_> {
         if let Some(Err(refusal)) = door.map(|door| door.admit_run_call(RunCall::RecordedOutput)) {
             let rejected = super::gate_rejection(&refusal.code);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code.clone(),
                 reason_codes: vec![KEPT_ANSWER_REFUSED.to_owned()],
@@ -618,6 +619,7 @@ fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
 /// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect: SelfEffect::AgentVerb,
         outcome: why.to_owned(),
         reason_codes: vec![why.to_owned()],
@@ -659,6 +661,7 @@ fn answered(
     outcome.map_or_else(
         |refusal| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code,
                 reason_codes: Vec::new(),

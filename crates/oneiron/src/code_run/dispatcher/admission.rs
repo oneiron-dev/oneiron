@@ -130,6 +130,7 @@ impl HostSelfDispatcher<'_> {
                     Err(refusal) => {
                         return Ok((
                             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                hook_notice: None,
                                 effect: call.effect(),
                                 outcome: refusal.code,
                                 reason_codes: Vec::new(),
