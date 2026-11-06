@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Memory, MemoryError, MemoryResult};
 use crate::authority::StoredReadProof;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 use crate::edge::EdgeActorClass;
 use crate::{EntityId, Vault};
 
@@ -28,7 +28,7 @@ enum QueuedIdentityHintAuthority {
 impl Memory<'_> {
     pub(crate) fn queued_identity_hint_reader(
         &self,
-        original_read: Option<&ScopedRead<'_>>,
+        original_key: Option<&ScopedReadActorKey>,
     ) -> Option<OnDeviceIdentityHintReader> {
         if self.host_action.is_some()
             || self.room_turn.is_some()
@@ -39,7 +39,7 @@ impl Memory<'_> {
         }
         let authority = match &self.read_proof {
             Some(proof) => QueuedIdentityHintAuthority::Credential(StoredReadProof::of(proof)),
-            None if original_read.is_some_and(|read| read.actor_key().reads_as_vault_owner()) => {
+            None if original_key.is_some_and(ScopedReadActorKey::reads_as_vault_owner) => {
                 QueuedIdentityHintAuthority::UncredentialedOwner
             }
             None => QueuedIdentityHintAuthority::Uncredentialed,
