@@ -136,13 +136,61 @@ fn sort(rows: &mut Vec<CanonicalCutoff>) -> Result<()> {
 
 /// Each row names a canonical id, and the rows sort by their map key, each
 /// key once.
-pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    let keys = snapshot
-        .withdrawn_cutoffs
-        .iter()
-        .map(CanonicalCutoff::key)
-        .collect::<Result<Vec<_>>>()?;
-    crate::recovery::validation::strict(keys.iter())
+#[derive(Default)]
+pub(super) struct WithdrawnCutoffsValidation {
+    stage: CutoffValidationStage,
+    next: usize,
+    keys: Vec<String>,
+}
+
+#[derive(Default)]
+enum CutoffValidationStage {
+    #[default]
+    Keys,
+    Strict,
+}
+
+impl WithdrawnCutoffsValidation {
+    pub(super) fn advance(
+        &mut self,
+        snapshot: &CanonicalSnapshot,
+        max_rows: usize,
+    ) -> Result<bool> {
+        let page = max_rows.max(1);
+        match self.stage {
+            CutoffValidationStage::Keys => {
+                let rows = &snapshot.withdrawn_cutoffs;
+                let end = self.next.saturating_add(page).min(rows.len());
+                for row in &rows[self.next..end] {
+                    self.keys.push(row.key()?);
+                }
+                self.next = end;
+                if self.next < rows.len() {
+                    return Ok(false);
+                }
+                // Every native key error precedes the first ordering error.
+                self.next = 0;
+                self.stage = CutoffValidationStage::Strict;
+                Ok(self.keys.is_empty())
+            }
+            CutoffValidationStage::Strict => {
+                let end = self.next.saturating_add(page).min(self.keys.len());
+                crate::recovery::validation::strict(
+                    self.keys[self.next.saturating_sub(1)..end].iter(),
+                )?;
+                self.next = end;
+                Ok(self.next == self.keys.len())
+            }
+        }
+    }
+
+    pub(super) fn position(&self) -> (&'static str, usize) {
+        let stage = match self.stage {
+            CutoffValidationStage::Keys => "keys",
+            CutoffValidationStage::Strict => "strict",
+        };
+        (stage, self.next)
+    }
 }
 
 /// Files one cutoff back in the rebuilt window's map, where the forward pass
