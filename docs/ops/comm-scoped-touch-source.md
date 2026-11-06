@@ -146,6 +146,17 @@ are unchanged; no live Entities row or original CLAIM is needed to record this
 captured fact. Document frames, pending note requests, window histories and
 other opaque sync carriers are not covered by this blob supplier.
 
+A split window has a separate positive supplier after its native Loro decode.
+The window projection keeps each entity value's full header and body in an
+exact copy under its native entity-tree owner. Capture recognizes those copies
+by the existing window bundle role and fragment, not a locator spelling or an
+opaque Loro blob. It checks the actual owner id against the same scoped-touch
+body before recording the original in the existing instance row. Only windows
+that the native projection actually split supply these copies. Whole or unsplit
+windows and featureless captures do not. Document frames do not supply a COMM
+body and remain outside this path. Window classification, copies, framing,
+restore, ownership and holds are unchanged.
+
 The existing permanent marker remains presence-only for admission. Its
 informational value records a real privacy request's canonical reason, time
 and request id, without letting a later ordinary request forget that setting.
