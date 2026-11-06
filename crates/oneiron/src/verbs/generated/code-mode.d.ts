@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4653 declarations.
-// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4659 declarations.
+// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1480,6 +1480,13 @@ declare namespace Sdk {
   type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
   type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
   type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
+  type ResidenceMachineRequest = { machine: EntityId };
+  type SyncOutboxReceipt = "durable" | "held";
+  type SyncOutboxRow = { seq: number; digest: string; bytes: number; receipt?: SyncOutboxReceipt | null };
+  type SyncOutboxWindow = { window_key: string; rows: SyncOutboxRow[] };
+  type SyncOutbox = { machine: EntityId; owed: number; windows: SyncOutboxWindow[] };
+  type SyncOutboxUnreached = { machine: EntityId };
+  type SyncOutboxAnswer = (SyncOutbox & { state: "read" }) | (SyncOutboxUnreached & { state: "unreached" });
   type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases";
   type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number };
   type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp";
@@ -1616,7 +1623,6 @@ declare namespace Sdk {
   type NoteReadView = { version: NoteVersion; markdown: string; title?: string | null; spans: NoteAnchoredSpan[]; source: NoteReadSource };
   type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number; source: NoteReadSource; note?: NoteReadView | null };
   type ResidenceOpenAnswer = (ResidenceOpened & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
-  type ResidenceMachineRequest = { machine: EntityId };
   type ResidenceIndexEntry = { entity_id: string; title?: string | null; learned_at: number };
   type ResidenceIndexWindowView = { window: string; items: ResidenceIndexEntry[] };
   type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
@@ -7802,6 +7808,8 @@ declare const vault: Sdk.VaultHost & {
     revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
   };
   sync: {
+    /** The updates one of the owner's machines still owes its home, per window: each row's digest, size and the home's Durable or Held answer, never a body; state unreached when this host runs no connection for it. */
+    outbox(input: Sdk.ResidenceMachineRequest): Promise<Sdk.SyncOutboxAnswer | StoredResult>;
     quarantine: {
       /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
       held_edits(input: Sdk.EmptyRequest): Promise<[number, Sdk.SyncHeldEditEvidence][] | StoredResult>;

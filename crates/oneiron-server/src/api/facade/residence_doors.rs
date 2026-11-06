@@ -18,6 +18,12 @@
 //! each machine's result as this replica received it, under the same owner
 //! proof. It reaches no machine and queues nothing, and its view is
 //! content-free control metadata, so it lists none.
+//!
+//! `vault.sync.outbox` (FIX 3966) reads, under the same owner proof, the
+//! updates the named machine's connection here still owes its home, with the
+//! home's answer to each; a machine with no connection here answers
+//! `state: "unreached"`, and nothing is queued. Its rows are digests and
+//! sizes, so it lists none.
 use std::sync::Arc;
 
 use oneiron::authority::ResidenceAct;
@@ -28,7 +34,7 @@ use oneiron::task_verb::sdk::{
     ResidenceDirectiveView, ResidenceDirectivesRequest, ResidenceIndexAnswer,
     ResidenceMachineRequest, ResidenceModeAnswer, ResidenceModeName, ResidenceModeRequest,
     ResidenceOpenAnswer, ResidenceOpenRequest, ResidenceOpened, ResidencePruneAnswer,
-    ResidencePruneRequest, ResidencePruned, ResidenceQueued,
+    ResidencePruneRequest, ResidencePruned, ResidenceQueued, SyncOutboxAnswer, SyncOutboxUnreached,
 };
 
 use super::host_doors::support::{Listed, internal, naming, owner_proof};
@@ -200,6 +206,28 @@ async fn residence_index(
     ))
 }
 
+/// [`vault_sync_outbox`]'s answer: the updates the named machine still owes
+/// its home (FIX 3966), read through its connection here. A machine this host
+/// runs no connection for is read on the machine itself; nothing is queued.
+async fn sync_outbox(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceMachineRequest,
+) -> MemoryResult<SyncOutboxAnswer> {
+    const VERB: &str = "vault.sync.outbox";
+    let _owner = super::owner_binding::facade_owner(server, auth, VERB)?;
+    let Some(connection) = crate::residence_machines::connection(&input.machine) else {
+        return Ok(SyncOutboxAnswer::Unreached(SyncOutboxUnreached {
+            machine: input.machine,
+        }));
+    };
+    Ok(SyncOutboxAnswer::Read(
+        connection
+            .outbox(input.machine)
+            .map_err(MemoryError::from)?,
+    ))
+}
+
 /// [`vault_residence_prune`]'s answer: drops the named machine's opened-item caches
 /// last touched before `before`.
 async fn residence_prune(
@@ -282,6 +310,16 @@ pub(crate) async fn vault_residence_index(
             ResidenceIndexAnswer::Queued(_) => Vec::new(),
         },
     )
+}
+
+/// `vault.sync.outbox`: the updates the named machine still owes its home.
+/// Its rows are digests and sizes, never a body, so it lists none.
+pub(crate) async fn vault_sync_outbox(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceMachineRequest,
+) -> Listed<SyncOutboxAnswer> {
+    naming(sync_outbox(server, auth, input).await, |_| Vec::new())
 }
 
 /// `vault.residence.prune`: drops the named machine's opened-item caches

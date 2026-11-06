@@ -1888,6 +1888,8 @@ class Oneiron:
         def receive(self, spec: Facade.ForeignWorldPrivacyDelivery) -> Facade.WorldPrivacyRequest:
             """The owner hands in a world-settings leg a connected vault's host signed: an ask files for this vault's holders of the world at the world-privacy door, and an answer settles the ask it answers."""
     class _VaultSyncVerbs:
+        def outbox(self, spec: Facade.ResidenceMachineRequest) -> Facade.SyncOutboxAnswer:
+            """The updates one of the owner's machines still owes its home, per window: each row's digest, size and the home's Durable or Held answer, never a body; state unreached when this host runs no connection for it."""
         @property
         def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs": ...
         @property

@@ -2828,6 +2828,9 @@ class Oneiron:
     class _VaultSyncVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def outbox(self, spec):
+            """The updates one of the owner's machines still owes its home, per window: each row's digest, size and the home's Durable or Held answer, never a body; state unreached when this host runs no connection for it."""
+            return json.loads(_translate(lambda: self._client.vault_sync_outbox(json.dumps(spec))))
         @property
         def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs":
             return Oneiron._VaultSyncQuarantineVerbs(self._client)

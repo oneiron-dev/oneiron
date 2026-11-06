@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4596 declarations.
-Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1265 facade rows, 4602 declarations.
+Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7540,6 +7540,28 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
+class ResidenceMachineRequest(TypedDict):
+    machine: EntityId
+SyncOutboxReceipt = Literal["durable", "held"]
+class SyncOutboxRow(TypedDict):
+    seq: int
+    digest: str
+    bytes: int
+    receipt: NotRequired[SyncOutboxReceipt | None]
+class SyncOutboxWindow(TypedDict):
+    window_key: str
+    rows: list[SyncOutboxRow]
+class SyncOutbox(TypedDict):
+    machine: EntityId
+    owed: int
+    windows: list[SyncOutboxWindow]
+class SyncOutboxUnreached(TypedDict):
+    machine: EntityId
+class SyncOutboxAnswerRead(SyncOutbox):
+    state: Literal["read"]
+class SyncOutboxAnswerUnreached(SyncOutboxUnreached):
+    state: Literal["unreached"]
+SyncOutboxAnswer = SyncOutboxAnswerRead | SyncOutboxAnswerUnreached
 QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
 class SyncHeldEditEvidence(TypedDict):
     window_key: str
@@ -8134,8 +8156,6 @@ class ResidenceOpenAnswerApplied(ResidenceOpened):
 class ResidenceOpenAnswerQueued(ResidenceQueued):
     state: Literal["queued"]
 ResidenceOpenAnswer = ResidenceOpenAnswerApplied | ResidenceOpenAnswerQueued
-class ResidenceMachineRequest(TypedDict):
-    machine: EntityId
 class ResidenceIndexEntry(TypedDict):
     entity_id: str
     title: NotRequired[str | None]

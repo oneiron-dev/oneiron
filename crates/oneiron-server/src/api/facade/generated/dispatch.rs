@@ -11613,6 +11613,37 @@ async fn vault_federation_burst_policy_set(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_sync_outbox(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.sync.outbox")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.outbox", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.sync.outbox", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_sync_outbox(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_sync_quarantine_held_edits(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -40708,6 +40739,7 @@ async fn call_verb_row(
         "vault.federation.burst.policy.set" => {
             Box::pin(vault_federation_burst_policy_set(server, call, input)).await
         }
+        "vault.sync.outbox" => Box::pin(vault_sync_outbox(server, call, input)).await,
         "vault.sync.quarantine.held_edits" => {
             Box::pin(vault_sync_quarantine_held_edits(server, call, input)).await
         }

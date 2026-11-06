@@ -1548,6 +1548,8 @@ export class Oneiron {
       },
     },
     sync: {
+      /** The updates one of the owner's machines still owes its home, per window: each row's digest, size and the home's Durable or Held answer, never a body; state unreached when this host runs no connection for it. */
+      outbox: (input: Facade.ResidenceMachineRequest): Facade.SyncOutboxAnswer => this.#call(() => this.#client.vaultSyncOutbox(input) as Facade.SyncOutboxAnswer),
       quarantine: {
         /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
         held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),

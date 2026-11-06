@@ -3186,6 +3186,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sync_outbox(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.outbox", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_sync_quarantine_held_edits(
         &self,
         input: serde_json::Value,
