@@ -151,7 +151,11 @@ fn rewrite_version_claim_in_txn(
         header.learned_at,
     )?;
     for control in &controls {
-        let _ = crate::batch::deindex_entity(&vault.store, wtxn, control)?;
+        let _ = crate::batch::deindex_entity(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            control,
+        )?;
     }
     crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, &record.claim_id)?;
     let raw = vault
