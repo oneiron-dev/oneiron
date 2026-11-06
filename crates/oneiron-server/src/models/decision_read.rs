@@ -34,10 +34,9 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, WorkPhysical};
 use oneiron::llm::{
     BudgetLease, CacheDigest, DispatchRelease, FatalLlmError, LabelReadDistribution,
-    LabelReadFailure,
-    LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel, LabelReadRequest,
-    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
-    LlmUsage, RetryableLlmError,
+    LabelReadFailure, LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel,
+    LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage,
+    LlmOutputUsage, LlmResult, LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
 use oneiron_driver::WorkerLease;
@@ -446,10 +445,19 @@ impl DecisionReader {
         eos: u64,
         n_probs: u64,
         release: Option<ReadRelease<'_>>,
+        observations: Option<&mut Vec<oneiron::llm::decision::DecisionCompletionObservation>>,
     ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
+        let requested_prompts = prompt.as_array().map_or(1, Vec::len);
         let mut body = completion_fields(prompt, n_probs);
         body["logit_bias"] = json!([[eos, EOS_BIAS]]);
         let execution = execution_mode(&body);
+        let observation = observations.and_then(|observations| {
+            observations.push(oneiron::llm::decision::DecisionCompletionObservation {
+                requested_prompts,
+                response: None,
+            });
+            observations.last_mut()
+        });
         let reply = match release {
             Some((release, lease)) => self
                 .http
@@ -474,6 +482,18 @@ impl DecisionReader {
                 .await
                 .map_err(transport)?,
         };
+        if let Some(observation) = observation {
+            observation.response = Some(oneiron::llm::decision::DecisionCompletionResponse {
+                status: reply.status,
+                answers: match &reply.body {
+                    JsonValue::Array(answers) => {
+                        Some(answers.iter().map(answer_quantity).collect())
+                    }
+                    answer @ JsonValue::Object(_) => Some(vec![answer_quantity(answer)]),
+                    _ => None,
+                },
+            });
+        }
         status(reply.status)?;
         Ok((reply.body, execution))
     }
@@ -489,11 +509,18 @@ impl DecisionReader {
         physical: Option<WorkPhysical>,
         release: Option<ReadRelease<'_>>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+        mut observations: Option<&mut Vec<oneiron::llm::decision::DecisionCompletionObservation>>,
     ) -> LlmResult<LabelReadGenerationOutcome> {
         let ids = self.ids(release).await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
         let (first, first_mode) = self
-            .complete(prompt_array, ids.eos, self.recipe.n_probs(), release)
+            .complete(
+                prompt_array,
+                ids.eos,
+                self.recipe.n_probs(),
+                release,
+                observations.as_deref_mut(),
+            )
             .await?;
         let replies = answers(first, prompts.len())?;
         let mut readouts = Vec::with_capacity(prompts.len());
@@ -502,7 +529,12 @@ impl DecisionReader {
             // The first batch answered every prompt, including questions not processed yet.
             for reply in &replies {
                 let answering = self.answering(reply).await;
-                reads.push(usage(reply, answering.as_ref(), first_mode.as_ref(), physical)?);
+                reads.push(usage(
+                    reply,
+                    answering.as_ref(),
+                    first_mode.as_ref(),
+                    physical,
+                )?);
             }
         }
         for (index, ((prompt, question), mut reply)) in
@@ -530,7 +562,15 @@ impl DecisionReader {
                         usage: pack_usage(reads.into_iter().map(|read| read.usage).collect()),
                     });
                 }
-                (reply, mode) = self.complete(json!(prompt), ids.eos, full, release).await?;
+                (reply, mode) = self
+                    .complete(
+                        json!(prompt),
+                        ids.eos,
+                        full,
+                        release,
+                        observations.as_deref_mut(),
+                    )
+                    .await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
@@ -642,7 +682,12 @@ impl LabelReadGenerationReader for DecisionReader {
                         Err(FatalLlmError::Auth.into())
                     }
                 };
-                self.read_with_generations(request, physical, Some((&release, lease)), Some(admit_next))
+                self.read_with_generations(
+                    request,
+                    physical,
+                    Some((&release, lease)),
+                    Some(admit_next),
+                )
             }
             None => self.read_with_generations(request, physical, None, Some(admit_next)),
         }
@@ -677,7 +722,11 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        self.read_with_release(request, lease.work_context().map(|context| context.physical), None)
+        self.read_with_release(
+            request,
+            lease.work_context().map(|context| context.physical),
+            None,
+        )
     }
 
     fn read_while(
@@ -693,7 +742,11 @@ impl LabelReadModel for DecisionReader {
                 Err(FatalLlmError::Auth.into())
             }
         };
-        self.read_with_release(request, lease.work_context().map(|context| context.physical), Some((&release, lease)))
+        self.read_with_release(
+            request,
+            lease.work_context().map(|context| context.physical),
+            Some((&release, lease)),
+        )
     }
 }
 
@@ -734,6 +787,16 @@ fn prompt_of<'a>(state: &'a JsonValue, question: &LabelReadout<'a>) -> ReadPromp
         paired: question.paired,
         descriptions,
         state,
+    }
+}
+
+/// Preserve only native counters; validation and accounting retain their own
+/// original order and policy (including usage's output floor).
+fn answer_quantity(body: &JsonValue) -> oneiron::llm::decision::DecisionAnswerQuantity {
+    oneiron::llm::decision::DecisionAnswerQuantity {
+        index: body.get("index").and_then(JsonValue::as_u64),
+        tokens_evaluated: body.get("tokens_evaluated").and_then(JsonValue::as_u64),
+        tokens_predicted: body.get("tokens_predicted").and_then(JsonValue::as_u64),
     }
 }
 

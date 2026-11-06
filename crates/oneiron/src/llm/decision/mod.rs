@@ -1,6 +1,9 @@
 //! Typed question records and shared outcome projection.
 
-pub use crate::dreamer_wake::{DecisionCallAdmission, DecisionCallInvoice, DecisionCallSource};
+pub use crate::dreamer_wake::{
+    DecisionAnswerQuantity, DecisionCallAdmission, DecisionCallInvoice, DecisionCallSource,
+    DecisionCompletionObservation, DecisionCompletionResponse,
+};
 
 mod answer_actor;
 pub use answer_actor::AnswerActor;
