@@ -18,12 +18,13 @@ use crate::store::{BODY_INSTANCES, BODY_KEYS, Store, remembered_body_instances_i
 /// Adds to `keys` the full `vault_meta` keys of the rows `owner`'s bodies
 /// stand on. For each descriptor that holds bytes, a complete body or an
 /// incomplete one's retained part: its own digest holder row, the digest's
-/// key row and every instance row remembered under it, the result body row
-/// of that digest, and the result taint and secret marks of the occurrence
-/// the descriptor marks (`OwnedBody::mark_occurrence`). A descriptor that
-/// holds no bytes needs none of them; its own row names the owner. A key
-/// with no row behind it keeps nothing. Nothing is opened, decrypted,
-/// published or repaired.
+/// key row and every instance row remembered under it, the erase debts its
+/// instances carry with each erase's note of them, the result body row of
+/// that digest, and the result taint and secret marks of the occurrence the
+/// descriptor marks (`OwnedBody::mark_occurrence`). A descriptor that holds
+/// no bytes needs none of them; its own row names the owner. A key with no
+/// row behind it keeps nothing. Nothing is opened, decrypted, published or
+/// repaired.
 ///
 /// # Errors
 ///
@@ -44,6 +45,7 @@ pub(crate) fn retained_body_side_keys_in_txn(
         for instance in remembered_body_instances_in_txn(store, txn, &digest)? {
             keys.insert(BODY_INSTANCES.key_bytes(&(digest, instance)));
         }
+        crate::store::owed_erase_side_keys_in_txn(store, txn, &digest, keys)?;
         let row = crate::code_run::code_run_body_row_key(&digest);
         if let Some(handle) = row
             .strip_prefix(side_table::CODE_RUN_RAW_OUTPUT.prefix)
