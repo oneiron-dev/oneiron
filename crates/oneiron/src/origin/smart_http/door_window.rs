@@ -737,14 +737,14 @@ fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
     Ok((oid.to_owned(), len, path.to_owned()))
 }
 
-/// Decode the exact bytes of a TIP-stream path for LFS attribution only.
+/// Decode the exact bytes of a TIP-stream path for LFS attribution and receive marks.
 ///
 /// The tip producer frames `git diff-tree --raw` text, so a tip path that
 /// starts with `"` is git's C-quoted form; plain tip paths pass through
 /// byte-identical. History labels are cat-file `%(rest)` and never reach
 /// here. A malformed actual tip quote is the existing generic refusal, never
 /// an echoed input. The scanner still receives the original textual label.
-fn decode_tip_path(path: &str) -> Result<Vec<u8>> {
+pub(super) fn decode_tip_path(path: &str) -> Result<Vec<u8>> {
     if !path.starts_with('"') {
         return Ok(path.as_bytes().to_vec());
     }

@@ -47,6 +47,19 @@ pub(super) fn stamp_embedding_locality_in_txn(
 }
 
 impl Vault {
+    pub(crate) fn settled_embedding_locality_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbedderLocality>> {
+        if self.store.pending_embedding_marker_present(txn, id)? {
+            return Ok(None);
+        }
+        EMBEDDING_LOCALITY.get(&self.store, txn, id)
+    }
+}
+
+impl Vault {
     /// Where the current reconciled vector was actually filled. Client-supplied
     /// vectors and pending/stale fills carry no inferred locality.
     pub fn embedding_locality(&self, id: &EntityId) -> Result<Option<EmbedderLocality>> {
