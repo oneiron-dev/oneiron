@@ -423,8 +423,27 @@ impl VaultAllocationLedger {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
+        self.hold_in_txn(&txn, key)
+    }
+
+    /// Reads the original hold in the caller's writer, including pending
+    /// writes. It opens no transaction and changes no allocation or hold.
+    pub fn hold_in_write_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        key: &AllocationCallKey,
+    ) -> Result<Option<DurableAllocationHold>> {
+        self.require_lease()?;
+        self.hold_in_txn(txn, key)
+    }
+
+    fn hold_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &AllocationCallKey,
+    ) -> Result<Option<DurableAllocationHold>> {
         let row = ACCOUNT
-            .get(&self.vault.store, &txn, &())?
+            .get(&self.vault.store, txn, &())?
             .unwrap_or_default();
         if row.fence != Some(self.fence) {
             return Err(AllocationStoreError::ServingChanged);
