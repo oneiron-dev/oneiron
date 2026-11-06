@@ -184,10 +184,10 @@ existing read or become zero usage.
 
 The scoped caller can sample the exact retained lease on its issuing guard. This
 is GROSS meter data, not a native NET invoice, paid receipt or durable inclusion
-proof. This carrier does not register native House input hashes or NET invoices.
-Those actual producer hooks and the executor/driver coverage join remain separate
-work. Automatic payment and the existing generated-only opening policy are
-unchanged.
+proof. This runtime carrier alone registers no native input hash or NET invoice;
+the configured prepared House producer below records those optional facts.
+The executor/driver coverage join remains separate work. Automatic payment and
+the existing generated-only opening policy are unchanged.
 
 ### Registered GROSS inclusion at park/error settlement
 
@@ -218,3 +218,35 @@ settlement, native NET tally coverage, native House admission/invoice hooks and
 late-call reconciliation still need their actual joins. No durable guard pointer
 is serialized. Automatic native invoice payment and aggregate charge subtraction
 remain off; a known empty GROSS interval is not a zero NET invoice.
+
+### Captured House native input and NET quantities
+
+The original scoped caller also binds its actual vault boot. The admitted handle
+keeps that boot, its original line, the actual selected lease's reservation when
+known, and its admission time. Missing reservations remain unknown, not zero.
+The gate lends that exact handle into the configured prepared House reader before
+its tokenizer or completion can send. Ordinary custom readers keep their existing
+port and produce no invented source facts.
+
+The prepared reader hashes the same native input-plan bytes it constructed from
+its rendered prompts, recipe, endpoints, tokenizer bodies, retry plan and forced
+end token. This is a plan hash: the paid tokenizer has not yet supplied token ids,
+so it is not a finalized completion-body or wire hash. It is not the generated
+first read's logical request hash or a ModelCallRecord semantic evidence digest.
+Before the read starts, the existing private native-call row retains this plan
+hash with the original admission. The original boot must match the reader's
+vault. A failed optional write is logged; the read and its settlement still run.
+
+A complete read or a stopped paid prefix records that native terminal's actual
+input and output totals on the same admission. The batch and full-vocabulary
+retries still use one permit and one settlement; they do not create per-prompt
+financial calls. Errors without a complete native quantity stay unknown. A
+failed input registration or invoice write never changes the returned read.
+No terminal CONTENT claim is fabricated for a House read. The existing scope,
+purpose and extraction egress admission remain, and preparing a captured local
+read adds no extraction authorization requirement.
+
+This is optional producer data, not a paid fact, exact aggregate coverage or
+complete error-prefix accounting. The native payment primitive stays uncalled;
+new funding, aggregate subtraction, automatic payment and the generated-only
+opening policy remain unchanged.
