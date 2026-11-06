@@ -247,7 +247,9 @@ pub(crate) fn event_without_erased_actors(
 /// Binds the replicated row `record` to `policy`, in `txn`, once the
 /// policy's closure resolves: a thread policy needs its source's. A row
 /// bound already stays where it was born: the same binding holds, another
-/// conflicts.
+/// conflicts. A binding on a row held here whose own bytes carry no valid
+/// obligation conflicts too (fix list row 16256): only a stamped row is
+/// born bound.
 ///
 /// # Errors
 ///
@@ -262,6 +264,12 @@ pub(crate) fn bind_replicated_in_txn(
         Some(bound) if bound == *policy => return Ok(ReplicaMerge::Held),
         Some(_) => return Ok(ReplicaMerge::Conflict),
         None => {}
+    }
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, record)?
+        && super::obligation::row_obligation(&raw)
+            != crate::store::source_audience_obligation::SourceAudienceObligation::Required
+    {
+        return Ok(ReplicaMerge::Conflict);
     }
     if policy_closure_in(vault, txn, policy)?.is_none() {
         return Ok(ReplicaMerge::Pending);
