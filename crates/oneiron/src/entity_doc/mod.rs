@@ -15,6 +15,8 @@ pub use oneiron_store::entity_doc::document_resources;
 mod forks;
 mod history_erase;
 mod lift;
+#[cfg(feature = "sync")]
+mod local_discard;
 mod message_parts;
 mod message_stream;
 mod metadata;
@@ -46,6 +48,8 @@ pub(crate) use token_uses::engine_stamp_token;
 mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use commit_receipts::commit_input_rows_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use local_discard::discard_local_copies_in_txn;
 pub(crate) use message_parts::append_message_parts_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
