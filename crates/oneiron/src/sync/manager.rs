@@ -54,6 +54,9 @@ mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+// FIX 14534: a world eviction waits for, or on the owner's word discards, the
+// rows a local write still owes a window.
+pub(crate) use self::pending_mirror::{discard_window_mirrors_in_txn, window_owes_mirror_in_txn};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};

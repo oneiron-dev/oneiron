@@ -113,7 +113,13 @@ fn named_id(name: &str) -> Option<SnapshotId> {
 /// binds, so it opens under its own row alone.
 fn associated_data(id: &SnapshotId, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
     let manifest = rmp_serde::to_vec_named(manifest).map_err(|_| corrupt())?;
-    let mut aad = Vec::with_capacity(AAD_DOMAIN.len() + 16 + manifest.len());
+    let len = AAD_DOMAIN
+        .len()
+        .checked_add(16)
+        .and_then(|len| len.checked_add(manifest.len()))
+        .ok_or_else(|| std::io::Error::from(ErrorKind::OutOfMemory))?;
+    let mut aad = Vec::new();
+    aad.try_reserve_exact(len).map_err(std::io::Error::from)?;
     aad.extend_from_slice(AAD_DOMAIN);
     aad.extend_from_slice(&id.0);
     aad.extend_from_slice(&manifest);
@@ -203,7 +209,7 @@ impl Vault {
     /// room inside `budget`. Never a refusal of the turn that made it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn publish_inference_snapshot(
         &self,
         admission: &SnapshotAdmission,

@@ -334,6 +334,13 @@ impl Vault {
         self.store
             .delete_guards
             .reject_ruling_delete(&self.store, wtxn, id)?;
+        // FIX 8740: a grant's rulings keep the admission it gave them while
+        // its body is still here. Every soft path (a delete, an erase, a
+        // replayed soft tombstone, a redirect shell) scrubs it below, so a
+        // later tear finds them witnessed.
+        if let Some(row) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)? {
+            crate::federation::witness_grant_rulings_in_txn(&self.store, wtxn, id, &row)?;
+        }
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::store::task_authority_guard::reject_fact_delete(&self.store, wtxn, id)?;
         self.store
