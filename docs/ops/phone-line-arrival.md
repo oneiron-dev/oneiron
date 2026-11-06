@@ -293,8 +293,9 @@ still passes `None`, including its working room/roster behavior. This transport 
 add a phone tool-context endpoint: the existing owner-only tool-context condition remains
 unchanged. A future phone connector context must use the actual receiving-agent reader
 and source accounting, not bypass that condition or use unrestricted connector memory.
-SDK/OpenAPI discovery, external telephony integration and runtime answering proof remain
-partial. No number is provisioned, no audio or transcript is persisted by metadata intake,
+The seven phone-session operations are registered in the HTTP OpenAPI document with
+JSON payloads; the concrete native voice DTOs still parse and serialize them. Typed SDK
+publication, external telephony integration and runtime answering proof remain partial. No number is provisioned, no audio or transcript is persisted by metadata intake,
 and these source changes do not prove the complete anonymous-call lifecycle.
 
 ## Completion boundaries
