@@ -239,13 +239,35 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
     {
         line(&mut ics, "DTSTAMP", &utc_stamp(stamp)?);
     }
-    for (name, field) in [("DTSTART", "start"), ("DTEND", "end")] {
-        if let Some(at) = event
-            .pointer(&format!("/{field}/dateTime"))
+    // An all-day event lands as its days (FIX 16309), not as a UTC span:
+    // Graph gives it as midnight to midnight, whose dates are the days.
+    let all_day = event.get("isAllDay").and_then(Value::as_bool) == Some(true);
+    let days = match (
+        all_day,
+        event
+            .pointer("/start/dateTime")
             .and_then(Value::as_str)
-            .and_then(utc_wall_seconds)
-        {
-            line(&mut ics, name, &utc_stamp(at)?);
+            .and_then(midnight_date),
+        event
+            .pointer("/end/dateTime")
+            .and_then(Value::as_str)
+            .and_then(midnight_date),
+    ) {
+        (true, Some(start), Some(end)) if start < end => Some((start, end)),
+        _ => None,
+    };
+    if let Some((start, end)) = days {
+        line(&mut ics, "DTSTART;VALUE=DATE", &start);
+        line(&mut ics, "DTEND;VALUE=DATE", &end);
+    } else {
+        for (name, field) in [("DTSTART", "start"), ("DTEND", "end")] {
+            if let Some(at) = event
+                .pointer(&format!("/{field}/dateTime"))
+                .and_then(Value::as_str)
+                .and_then(utc_wall_seconds)
+            {
+                line(&mut ics, name, &utc_stamp(at)?);
+            }
         }
     }
     if let Some(subject) = text_of(event.get("subject")) {
@@ -335,6 +357,16 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
 }
 
 /// A Graph `dateTime` in UTC (the wire asks for UTC): `2026-11-06T15:00:00.0000000`.
+/// The `YYYYMMDD` date of a Graph wall time at midnight; `None` for any
+/// other time, which is not a day boundary.
+fn midnight_date(value: &str) -> Option<String> {
+    let bare = value.split('.').next().unwrap_or(value);
+    let bare = bare.strip_suffix('Z').unwrap_or(bare);
+    let at = chrono::NaiveDateTime::parse_from_str(bare, "%Y-%m-%dT%H:%M:%S").ok()?;
+    bare.ends_with("T00:00:00")
+        .then(|| at.format("%Y%m%d").to_string())
+}
+
 fn utc_wall_seconds(value: &str) -> Option<u64> {
     let bare = value.split('.').next().unwrap_or(value);
     let bare = bare.strip_suffix('Z').unwrap_or(bare);
