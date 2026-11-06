@@ -78,7 +78,7 @@ impl BudgetState {
                 events.push(BudgetLadderEvent {
                     threshold,
                     steering: steering_signal(threshold),
-                    row_index: u16::try_from(index).ok(),
+                    row_index: Some(index),
                 });
             }
         }

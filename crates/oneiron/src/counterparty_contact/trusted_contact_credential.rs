@@ -108,6 +108,7 @@ impl Vault {
                 delegation: None,
                 comm: None,
                 trusted_contact: Some(TrustedContactSlipBinding { person, version }),
+                seat_claim: None,
             };
             self.mint_slip_in_txn(wtxn, issuer, claims)
         })
