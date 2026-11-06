@@ -44,6 +44,7 @@ pub(super) fn run(
     transport: Option<&dyn CredentialReadTransport>,
     spool: Option<&dyn crate::code_sandbox::ProposalSpoolFloor>,
     cancel: &StepCancellation,
+    output: &mut dyn crate::code_sandbox::microvm::MicroVmOutputSink,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     cancel.check()?;
     let (_jail_custody, jail_root, staged) = stage_images(config, vm, image, budget)?;
@@ -90,6 +91,7 @@ pub(super) fn run(
                 transport,
                 spool,
                 cancel,
+                output,
             )
         })();
         let _ = finish.send(());
