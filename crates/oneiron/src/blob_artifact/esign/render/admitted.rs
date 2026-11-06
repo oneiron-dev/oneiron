@@ -53,6 +53,36 @@ impl Stage {
         }
     }
 
+    /// Grows one worklist on its host's memory. The caller keeps `backing`
+    /// behind the vector so its allocation is freed before its admission.
+    pub(super) fn reserve<T>(
+        &self,
+        values: &mut Vec<T>,
+        additional: usize,
+        backing: &mut Self,
+    ) -> Result<()> {
+        if additional <= values.capacity() - values.len() {
+            return Ok(());
+        }
+        if !self.admits() {
+            values.reserve(additional);
+            return Ok(());
+        }
+        let needed = values
+            .len()
+            .checked_add(additional)
+            .ok_or(PdfPreparationError::Limit)?;
+        let capacity = needed.max(values.capacity().saturating_mul(2));
+        let bytes = capacity
+            .checked_mul(size_of::<T>())
+            .ok_or(PdfPreparationError::Limit)?;
+        let replacement = self.nested();
+        replacement.admit(bytes)?;
+        values.reserve_exact(capacity - values.len());
+        *backing = replacement;
+        Ok(())
+    }
+
     /// The admission lopdf's load asks: this stage's.
     pub(super) fn decode_admission(&self) -> Option<Arc<dyn DecodeAdmission>> {
         self.0

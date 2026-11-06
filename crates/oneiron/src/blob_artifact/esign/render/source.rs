@@ -78,56 +78,89 @@ pub(super) fn reject_signatures(doc: &Document) -> Result<()> {
 pub(super) fn pages<'a>(
     doc: &'a Document,
     id: ObjectId,
-    mut inherited: BTreeMap<&'static [u8], &'a Object>,
+    inherited: BTreeMap<&'static [u8], &'a Object>,
     seen: &mut BTreeSet<ObjectId>,
     out: &mut Vec<BTreeMap<&'static [u8], &'a Object>>,
-    depth: usize,
+    stage: &super::admitted::Stage,
 ) -> Result<()> {
-    // A node met twice is a cycle. The depth guard bounds this recursion,
-    // not the pages: a page tree of fanout two holds 2^64 pages at it.
-    if depth > 64 || !seen.insert(id) {
-        return Err(PdfPreparationError::MalformedPdf);
+    enum Visit<'a> {
+        Node(ObjectId, BTreeMap<&'static [u8], &'a Object>),
+        Children {
+            node: &'a Dictionary,
+            children: std::slice::Iter<'a, Object>,
+            inherited: BTreeMap<&'static [u8], &'a Object>,
+            before: usize,
+        },
     }
-    let node = doc.get_dictionary(id)?;
-    for key in [b"MediaBox".as_slice(), b"CropBox", b"Resources", b"Rotate"] {
-        if let Ok(value) = node.get(key) {
-            inherited.insert(key, value);
-        }
-    }
-    match name(doc, node, b"Type")? {
-        Some(b"Pages") => {
-            let before = out.len();
-            for child in resolved(doc, node.get(b"Kids")?)?.as_array()? {
-                pages(
-                    doc,
-                    child.as_reference()?,
-                    inherited.clone(),
-                    seen,
-                    out,
-                    depth + 1,
-                )?;
-            }
-            if node.get(b"Count")?.as_i64()? != (out.len() - before) as i64 {
-                return Err(PdfPreparationError::MalformedPdf);
-            }
-        }
-        Some(b"Page") => {
-            for key in [
-                b"Contents".as_slice(),
-                b"Annots",
-                b"UserUnit",
-                b"Group",
-                b"TrimBox",
-                b"BleedBox",
-                b"ArtBox",
-            ] {
-                if let Ok(value) = node.get(key) {
-                    inherited.insert(key, value);
+
+    let mut backing = stage.nested();
+    let mut pending = Vec::new();
+    stage.reserve(&mut pending, 1, &mut backing)?;
+    pending.push(Visit::Node(id, inherited));
+    while let Some(visit) = pending.pop() {
+        match visit {
+            Visit::Node(id, mut inherited) => {
+                if !seen.insert(id) {
+                    return Err(PdfPreparationError::MalformedPdf);
+                }
+                let node = doc.get_dictionary(id)?;
+                for key in [b"MediaBox".as_slice(), b"CropBox", b"Resources", b"Rotate"] {
+                    if let Ok(value) = node.get(key) {
+                        inherited.insert(key, value);
+                    }
+                }
+                match name(doc, node, b"Type")? {
+                    Some(b"Pages") => {
+                        let children = resolved(doc, node.get(b"Kids")?)?.as_array()?.iter();
+                        stage.reserve(&mut pending, 1, &mut backing)?;
+                        pending.push(Visit::Children {
+                            node,
+                            children,
+                            inherited,
+                            before: out.len(),
+                        });
+                    }
+                    Some(b"Page") => {
+                        for key in [
+                            b"Contents".as_slice(),
+                            b"Annots",
+                            b"UserUnit",
+                            b"Group",
+                            b"TrimBox",
+                            b"BleedBox",
+                            b"ArtBox",
+                        ] {
+                            if let Ok(value) = node.get(key) {
+                                inherited.insert(key, value);
+                            }
+                        }
+                        out.push(inherited);
+                    }
+                    _ => return Err(PdfPreparationError::MalformedPdf),
                 }
             }
-            out.push(inherited);
+            Visit::Children {
+                node,
+                mut children,
+                inherited,
+                before,
+            } => {
+                if let Some(child) = children.next() {
+                    let id = child.as_reference()?;
+                    stage.reserve(&mut pending, 2, &mut backing)?;
+                    let child_inherited = inherited.clone();
+                    pending.push(Visit::Children {
+                        node,
+                        children,
+                        inherited,
+                        before,
+                    });
+                    pending.push(Visit::Node(id, child_inherited));
+                } else if node.get(b"Count")?.as_i64()? != (out.len() - before) as i64 {
+                    return Err(PdfPreparationError::MalformedPdf);
+                }
+            }
         }
-        _ => return Err(PdfPreparationError::MalformedPdf),
     }
     Ok(())
 }
