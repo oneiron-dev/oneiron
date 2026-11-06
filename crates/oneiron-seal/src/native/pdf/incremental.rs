@@ -286,9 +286,9 @@ pub(crate) fn append_revision(
         let gen_len = decimal_len_u64(u64::from(*generation));
         admitted::reserve(limits, &mut out, num_len + 1 + gen_len + b" obj\n".len())
             .map_err(memory_error)?;
-        push_decimal_u64(out, u64::from(*num));
+        push_decimal_u64(&mut out, u64::from(*num));
         out.push(b' ');
-        push_decimal_u64(out, u64::from(*generation));
+        push_decimal_u64(&mut out, u64::from(*generation));
         out.extend_from_slice(b" obj\n");
         if let Some((sig_num, br_rel, lt_rel)) = sig_info
             && sig_num == *num
@@ -339,7 +339,7 @@ pub(crate) fn append_revision(
     )
     .map_err(memory_error)?;
     out.extend_from_slice(b"startxref\n");
-    push_decimal_u64(out, xref_offset);
+    push_decimal_u64(&mut out, xref_offset);
     out.extend_from_slice(b"\n%%EOF");
     let byte_range = match (br_patch, contents_gap) {
         (Some(p), Some((lt, gt))) => {
@@ -391,7 +391,7 @@ fn patch_byterange(out: &mut [u8], pos: usize, br: [u64; 4]) -> Result<(), SealE
 pub(crate) fn patch_contents(
     draft: &mut DraftRevision,
     der: &[u8],
-    limits: &SealResourceLimits,
+    _limits: &SealResourceLimits,
 ) -> Result<(), SealError> {
     let (lt, gt) = draft
         .contents_gap
@@ -406,13 +406,13 @@ pub(crate) fn patch_contents(
             code: FatalCode::ContentsCapacityExceeded,
         });
     }
-    let mut hex: Vec<u8> = admitted::vec(limits, gap).map_err(memory_error)?;
-    for &b in der {
-        hex.push(HEX_UPPER[(b >> 4) as usize]);
-        hex.push(HEX_UPPER[(b & 0xF) as usize]);
+    // The draft already owns this gap's allocation.
+    let slot = &mut draft.bytes[lt + 1..gt];
+    for (i, &b) in der.iter().enumerate() {
+        slot[2 * i] = HEX_UPPER[(b >> 4) as usize];
+        slot[2 * i + 1] = HEX_UPPER[(b & 0xF) as usize];
     }
-    hex.resize(gap, b'0');
-    draft.bytes[lt + 1..gt].copy_from_slice(&hex);
+    slot[der.len() * 2..].fill(b'0');
     Ok(())
 }
 

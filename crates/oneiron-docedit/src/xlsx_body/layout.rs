@@ -2,17 +2,20 @@
 //! Entry: `Book::relayout`.
 //! Definitions live here; xlsx_body retains the old API and shared Book state.
 
+use super::links::OwnLinks;
+use super::titles::TitleMoves;
 use super::*;
+use crate::xlsx_shift::retarget_linked_sheets;
 
 impl Book {
     /// Write a sheet layout: rename, reorder, add and delete worksheets in the
     /// sheet list; carry each defined name's scope and the workbook view's
     /// tabs to the new order, dropping names local to a deleted sheet; and
     /// retarget every formula, chart range and hyperlink that names a renamed
-    /// or deleted sheet. A deleted sheet's parts leave with it unless another
-    /// part still reaches them. A chart or dialog sheet stays after the
-    /// worksheet it followed.
-    pub(super) fn relayout(&mut self, plan: &[XlsxSheetPlan]) -> Result<()> {
+    /// or deleted sheet, through the workbook's `own` links to itself too. A
+    /// deleted sheet's parts leave with it unless another part still reaches
+    /// them. A chart or dialog sheet stays after the worksheet it followed.
+    pub(super) fn relayout(&mut self, plan: &[XlsxSheetPlan], own: &OwnLinks) -> Result<()> {
         let mut taken = HashSet::new();
         let mut kept = HashSet::new();
         for slot in plan {
@@ -141,11 +144,13 @@ impl Book {
                 .cloned()
                 .unwrap_or(SheetFate::Keep)
         };
-        // A formula's sheet prefixes follow the layout, and its references
-        // to a deleted sheet's tables read `#REF!`.
+        // A formula's sheet prefixes follow the layout, through a link to
+        // the workbook itself too, and its references to a deleted sheet's
+        // tables read `#REF!`.
         let order = self.order.clone();
+        let own_link = |link: &str| own.names.contains(link);
         let retarget = |text: &str| -> Option<String> {
-            let moved = retarget_sheets(text, &order, &fate);
+            let moved = retarget_linked_sheets(text, &order, &fate, &own_link);
             if gone_tables.is_empty() {
                 return moved;
             }
@@ -350,6 +355,7 @@ impl Book {
             for part in parts {
                 self.rewrite_formulas(&part, &|text: &str, _| retarget(text))?;
             }
+            self.retarget_own_links(&own.parts, &fate)?;
             self.move_pivot_sources(&|source: &Node| {
                 if let Some(sheet) = source.attr("sheet") {
                     return match fate(sheet) {
@@ -382,7 +388,21 @@ impl Book {
                 })
                 .map(|(_, name, _)| name.clone())
                 .collect();
-            self.retitle_parts(&old, &new)?;
+            // The other sheets keep their names, laid out (FIX 9084).
+            let others: Vec<String> = layout
+                .iter()
+                .filter(|(at, ..)| {
+                    at.is_some_and(|at| !self.worksheets.contains_key(&self.order[at]))
+                })
+                .map(|(_, name, _)| name.clone())
+                .collect();
+            self.retitle_parts(&TitleMoves {
+                old: &old,
+                new: &new,
+                others: &others,
+                order: &order,
+                fate: &fate,
+            })?;
         }
         self.visibility = layout
             .iter()

@@ -350,11 +350,12 @@ pub struct AgentHealthCard {
     pub causes: Vec<HealthCauseSource>,
     /// The activity the newest `silent` finding judged its attempt by
     /// (OF-568 L5): its own call and model step at its lease generation, its
-    /// actor's newest call that names no attempt, and another session's
-    /// newest call. While the card is open, a review that finds the attempt
-    /// active again refreshes it to the activity it read (FIX 8376). `None`
-    /// on every other signal. Neither `evidence` nor the watermark counts it,
-    /// so it never reopens a settled card.
+    /// actor's newest call that names no attempt, another session's newest
+    /// call, and the runtime's in-memory `stream_at` and `tool_finished_at`
+    /// while this vault runs the lease. While the card is open, a review that
+    /// finds the attempt active again refreshes it to the activity it read
+    /// (FIX 8376). `None` on every other signal. Neither `evidence` nor the
+    /// watermark counts it, so it never reopens a settled card.
     pub silence: Option<HealthSilenceActivity>,
     /// Every note and steer taken through the card (`moves`), oldest first,
     /// kept across merges and reopens. Neither `evidence` nor the watermark

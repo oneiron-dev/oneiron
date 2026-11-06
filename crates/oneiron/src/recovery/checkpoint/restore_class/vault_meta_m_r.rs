@@ -9,14 +9,31 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_TOPOLOGY_SEQ, CONTENT),
     (&t::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN, CONTENT),
+    // The compliance log and setting are live: a restore never takes back a
+    // logged search or turns a switched-off search on again (FIX 12560).
+    // An import's queue, occurrences and progress stand with the rows they
+    // landed, as the image holds them (FIX 12559).
+    (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
+    (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
+    (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    (&t::MAIL_PACK_OCCURRENCE, CONTENT),
+    (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
+    // A source's owner, custody name and settings are live configuration.
+    (&t::MAIL_PACK_SOURCE, LIVE),
+    (&t::MAIL_PACK_SOURCE_INDEX, LIVE),
+    (&t::MAIL_PACK_SYNC, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
     // image holds it, as the wakes its landing did record do.
     (&t::MEMORY_TURN_WAKE_UNPERSISTED, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
+    // Derived beside each batch, restored with it (FIX 7067).
+    (&t::MERGE_QUEUE_BATCH_INDEX, CONTENT),
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
     (&t::MERGE_QUEUE_CHECK_WORK, CONTENT),
+    // Derived beside each work row's receipts, restored with it (FIX 7349).
+    (&t::MERGE_QUEUE_RECEIPT_INDEX, CONTENT),
     // A restore never revives a cleared review policy: the live one stands.
     (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),
@@ -69,6 +86,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_CAS_INTENT, CONTENT),
     (&t::ORIGIN_CHANGE_RECEIPT, CONTENT),
     (&t::ORIGIN_CODE_OPERATIONS, CONTENT),
+    (&t::ORIGIN_CODE_PENDING, CONTENT),
+    (&t::ORIGIN_CODE_RESOLVED_TIP, CONTENT),
     (&t::ORIGIN_ENGINE_EXPORT, CONTENT),
     (&t::ORIGIN_KEEP_OWNER, CONTENT),
     (&t::ORIGIN_LFS_CDC_SEED, CONTENT),
@@ -88,6 +107,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_RECEIVE_PACK_EVIDENCE, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_INTENT, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_PROGRESS, CONTENT),
+    (&t::ORIGIN_RECEIVED_UPDATE, CONTENT),
     (&t::ORIGIN_SCAN_CHECK, LIVE),
     (&t::ORIGIN_SCAN_POLICY, LIVE),
     (&t::ORIGIN_VISIBLE_REF, CONTENT),
@@ -95,6 +115,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_CONNECTOR_CALL_CALLER, LIVE),
     (&t::OUTBOUND_DEDUPE_RESERVATION, LIVE),
     (&t::OUTBOUND_DEDUPE_INTENT, LIVE),
+    (&t::OUTBOUND_INTENT_ACCOUNTING, LIVE),
     (&t::OUTBOUND_INTENT_ATTEMPT_INDEX, LIVE),
     (&t::OUTBOUND_INTENT_ATTEMPT_FORMAT, LIVE),
     (&t::OUTBOUND_INTENT_LEDGER_RECORD, LIVE),
@@ -143,6 +164,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_CHANGE, CONTENT),
     (&t::PORTS_CHANGE_BY_ACTOR, CONTENT),
     (&t::PORTS_CHANGE_BY_ENTITY, CONTENT),
+    (&t::PORTS_CLAIM_ROW_FLOOR, LIVE),
     (&t::PORTS_CLOCK_FLOOR, LIVE),
     (&t::PORTS_DEPENDENCY, CONTENT),
     (&t::PORTS_DEPENDENCY_REVERSE, CONTENT),
@@ -204,6 +226,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // state, so a restore keeping current authority keeps the current vault's.
     (&t::PROVENANCE_BODY_RESPONSE, CONTENT),
     (&t::PROVENANCE_BODY_RESPONSE_OWNER, LIVE),
+    // Historical source facts are custody state: the current vault's is kept.
+    (&t::PROVENANCE_BODY_SOURCE, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),
     (&t::PROVENANCE_WITHHELD_SECRET, LIVE),
     // Acts that already left the vault: a restore never revives a withdrawn submission or replays
@@ -228,6 +252,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
+    (&t::REPO_DERIVED_SOURCE_BLOB, CONTENT),
     (&t::REPO_MANIFEST_BY_CODE, CONTENT),
     // A restore never makes this machine a repo's refs writer again (FIX 6870).
     (&t::REPO_MANIFEST_MINTED, LIVE),

@@ -41,7 +41,14 @@ pub struct OpenAiCompatHttpResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OpenAiCompatStreamFrame {
     Chunk(JsonValue),
-    Abort { usage: LlmUsage },
+    /// A terminal chunk with call-local evidence kept outside provider JSON.
+    ChunkWithMetadata {
+        chunk: JsonValue,
+        metadata: oneiron::llm::LlmCallMetadata,
+    },
+    Abort {
+        usage: LlmUsage,
+    },
     Status(OpenAiCompatHttpResponse),
 }
 

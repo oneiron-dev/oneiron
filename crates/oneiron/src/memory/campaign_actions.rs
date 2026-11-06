@@ -317,7 +317,7 @@ impl Memory<'_> {
             require_readable(&lane, txn, &[campaign, person, evidence])?;
             // An archived campaign still must honor an unsubscribe.
             require_campaign_person(self, txn, campaign, person, false)?;
-            let receipt = crate::campaign::send_hygiene::apply_suppression_in_txn(
+            let receipt = self.vault.store.record_hooks.apply_suppression_in_txn(
                 self.vault,
                 txn,
                 crate::write_envelope::cohort_claims::suppression::SuppressionCause::Unsubscribe,
@@ -391,7 +391,7 @@ fn require_campaign_person(
     )?;
     if active && record.definition.lifecycle != CampaignLifecycle::Active {
         return Err(MemoryError::bad_request(
-            "an archived campaign cannot advance stages",
+            "a campaign that is not active (draft, paused or archived) cannot advance stages",
         ));
     }
     if memory.vault.get_entity_type_in_txn(txn, &person)?

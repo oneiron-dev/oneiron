@@ -17,6 +17,7 @@ pub mod xref;
 mod admitted;
 mod document;
 mod incremental_document;
+#[macro_use]
 mod object;
 
 mod bookmarks;

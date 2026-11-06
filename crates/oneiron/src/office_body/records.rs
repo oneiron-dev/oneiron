@@ -150,9 +150,10 @@ impl OfficeRecalcZone {
         if !(-840..=840).contains(&utc_offset_minutes) {
             return Err(invalid("utc_offset_minutes must be in -840..=840"));
         }
-        if iana_timezone.as_deref().is_some_and(|label| {
-            label.trim().is_empty() || label.chars().any(char::is_control) || label.len() > 255
-        }) {
+        if iana_timezone
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty() || label.chars().any(char::is_control))
+        {
             return Err(invalid(
                 "iana_timezone must be non-blank and contain no controls",
             ));
@@ -171,6 +172,13 @@ pub struct OfficeBodyExportRecord {
     pub artifact: EntityId,
     pub version: u64,
     pub frontier: Vec<u8>,
+    /// The frontier the deck's rebinding to this export left (FIX 12325):
+    /// `frontier` and the one commit that bound the deck to this version,
+    /// wherever the head stands since. The deck there holds the slides and
+    /// shapes `frontier` holds, each bound to its ids in this version.
+    /// `None` for DOCX and XLSX, and for a deck export a Keep did not bind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebind_frontier: Option<Vec<u8>>,
     pub source_version: u64,
     pub actor: BodyActor,
     /// The author the export showed; empty once its actor was erased.

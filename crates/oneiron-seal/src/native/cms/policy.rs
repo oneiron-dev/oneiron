@@ -1,10 +1,9 @@
 //! Attribute/ESS binding and frozen signature-suite verification gates.
 
-use der::{Decode, Encode};
+use der::{Decode, referenced::OwnedToRef};
 
 use crate::api::{Sha256Digest, SignatureAlgorithm};
 use crate::error::{FatalCode, SealError, SealStage};
-use crate::memory::MemoryLedger;
 
 use super::cms_err;
 use super::der::{DerReader, Tlv, sha256};
@@ -13,29 +12,17 @@ use super::oids::{
     OID_EC_PUBLIC_KEY, OID_ECDSA_SHA256, OID_P256, OID_RSA_ENCRYPTION, OID_RSA_PSS, OID_SHA256,
     OID_SHA256_WITH_RSA,
 };
-use super::parse::{ParsedSignerInfo, parse_oid};
+use super::parse::ParsedSignerInfo;
 
 // ---------------------------------------------------------------------------
 // Attribute inspection and signature verification
 // ---------------------------------------------------------------------------
 
-/// Refuse through the operation ledger before allocating `bytes`; a parsing
-/// failure stays the CMS encoding error, a refused ledger the typed error.
-fn admit(bytes: usize, memory: &MemoryLedger) -> Result<(), SealError> {
-    memory
-        .admit_len::<u8>(bytes)
-        .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
-}
-
 /// Parse one Attribute: returns (attr OID content bytes, single value TLV).
-/// The OID copy is admitted inside `parse_oid`.
-pub(crate) fn parse_attribute(
-    attr_der: &[u8],
-    memory: &MemoryLedger,
-) -> Result<(Vec<u8>, Tlv<'_>), SealError> {
+pub(crate) fn parse_attribute(attr_der: &[u8]) -> Result<(&[u8], Tlv<'_>), SealError> {
     let top = DerReader::new(attr_der).expect(0x30)?;
     let mut r = DerReader::new(top.content);
-    let oid = parse_oid(r.expect(0x06)?, memory)?;
+    let oid = r.expect(0x06)?.content;
     let set = r.expect(0x31)?;
     let mut sr = DerReader::new(set.content);
     let value = sr.read()?;
@@ -50,10 +37,7 @@ pub(crate) fn parse_attribute(
 
 /// Enforce the exact three-attribute PAdES baseline (§7.3). Returns the
 /// `message-digest` value.
-pub(crate) fn check_baseline_attrs(
-    signer: &ParsedSignerInfo,
-    memory: &MemoryLedger,
-) -> Result<Sha256Digest, SealError> {
+pub(crate) fn check_baseline_attrs(signer: &ParsedSignerInfo) -> Result<Sha256Digest, SealError> {
     if signer.signed_attrs.len() != 3 {
         return Err(cms_err());
     }
@@ -61,7 +45,7 @@ pub(crate) fn check_baseline_attrs(
     let mut seen_ct = false;
     let mut seen_sc = false;
     for attr in &signer.signed_attrs {
-        let (oid, value) = parse_attribute(attr, memory)?;
+        let (oid, value) = parse_attribute(attr)?;
         if oid == OID_ATTR_CONTENT_TYPE.as_bytes() {
             if seen_ct || value.tag != 0x06 || value.content != OID_DATA.as_bytes() {
                 return Err(cms_err());
@@ -91,17 +75,14 @@ pub(crate) fn check_baseline_attrs(
 
 /// (cert hash content, issuer Name DER, serialNumber TLV) of one
 /// ESSCertIDv2.
-type EssCertIdParts = (Vec<u8>, Vec<u8>, Vec<u8>);
+type EssCertIdParts<'a> = (&'a [u8], &'a [u8], &'a [u8]);
 
 /// Walk a signingCertificateV2 attribute down to its (single) ESSCertIDv2,
 /// returning (cert hash content, issuer Name DER, serialNumber TLV). The
 /// attribute must be the exact baseline shape: single value, one
 /// ESSCertIDv2, issuerSerial with one directoryName GeneralName.
-pub(super) fn ess_cert_id_v2(
-    attr_der: &[u8],
-    memory: &MemoryLedger,
-) -> Result<EssCertIdParts, SealError> {
-    let (oid, value) = parse_attribute(attr_der, memory)?;
+pub(super) fn ess_cert_id_v2(attr_der: &[u8]) -> Result<EssCertIdParts<'_>, SealError> {
+    let (oid, value) = parse_attribute(attr_der)?;
     if oid != OID_ATTR_SIGNING_CERT_V2.as_bytes() || value.tag != 0x30 {
         return Err(cms_err());
     }
@@ -132,18 +113,7 @@ pub(super) fn ess_cert_id_v2(
     if !gr.is_done() {
         return Err(cms_err());
     }
-    admit(
-        hash.content
-            .len()
-            .saturating_add(dir_name.content.len())
-            .saturating_add(serial.full.len()),
-        memory,
-    )?;
-    Ok((
-        hash.content.to_vec(),
-        dir_name.content.to_vec(),
-        serial.full.to_vec(),
-    ))
+    Ok((hash.content, dir_name.content, serial.full))
 }
 
 /// Verify the ESSCertIDv2 binding inside a signingCertificateV2 attribute:
@@ -154,10 +124,10 @@ pub(crate) fn check_ess_binding(
     signer_cert_der: &[u8],
     issuer_name_der: &[u8],
     serial_der: &[u8],
-    memory: &MemoryLedger,
 ) -> Result<(), SealError> {
-    let (hash, issuer, serial) = ess_cert_id_v2(attr_der, memory)?;
-    if hash != sha256(signer_cert_der) || issuer != issuer_name_der || serial != serial_der {
+    let (hash, issuer, serial) = ess_cert_id_v2(attr_der)?;
+    let expected = sha256(signer_cert_der);
+    if hash != expected.as_slice() || issuer != issuer_name_der || serial != serial_der {
         return Err(cms_err());
     }
     Ok(())
@@ -205,11 +175,7 @@ pub(crate) fn verify_signature_value(
     let digest = sha256(signing_input);
     let ok = match alg {
         SignatureAlgorithm::RsaPkcs1v15Sha256 => {
-            use rsa::pkcs8::DecodePublicKey;
-            let key = rsa::RsaPublicKey::from_public_key_der(
-                spki.to_der().map_err(|_| cms_err())?.as_slice(),
-            )
-            .map_err(|_| cms_err())?;
+            let key = rsa::RsaPublicKey::try_from(spki.owned_to_ref()).map_err(|_| cms_err())?;
             let scheme = rsa::Pkcs1v15Sign::new::<sha2::Sha256>();
             key.verify(scheme, &digest, signature).is_ok()
         }

@@ -4,8 +4,7 @@ use super::verify_evidence::ValidatedTimeToken;
 use super::verify_revocation::gen_time_beyond_skew;
 use super::verify_sig_pipeline::{Checks, SigEntry, unpadded_cms};
 use crate::api::{Sha256Digest, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
-use crate::error::{FatalCode, SealError, SealStage};
-use crate::memory::MemoryLedger;
+use crate::memory::{MemoryLedger, SealMemoryRefusal};
 use crate::native::{cms, pdf, tsp};
 
 #[derive(Clone, Copy)]
@@ -19,7 +18,7 @@ enum CheckOutcome {
     NotRun(VerifyFindingCode),
 }
 impl CheckOutcome {
-    fn emit(self, kind: VerifyCheckKind, checks: &mut Checks) {
+    fn emit(self, kind: VerifyCheckKind, checks: &mut Checks<'_>) -> Result<(), SealMemoryRefusal> {
         match self {
             Self::Pass => checks.record(kind, true, VerifyFindingCode::TimestampInvalid),
             Self::Fail(reason) => checks.record(kind, false, reason),
@@ -52,6 +51,8 @@ impl TimestampResult {
 
 /// `Absent` only means no optional token was present. Every other variant
 /// produces exactly one applicable crypto check AND one applicable TSA check.
+/// A token's parse, decodes and copies are held on the verification's
+/// `memory` ledger (FIX 12260); memory refused is `Err`, never a verdict.
 pub(super) enum TimestampEvidence {
     Absent,
     NotEvaluated,
@@ -65,31 +66,25 @@ impl TimestampEvidence {
         signer: &cms::ParsedSignerInfo,
         anchors: &[pkix_chain::TrustAnchor],
         memory: &MemoryLedger,
-    ) -> Result<Self, SealError> {
+    ) -> Result<Self, SealMemoryRefusal> {
         let mut token = None;
         for attr in &signer.unsigned_attrs {
-            // Only an ordinary attribute failure is malformed; a memory
-            // refusal propagates as the verification's resource error.
-            let (oid, value) = match cms::parse_attribute(attr, memory) {
-                Ok(pair) => pair,
-                Err(err) if err.is_retryable() => return Err(err),
-                Err(_) => return Ok(Self::Malformed),
+            let Ok((oid, value)) = cms::parse_attribute(attr) else {
+                return Ok(Self::Malformed);
             };
             if oid == cms::OID_ATTR_TS_TOKEN.as_bytes() {
                 if token.is_some() {
                     return Ok(Self::Malformed);
                 }
-                memory
-                    .admit_len::<u8>(value.full.len())
-                    .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-                token = Some(value.full.to_vec());
+                // The token is read in place, never copied (FIX 12260).
+                token = Some(value.full);
             }
         }
         let Some(token) = token else {
             return Ok(Self::Absent);
         };
         Self::evaluate(
-            &token,
+            token,
             &cms::sha256(&signer.signature),
             anchors,
             clock_ms,
@@ -103,7 +98,7 @@ impl TimestampEvidence {
         clock_ms: u64,
         coverage_ok: bool,
         memory: &MemoryLedger,
-    ) -> Result<Self, SealError> {
+    ) -> Result<Self, SealMemoryRefusal> {
         if !coverage_ok {
             return Ok(Self::CryptoRejected);
         }
@@ -121,22 +116,11 @@ impl TimestampEvidence {
         anchors: &[pkix_chain::TrustAnchor],
         clock_ms: u64,
         memory: &MemoryLedger,
-    ) -> Result<Self, SealError> {
-        // Only an ordinary token failure is a rejection; a memory refusal or
-        // an unconfigured service propagates, never a verdict on the token.
+    ) -> Result<Self, SealMemoryRefusal> {
         let value = match tsp::validate_token_for_verify(token, imprint, anchors, memory) {
             Ok(value) => value,
-            Err(err) if err.is_retryable() => return Err(err),
-            Err(SealError::Fatal {
-                code: FatalCode::InvalidConfiguration,
-                ..
-            }) => {
-                return Err(SealError::Fatal {
-                    stage: SealStage::Verification,
-                    code: FatalCode::InvalidConfiguration,
-                });
-            }
-            Err(_) => return Ok(Self::CryptoRejected),
+            Err(tsp::TokenError::Memory(refusal)) => return Err(refusal),
+            Err(tsp::TokenError::Invalid) => return Ok(Self::CryptoRejected),
         };
         if gen_time_beyond_skew(value.gen_time_unix, clock_ms) {
             return Ok(Self::CryptoRejected);
@@ -168,16 +152,15 @@ impl TimestampEvidence {
             },
         }
     }
-    /// Only trusted time may become signer or archival time evidence.
-    /// Memory the covered-set parse was refused propagates as the
-    /// verification's resource error, never a trust verdict.
+    /// Only trusted time may become signer or archival time evidence. The
+    /// TSA chain's certificates join `covered`, each held on `memory`.
     pub(super) fn project(
         self,
         kind: TimestampKind,
-        checks: &mut Checks,
+        checks: &mut Checks<'_>,
         covered: &mut Vec<EmbeddedCert>,
         memory: &MemoryLedger,
-    ) -> Result<TimestampResult, SealError> {
+    ) -> Result<TimestampResult, SealMemoryRefusal> {
         let (crypto_kind, invalid) = match kind {
             TimestampKind::Signature => (
                 VerifyCheckKind::SignatureTimestamp,
@@ -191,12 +174,12 @@ impl TimestampEvidence {
         let slots = self.slots(invalid);
         match slots {
             TimestampSlots::Absent => {
-                checks.absent(crypto_kind);
-                checks.absent(VerifyCheckKind::TimestampCertificatePath);
+                checks.absent(crypto_kind)?;
+                checks.absent(VerifyCheckKind::TimestampCertificatePath)?;
             }
             TimestampSlots::Complete { crypto, trust } => {
-                crypto.emit(crypto_kind, checks);
-                trust.emit(VerifyCheckKind::TimestampCertificatePath, checks);
+                crypto.emit(crypto_kind, checks)?;
+                trust.emit(VerifyCheckKind::TimestampCertificatePath, checks)?;
             }
         }
         if let Self::Valid(token) = self {
@@ -204,16 +187,11 @@ impl TimestampEvidence {
                 token.trust,
                 VerifyCheckStatus::Pass | VerifyCheckStatus::NotRun
             ) {
-                for d in &token.tsa_chain_ders {
-                    let cert = EmbeddedCert::from_der(d, memory)
-                        .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-                    if let Some(cert) = cert {
-                        memory
-                            .admit_len::<EmbeddedCert>(1)
-                            .map_err(|refusal| refusal.seal_error(SealStage::Verification))?;
-                        covered.push(cert);
-                    }
-                }
+                EmbeddedCert::extend_admitted(
+                    covered,
+                    token.tsa_chain_ders.iter().map(Vec::as_slice),
+                    memory,
+                )?;
             }
             return Ok(match token.trust {
                 VerifyCheckStatus::Pass => TimestampResult {

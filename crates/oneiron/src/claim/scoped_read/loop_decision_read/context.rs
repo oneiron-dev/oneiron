@@ -40,7 +40,7 @@ pub(super) fn record_family(record: &GateDecisionRecord) -> Option<LoopDecisionF
     })
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// What `record`'s kept read context admits, when the reader is admitted
     /// to every read context it kept (a bundle's every member): `None` when
     /// it kept none or one does not admit. A decision on a claim `claim`
@@ -54,7 +54,7 @@ impl<'v> ScopedRead<'v> {
     pub(super) fn loop_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         record: &GateDecisionRecord,
         claim: Option<EntityId>,
     ) -> Result<Option<KeptAdmission>> {
@@ -115,7 +115,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         context: &GateDecisionReadContext,
     ) -> Result<bool> {
         if context.about.is_empty() && context.position.is_none() {
@@ -190,8 +190,9 @@ impl<'v> ScopedRead<'v> {
     /// the row exists, but root-turn content visibility never gates the
     /// placed turn (FIX 10999) — while placed turns and rooms stand under
     /// CONTENT through today's audience read. Anchor worlds contribute the
-    /// nonempty gate; their window-time refinement stays PARTLY.
-    /// Content-free: only id readability is asked, never body text.
+    /// nonempty gate. An unbound agent's own-entry windows additionally meet
+    /// the candidate header's captured occurred start, never a live clock.
+    /// Content-free: ids and the candidate's own time, never body text.
     fn loop_anchors_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -203,6 +204,9 @@ impl<'v> ScopedRead<'v> {
         if !anchors.is_complete() || anchors.worlds().is_empty() {
             return Ok(false);
         }
+        let Some(occurred) = anchors.occurred() else {
+            return Ok(false);
+        };
         for anchor in anchors.threads() {
             if self.entity_record_in(txn, &anchor.root)?.is_none() {
                 return Ok(false);
@@ -224,7 +228,24 @@ impl<'v> ScopedRead<'v> {
                 return Ok(false);
             }
         }
-        Ok(true)
+        let class = self.actor_key.actor_class();
+        let unbound_agent = self.actor_key.room_turn.is_none()
+            && [crate::EdgeActorClass::Agent, crate::EdgeActorClass::System]
+                .into_iter()
+                .any(|agent| class == Some(agent.gate_actor_class()));
+        let Some(reader) = unbound_agent
+            .then(|| EntityId::from_hex(self.actor_key.actor_ref()).ok())
+            .flatten()
+        else {
+            return Ok(true);
+        };
+        Ok(crate::conversation::anchors_own_windows_admit_in(
+            self.vault,
+            txn,
+            anchors.rooms(),
+            reader,
+            occurred.start,
+        ))
     }
 
     /// A kept record position under the reader's live authority, as a stored
@@ -236,7 +257,7 @@ impl<'v> ScopedRead<'v> {
     fn loop_position_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead<'v>,
+        read: &LoopRead,
         record: Option<&EntityId>,
         position: &GateReadPosition,
     ) -> Result<bool> {

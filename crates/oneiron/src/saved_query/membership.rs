@@ -13,6 +13,7 @@ use crate::campaign::claims::{
 use crate::campaign::enrollment::{
     IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
 };
+use crate::campaign::surface::{CampaignLifecycle, campaign_type_byte, load_campaign_in_txn};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
 };
@@ -219,6 +220,18 @@ pub fn commit_membership_plan(
         detected_at: event.detected_at,
     };
     vault.with_write_txn_grouped(|wtxn| {
+        // The campaign must still be Active: evidence evaluation awaits
+        // between the enroll check and this commit, and a complaint webhook
+        // can pause the campaign during that await. A campaign that is not
+        // Active neither enrolls nor consumes an epoch.
+        let campaign_kind = campaign_type_byte(vault)?;
+        let active = load_campaign_in_txn(vault, wtxn, event.campaign_ref, campaign_kind)?
+            .is_some_and(|campaign| campaign.definition.lifecycle == CampaignLifecycle::Active);
+        if !active {
+            return Err(Error::InvalidConfig(
+                "the campaign is not active; nothing enrolls into it".to_owned(),
+            ));
+        }
         let watermark = current_watermark(
             vault,
             wtxn,

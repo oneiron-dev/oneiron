@@ -17,6 +17,7 @@ use super::{
 };
 use crate::api::{Counter, SealResourceLimits};
 use crate::memory::SealMemoryRefusal;
+use crate::native::held_bytes;
 use lopdf::{
     Document, ObjectId,
     xref::{XrefEntry, XrefType},
@@ -352,6 +353,9 @@ pub(crate) fn analyze(
         return Err(RevisionAnalysisError::Limit);
     }
     let _analysis = limits.observed.enter();
+    // One parse pass for the analysis, and one inside it per revision: each
+    // document drops before its pass does (FIX 8448).
+    let _pass = limits.memory.pass();
     let final_doc = strict(bytes, limits)?;
     let ends = revision_ends(bytes, &final_doc, limits)
         .map_err(RevisionAnalysisError::Memory)?
@@ -366,6 +370,7 @@ pub(crate) fn analyze(
     for end in ends {
         prefix_work = prefix_work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, prefix_work);
+        let _revision_pass = limits.memory.pass();
         let doc = strict(&bytes[..end], limits)?;
         let xref_offset = usize::try_from(
             last_startxref(&bytes[..end]).map_err(|_| RevisionAnalysisError::Framing)?,
@@ -410,6 +415,11 @@ pub(crate) fn analyze(
                 }
             }
         }
+        // The parsed trailer belongs to this revision's parse pass. Keep an
+        // independently admitted copy, so ending the pass cannot return the
+        // retained graph's credit while the facts still own it.
+        admitted::dictionary(limits, &doc.trailer).map_err(RevisionAnalysisError::Memory)?;
+        let trailer = doc.trailer.clone();
         admitted::push(
             limits,
             &mut revisions,
@@ -418,7 +428,7 @@ pub(crate) fn analyze(
                 xref_offset,
                 prev_xref,
                 xref_style: doc.reference_table.cross_reference_type,
-                trailer: doc.trailer,
+                trailer,
                 definitions,
             },
         )

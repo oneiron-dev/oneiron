@@ -180,11 +180,6 @@ pub fn review_slides(
                 });
                 continue;
             }
-            // A decision reads an image whole or not at all: none is scaled to fit.
-            if unit.image.len() > MAX_DECISION_IMAGE_BYTES {
-                refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
-                continue;
-            }
             // A render's pixel size, which a located answer maps onto the slide.
             let (medium, rendered) = match &unit.image {
                 SlideReviewImage::Rendered(bytes) => {

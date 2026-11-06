@@ -93,6 +93,7 @@ impl AttemptQueue<'_> {
         record.backoff_until = None;
         record.last_error = None;
         record.updated_at = input.now;
+        record.settled_at = Some(input.now);
         record.cancel_state.cancellation = Some(AttemptCancellation {
             mode: CancelMode::Landed,
             grounds: None,
@@ -217,6 +218,19 @@ impl AttemptQueue<'_> {
         Ok(outcome)
     }
 
+    /// Publishes only actual native cancellations retained by a committed
+    /// erase/restore writer. A cancelled ledger row is not a stopped process.
+    pub(crate) fn erased_payload_cancellations_committed(&self, cancelled: &[(AttemptId, u32)]) {
+        if cancelled.is_empty() {
+            return;
+        }
+        self.store.notify_attempt_observers();
+        self.store.notify_notification_updates();
+        for &(id, attempt_count) in cancelled {
+            crate::engine_executor::stop_attempt_step(self.vault, id, attempt_count);
+        }
+    }
+
     /// Transaction-composable [`Self::force_cancel`].
     pub(crate) fn force_cancel_in_txn(
         &self,
@@ -268,6 +282,12 @@ impl AttemptQueue<'_> {
         )?;
         self.delete_dedupe_entry_for_record(wtxn, &record)?;
         self.notify_settled_in_txn(wtxn, &record)?;
+        // FIX 900: a force-cancelled child settles its spend lease in the
+        // same write (OF-532); idempotent, a no-op when unmetered.
+        if let Some(vault) = self.vault {
+            crate::agent_dispatch::AgentDispatcher::new(vault)
+                .settle_child_in_txn(wtxn, &record.id, input.now)?;
+        }
         Ok(ForceCancelOutcome::Cancelled(record))
     }
 
@@ -486,7 +506,7 @@ fn lease_warning_after_secs(lease_timeout_secs: u64) -> u64 {
 /// receipt with, by the grounds it rests on.
 ///
 /// An OWNER is an ordinary actor and is held to the ordinary actor rules,
-/// including the refusal to claim the reserved runtime name. The two RUNTIME
+/// including the refusal to claim the reserved runtime name. The RUNTIME
 /// grounds legitimately carry [`ATTEMPT_RUNTIME_ACTOR`], so they are validated
 /// as a plain actor name.
 pub(in crate::attempt_queue) fn validate_force_authority(
@@ -494,9 +514,9 @@ pub(in crate::attempt_queue) fn validate_force_authority(
 ) -> Result<()> {
     match authority.grounds() {
         ForceCancelGrounds::Owner => validate_cancel_actor(authority.actor()),
-        ForceCancelGrounds::LeaseExpiry | ForceCancelGrounds::Criticality => {
-            validate_intervention_actor(authority.actor())
-        }
+        ForceCancelGrounds::LeaseExpiry
+        | ForceCancelGrounds::Criticality
+        | ForceCancelGrounds::ErasedPayload => validate_intervention_actor(authority.actor()),
     }
 }
 
@@ -521,6 +541,7 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     record.backoff_until = None;
     record.last_error = None;
     record.updated_at = now;
+    record.settled_at = Some(now);
     record.cancel_state.pressure.pending = 0;
     record.cancel_state.cancellation = Some(AttemptCancellation {
         mode: CancelMode::Forced,
@@ -586,6 +607,7 @@ fn landing_successor(
         dedupe_actor_ref: source.dedupe_actor_ref.clone(),
         created_at: now,
         updated_at: now,
+        settled_at: None,
         events: Vec::new(),
         manifest: Vec::new(),
         executor_model: None,

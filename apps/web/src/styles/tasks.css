@@ -1,0 +1,111 @@
+/* ── the tasks page — a list on paper. your tasks, plus what the agents
+   propose or do. built on the inbox one-line-row idiom (.brow /
+   .brow-line / settle-in-place), scoped to this pane so the sheet reads
+   the same whether or not the inbox sheet was loaded before it. ── */
+
+/* the sheet holds one body; no context column here — the row unfolds
+   in place (rule 39, rec A: under the row = glance + act) */
+main.pane.tasks-pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.tasks-pane .pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* ── bundles = FLAT sections on the one sheet (rule 6): serif head,
+   dividers are SPACE; the head is a quiet toggle (rule 10); the count
+   renders ONLY when the rows are hidden (rule 16) ── */
+.tasks-pane .bundle { display: flex; flex-direction: column; }
+.tasks-pane .bundle + .bundle { margin-top: 20px; }
+.tasks-pane .bundle.closed + .bundle { margin-top: 0; }
+.tasks-pane .bundle .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; cursor: pointer; }
+.tasks-pane .bundle .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.tasks-pane .bundle .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.tasks-pane .bundle .head:hover .fold-hint, .tasks-pane .bundle .head:focus-visible .fold-hint { opacity: 1; }
+.tasks-pane .bundle.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.tasks-pane .bundle .head .meta-line { margin-left: auto; display: none; }
+.tasks-pane .bundle.closed .head .meta-line { display: inline; }
+.tasks-pane .bundle.closed .brows { display: none; }
+.tasks-pane .brows { padding: 3px 0 0; }
+
+/* ── one-line rows: bullet · task · for · who · acts · due ── */
+/* the slot is a 0fr/1fr grid so a settled row can leave its group
+   without a height jump: it cools, then folds, then lands in done */
+.tasks-pane .brow-slot { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), opacity 200ms ease-out; }
+.tasks-pane .brow-slot > .brow { min-height: 0; overflow: hidden; }
+.tasks-pane .brow-slot.leaving { grid-template-rows: 0fr; opacity: 0; }
+.tasks-pane .brow-slot.arriving { animation: tk-land 220ms ease-out; }
+@keyframes tk-land { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+.tasks-pane .brow { outline: none; }
+.tasks-pane .brow-line {
+  display: flex; gap: 12px; padding: 6px 8px 6px 6px; align-items: baseline;
+  cursor: pointer; border-radius: 5px; transition: background 160ms ease;
+}
+.tasks-pane .brow-line:hover, .tasks-pane .brow:focus-visible .brow-line { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+
+/* the bullet IS the check: filled = yours · hollow = an agent proposed
+   it · the check = done. text-free; the state reads on hover. */
+.tasks-pane .tbul {
+  flex: none; width: 10px; height: 10px; align-self: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--silver-3);
+}
+.tasks-pane .tbul::before { content: ""; width: 7px; height: 7px; border-radius: 50%; transition: background 200ms ease, border-color 200ms ease; }
+.tasks-pane .tbul.mine::before { background: var(--silver-2); }
+.tasks-pane .tbul.proposed::before { border: 1.5px solid var(--amber); }
+.tasks-pane .tbul.skipped::before { border: 1.5px solid var(--silver-4); }
+.tasks-pane .tbul.done::before { display: none; }
+.tasks-pane .tbul svg { display: block; width: 11px; height: 11px; }
+
+/* task = the claim, serif; for = the org, silver-3 serif; who = a seal
+   or the name in the agent's ink; due = mono, hover-tier time */
+.tasks-pane .task {
+  flex: 1; min-width: 0;
+  font-family: var(--serif); font-size: 14px; line-height: 1.45; color: var(--silver-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color 200ms ease;
+}
+.tasks-pane .brow.proposed .task { color: var(--silver-2); }
+.tasks-pane .brow.cool .task, .tasks-pane .brow.cool .tfor { color: var(--silver-3); }
+.tasks-pane .brow.skipped .task, .tasks-pane .brow.skipped .tfor, .tasks-pane .brow.skipped .tdue { color: var(--silver-4); }
+.tasks-pane .tfor {
+  flex: none; width: 108px;
+  font-family: var(--serif); font-size: 13px; color: var(--silver-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color 200ms ease;
+}
+.tasks-pane .twho { flex: none; width: 58px; display: inline-flex; align-items: center; align-self: center; }
+/* the name in ink IS the presence mark, and a name is voice, not data */
+.tasks-pane .twho .aname { font-family: var(--serif); font-size: 13.5px; line-height: 1.2; }
+.tasks-pane .rverbs { flex: none; width: 96px; display: flex; justify-content: flex-end; gap: 12px; }
+.tasks-pane .tdue {
+  flex: none; width: 52px; text-align: right;
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+  color: var(--silver-3); font-feature-settings: "tnum" 1;
+  transition: color 200ms ease;
+}
+
+/* the unfold: why (serif) + doors, in place */
+.tasks-pane .brow-detail { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.tasks-pane .brow.open .brow-detail { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
+.tasks-pane .brow-detail > .bd-inner { min-height: 0; overflow: hidden; }
+.tasks-pane .bd-inner { padding: 1px 8px 0 28px; display: flex; flex-direction: column; gap: 6px; }
+.tasks-pane .brow.open .bd-inner { padding-bottom: 11px; }
+.tasks-pane .bd-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); max-width: 56ch; }
+.tasks-pane .bd-why .aname { font-weight: 550; }
+.tasks-pane .bd-acts { display: flex; gap: 12px; }
+
+/* the empty list: the flock, one line (rule 40) */
+.tasks-pane .tasks-empty { display: flex; align-items: center; gap: 18px; padding: 18px 4px 6px; }
+.tasks-pane .tasks-empty .spot { width: 150px; height: auto; }
+.tasks-pane .tasks-empty .lead { font-family: var(--serif); font-size: 15px; color: var(--silver-2); line-height: 1.5; max-width: 40ch; }
+.tasks-pane .tasks-empty .lead .sub { display: block; font-size: 13.5px; color: var(--silver-3); margin-top: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks-pane .brow-detail, .tasks-pane .brow-slot { transition: none; }
+  .tasks-pane .brow-slot.arriving { animation: none; }
+}

@@ -32,12 +32,13 @@ use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStep,
 };
-use super::wire::{HealedExecutorReply, heal_executor_reply};
+use super::wire::{HealedExecutorReply, heal_executor_text};
 use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
+    WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -221,12 +222,9 @@ impl EngineNativeExecutor<'_> {
                     .await
             }?;
             let execution_text = self.post_turn_hooks(turn, &response)?;
-            // Only the post-hook execution view is healed below. The raw
-            // provider response stays separate as evidence (FIX 9840).
-            let mut execution_response = response.clone();
-            execution_response.message.content = vec![ContentPart::Text {
-                text: execution_text,
-            }];
+            // Only the post-hook execution view is healed below, as its text:
+            // no copy of the reply is made for it (FIX 448). The raw provider
+            // response stays separate as evidence (FIX 9840).
             // The provider that answered is the one this turn's program
             // speaks for: each verb call it makes carries the name (OF-560).
             self.gated_write
@@ -242,11 +240,17 @@ impl EngineNativeExecutor<'_> {
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
             // staged, hashed, or replayed; the reply's own console bytes are
             // already gone, and `trailing_speak` belongs to ONE-1686.
+            if response.finish_reason != crate::FinishReason::Stop {
+                return Err(Error::InvalidClaimBody(
+                    "executor LLM response did not finish cleanly",
+                )
+                .into());
+            }
             let HealedExecutorReply {
                 code: script,
                 trailing_speak,
                 repairs,
-            } = heal_executor_reply(&execution_response)?;
+            } = heal_executor_text(&execution_text)?;
             record_script_output(
                 &self.storage,
                 &mut record,
@@ -267,6 +271,7 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
+            self.gated_write.observe_consumed_code_replies(&record)?;
             let recoverable = self.observation_refs(&record)?;
             let mut host = RecordingJsHost::new(
                 self.gated_write,
@@ -298,10 +303,12 @@ impl EngineNativeExecutor<'_> {
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    // A cancelled root fails the step: the bridge rows it
-                    // left stay recorded, and no wait it reached hides that.
+                    // A cancelled root fails the step. Its real wait still
+                    // joins the checkpoint for a later valid lease, but never
+                    // turns this cancelled entry into a Waiting success.
+                    let cancelled = cancel.is_cancelled();
                     let callable_rows = host.result_rows();
-                    let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
+                    let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
                     let bound = host.bound;
@@ -318,12 +325,14 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
                             repairs.healed(),
                             config,
                         )?
+                        && !cancelled
                     {
                         checking.ended(Some(&status));
                         return Ok(self.outcome(status, steps_run + 1, record));
@@ -362,6 +371,7 @@ impl EngineNativeExecutor<'_> {
                     captured,
                     bound,
                     receipts,
+                    host.context_capture,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -378,7 +388,7 @@ impl EngineNativeExecutor<'_> {
             // store; none is held whole here.
             let step_bodies = host
                 .take_streamed()
-                .into_step_bodies(&self.storage, &step_outcome)
+                .into_step_bodies(&self.storage, record.run_id, &step_outcome)
                 .map_err(Into::into)
                 .and_then(|bodies| {
                     validate_runtime_outputs(&record, completed_steps, &bodies.files)
@@ -405,6 +415,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!(
@@ -532,7 +543,8 @@ impl EngineNativeExecutor<'_> {
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
-
+            let (end, context) =
+                self.step_context(config, &record, bridge_start, host.context_capture)?;
             let checkpoint = CodeRunStepCheckpoint::new(
                 completed_steps,
                 checkpoint_label(completed_steps),
@@ -548,13 +560,18 @@ impl EngineNativeExecutor<'_> {
                     &step_result,
                     implicit_speak_bytes.as_deref(),
                     &record.bridge_calls[bridge_start..],
+                    end,
                 )?,
                 config
                     .determinism
                     .frozen_unix_ms
                     .saturating_add(completed_steps),
-            )?;
-            record.step_checkpoints.push(checkpoint);
+            )?
+            .ending_at(end.bridge_end);
+            let bridge_end = record.bridge_calls.len();
+            record
+                .step_checkpoints
+                .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
@@ -562,7 +579,10 @@ impl EngineNativeExecutor<'_> {
             // beside the bindings they describe, and so does the seal of the
             // code consent wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
-            let next_generation = self
+            // A flaky commit converts to success on one identical retry
+            // (FIX 1443): a first commit that actually landed fails the
+            // retry closed on its generation mismatch instead.
+            let next_generation = match self
                 .storage
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
@@ -570,7 +590,24 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
-                )?;
+                    &context,
+                ) {
+                Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
+                    tracing::warn!(
+                        "{error:?}: step checkpoint commit hit a storage error; retrying once"
+                    );
+                    self.storage
+                        .put_code_run_replay_record_with_receipts_if_generation(
+                            &record,
+                            expected_generation,
+                            repairs.healed().then_some(&config.model),
+                            &host.receipts,
+                            parked.as_ref(),
+                            &context,
+                        )?
+                }
+                result => result?,
+            };
             // The implicit bubble is downstream of its checkpoint commit. A
             // compare-and-put failure emits nothing. A terminal retry replays
             // this delivery under stable witness ids, so it can recover a

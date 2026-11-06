@@ -3,10 +3,10 @@
 //! The engine owns the seat contract (`oneiron::dispatch_byoa::official_seats`);
 //! this module is the host half: owner settings in, a sign-in surface out, a
 //! local executor for the official signed-in CLIs, and the Dreamer executor
-//! that dispatches admitted work onto a seat. No type here can hold a vendor
-//! token either: settings carry labels and custody handles, the surface
-//! carries an argv or a browser URL the PERSON runs, and the control plane
-//! holds nothing.
+//! that dispatches admitted work onto a seat. Public settings carry labels
+//! and custody handles, and the surface carries an argv or a browser URL
+//! the PERSON runs. The private SIWC module keeps verified credentials only
+//! in a protected runtime-local file; the control plane holds nothing.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
+use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
@@ -28,7 +29,6 @@ use oneiron::dispatch_byoa::{
     check_seat_placement, hosted_seat_bound, register_official_dreamer_providers,
     skipped_seats_note,
 };
-use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
     HostingPrivacyPosture, WakeAttemptContext,
@@ -40,6 +40,7 @@ use super::secret_destinations::RunSecretDestinations;
 
 mod drain;
 mod runner_work;
+pub(crate) mod siwc;
 mod surface;
 
 use drain::{Drain, drain_spooled};
@@ -51,7 +52,7 @@ pub use surface::{
 /// Env names that would hand the official CLI a credential from OUR process
 /// instead of the login the person made in the CLI's own store. The seat
 /// runs on the person's sign-in, so these never cross into the child.
-const SEAT_ENV_REMOVED: [&str; 5] = [
+pub(super) const SEAT_ENV_REMOVED: [&str; 5] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
@@ -82,10 +83,21 @@ pub struct OfficialCliSeatExecutor {
     /// The free disk the host keeps under the output this executor spools
     /// past memory (the server's `DiskFloor`): a write that would go below it
     /// stops the run with [`ByoaError::SpoolAtDiskFloor`]. `None` keeps none.
-    pub floor: Option<Arc<dyn SpillFloor>>,
+    pub floor: Option<Arc<dyn ProposalSpoolFloor>>,
     /// Raised by the host when the run's claim is lost under it (FIX 9320):
     /// the run's process is to stop. `None` watches nothing.
     pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// The credential-helper environment the host built for the run (FIX
+    /// 10624 step 2): the seat-child slip, its seed, the loopback origin and
+    /// the git configuration that calls the helper. `None` for a run with no
+    /// helper destination.
+    pub helper_env: Option<super::SeatHelperEnv>,
+    /// The model door environment the host built for the run (FIX 15702):
+    /// each offered slot's loopback URL and the run's reference to it, in the
+    /// variables the CLI's SDK reads. Set after the variables the seat
+    /// removes, so the reference is the one key the CLI holds. `None` for a
+    /// run offered no slot.
+    pub model_env: Option<super::SeatModelEnv>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
@@ -94,6 +106,8 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
             .field("workdir", &self.workdir)
             .field("secret_destinations", &self.secret_destinations)
             .field("floor", &self.floor.is_some())
+            .field("helper_env", &self.helper_env)
+            .field("model_env", &self.model_env)
             .finish()
     }
 }
@@ -136,8 +150,14 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         if let Some(destinations) = &self.secret_destinations {
             destinations.apply_env(&mut command);
         }
+        if let Some(helper_env) = &self.helper_env {
+            helper_env.apply(&mut command);
+        }
         for name in SEAT_ENV_REMOVED {
             command.env_remove(name);
+        }
+        if let Some(model_env) = &self.model_env {
+            model_env.apply(&mut command);
         }
         let mut child = command
             .spawn()

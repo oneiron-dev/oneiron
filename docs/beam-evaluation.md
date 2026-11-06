@@ -60,11 +60,40 @@ fixed call contract, model pins, real provider usage and request hashes. Judge
 usage is eval overhead. Offline engine ingest/index time and tokenizer work are
 measured separately; no offline LLM call means zero offline provider dollars.
 
+Measured `beam measure` rows, exported context-pack records, and emitted
+competitor rows each carry `secret_scan`: the benchmark run's own
+Oneiron-vault secret-scan mode (`scan-on`/`scan-off`), read from the actual
+vault switch at run time. (Competitor rows serialize it as `secretScan`.) It
+is not a claim about any competitor's own scanner.
+
+## Reader tokenizer slice
+
+For provider wire names that tiktoken 0.12 actually maps, `beam measure`
+budgets the delivered context with that vendored encoding before every
+measured gate: pack L2 admission, item, merged/split, serialized and envelope
+accounting, plus own-trace, chat and the final context clip. The counter is
+`count_ordinary` over raw context text. Unknown wire names (Claude, Gemini
+and friends) stay admitted on the current engine-normalized `o200k` path and
+are explicitly non-reader-measured PART: no guessed encoding, no ratio, no
+refusal, no override read.
+
+Each measured row discloses `context_tokenizer_id` (the counter that actually
+budgeted it), `reader_tokenizer_id` (`None` for the unknown slice),
+`context_tokens` (delivered raw context in the actual counter),
+`engine_normalized_context_tokens` (the same raw context in `o200k`), and
+`context_token_budget` (`None` when the budget was off). Provider framing and
+usage stay in `query_cost`; offline ingest/index accounting stays
+engine-normalized. The context-budget-off leg sets the builder budget to `0`
+and skips the final clip; all other row, field, window and authority limits
+stay on.
+
 ## Data and comparison boundaries
 
 The bundled LongMemEval-S and BEAM tier files are small conformance samples,
-not the native 500K/1M/10M datasets. `beam tiers <graduation.json>` requires a
-non-regressed previous tier. The 10M cell stays `not-yet-run (10M-gated)`.
+not the native 500K/1M/10M datasets. `beam tiers <graduation.json>` reports
+BEAM-128K first, followed by LongMemEval-S. Either can be recorded on its own.
+The larger BEAM tiers require all preceding tiers to have cleared without
+regression. The 10M cell stays `not-yet-run (10M-gated)` until scale work is ready.
 Every corpus item must carry `metadata.dataset_timestamp` in Unix seconds;
 `occurredAt` must agree with it. Learned time follows corpus order, not ingest
 wall-clock time. Measured plans freeze read-time decay with `temporal_now`.

@@ -7,38 +7,44 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
+use super::review_request::SlideReviewLimitsInput;
 use super::{
     ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource,
     VersionReconciliation,
 };
 use super::{DeckProposeRejection, DeckTransaction};
-use crate::claim::ClaimReadStatus;
+use crate::blob_artifact::deck_context::DeckEditContext;
+use crate::blob_artifact::native_output::NativeOutput;
+use crate::blob_artifact::office_address::RangeRef;
+use crate::blob_artifact::slide_review::REVIEW_IMAGE;
+use crate::blob_artifact::slide_review::SlideRenderer;
+use crate::blob_artifact::slide_review::SlideUnitRefusalReason;
+use crate::blob_artifact::slide_review::review_copy_bytes;
+use crate::blob_artifact::unit_refusal::UnitRefusal;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
-    REVIEW_IMAGE, SlideAbstention, SlideJudgment, SlideRenderer, SlideReviewError,
-    SlideReviewImage, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
-    SlideUnitRefusalReason,
+    SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewLabels,
+    SlideReviewRequest, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
-    ArtifactAsk, DeckEditContext, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
-    RangeRef, SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+    ArtifactAsk, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
+    UnitAbstention, UnitCall, UnitDecider,
 };
 use crate::edit_settle::{
-    KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
+    KeepUndo, MadeByReader, OrganWaitView, PendingProposalView, SettleConsent, SettledReview,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::file_secret_marks::SecretSight;
-use crate::lens::RecordRef;
-use crate::llm::decision::TypedDecision;
+use crate::llm::decision::{ResolvedMedia, TypedDecision};
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
 };
-use crate::model_decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
-};
-use crate::receipt::ReceiptRecord;
+use crate::model_decision::{DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility};
+use crate::ports::ClaimReadStatus;
+use crate::store::receipt_row::ReceiptRecord;
+use crate::store::record_ref::RecordRef;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{MadeBy, MadeByTrigger};
@@ -148,6 +154,10 @@ pub struct NativeOutputRequest {
     /// The envelope Keep gives the version; absent gives the writer's own.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// Additional rows the caller declares it read. Waiting-proposal readers
+    /// must admit each row. This is not authority or a complete read log.
+    #[serde(default)]
+    pub read_rows: Vec<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -198,6 +208,15 @@ pub struct SlideReviewSubmit {
     /// The made_by envelope Keep gives the version.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// The caller's own dial (FIX 9336): a first rung, a ceiling and a band
+    /// inside the host's, which it narrows and never widens. Absent, the
+    /// host's dial runs.
+    #[serde(default)]
+    pub resident_dial: Option<DecisionDial>,
+    /// The caller's own pacing (FIX 9336), each narrowing the vault's
+    /// policy row and never widening it; absent, the vault's row runs.
+    #[serde(default)]
+    pub limits: SlideReviewLimitsInput,
 }
 
 /// One unit to judge: a slide or a shape (its `PptxCommentTarget`),
@@ -243,7 +262,7 @@ pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
     pub offer: Option<PptxCommentTarget>,
-    pub judged_live: Option<crate::office_body::LivePin>,
+    pub judged_live: Option<crate::typed_body::live_pin::LivePin>,
 }
 
 /// One typed question over an artifact's units (ARCH-0076 §2): rows of a
@@ -265,7 +284,7 @@ pub struct ArtifactAskSubmit {
     pub units: ArtifactAskUnits,
     /// `reversible_read` (the default) or `outbound_effect`.
     #[serde(default)]
-    pub reversibility: Option<serde_json::Value>,
+    pub reversibility: Option<Reversibility>,
     /// Access-checked evidence beside the artifact, by ref.
     #[serde(default)]
     pub evidence_refs: Vec<String>,
@@ -275,9 +294,9 @@ pub struct ArtifactAskSubmit {
     /// The whole ask's deadline from now; five minutes when absent.
     #[serde(default)]
     pub deadline_ms: Option<u64>,
-    /// The made_by envelope Keep gives the version, as JSON.
+    /// The made_by envelope Keep gives the version.
     #[serde(default)]
-    pub made_by: Option<serde_json::Value>,
+    pub made_by: Option<MadeBy>,
 }
 
 /// The units one ask covers, and where each answer lands.
@@ -304,8 +323,8 @@ pub enum ArtifactAskUnits {
         blocks: Vec<String>,
         /// The comments' author name.
         author: String,
-        /// The display words, severity words included (`SlideReviewLabels`), as JSON.
-        labels: serde_json::Value,
+        /// The display words, severity words included.
+        labels: SlideReviewLabels,
     },
     /// Each file is one unit, read whole at its head; its answer fills
     /// column `answer_column` of its row on `sheet`.
@@ -363,7 +382,8 @@ pub struct ReleasedWait {
     pub released: bool,
 }
 
-/// A kept proposal: the version it became, the threads it moved, its receipt.
+/// A kept proposal: the version it became, the threads it moved, its
+/// receipt and the review it settled.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeptProposal {
     pub version: ArtifactVersionView,
@@ -377,6 +397,10 @@ pub struct KeptProposal {
     /// (FIX 2700). `None` when it did not fork.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconciliation: Option<VersionReconciliation>,
+    /// The review it settled, typed: each slide and paragraph judgment and
+    /// each comment's asker, answerer and selected author (FIX 9337).
+    #[serde(default)]
+    pub review: SettledReview,
 }
 
 /// A discarded proposal's receipt.
@@ -423,20 +447,6 @@ fn entity(text: &str) -> MemoryResult<EntityId> {
     Ok(EntityId::from_hex(text)?)
 }
 
-fn json_field<T: serde::de::DeserializeOwned>(
-    value: Option<serde_json::Value>,
-    field: &str,
-) -> MemoryResult<Option<T>> {
-    match value {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(value) => {
-            Ok(Some(serde_json::from_value(value).map_err(|_| {
-                invalid(&format!("{field} is not a valid value"))
-            })?))
-        }
-    }
-}
-
 impl Memory<'_> {
     fn artifact_actor(&self) -> WriteActor {
         self.write_actor()
@@ -465,11 +475,51 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.view`: kind, name, type, head and every version with
-    /// its made_by and born-from.
+    /// its made_by and born-from. Queue-check exhaust needs the request's
+    /// authenticated Owner proof; an unbound public read withholds it.
     pub fn artifacts_view(&self, input: &ArtifactRefRequest) -> MemoryResult<Option<ArtifactView>> {
-        Ok(self
+        let artifact = entity(&input.artifact_ref)?;
+        if let Some(view) = self
             .vault()
-            .blob_artifact_view(&entity(&input.artifact_ref)?)?)
+            .blob_artifact_view_for_reader(&artifact, None, None)?
+        {
+            return Ok(Some(view));
+        }
+        match self.queue_check_request_owner() {
+            Some(owner) => self.artifacts_view_as_owner(owner, input),
+            None => Ok(None),
+        }
+    }
+
+    /// The family view with the actual Owner proof carried by this request.
+    /// The protected artifact and Owner are judged again in the read snapshot.
+    pub fn artifacts_view_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &ArtifactRefRequest,
+    ) -> MemoryResult<Option<ArtifactView>> {
+        self.artifact_owner_matches(owner)?;
+        let lane = self.queue_check_owner_read_lane(owner, ClaimReadStatus::Recorded)?;
+        Ok(self.vault().blob_artifact_view_for_reader(
+            &entity(&input.artifact_ref)?,
+            Some(owner),
+            Some(&lane),
+        )?)
+    }
+
+    pub(crate) fn artifact_owner_matches(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> MemoryResult<()> {
+        let actor = owner.revalidate(self.vault())?;
+        if self.actor_class() != EdgeActorClass::Human || self.actor() != actor {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "artifact Owner proof does not belong to this caller",
+                &[],
+            ));
+        }
+        Ok(())
     }
 
     /// `vault.artifacts.export`: one version's export file, with the born-with
@@ -478,13 +528,39 @@ impl Memory<'_> {
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
+        self.artifacts_export_with_owner(input, self.queue_check_request_owner())
+    }
+
+    /// A sighted export with this request's real Owner proof. Secret sight
+    /// remains independent of the protected exhaust's Owner audience.
+    pub fn artifacts_export_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: &ArtifactExportRequest,
+    ) -> MemoryResult<Option<ArtifactExportFile>> {
+        self.artifact_owner_matches(owner)?;
+        self.artifacts_export_with_owner(input, Some(owner))
+    }
+
+    fn artifacts_export_with_owner(
+        &self,
+        input: &ArtifactExportRequest,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> MemoryResult<Option<ArtifactExportFile>> {
         let vault = self.vault();
-        let Some(file) = self.export_blob_artifact_sighted(
-            &entity(&input.artifact_ref)?,
-            input.version,
-            input.why.as_deref(),
-        )?
-        else {
+        let artifact = entity(&input.artifact_ref)?;
+        let file = match owner {
+            Some(owner) => self.export_blob_artifact_sighted_as_owner(
+                &artifact,
+                input.version,
+                input.why.as_deref(),
+                owner,
+            )?,
+            None => {
+                self.export_blob_artifact_sighted(&artifact, input.version, input.why.as_deref())?
+            }
+        };
+        let Some(file) = file else {
             return Ok(None);
         };
         // The owner's export comes back to the owner, a download or a save to
@@ -558,14 +634,7 @@ impl Memory<'_> {
         };
         // Each born row is named by the kind its row is; one whose kind no
         // longer reads is listed in `born` alone.
-        let born_records = born
-            .iter()
-            .filter_map(|id| match vault.get_entity_type(id) {
-                Ok(Some(kind)) => Some(Ok(RecordRef::from_id(kind, id, None))),
-                Ok(None) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .collect::<crate::Result<Vec<_>>>()?;
+        let born_records = vault.born_records(&born)?;
         Ok(BornFromView {
             born,
             born_records,
@@ -573,26 +642,33 @@ impl Memory<'_> {
         })
     }
 
-    /// `vault.artifacts.proposals`: the proposals waiting beside one artifact.
+    /// `vault.artifacts.proposals`: the proposals waiting beside one artifact
+    /// that this handle's own lane admits (FIX 9311): the artifact, the
+    /// version each was made against, its records covered by the artifact,
+    /// and each source its made_by names. A withheld one leaves no trace.
     pub fn artifacts_proposals(
         &self,
         input: &ArtifactRefRequest,
     ) -> MemoryResult<Vec<PendingProposalView>> {
-        Ok(self
-            .vault()
-            .pending_proposals(&entity(&input.artifact_ref)?)?)
+        let artifact = entity(&input.artifact_ref)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_artifact_records_cover(&[artifact]);
+        Ok(self.vault().pending_proposals_scoped(&lane, &artifact)?)
     }
 
     /// `slides` of the artifact's head as `renderer` draws them, each with the
-    /// renderer's name, in order. `None` when the head cannot be read or the
-    /// render fails or comes back short: those units are read for their
-    /// structure only.
+    /// renderer's name, in order, beside the bytes admitted to `renderer` for
+    /// the copy the review makes of each (FIX 8244). `None` when the head
+    /// cannot be read, the render fails or comes back short, or the machine
+    /// cannot hold those copies: those units are read for their structure
+    /// only.
     fn render_head_slides(
         &self,
         artifact: &EntityId,
         renderer: &dyn SlideRenderer,
         slides: &[u64],
-    ) -> Option<Vec<(Vec<u8>, String)>> {
+    ) -> Option<(Vec<(Vec<u8>, String)>, u64)> {
         let rendered = self
             .vault()
             .blob_artifact_head(artifact)
@@ -608,12 +684,18 @@ impl Memory<'_> {
             })
             .and_then(|deck| renderer.render(&deck, slides));
         match rendered {
-            Ok(images) if images.len() == slides.len() => Some(
-                images
+            Ok(images) if images.len() == slides.len() => {
+                let copies = review_copy_bytes(&images);
+                if let Err(error) = renderer.admit(copies) {
+                    tracing::warn!(kind = ?error.kind(), "slide review images not admitted");
+                    return None;
+                }
+                let images = images
                     .into_iter()
                     .map(|image| (image, renderer.name().to_owned()))
-                    .collect(),
-            ),
+                    .collect();
+                Some((images, copies))
+            }
             Ok(_) => {
                 tracing::warn!("the slide renderer returned the wrong number of images");
                 None
@@ -696,14 +778,14 @@ impl Memory<'_> {
             .filter(|(_, image, _)| image.is_none())
             .map(|(target, _, _)| target.slide)
             .collect();
-        let mut renders = match renderer {
+        let (renders, admitted) = match renderer {
             Some(renderer) if !unrendered.is_empty() => {
                 self.render_head_slides(&artifact, renderer, &unrendered)
             }
             _ => None,
         }
-        .into_iter()
-        .flatten();
+        .unwrap_or_default();
+        let mut renders = renders.into_iter();
         let units: Vec<SlideReviewUnit> = units
             .into_iter()
             .map(|(target, image, renderer)| match image {
@@ -738,9 +820,9 @@ impl Memory<'_> {
             answered_by: actor.entity_ref(),
             author: &input.author,
             dial,
-            resident_dial: None,
-            // The vault re-imposes its stored policy's limits.
-            limits: SlideReviewLimits::default(),
+            resident_dial: input.resident_dial,
+            // The vault's stored policy row, narrowed by the caller's own.
+            limits: input.limits.limits(),
             policy,
             reversibility,
             labels: &input.labels,
@@ -755,21 +837,40 @@ impl Memory<'_> {
         };
         let run = self
             .vault()
-            .review_blob_artifact_slides(&artifact, &request)
-            .map_err(|error| match error {
-                SlideReviewError::Vault(error) => MemoryError::from(error),
-                other => MemoryError::from(Error::InvalidConfig(other.to_string())),
-            })?;
+            .review_blob_artifact_slides(&artifact, &request);
+        // The review's copies are gone with it: their room goes back (FIX 8244).
+        if let Some(renderer) = renderer {
+            renderer.materialized(admitted, 0);
+        }
+        let run = run.map_err(|error| match error {
+            SlideReviewError::Vault(error) => MemoryError::from(error),
+            other => MemoryError::from(Error::InvalidConfig(other.to_string())),
+        })?;
         // The head version the review read (FIX 5455).
         self.produced_from(run.read_rows.iter().copied());
+        // What the review read beside its base, its evidence and each stored
+        // image, waits with its proposal for that proposal's readers (FIX 9312).
+        let stored = units.iter().filter_map(|unit| match &unit.image {
+            SlideReviewImage::Stored(ResolvedMedia::Image { reference, .. }) => {
+                Some(reference.evidence.id)
+            }
+            _ => None,
+        });
+        let read: Vec<EntityId> = run
+            .read_rows
+            .iter()
+            .chain(&evidence)
+            .copied()
+            .chain(stored)
+            .collect();
         let proposed = match &run.proposal {
-            Some(proposal) => Some(self.vault().retain_edit_proposal(
+            Some(proposal) => Some(self.vault().retain_edit_proposal_with_reads(
                 &artifact,
                 proposal,
                 made_by,
                 self.made_by_reader(made_by)?,
-                actor,
-                at,
+                (actor, at),
+                &read,
             )?),
             None => None,
         };
@@ -848,10 +949,8 @@ impl Memory<'_> {
         let artifact = entity(&input.artifact_ref)?;
         let question = input.question.clone();
         question.validate()?;
-        let reversibility: Reversibility =
-            json_field(input.reversibility.clone(), "reversibility")?
-                .unwrap_or(Reversibility::ReversibleRead);
-        let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
+        let reversibility = input.reversibility.unwrap_or(Reversibility::ReversibleRead);
+        let made_by = input.made_by.as_ref();
         let evidence = input
             .evidence_refs
             .iter()
@@ -902,19 +1001,15 @@ impl Memory<'_> {
                 blocks,
                 author,
                 labels,
-            } => {
-                let labels: SlideReviewLabels = json_field(Some(labels.clone()), "labels")?
-                    .ok_or_else(|| invalid("a paragraph ask names its labels"))?;
-                vault.ask_blob_artifact_paragraphs(
-                    &artifact,
-                    &ParagraphAsk {
-                        ask,
-                        blocks,
-                        author,
-                        labels: &labels,
-                    },
-                )?
-            }
+            } => vault.ask_blob_artifact_paragraphs(
+                &artifact,
+                &ParagraphAsk {
+                    ask,
+                    blocks,
+                    author,
+                    labels,
+                },
+            )?,
             ArtifactAskUnits::FolderItems {
                 sheet,
                 answer_column,
@@ -971,14 +1066,17 @@ impl Memory<'_> {
                 run
             }
         };
+        // What the ask read beside its base and its evidence waits with its
+        // proposal for that proposal's readers (FIX 9312).
+        let read: Vec<EntityId> = run.read_rows.iter().chain(&evidence).copied().collect();
         let proposed = match &run.proposal {
-            Some(proposal) => Some(vault.retain_edit_proposal(
+            Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
                 &artifact,
                 proposal,
-                made_by.as_ref(),
-                self.made_by_reader(made_by.as_ref())?,
-                actor,
-                at,
+                made_by,
+                self.made_by_reader(made_by)?,
+                (actor, at),
+                &read,
             )?),
             None => None,
         };
@@ -1056,20 +1154,21 @@ impl Memory<'_> {
         input: &DeckProposeRequest,
     ) -> MemoryResult<DeckProposeOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        match self.vault().propose_blob_artifact_deck_edit(
+        let (outcome, read_rows) = self.vault().propose_blob_artifact_deck_edit_with_reads(
             &artifact,
             &input.transaction.canonical(),
             &input.run_ref,
             input.context.clone(),
-        )? {
+        )?;
+        match outcome {
             DeckEditOutcome::Proposed(proposal) => Ok(DeckProposeOutcome {
-                proposed: Some(self.vault().retain_edit_proposal(
+                proposed: Some(self.vault().retain_edit_proposal_with_reads(
                     &artifact,
                     &proposal,
                     input.made_by.as_ref(),
                     self.made_by_reader(input.made_by.as_ref())?,
-                    self.artifact_actor(),
-                    self.vault().now_recorded_at(),
+                    (self.artifact_actor(), self.vault().now_recorded_at()),
+                    &read_rows,
                 )?),
                 rejected: None,
             }),
@@ -1093,15 +1192,20 @@ impl Memory<'_> {
             name: input.name.clone(),
             media_type: input.media_type.clone(),
             bytes,
-            report: input.report.clone(),
+            report: input.report.to_string(),
             made_by: input.made_by.clone(),
         };
-        Ok(self.vault().propose_native_output(
+        let read_rows = input
+            .read_rows
+            .iter()
+            .map(|reference| entity(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(self.vault().propose_native_output_with_reads(
             &entity(&input.artifact_ref)?,
             &output,
             self.made_by_reader(output.made_by.as_ref())?,
-            self.artifact_actor(),
-            self.vault().now_recorded_at(),
+            (self.artifact_actor(), self.vault().now_recorded_at()),
+            &read_rows,
         )?)
     }
 
@@ -1139,6 +1243,7 @@ impl Memory<'_> {
             drifted: outcome.reanchor.drifted.len(),
             receipt: outcome.receipt,
             reconciliation: outcome.reconciliation,
+            review: outcome.review,
         })
     }
 

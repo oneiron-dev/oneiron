@@ -19,7 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_TURN};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
-use crate::sync::origin_claims::pin_erased_replacement;
+use crate::sync::origin_claims::{pin_erased_replacement, pin_section_fit_replacement};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
@@ -415,6 +415,8 @@ fn reverse_rematerialize_scan(
             {
                 // FIX 3877: an origin claim's erased form replaces its carrier history-free.
                 pin_erased_replacement(vault, window_key, &entities_map, &hex_id, &raw)?;
+                // FIX 12769: a section-fit receipt's erased form replaces its carrier history-free.
+                pin_section_fit_replacement(vault, window_key, &entities_map, &hex_id, &raw)?;
                 // Pack rows mirror the canonical wire header/body (origin
                 // handle/generation, exact identity/payload), not the
                 // receiver-local materialization. A corrupt local pack row
@@ -470,6 +472,17 @@ fn reverse_rematerialize_scan(
             if map_contains_binary(&entities_map, &hex_id)
                 && crate::sync::row_birth::mirror_local_birth(vault, doc, id)?
             {
+                wrote_any = true;
+            }
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::origin_positions::mirror_local_position(vault, doc, window_key, id)?
+            {
+                wrote_any = true;
+            }
+            // FIX 12113: a MESSAGE row's writer proof rides beside its
+            // carrier the same way, when this install wrote the row or the
+            // own-device lane admitted it with that proof.
+            if crate::sync::ingest::publish_writer_proof(vault, doc, id, &raw)? {
                 wrote_any = true;
             }
             // OF-522: a TURN's room row rides beside its carrier the same
@@ -747,11 +760,10 @@ pub(super) fn remove_entity_crdt_carriers(
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
         removed = true;
     }
-    // The row's birth leaves with its carrier.
-    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
-        && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
-    {
-        removed = true;
+    // The row's birth and optional position data leave with its carrier.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map) {
+        removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
+        removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
     }
     Ok(removed)
 }

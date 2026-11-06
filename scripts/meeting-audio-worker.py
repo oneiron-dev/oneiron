@@ -28,6 +28,8 @@ process = module("meeting_audio_process", "meeting_audio_process.py")
 class Port:
     def __init__(self, stage, path, checksum):
         self.stage = stage
+        # The request's unit gate, set when its request is read.
+        self.units = None
         self.runtime = runtime.LocalRuntime(path, checksum, error=bridge.Refusal)
         if any(isinstance(value, dict) and value.get("backend") == "process"
                for key, value in self.runtime.profile.items() if key not in {"version", "packages"}):
@@ -44,11 +46,28 @@ class Port:
             models = native.alignment_models() if self.stage == "alignment" else {}
             ready = bool(models) if self.stage == "alignment" else native.available(self.stage)
             selected = "uk_alignment" if self.stage == "alignment" and runtime.ALIGNER not in models.values() else self.stage
+            if self.stage == "alignment":
+                window_models = []
+                if ready:
+                    if runtime.ALIGNER in models.values():
+                        mid, dg = native.model_identity("alignment")
+                        window_models.append(mid + "@" + dg)
+                    if runtime.UK_ALIGNER in models.values():
+                        mid, dg = native.model_identity("uk_alignment")
+                        window_models.append(mid + "@" + dg)
+                unit_models = {"alignment_window": window_models}
+            else:
+                if ready:
+                    mid, dg = native.model_identity(self.stage)
+                    unit_models = {"diarization": [mid + "@" + dg]}
+                else:
+                    unit_models = {"diarization": []}
             return {"available": ready, "stage": self.stage, "runtime_binding": self.binding,
                     "model_id": native.profile[selected]["model_id"] if ready else None,
                     "models_by_language": models,
                     "model_files_sha256": hashlib.sha256(json.dumps(native.profile[selected]["files"],
                         ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest() if ready else None,
+                    "unit_models": unit_models,
                     "model_execution": False}, b""
         if self.stage == "alignment" and operation == "align_words":
             if (set(options) != {"transcript", "language"} or not isinstance(options["transcript"], str)
@@ -56,6 +75,8 @@ class Port:
                 raise bridge.Refusal("InvalidAlignmentRequest")
             import numpy as np
             audio = np.frombuffer(body, dtype="<i2").astype(np.float32) / 32768.0
+            # Each window below runs as one unit the host admits (FIX 11501).
+            self.runtime.units = self.units
             words = native.align(audio, options["transcript"], options["language"], (len(body) // 2 + 15) // 16)
             return {"words": words, "aligner_model": native.alignment_model(options["language"]),
                     "runtime_binding": self.binding,
@@ -67,6 +88,8 @@ class Port:
                 raise bridge.Refusal("InvalidDiarizationRequest")
             import numpy as np
             audio = np.frombuffer(body, dtype="<i2").astype(np.float32) / 32768.0
+            # The call below runs as one unit the host admits (FIX 11501).
+            self.runtime.units = self.units
             tracks = native.diarize(audio, (len(body) // 2 + 15) // 16)
             return {"exclusive_tracks": tracks, "runtime_binding": self.binding,
                     "provenance": bridge.provenance(runtime.COMMUNITY, body, full_file_samples=len(body) // 2)}, b""
@@ -82,7 +105,10 @@ def main():
     os.environ.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1", PYANNOTE_METRICS_ENABLED="0")
     # Importing providers only happens after validated framed operation dispatch.
     host = Port(args.stage, args.runtime_profile, args.runtime_profile_sha256)
-    bridge.serve(host, sys.stdin.buffer, sys.stdout.buffer)
+    # One stdin object passed twice: the request is read first, then the same
+    # stream carries the host's admission answers, one line per unit.
+    request_in = sys.stdin.buffer
+    bridge.serve(host, request_in, sys.stdout.buffer, request_in)
 
 
 if __name__ == "__main__":

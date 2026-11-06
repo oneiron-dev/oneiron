@@ -28,11 +28,12 @@ use axum::routing::{get, post};
 use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, FoundKeySettled};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use crate::owner::secrets::reenter_kept_value_body_schema;
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
 use crate::server::SyncServer;
 
@@ -48,6 +49,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/found",
                 summary: "Each record the write door lifted keys out of, newest first, with its keys, a page at a time: `{notices, next_cursor, done}`, continued with `after`.",
                 row: None,
+                shape: None,
             },
             get(found),
         ),
@@ -57,6 +59,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/found/delete",
                 summary: "Deletes the record or file the key sits in (a hard delete, with its redaction receipt) and settles every key found there.",
                 row: None,
+                shape: Some(RestShape::json(
+                    found_key_body_schema,
+                    found_key_settled_schema,
+                )),
             },
             post(delete),
         ),
@@ -66,6 +72,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/found/grant",
                 summary: "A standing grant to that agent on the key's class, in that project, until revoked.",
                 row: None,
+                shape: Some(RestShape::json(
+                    grant_found_key_body_schema,
+                    found_key_settled_schema,
+                )),
             },
             post(grant),
         ),
@@ -75,6 +85,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/found/not-a-secret",
                 summary: "The owner overrules the scan for that key in its record.",
                 row: None,
+                shape: Some(RestShape::json(
+                    found_key_body_schema,
+                    found_key_settled_schema,
+                )),
             },
             post(not_a_secret),
         ),
@@ -84,6 +98,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/found/re-enter",
                 summary: "Seals the kept value of a key ruled no secret again, where its custody key no longer opens it.",
                 row: None,
+                shape: Some(RestShape::json(
+                    reenter_kept_value_body_schema,
+                    found_key_settled_schema,
+                )),
             },
             post(reenter),
         ),

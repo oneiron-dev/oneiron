@@ -94,6 +94,8 @@ pub enum GateDenialReason {
     /// longer allows a write the child's own bound allows; the write waits
     /// for review.
     PendingDelegationChainCeiling,
+    /// FIX 12542: campaign compliance waits for the owner's clearance.
+    PendingCampaignCompliance,
 }
 
 impl GateDenialReason {
@@ -126,6 +128,7 @@ impl GateDenialReason {
             Self::DenyMessageAddress => "gate.deny.message_address",
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
             Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
+            Self::PendingCampaignCompliance => "gate.pending.campaign_compliance",
         }
     }
 
@@ -160,6 +163,7 @@ impl GateDenialReason {
             "gate.deny.message_address" => Some(Self::DenyMessageAddress),
             "gate.deny.unresolved_record_reference" => Some(Self::DenyUnresolvedRecordReference),
             "gate.pending.delegation_chain_ceiling" => Some(Self::PendingDelegationChainCeiling),
+            "gate.pending.campaign_compliance" => Some(Self::PendingCampaignCompliance),
             _ => None,
         }
     }
@@ -186,7 +190,8 @@ impl GateDenialReason {
             | Self::PendingExternalEffectAuthority
             | Self::PendingChecker
             | Self::PendingCheckerUnavailable
-            | Self::PendingDelegationChainCeiling => GateDenialOutcome::Pending,
+            | Self::PendingDelegationChainCeiling
+            | Self::PendingCampaignCompliance => GateDenialOutcome::Pending,
         }
     }
 }

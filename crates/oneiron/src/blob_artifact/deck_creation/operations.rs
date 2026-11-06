@@ -2,14 +2,16 @@
 use super::*;
 use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
-use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::consent::AuthenticatedOwner;
-use crate::edit_roundtrip::deck_create::{
+use crate::blob_artifact::deck_creation::record::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
+use crate::claim::ScopedRead;
+use crate::consent::AuthenticatedOwner;
 use crate::file_secret_marks::SecretSight;
-use crate::memory::{Memory, resolve_entity_ref};
+use crate::memory::Memory;
+use crate::ports::ClaimReadStatus;
 use crate::typed_body::LiftedSources;
+use crate::vault::entity_refs::resolve_entity_ref;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
@@ -509,7 +511,7 @@ impl Memory<'_> {
             } else {
                 crate::file_secret_marks::SecretSight::Masked
             };
-            let sighted = crate::secret_custody::sighted_bytes_in_txn(
+            let sighted = crate::store::file_key_masks::sighted_bytes_in_txn(
                 &self.vault().store,
                 txn,
                 bytes,

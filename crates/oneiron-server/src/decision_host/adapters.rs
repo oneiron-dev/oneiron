@@ -2,8 +2,11 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
-use oneiron::llm::decision::{AnswerContract, HostRuleRef, RemoteDecisionCapability};
+use oneiron::llm::decision::{
+    AnswerContract, DecisionReadProvider, HostRuleRef, RemoteDecisionCapability,
+};
 use oneiron::llm::routing::DescriptionNotes;
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
 
 use super::{
@@ -61,6 +64,58 @@ impl DecisionReadGate for HouseGate {
     }
 }
 
+/// One house read admitted on the call the rung answers carries (FIX 10443): the same
+/// turn, admission, dispatch and settlement as [`HouseGate`], but the permit comes from
+/// the caller's run, already sourced with the call's evidence, instead of a run of the
+/// gate's own. The caller's run carries its own line, so no verdict meter wraps it.
+struct RunHouseGate<'a> {
+    gate: &'a HouseGate,
+    run: RunAdmission,
+}
+
+impl DecisionReadGate for RunHouseGate<'_> {
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
+        // The host's own work: its turn comes while no caller waits for one,
+        // and the wait ends with the caller's work time (FIX 9526). A turn
+        // that never came admits nothing and pays nothing.
+        let Ok(_turn) = self
+            .gate
+            .admission
+            .turns
+            .admit_background_blocking_for(deadline.decision_time_left())
+        else {
+            return Ok(GatedRead::NotStarted);
+        };
+        let permit = self
+            .run
+            .admit_paid(
+                &self.gate.connector,
+                self.run.declaration().budget().reserve_units,
+            )
+            .map_err(|_| refused("refused by the budget"))?;
+        self.run
+            .dispatch_paid(permit.lease(), &self.gate.connector)
+            .map_err(|_| refused("refused at dispatch"))?;
+        let gated = read(permit.lease());
+        let unread = oneiron::llm::LlmUsage::zero();
+        // A read that went out and failed keeps its reservation as spend.
+        let outcome = match &gated {
+            GatedRead::NotStarted => CallOutcome::Answered(&unread),
+            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
+            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+        };
+        if let Err(denied) = permit.settle(outcome) {
+            tracing::error!(%denied, "a house decision read's settlement was refused");
+        }
+        Ok(gated)
+    }
+}
+
 impl DecisionProvider for HouseRead {
     fn pin(&self) -> ProviderPin {
         self.pin.clone()
@@ -82,10 +137,40 @@ impl DecisionProvider for HouseRead {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        // A call that carries its caller's run reads on it (FIX 10443).
+        if let Some(run) = call.run {
+            let gate = RunHouseGate {
+                gate: &self.gate,
+                run: run.sourced(Some(call.evidence.to_vec())),
+            };
+            return DecisionReadProvider::new(
+                self.pin.clone(),
+                self.reader.as_ref(),
+                &gate,
+                &self.paired,
+                self.person.as_ref(),
+            )?
+            .decide(call);
+        }
         self.provider()?.decide(call)
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        // A pack that carries its caller's run reads on it (FIX 10443).
+        if let Some(run) = pack.run {
+            let gate = RunHouseGate {
+                gate: &self.gate,
+                run: run.sourced(Some(pack.evidence.to_vec())),
+            };
+            return DecisionReadProvider::new(
+                self.pin.clone(),
+                self.reader.as_ref(),
+                &gate,
+                &self.paired,
+                self.person.as_ref(),
+            )?
+            .decide_pack(pack);
+        }
         self.provider()?.decide_pack(pack)
     }
 }
@@ -152,35 +237,111 @@ impl DecisionProvider for SystemOneRung {
         self.seat
             .preflight()
             .map_err(|_| failed("its credential broker or vault-secret key is not there"))?;
-        // Inside a verdict, the caller's own line (FIX 1123).
+        // A call that carries its caller's run measures on it (FIX 10443).
+        if let Some(run) = call.run {
+            return self.decide_on_run(call, request, run);
+        }
+        // Inside a verdict, use the caller's own line and room payer (FIX 1123,
+        // FIX 3795); outside one, keep the rung's meter and the vault owner.
         let guard = crate::decision_verdict::rung_meter(&self.guard);
-        let lease = guard
-            .admit()
-            .map_err(|_| failed("refused by the budget"))?
-            .lease;
+        let run = self
+            .models
+            .funded_run(
+                self.connector.connector.clone(),
+                guard.clone(),
+                crate::decision_verdict::rung_payer(),
+            )
+            .sourced(Some(call.evidence.to_vec()));
+        let permit = run
+            .admit_paid(&self.connector, guard.reserve_units())
+            .map_err(|_| failed("refused by the budget"))?;
+        run.dispatch_paid(permit.lease(), &self.connector)
+            .map_err(|_| failed("refused at dispatch"))?;
         // A measurement admitted after the work time is spent never starts.
         if call.deadline.decision_time_left().is_zero() {
-            guard
-                .settle_reserved(&lease)
+            permit
+                .settle(CallOutcome::Failed)
                 .map_err(|_| failed("settlement refused"))?;
+            return Err(failed("admitted after the work time"));
+        }
+        let asked = self.runtime.block_on(async {
+            let cancel = call.deadline.work_cancel();
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                result = self.seat.ask(
+                    request,
+                    permit.lease(),
+                    call.deadline.decision_time_left(),
+                ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
+            }
+        });
+        let answer = match asked {
+            Ok(answer) => {
+                permit
+                    .settle(CallOutcome::Answered(&answer.usage))
+                    .map_err(|_| failed("settlement refused"))?;
+                answer
+            }
+            Err(error) => {
+                // The seat may still bill a failed or cancelled call.
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+                return Err(error);
+            }
+        };
+        let abstained = answer.answer == DecisionAnswer::Abstain;
+        Ok(ProviderDecision {
+            answer: answer.answer,
+            probability: (!abstained).then_some(answer.probability),
+            paired: None,
+            person: None,
+            served: None,
+        })
+    }
+}
+
+impl SystemOneRung {
+    /// [`DecisionProvider::decide`] for a call that carries its caller's run (FIX 10443):
+    /// the measurement admits on that run as this rung's paid connector, sourced with
+    /// the call's evidence, and settles there; the seat's own meter is untouched. The
+    /// caller's run carries its own line, so no verdict meter wraps it.
+    fn decide_on_run(
+        &self,
+        call: &DecisionCall<'_>,
+        request: SeatRequest,
+        run: &RunAdmission,
+    ) -> oneiron::Result<ProviderDecision> {
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let run = run.sourced(Some(call.evidence.to_vec()));
+        let permit = run
+            .admit_paid(&self.connector, run.declaration().budget().reserve_units)
+            .map_err(|_| failed("refused by the budget"))?;
+        run.dispatch_paid(permit.lease(), &self.connector)
+            .map_err(|_| failed("refused at dispatch"))?;
+        // A measurement admitted after the work time is spent never starts; the
+        // dispatched permit's drop keeps its reservation as spend, as the own-meter
+        // path's settlement does.
+        if call.deadline.decision_time_left().is_zero() {
             return Err(failed("admitted after the work time"));
         }
         let asked = self.runtime.block_on(self.seat.ask(
             request,
-            &lease,
+            permit.lease(),
             call.deadline.decision_time_left(),
         ));
         let answer = match asked {
             Ok(answer) => {
-                guard
-                    .settle_per_call(&lease, &answer.usage)
+                permit
+                    .settle(CallOutcome::Answered(&answer.usage))
                     .map_err(|_| failed("settlement refused"))?;
                 answer
             }
             Err(error) => {
                 // The seat may still bill a failed call.
-                guard
-                    .settle_reserved(&lease)
+                permit
+                    .settle(CallOutcome::Failed)
                     .map_err(|_| failed("settlement refused"))?;
                 return Err(failed(&format!("the seat failed: {error}")));
             }

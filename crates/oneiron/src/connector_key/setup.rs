@@ -36,7 +36,9 @@ use crate::{EntityId, Vault};
 
 // An agent's `allow`, put to the owner as a decision ask.
 mod allow_ask;
+mod google_code;
 mod grants;
+pub use google_code::{GoogleAuthorizationCode, GoogleAuthorizationGrant};
 // A built-in channel's isolated probe replies (FIX 710).
 mod probe;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
@@ -63,6 +65,14 @@ const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+// Identity scopes can accompany Google's Gmail grant without adding mail access.
+const GMAIL_IDENTITY_SCOPES: [&str; 5] = [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+];
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
 
@@ -247,6 +257,36 @@ impl ProviderConnectionChecks {
             )
         })?;
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
+    }
+
+    /// A fresh access token for a stored grant that carries its OAuth client.
+    /// Called only inside an admitted credential door; nothing is persisted.
+    pub(crate) fn refresh_stored_google_grant(
+        client: &reqwest::blocking::Client,
+        value: &[u8],
+    ) -> Result<Option<Zeroizing<String>>> {
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return Ok(None);
+        }
+        let grant: StoredGoogleGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
+        let (Some(refresh_token), Some(client_id)) =
+            (present(&grant.refresh_token), present(&grant.client_id))
+        else {
+            return Ok(None);
+        };
+        let checks = Self {
+            client: client.clone(),
+        };
+        let (token, _) = checks.exchange_google_refresh(
+            refresh_token,
+            client_id,
+            present(&grant.client_secret),
+        )?;
+        Ok(Some(token))
     }
 
     /// Exchanges a stored refresh token for a fresh access token at Google's
@@ -543,7 +583,8 @@ fn connection_bound(
 }
 
 /// The provider's word against the owner's: an account must be named, and
-/// reported scopes must be exactly the allowed ones.
+/// reported scopes must be allowed, apart from undeclared Google identity
+/// scopes accompanying a Gmail grant. Declared-but-declined scopes still fail.
 fn judge_evidence(
     declared: &PackSetupConnection,
     allowed: &[String],
@@ -570,7 +611,11 @@ fn judge_evidence(
         let unexplained: Vec<&str> = held
             .iter()
             .copied()
-            .filter(|scope| !explained.contains(scope))
+            .filter(|scope| {
+                !explained.contains(scope)
+                    && !(declared.verify == GMAIL_PROFILE_CHECK
+                        && GMAIL_IDENTITY_SCOPES.contains(scope))
+            })
             .collect();
         let declined: Vec<&str> = held
             .iter()

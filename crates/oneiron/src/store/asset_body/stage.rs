@@ -20,8 +20,8 @@ use crate::batch::secret_scan::{KnownStreamFinder, StreamKnown};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::secret_custody::KnownValues;
 use crate::store::body_store::SecretScan;
+use crate::store::known_value_index::KnownValues;
 use crate::store::result_body_pins::ResultBodyPin;
 use crate::store::{
     BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES, SpilledBody, StagedBodyKey,
@@ -572,6 +572,11 @@ impl crate::Vault {
         staged: &StagedAssetBody,
     ) -> Result<()> {
         let batch = self.batch_in();
+        // A body this install writes is not one its home served, whatever
+        // bytes it holds: the owner's discard of a world copy keeps it
+        // (FIX 14534).
+        #[cfg(feature = "sync")]
+        crate::sync::asset_body::home_proof::forget_in_txn(&self.store, txn, *id)?;
         if let Staged::File { file, .. } = &staged.body {
             staged
                 .known
@@ -635,6 +640,7 @@ impl crate::Vault {
         id: &EntityId,
         occurred: TimeRange,
         learned_at: u64,
+        row_version: u64,
         staged: &StagedAssetBody,
         tier: crate::store::window_protocol::ImportTier,
         birth: Option<&crate::store::row_birth::RowBirth>,
@@ -659,13 +665,27 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            batch.put_replicated_asset_file(id, occurred, learned_at, &manifest, staged.facts)
+            batch.put_replicated_asset_file(
+                id,
+                occurred,
+                learned_at,
+                Some(row_version),
+                &manifest,
+                staged.facts,
+            )
         } else {
             let bytes = match &staged.body {
                 Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
                 Staged::File { .. } => std::borrow::Cow::Owned(staged.to_vec()?),
             };
-            batch.put_replicated(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
+            batch.put_replicated(
+                id,
+                ENTITY_TYPE_ASSET,
+                occurred,
+                learned_at,
+                Some(row_version),
+                &bytes,
+            )
         };
         put.apply(txn)?;
         if matches!(staged.body, Staged::File { .. }) {
@@ -678,7 +698,7 @@ impl crate::Vault {
         if let Some(birth) = birth
             && crate::vault::live_entity_row_in_txn(&self.store, txn, id)?.is_live()
         {
-            match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
+            match crate::store::birth_record::stamp_replicated_row_birth_in_txn(
                 &self.store,
                 txn,
                 id,

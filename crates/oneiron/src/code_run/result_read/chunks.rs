@@ -2,11 +2,12 @@
 //! range of its parent named `<occurrence>#<start>-<end>` in the
 //! parent's own bytes, so a chunk of a range is a range of the same
 //! parent. No byte is copied and nothing is published: a chunk is read as
-//! its parent is.
+//! its parent is. A scoped child's page stops at its live cutoff, checked
+//! before each chunk and each line it counts (FIX 8233).
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, Seek, decode, floor_boundary, invalid_input,
-    refusal, scan_limit, seek_line, whole_index,
+    refusal, scan_limit, seek_line, window_index,
 };
 use crate::Result;
 use crate::code_run::CodeRunOutputKind;
@@ -190,6 +191,7 @@ fn by_bytes(
     let base = body.base();
     let mut s = start;
     loop {
+        body.live_cutoff().check()?;
         if s >= len {
             return Ok((None, false));
         }
@@ -266,6 +268,7 @@ fn by_tokens(
     let (mut buf, mut buf_at) = (Vec::new(), start);
     let (mut chunk_start, mut at, mut count, mut cut) = (start, start, 0_u64, false);
     loop {
+        body.live_cutoff().check()?;
         if at >= len {
             if at > chunk_start {
                 page.push(entry(parent, base, chunk_start, at, cut));
@@ -329,8 +332,8 @@ fn by_tokens(
     }
 }
 
-/// Chunks of `count` lines from `from`, found by the line index when the
-/// window is the whole body, else by a bounded scan. A first chunk the scan
+/// Chunks of `count` lines from `from`, found by the window's line index
+/// when there is one, else by a bounded scan. A first chunk the scan
 /// bound ends is cut there and marked `cut`. The cursor of the next page,
 /// and whether the scan bound ended this one.
 fn by_lines(
@@ -344,10 +347,10 @@ fn by_lines(
 ) -> Result<(Option<Value>, bool)> {
     let len = body.len();
     let base = body.base();
-    let index = whole_index(body);
-    let index = index.as_deref();
+    let mut index = window_index(body, scan, from)?;
     let mut at = from;
     loop {
+        body.live_cutoff().check()?;
         if at.offset >= len {
             return Ok((None, false));
         }
@@ -355,26 +358,27 @@ fn by_lines(
             return Ok((Some(json!({"offset": at.offset, "line": at.lfs})), false));
         }
         let start = at;
-        let (end, whole, cut) = match seek_line(body, index, start, start.lfs + count, scan)? {
-            Seek::At(end) => (
-                LinePos {
-                    offset: end,
-                    lfs: start.lfs + count,
-                },
-                true,
-                false,
-            ),
-            Seek::End(end) => (end, false, false),
-            Seek::Limit(reached) if page.is_empty() && reached.offset > start.offset => {
-                (reached, false, true)
-            }
-            Seek::Limit(_) => {
-                return Ok((
-                    Some(json!({"offset": start.offset, "line": start.lfs})),
+        let (end, whole, cut) =
+            match seek_line(body, index.as_mut(), start, start.lfs + count, scan)? {
+                Seek::At(end) => (
+                    LinePos {
+                        offset: end,
+                        lfs: start.lfs + count,
+                    },
                     true,
-                ));
-            }
-        };
+                    false,
+                ),
+                Seek::End(end) => (end, false, false),
+                Seek::Limit(reached) if page.is_empty() && reached.offset > start.offset => {
+                    (reached, false, true)
+                }
+                Seek::Limit(_) => {
+                    return Ok((
+                        Some(json!({"offset": start.offset, "line": start.lfs})),
+                        true,
+                    ));
+                }
+            };
         // The last line the chunk touches: the one before its end, when it
         // ends on a newline.
         let on_newline = whole
@@ -393,7 +397,7 @@ fn by_lines(
         at = end;
         if whole && overlap > 0 && end.offset < len {
             let back = end.lfs - overlap;
-            if let Seek::At(offset) = seek_line(body, index, start, back, scan)?
+            if let Seek::At(offset) = seek_line(body, index.as_mut(), start, back, scan)?
                 && offset > start.offset
             {
                 at = LinePos { offset, lfs: back };

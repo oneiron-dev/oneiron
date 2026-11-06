@@ -6,7 +6,8 @@
 //! The copies are found from the marked blobs' whole BLAKE3 alone, through
 //! the links derivation used: the snapshot ASSET id it derives (and the
 //! document and revisions that row owns), every inline media envelope whose
-//! inner bytes are the blob's, and every snapshot listing the blob, whose
+//! inner bytes are the blob's, every derived text whose own words are the
+//! blob's (FIX 10406), and every snapshot listing the blob, whose
 //! symbol graph is derived again from projected full sources. A record's
 //! published text, phonetic codes and vectors are replaced through the
 //! existing batch door, refill and pending stores; no canonical revision,

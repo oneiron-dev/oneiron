@@ -16,8 +16,8 @@ const TRUSTED_ORIGIN: SideTable<HexId, TrustedOrigin, Raw> =
 
 /// [`TRUSTED_ORIGIN`]'s value: the trusted body's hash, then the second this vault first
 /// trusted that body (FIX 10936), big-endian. A rewrite of the same body keeps the time, so
-/// what counts from it never moves. The vault-bootstrap seed writes the bare hash: it records
-/// no trust time.
+/// what counts from it never moves. The vault-bootstrap seed stamps the second it seeds
+/// (FIX 11770): the origin row carries hash plus big-endian time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TrustedOrigin {
     hash: [u8; 32],
@@ -62,12 +62,8 @@ const MANIFEST_QUARANTINED_REASON: &str = "gate.manifest.quarantined";
 /// A manifest's quarantine marker was lifted.
 const MANIFEST_QUARANTINE_LIFTED_REASON: &str = "gate.manifest.quarantine_lifted";
 
-/// `store::handle`'s vault-bootstrap seed writes this row directly, before any vault (and so any
-/// typed door) exists to read it back through — kept as a plain string builder so that raw write
-/// keeps landing under [`TRUSTED_ORIGIN`]'s declared prefix byte-for-byte.
-pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
-    format!("manifest:trusted:{}", id.to_hex())
-}
+// `store::handle`'s vault-bootstrap seed writes the `TRUSTED_ORIGIN` and `SEEDED` rows
+// directly, under the key builders in `oneiron_store::manifest_origin_keys`.
 
 /// Separate proof that an authenticated vault owner authored an override
 /// row. A generic local manifest trust stamp is not holder authority.
@@ -83,12 +79,6 @@ pub(in crate::gate) fn retention_holder_verified(
     Ok(RETENTION_HOLDER
         .get(store, txn, &HexId(*id))?
         .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
-}
-
-/// The bootstrap seed's [`SEEDED`] row key, spelled for the same raw write as
-/// [`trusted_manifest_key`].
-pub(crate) fn seeded_manifest_key(id: &EntityId) -> String {
-    format!("manifest:seeded_confidence:{}", id.to_hex())
 }
 
 pub(crate) fn manifest_is_seeded_default(
@@ -206,7 +196,7 @@ pub(crate) fn manifest_is_trusted(
 
 /// The second this vault first trusted `body` at manifest `id` (FIX 10936): its trust stamp's
 /// time, kept across a rewrite of the same body. `None` when that body is not trusted there,
-/// or its stamp records no time (the bootstrap seed's).
+/// or its stamp is a bare hash that records no time.
 pub(crate) fn manifest_trusted_at(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -262,11 +252,15 @@ fn quarantine_current_in_txn(
 pub struct ManifestContribution {
     pub id: String,
     pub trusted: bool,
+    /// An untrusted contribution: a proposal that enters no effective policy,
+    /// narrowing included, until a policy holder authors its values through
+    /// the manifest put (FIX 8780).
     pub restrict_only: bool,
     pub quarantined: bool,
 }
 impl Vault {
-    /// Surface unauthenticated narrowing as actionable rows, without granting it authority.
+    /// Surface untrusted contributions as proposals a holder may act on,
+    /// without giving them any effect (FIX 8780).
     pub fn manifest_contributions(&self) -> Result<Vec<ManifestContribution>> {
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
@@ -461,6 +455,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

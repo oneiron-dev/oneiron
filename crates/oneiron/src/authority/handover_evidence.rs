@@ -1,7 +1,9 @@
 //! What valid owner handovers name (FIX 5765): the exact grant ids a
 //! shared-vault Owner change wrote and retired, and the shared act and
-//! receipt it executed, as its signed `OwnerHandover` entry carries them. A
-//! checkpoint restore across that change reads this to keep those rows as
+//! receipt it executed, as its signed `OwnerHandover` entry carries them, or
+//! the handover a carrier-signed membership execution record carries for an
+//! Owner act no host issuer signed (FIX 12335). A pending record, not yet
+//! signed or not counted, names nothing. A checkpoint restore across that change reads this to keep those rows as
 //! the live vault holds them, so the demotion stays in force and demoted
 //! authority never comes back.
 //!
@@ -12,7 +14,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::adopted_evidence::AdoptedEvidence;
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
@@ -59,11 +60,18 @@ impl crate::Vault {
         let mut evidence = HandoverEvidence::default();
         let mut seen = BTreeSet::new();
         let mut take = |hash: AuthorityEntryHash, entry: &AuthorityLogEntry| {
-            if let AuthorityOp::OwnerHandover(handover) = &entry.op
+            let handover = match &entry.op {
+                AuthorityOp::OwnerHandover(handover) => Some(std::borrow::Cow::Borrowed(handover)),
+                AuthorityOp::MembershipExecution(record) => {
+                    record.owner_handover().map(std::borrow::Cow::Owned)
+                }
+                _ => None,
+            };
+            if let Some(handover) = handover
                 && seen.insert(hash)
                 && fold.valid_entries.contains(&hash)
             {
-                evidence.add(handover);
+                evidence.add(&handover);
             }
         };
         for (_, body) in authority_log_rows_in_txn(&self.store, txn)? {
@@ -72,7 +80,7 @@ impl crate::Vault {
             };
             take(authority_entry_hash(&entry)?, &entry);
         }
-        if let Some(adopted) = AdoptedEvidence::read_in_txn(&self.store, txn)? {
+        if let Some(adopted) = crate::authority::cached_adopted_evidence_in_txn(&self.store, txn)? {
             for (hash, entry) in adopted.bodies() {
                 take(*hash, entry);
             }

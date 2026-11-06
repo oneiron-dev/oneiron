@@ -92,6 +92,7 @@ pub struct Package {
     /// The operation's port: every later read, edit, copy and export
     /// reserves its memory through it.
     resources: Resources,
+    inflated: std::sync::Arc<open::Inflated>, // FIX 5144: shared by every copy
 }
 
 impl Package {

@@ -9,26 +9,27 @@
 //! that an ancestor below the part's root declares (FIX 6402), so a copy
 //! stays well-formed in a fresh plot.
 
-use super::{Writer, close, int, piece};
+use super::{Writer, close, families, int, piece, retype};
 use crate::edit::xml;
 use crate::live::held::{self, C};
-use crate::live::pptx::ChartKind;
+use crate::live::pptx::{ChartKind, PlotGrouping};
 use crate::ooxml::{Node, XmlTree};
 use std::collections::BTreeMap;
 
 /// The theme accents a chart's colour style cycles through by series.
 const ACCENTS: u8 = 6;
 
-/// A series written new in a `kind` plot: its own `idx` and `order`, `tx`,
-/// then `template`'s shape properties, marker (in a family that draws one)
-/// and data label settings, its accents stepped on, then the category and
-/// value slots, a bubble series' size slot and 3D setting (`tail`), and the
-/// family's `smooth`. Without a template, the family's defaults.
+/// A series written new in a `kind` plot laid out as `grouping`: its own
+/// `idx` and `order`, `tx`, then `template`'s shape properties, marker (in
+/// a family that draws one) and data label settings, its accents stepped
+/// on, then the category and value slots, a bubble series' size slot and 3D
+/// setting (`tail`), and the family's `smooth`. Without a template, the
+/// family's defaults.
 pub(super) fn fresh(
     bytes: &[u8],
     tree: &XmlTree,
     template: Option<usize>,
-    kind: ChartKind,
+    (kind, grouping): (ChartKind, Option<PlotGrouping>),
     writer: &Writer,
     (idx, order): (u32, u32),
     [tx, cat, val, tail]: [&str; 4],
@@ -47,10 +48,13 @@ pub(super) fn fresh(
             style.extend(copied(bytes, tree, at));
         }
         if let Some(at) = child("dLbls").filter(|_| !crate::live::pptx::surface(kind)) {
-            let family = tree.nodes[ser]
-                .parent
-                .and_then(|plot| held::plot_family(&tree.nodes[plot].name));
-            style.extend(labels(bytes, tree, at, family == Some(kind)));
+            let held_plot = tree.nodes[ser].parent.and_then(|plot| {
+                let family = held::plot_family(&tree.nodes[plot].name)?;
+                Some((family, families::grouping(tree, Some(plot), family, &[], 0)))
+            });
+            let same = held_plot == Some((kind, grouping));
+            let allowed = retype::positions(kind, grouping);
+            style.extend(labels(bytes, tree, at, same, allowed));
         }
         let from = int(tree, ser, "idx").unwrap_or(idx);
         let step = (i64::from(idx) - i64::from(from)).rem_euclid(i64::from(ACCENTS));
@@ -75,19 +79,23 @@ pub(super) fn fresh(
 
 /// A held `c:dLbls`'s settings for a new series: without its point labels
 /// (`c:dLbl`) and extensions, which name the template's points and cells,
-/// and without a label position when the template's family is not the new
-/// series' (`same`). Nothing when no setting is left.
-fn labels(bytes: &[u8], tree: &XmlTree, at: usize, same: bool) -> Vec<u8> {
+/// and with its label position only where the template's plot is laid out
+/// as the new series' (`same`, its family and grouping) or the new plot
+/// places labels there (`allowed`, FIX 10297). Nothing when no setting is
+/// left.
+fn labels(bytes: &[u8], tree: &XmlTree, at: usize, same: bool, allowed: &[&str]) -> Vec<u8> {
     let node = &tree.nodes[at];
     if node.empty {
         return copied(bytes, tree, at);
     }
+    let kept_position =
+        |element: &Node| same || allowed.contains(&element.attr("val").unwrap_or_default().trim());
     let mut inner = Vec::new();
     for &child in &node.children {
         let element = &tree.nodes[child];
         if !(element.is(C, "dLbl")
             || element.is(C, "extLst")
-            || (!same && element.is(C, "dLblPos")))
+            || (element.is(C, "dLblPos") && !kept_position(element)))
         {
             inner.extend_from_slice(piece(bytes, tree, child));
         }

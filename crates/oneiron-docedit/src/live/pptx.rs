@@ -33,6 +33,7 @@ pub use chart::{
     effective_categories,
 };
 pub(crate) use chart::{draws_categories, lines_and_bars, surface};
+use chart_ops::born_points;
 pub use merge::{diff, preflight, preflight_merged};
 pub use table::{MergeFault, TableBinding, TableBody, TableEdit, TableMerge};
 pub(crate) use table::{UNBOUND_GRID, positions};
@@ -978,13 +979,28 @@ impl LiveDeck {
                         "the payload does not belong to the node kind",
                     ));
                 }
-                let (payload, done) = match payload {
-                    Some(payload) => {
-                        let (settled, done) = payload.settle(None, false, &self.opaque_parts)?;
-                        settled.check()?;
-                        (Some(settled), done)
+                // A chart's unnamed series and points take identities after
+                // its node's; the points its settlement adds take its node's
+                // own (FIX 9164). A refusal mints nothing.
+                let mark = self.next_node;
+                let id = self.take(*id)?;
+                let mut payload = payload.clone();
+                if let Some(payload) = &mut payload {
+                    payload.name_series(&mut || self.mint());
+                }
+                let settled = payload.map(|payload| -> Result<_, LiveError> {
+                    let (mut settled, done) = payload.settle(None, false, &self.opaque_parts)?;
+                    settled.name_categories(&mut born_points(id, settled.category_ids()));
+                    settled.check()?;
+                    Ok((settled, done))
+                });
+                let (payload, done) = match settled.transpose() {
+                    Ok(Some((settled, done))) => (Some(settled), done),
+                    Ok(None) => (None, Vec::new()),
+                    Err(error) => {
+                        self.next_node = mark;
+                        return Err(error);
                     }
-                    None => (None, Vec::new()),
                 };
                 // A live-born freeform's paths are its outline: no preset.
                 let preset = if matches!(payload, Some(NodePayload::CustomGeometry { .. })) {
@@ -992,12 +1008,6 @@ impl LiveDeck {
                 } else {
                     *preset
                 };
-                let id = self.take(*id)?;
-                // A chart's unnamed series take identities after its node's.
-                let mut payload = payload;
-                if let Some(payload) = &mut payload {
-                    payload.name_series(&mut || self.mint());
-                }
                 effects.extend(done.into_iter().map(|conversion| Effect::Converted {
                     node: id,
                     conversion,
@@ -1123,11 +1133,17 @@ impl LiveDeck {
                     ));
                 }
                 let bound = found.binding.is_some();
+                let fresh = !matches!(found.payload, Some(NodePayload::Chart { .. }));
                 let (mut settled, mut done) =
                     payload.settle(found.payload.as_ref(), bound, &self.opaque_parts)?;
                 // The category points the settlement adds take the deck's
-                // next identities.
-                settled.name_categories(&mut || self.mint());
+                // next identities, or, over no held chart, the node's own
+                // (FIX 9164).
+                if fresh {
+                    settled.name_categories(&mut born_points(*node, settled.category_ids()));
+                } else {
+                    settled.name_categories(&mut || self.mint());
+                }
                 settled.check()?;
                 let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
                 // Edit Points draws the shape's own outline: its preset goes,

@@ -50,6 +50,18 @@ impl Vault {
             }
             let record = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
+            // The decision read whole (FIX 10188): a manifest's sources and
+            // heads ride its parts, and a part is no decision.
+            let Some(record) =
+                crate::identity_topology::logical_identity_topology_event_for_store_in_txn(
+                    &self.store,
+                    &*wtxn,
+                    &id,
+                    record,
+                )?
+            else {
+                continue;
+            };
             if identity_op_event_touches(&record.action, touched) {
                 targets.push(id);
             }
@@ -57,7 +69,7 @@ impl Vault {
         let mut scrubbed = Vec::new();
         for target in targets {
             scrubbed.push(target);
-            scrubbed.extend(crate::identity_topology::redact_author_attribution_in_txn(
+            scrubbed.extend(self.store.record_hooks.redact_author_attribution_in_txn(
                 self,
                 wtxn,
                 target,
@@ -74,7 +86,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        crate::identity_topology::redact_actor_in_txn(
+        self.store.record_hooks.redact_actor_in_txn(
             self,
             wtxn,
             *actor,

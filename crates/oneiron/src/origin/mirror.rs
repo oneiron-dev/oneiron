@@ -165,7 +165,8 @@ pub enum OriginMirrorReadiness {
 #[serde(rename_all = "snake_case")]
 pub enum OriginMirrorNotReadyReason {
     /// The pushed refs' history names Git-LFS objects whose bytes this push
-    /// did not send and nothing has verified at the mirror.
+    /// did not get to the mirror: refused, failed, unverified or not held
+    /// by this vault.
     LfsObjectsNotVerified,
     /// The census of the pushed refs' Git-LFS pointers could not finish: an
     /// object was missing or a read failed. It names what it met before.
@@ -489,9 +490,10 @@ impl Vault {
             if !trigger.records_idle(target.sync_strategy) {
                 return Ok(None);
             }
-            // No published commit to pin a handle to: the mirror has nothing
-            // to take, and keeps what it holds until there is one. Nothing
-            // walked what it holds, so only a mirror holding none is ready.
+            // No commit to pin a handle to, not even a deleted tip: the
+            // mirror has nothing to take, and keeps what it holds until there
+            // is one. Nothing walked what it holds, so only a mirror holding
+            // none is ready.
             let readiness = LfsCensus::default().readiness(target.pushed.is_empty());
             return Ok(Some((0, 0, readiness)));
         };
@@ -499,7 +501,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let readiness = self.mirror_lfs_readiness(&wire, &handle, repo_id, &done.census);
+        let readiness = self.mirror_lfs_readiness(&wire, &handle, target, repo_id, &done.census);
         Ok(Some((done.refs, done.deleted, readiness)))
     }
 
@@ -535,13 +537,24 @@ impl Vault {
     }
 
     /// A proven handle on the served repository, pinned to a commit one of
-    /// its publications names. `None` while it has no published commit.
+    /// its publications names: a published tip, else, once every ref was
+    /// deleted, the tip a deletion moved from while the store still holds
+    /// it, so the deletions reach the mirror with no later publication (FIX
+    /// 920). `None` while it has neither.
     pub(super) fn mirror_handle(
         &self,
         wire: &GitWire<'_>,
         repo_id: EntityId,
         repo_root: &std::path::Path,
     ) -> Result<Option<GitWireRepo>> {
+        let open = |commit: &GitOid| {
+            let repo_ref = RepoRef::LocalFolder {
+                path: repo_root.to_string_lossy().into_owned(),
+                commit: commit.as_str().to_owned(),
+            };
+            wire.open_repo(repo_ref, repo_root).ok()
+        };
+        let mut moved_from = Vec::new();
         for publication_id in self.origin_visible_ref_rows(&repo_id)? {
             let Some(record) = self.origin_publication(publication_id)? else {
                 continue;
@@ -549,17 +562,14 @@ impl Vault {
             if record.repo_id != repo_id || record.status != OriginPublicationStatus::Published {
                 continue;
             }
-            let repo_ref = RepoRef::LocalFolder {
-                path: repo_root.to_string_lossy().into_owned(),
-                commit: record.new_oid.as_str().to_owned(),
-            };
             // A deleted ref's slot or an annotated tag pins no commit; the
             // next publication may.
-            if let Ok(handle) = wire.open_repo(repo_ref, repo_root) {
+            if let Some(handle) = open(&record.new_oid) {
                 return Ok(Some(handle));
             }
+            moved_from.extend(record.expected_old_oid);
         }
-        Ok(None)
+        Ok(moved_from.iter().find_map(open))
     }
 
     /// Writes a run onto its target. A target the owner re-pointed or cleared

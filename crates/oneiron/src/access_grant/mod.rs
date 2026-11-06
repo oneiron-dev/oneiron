@@ -7,6 +7,7 @@
 //! and inconsistent revocation state are rejected.
 
 mod context;
+pub(crate) use context::AccessContextSnapshot;
 pub(crate) use context::principal_reach_ids_in;
 pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;
@@ -20,8 +21,15 @@ mod delegation;
 pub use delegation::{COMPANION_GRANT_OUTLIVES_ISSUER, COMPANION_PROFILE_SENSITIVITY};
 mod erase;
 pub(crate) use erase::erase_principal_grants_in_txn;
+mod owner_act;
+pub(crate) use owner_act::{
+    AccessGrantActChange, AccessGrantOwnerActReceipt, access_grant_owner_acts_in_txn,
+    record_access_grant_owner_act_in_txn,
+};
 mod record;
 mod vault_doors;
+mod witness_history;
+pub(crate) use witness_history::witness_read_generations;
 
 pub use self::codec::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, decode_access_grant_body,

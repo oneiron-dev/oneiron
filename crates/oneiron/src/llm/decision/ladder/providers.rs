@@ -8,6 +8,7 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionImage, DecisionQuestion, DecisionRung,
     HostRuleRef, PairedReading, ProviderPin,
 };
+use crate::llm::run_admission::RunAdmission;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
@@ -31,6 +32,10 @@ pub struct DecisionCall<'a> {
     /// A provider with a native deadline gets [`RetrievalDeadline::decision_time_left`], and
     /// its client waits no longer.
     pub deadline: &'a RetrievalDeadline,
+    /// The caller's run, when the call is metered on it (FIX 10443): a provider that
+    /// spends admits on this run, sourced with the call's evidence, instead of a run of
+    /// its own. `None` keeps today's own mint/carry behavior.
+    pub run: Option<&'a RunAdmission>,
 }
 
 impl DecisionCall<'_> {
@@ -51,6 +56,9 @@ pub struct DecisionPack<'a> {
     pub audio: &'a [DecisionAudio],
     pub state: &'a Value,
     pub deadline: &'a RetrievalDeadline,
+    /// The caller's run, when the pack is metered on it (FIX 10443): as
+    /// [`DecisionCall::run`], carried into each question's call.
+    pub run: Option<&'a RunAdmission>,
 }
 
 impl<'a> DecisionPack<'a> {
@@ -63,6 +71,7 @@ impl<'a> DecisionPack<'a> {
             audio: self.audio,
             state: self.state,
             deadline: self.deadline,
+            run: self.run,
         })
     }
 }

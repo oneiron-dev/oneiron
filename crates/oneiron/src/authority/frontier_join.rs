@@ -18,16 +18,18 @@
 //! its own rows (FIX 8498, Engine 09:31: its root record, its marks and the
 //! owner's kit push, never a row of another signer family), or the root a
 //! ReRoot retires, through the move's signing callback, in the host family
-//! (FIX 11867). The fold admits its signer by the act's own rule on the
-//! join's parent state ([`admits_join_signer`]): the one carrier rule in the
-//! roster view, a live Ed25519 owner roster key, or an anchor the fold
+//! (FIX 11867), an Ed25519 or a P-256 root (FIX 11993). The fold admits its
+//! signer by the act's own rule on the join's parent state
+//! ([`admits_join_signer`]): the one carrier rule in the roster view, a live
+//! owner roster key, or an anchor the fold
 //! recorded for a stored root, never a key the join names for itself. A join
 //! signed by any other key folds as every unvouched row does: invalid, with
 //! no sequence slot, so it never forks or blocks the act's sequence. Every
-//! group names the frontier's admission tip, the lowest-hash head whose own
-//! state admits the signer, so each join's parents carry the signer's
-//! standing. It reads no role, clearance or owner act beyond that, and
-//! grants nothing.
+//! group names the frontier's admission tip. The writer prefers the
+//! lowest-hash admitting head whose planned groups also admit the signer
+//! after merging their states (FIX 8499); if none is proven, it keeps the
+//! old lowest-hash tip and fold/readback decision. It reads no role,
+//! clearance or owner act beyond that, and grants nothing.
 //!
 //! A writer whose own side heads alone fill one entry joins them the same
 //! way first, by the same key, in the scope of the branch they ride (FIX
@@ -60,12 +62,12 @@ pub(crate) enum FrontierSigner<'a> {
     /// A stored owner root's anchor, for the anchor's own rows alone: its
     /// root record, its marks and the owner's kit push (FIX 8498).
     Anchor(&'a SigningKey),
-    /// A ReRoot's signer, the Ed25519 owner root the move retires, held
-    /// behind the caller's signing callback, which signs each join's
-    /// transcript (FIX 11867). Its joins are in the host family: that
-    /// family's rule, a live Ed25519 owner roster key, is the standing the
-    /// ReRoot itself stands on.
-    Callback([u8; 32], &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
+    /// A ReRoot's signer, the owner root the move retires, Ed25519 or
+    /// P-256 (FIX 11993), held behind the caller's signing callback, which
+    /// signs each join's transcript (FIX 11867). Its joins are in the host
+    /// family: that family's rule, a live owner roster key, is the standing
+    /// the ReRoot itself stands on.
+    Callback(&'a AuthorityKey, &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
 }
 
 impl FrontierSigner<'_> {
@@ -83,7 +85,7 @@ impl FrontierSigner<'_> {
                 AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
             }
             Self::Host(issuer) => issuer.public_key(),
-            Self::Callback(key, _) => AuthorityKey::Ed25519(key),
+            Self::Callback(key, _) => key.clone(),
         }
     }
 
@@ -123,7 +125,7 @@ impl FrontierSigner<'_> {
                 issuer.sign_entry(fold.vault_id, seq, parents.into_iter().collect(), op, now)
             }
             Self::Callback(key, transcript_signer) => {
-                let mut entry = unsigned_side_entry(fold, key, seq, parents, op, now)?;
+                let mut entry = unsigned_side_entry(fold, key.clone(), seq, parents, op, now)?;
                 entry.signer.signature = transcript_signer(&authority_transcript(&entry)?)?;
                 Ok(entry)
             }
@@ -135,11 +137,12 @@ impl FrontierSigner<'_> {
 /// the join leads to admit their own signer there: for a carrier, the one
 /// carrier rule in the roster view ([`super::owner_act_signer_admits`]: not
 /// a roster key, no removed chain, a live chain whose machine key it is);
-/// for the host, a live Ed25519 owner roster key, as the host's slip issuer
-/// and a ReRoot's signer are (FIX 11867); for an anchor, an anchor `state`
-/// recorded for a stored root, as its marks are admitted (FIX 8498, Engine
-/// 09:31 (2)), never a key the join carries and never a roster key in its
-/// place. A P-256 key signs no join.
+/// for the host, a live owner roster key, as the host's slip issuer and a
+/// ReRoot's signer are (FIX 11867), in either root suite (FIX 11993); for an
+/// anchor, an anchor `state` recorded for a stored root, as its marks are
+/// admitted (FIX 8498, Engine 09:31 (2)), never a key the join carries and
+/// never a roster key in its place. A P-256 key signs no carrier or anchor
+/// join.
 fn admits_join_signer(
     state: &FoldState,
     family: FrontierJoinFamily,
@@ -151,9 +154,7 @@ fn admits_join_signer(
         (FrontierJoinFamily::Install(carrier), AuthorityKey::Ed25519(key)) => {
             Standing::new(state, pin, counted).admits_owner_act_signer(carrier, key, roster)
         }
-        (FrontierJoinFamily::Host, AuthorityKey::Ed25519(_)) => {
-            roster_has_live_owner(&state.roster, signer)
-        }
+        (FrontierJoinFamily::Host, _) => roster_has_live_owner(&state.roster, signer),
         (FrontierJoinFamily::Anchor, AuthorityKey::Ed25519(key)) => {
             state.root_anchors.contains_key(key)
         }
@@ -273,10 +274,29 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
-        (heads, scope): (&BTreeSet<AuthorityEntryHash>, FrontierJoinScope),
+        heads_scope: (&BTreeSet<AuthorityEntryHash>, FrontierJoinScope),
         signer: FrontierSigner<'_>,
         room: usize,
     ) -> Result<Option<AuthorityView>> {
+        Ok(self
+            .join_scoped_heads_with_rows_in_txn(txn, fold, heads_scope, signer, room)?
+            .map(|(joined, _)| joined))
+    }
+
+    /// [`Self::join_scoped_heads_in_txn`], with the rows of the joins it
+    /// staged, for a writer that marks and announces them with its act (FIX
+    /// 11993).
+    ///
+    /// # Errors
+    /// As [`Self::prepare_authority_frontier_in_txn`].
+    pub(crate) fn join_scoped_heads_with_rows_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        (heads, scope): (&BTreeSet<AuthorityEntryHash>, FrontierJoinScope),
+        signer: FrontierSigner<'_>,
+        room: usize,
+    ) -> Result<Option<(AuthorityView, Vec<EntityId>)>> {
         let room = room.max(1);
         if heads.len() <= room {
             return Ok(None);
@@ -307,18 +327,22 @@ impl Vault {
             }
             level_tip = None;
         }
-        self.put_authority_log_entries_in_txn(txn, &rows)?;
+        let staged = self.put_authority_log_entries_in_txn(txn, &rows)?;
         let joined = self.authority_view_readonly_in_txn(txn)?;
         if !joins.iter().all(|hash| joined.valid_entries.contains(hash)) {
             return Err(authority_refused(JOIN_NOT_FOLDED));
         }
-        Ok(Some(joined))
+        Ok(Some((joined, staged)))
     }
 
-    /// The admission tip of `heads` for `signer`: the lowest-hash head whose
-    /// own state admits it ([`admits_join_signer`]), read from the capture
-    /// the causal points read. `None` when no head does, or when the states
-    /// cannot be read here ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    /// The lowest-hash admitting head whose planned first-level groups also
+    /// admit `signer` on their merged states (FIX 8499), read from the same
+    /// capture as the causal points. A divergent head can conflict with an
+    /// older tip's carrier revision while a newer tip heals that conflict.
+    /// If no candidate proves its groups, keep today's lowest admitting tip
+    /// and fold/readback decision. `None` when no head admits or the capture
+    /// is unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]); split
+    /// admission evidence needing more than one carrying head stays open.
     fn admission_tip_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -331,13 +355,39 @@ impl Vault {
                 Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
                 Err(error) => return Err(error),
             };
+        let Some(states) = states else {
+            return Ok(None);
+        };
         let key = signer.key();
-        Ok(states.into_iter().flatten().find_map(|(head, state)| {
-            state
-                .filter(|state| {
-                    admits_join_signer(state, signer.family(), &key, (None, &every_chain))
-                })
-                .map(|_| head)
-        }))
+        let admits = |state: &FoldState| {
+            admits_join_signer(state, signer.family(), &key, (None, &every_chain))
+        };
+        let candidates: Vec<_> = states
+            .iter()
+            .filter_map(|(head, state)| state.as_ref().filter(|state| admits(state)).map(|_| *head))
+            .collect();
+        for tip in &candidates {
+            let groups_admit = plan_frontier_joins(heads, Some(*tip))
+                .into_iter()
+                .all(|group| {
+                    let mut merged: Option<FoldState> = None;
+                    for head in group {
+                        let Some(state) = states.get(&head).and_then(Option::as_ref) else {
+                            return false;
+                        };
+                        merged = Some(match merged {
+                            Some(merged) => merge_states(&merged, state),
+                            None => state.clone(),
+                        });
+                    }
+                    merged.as_ref().is_some_and(&admits)
+                });
+            if groups_admit {
+                return Ok(Some(*tip));
+            }
+        }
+        // Incomplete evidence or no better partition keeps today's tip and
+        // the existing fold/readback decision, never a new refusal here.
+        Ok(candidates.first().copied())
     }
 }

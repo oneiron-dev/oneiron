@@ -26,19 +26,18 @@ use ingress::SigningIngress;
 use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
 use std::sync::Arc;
 use std::time::Instant;
+
 /// The owner's field editor. Its shell mints an editor token into its page
 /// (FIX 5618, `editor_auth`). A computation POST carrying one is admitted
 /// from its head, waits for one of two slots and spools its raw body, which
-/// no `DefaultBodyLimit` reads. A POST with no token is the capability-free
-/// door it was: those body limits and `EditorBudget`'s window still bound it.
+/// no `DefaultBodyLimit` reads. A capability-free POST spools under the
+/// same disk and memory floors; `EditorBudget`'s window still admits it
+/// before its body is read (Engine call 2026-11-05 12:04, FIX 141/142).
 pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
     let desk = editor_auth::EditorDesk::new();
     Router::new()
         .route("/sign/layout", post(presentation::layout))
-        .route(
-            "/sign/geometry",
-            post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
-        )
+        .route("/sign/geometry", post(presentation::upload_geometry))
         .route_layer(axum::middleware::from_fn_with_state(
             Arc::clone(&desk.budget),
             editor_budget::admit,
@@ -46,7 +45,7 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
         .route("/sign/editor", get(presentation::editor))
         .route("/sign/field-renderer.js", get(presentation::field_script))
         .route("/sign/editor.js", get(presentation::editor_script))
-        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        .layer(DefaultBodyLimit::disable())
         .layer(axum::Extension(desk))
         .layer(axum::middleware::from_fn(private_response))
 }
@@ -222,8 +221,7 @@ async fn pdf(
         verified_actor,
         ip,
         ua,
-    )
-    {
+    ) {
         Ok(bytes) => {
             let mut response = (
                 [

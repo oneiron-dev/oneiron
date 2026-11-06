@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::lens::RecordRef;
 use crate::provenance::made_by::MadeByTrigger;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::store::record_ref::RecordRef;
 
 use super::versions::{BlobArtifactVersion, VERSIONS};
 
@@ -154,6 +154,20 @@ impl Vault {
         Ok(out)
     }
 
+    /// `born` as typed record refs (OF-063, FIX 9340), each of the kind its
+    /// row is, read in one snapshot: a source's births are any rows it made,
+    /// not only artifacts. A row whose kind no longer reads is left out.
+    pub fn born_records(&self, born: &[EntityId]) -> Result<Vec<RecordRef>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut records = Vec::with_capacity(born.len());
+        for id in born {
+            if let Some(kind) = self.get_entity_type_in_txn(&rtxn, id)? {
+                records.push(RecordRef::from_id(kind, id, None));
+            }
+        }
+        Ok(records)
+    }
+
     /// The other direction: each version of one artifact with the sources it
     /// was born from, read from the versions' own made_by and provenance.
     pub fn blob_artifact_born_from(
@@ -187,4 +201,44 @@ fn live_version_claim(
 /// beside each version it reads back from, lent with its own key type and codec.
 pub(crate) fn archive_born_from_table() -> crate::batch::export::LentSideTable {
     &BORN_FROM
+}
+
+/// The artifacts whose live versions name `source`, in the caller's snapshot.
+/// Check the stored provenance too, so a run-ref hash collision names nothing else.
+pub(crate) fn artifacts_born_from_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    source: &BornFromSource,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut artifacts = std::collections::BTreeSet::new();
+    for row in BORN_FROM.iter_from(store, txn, &source.key())? {
+        let ((_, artifact, version), _) = row?;
+        if live_version_claim(store, txn, &artifact, version, source)?.is_some() {
+            artifacts.insert(artifact);
+        }
+    }
+    Ok(artifacts)
+}
+
+/// The artifacts with a live agent-run version whose run ref starts with `prefix`.
+/// The version's own provenance must still match its index key.
+pub(crate) fn agent_run_artifacts_with_prefix_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    prefix: &str,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut artifacts = std::collections::BTreeSet::new();
+    for row in BORN_FROM.iter_from(store, txn, &[SOURCE_AGENT_RUN])? {
+        let ((source, artifact, version), _) = row?;
+        let Some(record) = VERSIONS.get(store, txn, &(artifact, version))? else {
+            continue;
+        };
+        if let Some(run_ref) = record.provenance.run_ref()
+            && run_ref.starts_with(prefix)
+            && BornFromSource::AgentRun(run_ref.to_owned()).key() == source
+        {
+            artifacts.insert(artifact);
+        }
+    }
+    Ok(artifacts)
 }

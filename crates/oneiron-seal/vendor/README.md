@@ -59,7 +59,12 @@
 - Local patch list (the first vendor commit is the unmodified sources plus
   the manifest strip, so `git log -p` on this directory shows each change).
   Decode admission is opt-in. The iterative parser and checked xref
-  arithmetic apply with or without an admission.
+  arithmetic apply with or without an admission. Without a
+  `DecodeAdmission` every load and decode otherwise runs upstream's code,
+  but for two fixes that apply to both paths: Flate inflates through one
+  shared loop that keeps every byte written before a corruption (FIX
+  8449), and an xref entry whose object number does not fit `u32` is
+  skipped instead of wrapped (FIX 8451).
   - `src/decode_admission.rs` (new): the `DecodeAdmission` trait (`admit`
     before each allocation, defaulted `release`/`transfer` for local reuse,
     `decoded` to observe an output length),
@@ -99,3 +104,14 @@
     loader's object-stream members and `get_compressed_object`'s container
     move instead of being cloned; the result is the same, with or without
     an admission.
+  - Release charges (FIX 8448, 8450): `DecodeAdmission::release`
+    gives back a buffer's old allocation once it grows, a filter chain's
+    dropped layer and the PNG predictor's row buffers. The xref table admits
+    a map node share per entry, and the admitted `/Prev`-merge helper per
+    entry a merge adds.
+  - CMap scratch/copy removal (FIX 12777, narrow slice): `src/parser/cmap_parser.rs`
+    folds 1..4-byte source codes and the discarded XUID digit list on the stack
+    instead of temporary vectors, and `src/encodings/cmap.rs` moves owned range
+    targets into the map instead of cloning them. Grammar, entry points, error
+    behavior, returned mappings and the reverse map are unchanged; no new API,
+    and no admission/heap/lifecycle claim.

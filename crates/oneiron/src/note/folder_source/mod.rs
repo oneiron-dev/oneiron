@@ -166,6 +166,17 @@ pub struct FolderSourceFile {
     /// original was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original: Option<FileOriginal>,
+    /// When the ledger first saw the file, kept across partial landings
+    /// that hold the meta back so the row stays pending (REVIEW-4381 P1);
+    /// 0 only for rows written before it.
+    #[serde(default)]
+    pub first_seen_at: u64,
+    /// The note's indexing time, kept while the meta is cleared to force a
+    /// re-read: the clear must not lose when the note was last indexed
+    /// (REVIEW-4381 P1). Moved back into the meta when a whole read lands
+    /// it. None when no whole read has indexed the note since the clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_indexed_at: Option<u64>,
 }
 
 impl FolderSourceFile {
@@ -211,6 +222,12 @@ pub struct FolderRescan {
     /// By path, what a Files source's host read of each file it holds as
     /// text; empty for a folder attached as notes.
     pub facts: HashMap<String, FileFacts>,
+    /// The host read the folder whole: every present file carries its
+    /// links, and the new notes' out-links resolved against every file. A
+    /// partial read lands no meta, so a later whole read reconciles the
+    /// links it left alone; the row still keeps when it first saw the file
+    /// (REVIEW-4381 P1).
+    pub whole: bool,
 }
 
 /// What one rescan did.
@@ -230,9 +247,11 @@ pub struct FolderRescanReport {
     pub removed: usize,
     /// Files a Files source now holds by name only, new or changed.
     pub name_only: usize,
-    /// Files the write door refused; a later rescan tries them again.
+    /// Files the write door refused and folders that would not open (FIX
+    /// 10246); a later rescan tries them again.
     pub failed: usize,
-    /// Why the first of them was refused.
+    /// Why the first of them was refused, or the first folder that would
+    /// not open.
     pub first_error: Option<String>,
 }
 
@@ -310,6 +329,34 @@ impl Vault {
                 last_rescan_at: None,
                 files,
             };
+            SOURCES.put(&self.store, txn, &key, &source)?;
+            Ok(source)
+        })
+    }
+
+    pub(in crate::note) fn convert_notes_source_to_files(
+        &self,
+        owner: &AuthenticatedOwner,
+        folder: &str,
+        placement: FilesPlacement,
+    ) -> Result<FolderSource> {
+        let invalid = super::document::invalid;
+        let key = source_key(folder);
+        self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let mut source = SOURCES
+                .get(&self.store, txn, &key)?
+                .ok_or_else(|| invalid("the folder is not an attached notes source"))?;
+            if source.files.is_some() {
+                return Err(invalid("the folder is already a Files source"));
+            }
+            // The old ledger names notes under the folder namespace, not the
+            // Files identity. Keep those notes, as detach does, and scan afresh.
+            for file in FILES.scan_keys(&self.store, txn, files_prefix(folder).as_bytes())? {
+                FILES.delete(&self.store, txn, &file)?;
+            }
+            source.files = Some(placement);
+            source.last_rescan_at = None;
             SOURCES.put(&self.store, txn, &key, &source)?;
             Ok(source)
         })

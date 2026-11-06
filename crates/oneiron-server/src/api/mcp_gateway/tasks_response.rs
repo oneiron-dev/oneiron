@@ -143,7 +143,8 @@ pub(crate) async fn execute_mcp_generated_verb(
     // The hook blocks a fresh board read's answer shows; a continuation
     // restates a retained answer and spends nothing again.
     let mut hooks = None;
-    let (mut output, health, carrier, snapshot, producer_epoch) =
+    let mut hook_notice = None;
+    let (mut output, health, carrier, mut snapshot, producer_epoch) =
         if let Some(continuation) = dispatch.continuation.as_ref() {
             let snapshot = continuation.snapshot.clone().ok_or_else(|| {
                 mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -199,14 +200,26 @@ pub(crate) async fn execute_mcp_generated_verb(
                     // A verb hook's stop is a result the client reads, not a
                     // refusal (ARCH-0080 §3).
                     Err(McpGatewayError {
-                        hook: Some(stop), ..
-                    }) => return mcp_hook_stop_result(server, &args, actor, *stop, served.rows()),
+                        hook: Some(stop),
+                        hook_notice,
+                        ..
+                    }) => {
+                        return mcp_hook_stop_result(
+                            server,
+                            &args,
+                            actor,
+                            *stop,
+                            served.rows(),
+                            hook_notice,
+                        );
+                    }
                     produced => produced,
                 };
                 // A refusal is released by the rows its verb served first.
-                let (output, source, carrier, epoch) = produced.map_err(|error| {
+                let (output, source, carrier, epoch, notice) = produced.map_err(|error| {
                     super::device_release::mcp_release_error(server, actor, served.rows(), error)
                 })?;
+                hook_notice = notice;
                 (output, source, carrier, epoch.or(task_epoch))
             };
             // An act whose rows are unknown (FIX 5988), or held (FIX 8171), answers
@@ -222,6 +235,7 @@ pub(crate) async fn execute_mcp_generated_verb(
             };
             (output, source.health(), carrier, snapshot, producer_epoch)
         };
+    let hook_notice = mcp_hook_notice(server, actor, hook_notice, &mut snapshot.rows);
     dispatch.producer_epoch = producer_epoch;
     let mut page = mcp_resolve_page(
         server,
@@ -246,7 +260,7 @@ pub(crate) async fn execute_mcp_generated_verb(
     }
     // A step's type feedback leaves on its own release (FIX 10390).
     let feedback = super::type_feedback_release::hold_verb_feedback(args.tool.name, &mut output);
-    let structured = json!({
+    let mut structured = json!({
         "tool": args.tool.name,
         "family": args.tool.family.as_str(),
         "verb": args.tool.verb,
@@ -259,6 +273,9 @@ pub(crate) async fn execute_mcp_generated_verb(
             args.payload.cache,
         ),
     });
+    if let Some(notice) = hook_notice {
+        structured["meta"]["hook_notice"] = notice;
+    }
     // A board read records the receipt its hook rows owe before it goes out
     // and spends their blocks once it has, as setup's page one does (OF-579).
     if let Some(hooks) = &mut hooks {
@@ -483,6 +500,36 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
     error
 }
 
+/// Resolves the short refs embedded in a notice before releasing its detail.
+/// Allowed detail keeps those rows in the reply's replay provenance, after an
+/// act's own detail narrowing; unknown or held detail stays content-free.
+fn mcp_hook_notice(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    notice: Option<String>,
+    rows: &mut Option<Vec<oneiron::EntityId>>,
+) -> Option<Value> {
+    let notice = notice?;
+    let withheld = || json!(oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device());
+    let Some(named) = crate::device_local::short_refs_in_text(&server.vault, &notice) else {
+        return Some(withheld());
+    };
+    if !crate::device_local::retained_hold(
+        &server.vault,
+        &actor.destination(),
+        &named,
+        notice.as_bytes(),
+    )
+    .is_ok_and(|hold| hold.is_none())
+    {
+        return Some(withheld());
+    }
+    if let Some(rows) = rows {
+        rows.extend(named);
+    }
+    Some(Value::String(notice))
+}
+
 /// A verb hook's stop as the tool result a client reads (ARCH-0080 §3): the
 /// verb gave no output, so `isError` is set, and `structuredContent.hook`
 /// carries the typed stop, a pending ask's invocation and handle included.
@@ -492,21 +539,33 @@ fn mcp_hook_stop_result(
     actor: &McpCallContext,
     stop: oneiron::runtime_hooks::VerbHookStop,
     served: Option<&[oneiron::EntityId]>,
+    hook_notice: Option<String>,
 ) -> Result<Value, McpGatewayError> {
+    let mut served = served.map(<[oneiron::EntityId]>::to_vec);
+    let hook_notice = mcp_hook_notice(server, actor, hook_notice, &mut served);
     let text = stop.to_string();
-    let structured = json!({
+    let mut structured = json!({
         "tool": args.tool.name,
         "family": args.tool.family.as_str(),
         "verb": args.tool.verb,
         "hook": stop,
         "actor": mcp_actor_result(actor),
     });
+    let mut content = vec![mcp_text_content(text)];
+    if let Some(notice) = hook_notice {
+        content.push(mcp_text_content(
+            notice
+                .as_str()
+                .map_or_else(|| notice.to_string(), str::to_owned),
+        ));
+        structured["meta"] = json!({"hook_notice": notice});
+    }
     let result = json!({
-        "content": [mcp_text_content(text)],
+        "content": content,
         "structuredContent": structured,
         "isError": true,
     });
-    mcp_release_listed(server, actor, served, false, result)
+    mcp_release_listed(server, actor, served.as_deref(), false, result)
 }
 
 /// Every structured refusal states the same four things: the machine code, the
@@ -575,6 +634,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("hook".to_owned(), json!(*stop));
+    }
+    if let Some(notice) = error.hook_notice
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("hook_notice".to_owned(), Value::String(notice));
     }
     if let Some(legal_hold) = error.legal_hold
         && let Some(object) = data.as_object_mut()
@@ -664,6 +728,10 @@ impl McpRowSurface {
         .with_birth_position(self.position)
         .listing_producers(producers)
         .with_invocation(self.invocation);
+        let memory = match &actor.signing_request_transport {
+            Some(transport) => memory.with_signing_request_transport(transport.clone()),
+            None => memory,
+        };
         // The hook pause the request resumes beside the invocation it named
         // (L13 PR-D): with no invocation named, it resumes nothing.
         let memory = match actor.hook_ask.filter(|_| actor.invocation.is_some()) {
@@ -701,7 +769,7 @@ async fn mcp_task_row<T: Send + 'static>(
     let run_writes = surface
         .run
         .as_ref()
-        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
@@ -749,7 +817,7 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
     let run_writes = surface
         .run
         .as_ref()
-        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        .and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
         let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {

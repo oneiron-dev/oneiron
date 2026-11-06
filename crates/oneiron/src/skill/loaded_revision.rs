@@ -13,7 +13,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::receipt::ReceiptRecord;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::vault::{ReadMode, RevisionRef};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 use super::SkillRecord;
 use super::codec::decode_skill_record;
@@ -22,7 +22,7 @@ use super::codec::decode_skill_record;
 /// SKILL body is the `record` that loaded. A body read some other way (a
 /// proposal through its trial basis) keeps an unpinned row, and a pin never
 /// fails a load: an unreadable row is simply left unpinned.
-pub(super) fn pin_loaded_in_txn(
+pub(crate) fn pin_loaded_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
@@ -107,7 +107,10 @@ pub(crate) fn receipt_skill_record(
 }
 
 /// One retained SKILL revision, `None` when the ledger no longer serves it
-/// or its body is not a SKILL record.
+/// (an erased skill) or its body is not a SKILL record. A pin the local
+/// FRONTIER table cannot serve while the entity lives fails closed (FIX
+/// 10676): falling back to the current record would silently read the wrong
+/// revision.
 fn pinned_record_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -121,7 +124,7 @@ fn pinned_record_in_txn(
         ReadMode::Pinned(revision),
     ) {
         Ok(Some(raw)) => raw,
-        Ok(None) | Err(Error::EntityNotFound) => return Ok(None),
+        Ok(None) => return Ok(None),
         Err(error) => return Err(error),
     };
     let skill = EntityMetadataHeader::parse(&raw)

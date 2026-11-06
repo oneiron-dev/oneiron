@@ -275,7 +275,7 @@ impl Vault {
         if pin.pin.is_some() || pin.awaiting.is_some() {
             return Ok(false);
         }
-        Ok(adopted_authority_checkpoint_in_txn(&self.store, &txn)?.is_none())
+        Ok(adopted_checkpoint_id_in_txn(&self.store, &txn)?.is_none())
     }
 }
 

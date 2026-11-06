@@ -23,20 +23,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 16 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | XL | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/inference.rs` | src | s | 1 struct · 1 trait · 1 type | WorkerProbe, WorkerSpec | The model-worker probe seam (FIX 8314, INFERENCE R1): what one worker is declared to be, and the one call… |
-| `src/supervisor/inference_admission.rs` | src | m | 8 struct · 3 enum · 22 fn · 2 type · 1 re-export · 1 crate-vis | AdmissionSnapshot, AdmissionStop, DeviceAdmission, DeviceGrant, ExecutorRegistration, LoadGrant, PressureDecision, PressureState +3 | Host/device admission for inference work (DESIGN-V2 R4) |
+| `src/supervisor/inference_admission.rs` | src | L | 8 struct · 3 enum · 23 fn · 2 type · 1 re-export · 1 crate-vis | AdmissionSnapshot, AdmissionStop, DeviceAdmission, DeviceGrant, ExecutorRegistration, LoadGrant, PressureDecision, PressureState +3 | Host/device admission for inference work (DESIGN-V2 R4) |
 | `src/supervisor/inference_admission/load.rs` | src | s | 2 fn · 1 crate-vis | — | Pre-launch grants and their class inheritance |
 | `src/supervisor/inference_admission/policy.rs` | src | s | 6 enum · 13 const | BackgroundFairness, PressureAction, QueueOrder, ResidentFreshness, UnknownMemoryPolicy, UnmediatedPolicy | R4 admission policy constants |
 | `src/supervisor/inference_admission/status.rs` | src | s | 3 fn | — | Admission status and host-observed pause state |
-| `src/supervisor/inference_admission/ticket.rs` | src | s | 10 fn | — | Ticket waits and cancellation for the parent device queue |
-| `src/supervisor/inference_device.rs` | src | m | 6 struct · 2 enum · 21 fn | DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource, TryReserveOutcome, WorkEnvelope | One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency… |
-| `src/supervisor/inference_worker.rs` | src | L | 7 struct · 1 enum · 2 trait · 23 fn · 1 type · 5 const | InferenceWorker, LaunchFailure, RunningWorker, UnloadOutcome, WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease +2 | One model worker's lifecycle (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per worker, over an… |
-| `src/supervisor/inference_worker/drive.rs` | src | m | 1 crate-vis | — | A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and… |
+| `src/supervisor/inference_admission/ticket.rs` | src | s | 11 fn | — | Ticket waits and cancellation for the parent device queue |
+| `src/supervisor/inference_device.rs` | src | m | 6 struct · 2 enum · 21 fn · 3 crate-vis | DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource, TryReserveOutcome, WorkEnvelope | One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency… |
+| `src/supervisor/inference_worker.rs` | src | L | 7 struct · 1 enum · 2 trait · 25 fn · 1 type · 5 const | InferenceWorker, LaunchFailure, RunningWorker, UnloadOutcome, WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease +2 | One model worker's lifecycle (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per worker, over an… |
+| `src/supervisor/inference_worker/drive.rs` | src | m | 2 crate-vis | — | A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and… |
+| `src/supervisor/inference_worker/startup.rs` | src | s | 1 fn · 1 crate-vis | — | A replacement's startup follows the retirement of every pending predecessor |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn | WakeSupervisor, WakeSupervisorReport | The supervisor loop: one arbiter over fresh ticks, owed retries and wave quanta (see `arbiter`), at most one… |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
-| `src/supervisor/mod.rs` | src | s | 10 re-export | — | The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter… |
+| `src/supervisor/mod.rs` | src | s | 11 re-export | — | The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter… |
 | `src/supervisor/pass.rs` | src | s | 5 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/program_factory.rs` | src | s | 1 struct · 1 fn | ProgramExecutorFactory | The turn program runtime around a host's executor factory (DOOR-141 PR2) |
 | `src/supervisor/retry.rs` | src | s | 13 crate-vis | — | What a pass's outcome leaves owed, and the debt of owed passes (FIX 8601) |
+| `src/supervisor/session_allocations.rs` | src | s | 2 struct · 2 fn | SessionAllocation, SessionAllocationOwner | Fact-only session ownership rows (FIX10370): which vault sessions hold bytes on a device's worker, as the… |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
 | `src/supervisor/supervised_pass.rs` | src | s | 1 crate-vis | — | One pass run under supervision: panic-caught, cooperatively cancellable, and paused at its boundary by the… |
 | `src/supervisor/tests/attachment.rs` | test | s | — | — | The generic pass-attachment seam: asked after the pass meter, refusal is pre-admission, and a linked host… |
@@ -44,14 +46,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/wave_lane.rs` | src | s | 5 crate-vis | — | The wave lane's quantum: the vault's operational pump limits, resolved afresh, one bounded pump step, and… |
 | `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | HybridTick | Hybrid tick: deadline and push lanes taking turns, a deadline rest that leaves pushes flowing, and… |
 | `src/tick/mod.rs` | src | s | 1 type · 5 re-export · 3 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
-| `src/tick/model.rs` | src | s | 4 struct · 2 enum · 2 trait · 3 crate-vis | ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
+| `src/tick/model.rs` | src | s | 4 struct · 2 enum · 2 trait · 6 crate-vis | ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, QueuedSessionHint, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
 | `src/tick/policy.rs` | src | s | 1 struct · 1 fn · 1 type | WakePolicyTicks | One cancellable quiet sleep per tick source, driven by the vault's row policy |
-| `src/tick/push.rs` | src | m | 3 struct · 1 enum · 8 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
-| `src/tick/queue.rs` | src | s | 7 crate-vis | — | The ordered SESSION-hint queue (FIX 8602): every lifecycle fact a producer handed in, in arrival order… |
+| `src/tick/push.rs` | src | m | 4 struct · 1 enum · 11 fn · 3 crate-vis | AppOpenApplyHandle, HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
+| `src/tick/queue.rs` | src | s | 9 crate-vis | — | The ordered SESSION-hint queue (FIX 8602): every lifecycle fact a producer handed in, in arrival order… |
 | `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
 | `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_push.rs` | test | s | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
-| `src/tick/timer.rs` | src | m | 3 struct · 8 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
+| `src/tick/timer.rs` | src | L | 3 struct · 8 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
 | `src/wave.rs` | src | s | 1 struct · 3 fn | WaveHost | Host-side consumption of a queued planning attempt and live TASK dispatch |
 | `src/wave/tests.rs` | test | s | — | — | — |
 | `src/wave_dispatch.rs` | src | m | 2 struct · 3 enum · 1 fn · 10 crate-vis | WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome, WaveHandoffReceipt | Bounded, per-item delivery of durable wave TASKs to a host dispatcher |

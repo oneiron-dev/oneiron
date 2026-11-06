@@ -143,6 +143,7 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    super::queue_root::delete_queue_roots_below_in_txn(store, wtxn, id)?;
     delete_code_revision_record_in_txn(store, wtxn, id)?;
     delete_code_revision_fork_in_txn(store, wtxn, id)?;
     super::proposals::delete_proposal_in_txn(store, wtxn, id)?;
@@ -153,13 +154,7 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
     Ok(())
 }
 
-pub(crate) fn has_finalized_code_revision_in_txn(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    revision_id: &EntityId,
-) -> Result<bool> {
-    RECORDS.contains(store, rtxn, revision_id)
-}
+pub(crate) use crate::store::code_revision_record::tables::has_finalized_code_revision_in_txn;
 
 fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRevisionWriteOutcome> {
     // Blob and queue evidence are minted by the queue seal alone (G2 PR3).

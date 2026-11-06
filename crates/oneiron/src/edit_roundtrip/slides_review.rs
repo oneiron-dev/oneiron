@@ -32,9 +32,8 @@ use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
     DecisionMedia, DecisionMediaRef, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
-    MAX_DECISION_IMAGE_BYTES, MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading,
-    Reasoning, ReasoningCause, ResolvedMedia, Reversibility, SlideReviewLimits, StopCause,
-    TypedDecision,
+    MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading, Reasoning, ReasoningCause,
+    ResolvedMedia, Reversibility, SlideReviewLimits, StopCause, TypedDecision,
 };
 use crate::llm::image::ImageBytes;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -50,8 +49,7 @@ pub(crate) use carry::{SlideNow, carry_slide_judgments, deck_slides_now};
 pub use run::review_slides;
 pub(crate) use verify::{validate_judgment_rows, verify_carried_judgments, verify_judgments};
 
-/// The name a unit's image goes by in its `state.media` and its call.
-pub const REVIEW_IMAGE: &str = "review_image";
+pub use crate::blob_artifact::slide_review::REVIEW_IMAGE;
 
 /// One caller-approved unit and its rendered image. The renderer must have
 /// rendered these exact `base` bytes; its identity is saved beside the deck
@@ -92,38 +90,8 @@ impl SlideReviewImage {
     }
 }
 
-/// A review image's BLAKE3 hash in hex: the `hash` its [`ImageRef`] names in
-/// `state.media`, and its judgment's `render_hash`, as text.
-pub fn review_image_key(image: &[u8]) -> String {
-    blake3::hash(image).to_hex().to_string()
-}
-
-/// The host's review renderer (ARCH-0077 "Review images"), which a proposer
-/// wake asks for the changed slides of a held review: the engine renders
-/// nothing itself.
-pub trait SlideRenderer: Send + Sync {
-    /// The renderer's identity, saved on each judgment as provisional evidence.
-    fn name(&self) -> &str;
-    /// One PNG or JPEG per entry of `slides` (1-based numbers in `deck`), in
-    /// that order, each rendered from these exact bytes.
-    fn render(&self, deck: &[u8], slides: &[u64]) -> Result<Vec<Vec<u8>>>;
-    /// Reserve memory for `bytes` the caller is about to allocate; the
-    /// reservation lives as long as the renderer (FIX 7653). A host's
-    /// renderer refuses one the machine cannot hold, typed; a renderer that
-    /// keeps no account of memory admits every one.
-    fn admit(&self, bytes: u64) -> Result<()> {
-        let _ = bytes;
-        Ok(())
-    }
-    /// Name `reserved` of the bytes admitted allocated, as the `actual` bytes
-    /// the caller now holds (FIX 8240): an exact reservation made, what an
-    /// estimate came to, room left unused (`actual` 0), or bytes read before
-    /// their size was known (`reserved` 0). Only bookkeeping: it never waits
-    /// or refuses. A renderer that keeps no account of memory ignores it.
-    fn materialized(&self, reserved: u64, actual: u64) {
-        let _ = (reserved, actual);
-    }
-}
+pub(crate) use crate::blob_artifact::slide_review::review_copy_bytes;
+pub use crate::blob_artifact::slide_review::{SlideRenderer, review_image_key};
 
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.
@@ -186,11 +154,16 @@ impl SlideReviewLabels {
 /// The managed anchor kept beside the comment, not only inside the exported
 /// file (ARCH-0077, "Managed anchor"): the typed view's slide identity and
 /// fingerprints, and for a shape unit its retained node and fingerprint.
+/// Each fingerprint is hex on a JSON wire (FIX 9342).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideReviewAnchor {
     pub slide_part: String,
     pub sld_id: u32,
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub slide_fingerprint: [u8; 32],
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub render_fingerprint: [u8; 32],
     pub shape: Option<ShapeReviewAnchor>,
 }
@@ -201,11 +174,14 @@ pub struct ShapeReviewAnchor {
     pub node_part: String,
     pub node_index: u64,
     pub shape_id: Option<u32>,
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub fingerprint: [u8; 32],
 }
 
 /// Bound to its exported comment and exact source version. Settlement keeps
 /// this record with the consume-once receipt, not just a client-side preview.
+/// Its frontier and hashes are hex on a JSON wire (FIX 9342).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideJudgment {
     pub thread_id: EntityId,
@@ -232,16 +208,21 @@ pub struct SlideJudgment {
     /// rung is left to read it again (FIX 10745).
     pub ceiling: DecisionRung,
     pub renderer: String,
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub frontier: [u8; 32],
     /// The unit's `state.media`: its image's ref and whether its pixels rode
     /// with the call.
     #[serde(default)]
     pub media: Vec<DecisionMedia>,
-    /// The hash of the image its media entry names (its ref's `hash`). A row
-    /// from before media entries pinned its image on the receipt by it.
+    /// The hash of the image its media entry names (its ref's `hash`).
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub render_hash: [u8; 32],
     /// Hash of the exact state the providers read: the unit, its text and its
     /// media entries.
+    #[serde(with = "oneiron_docedit::hex_digest")]
+    #[schemars(with = "String")]
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     /// The deck's live body when it was reviewed: an edit to it never
@@ -344,27 +325,7 @@ pub struct SlideUnitRefusal {
     pub judged_live: Option<crate::office_body::LivePin>,
 }
 
-/// On the wire as its variant name (`MissingShape`, ...), the words a
-/// review's refusals have always carried.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum SlideUnitRefusalReason {
-    /// No shape on the slide carries the creation id.
-    MissingShape,
-    /// Several shapes carry it.
-    AmbiguousShape,
-    /// The shape no longer matches the caller's fingerprint.
-    TargetChanged,
-    /// The writer cannot verify the shape's slide-space position.
-    UnresolvedGeometry,
-    /// The unit's text, state or image exceeds the evidence budget; nothing is
-    /// trimmed or scaled to fit.
-    EvidenceBudget,
-    /// The rendered image is not PNG or JPEG whose header gives its size.
-    UnreadableImage,
-    /// The run's deadline came before the unit's batch started: nothing was
-    /// asked about it (FIX 9819).
-    RunDeadline,
-}
+pub use crate::blob_artifact::slide_review::SlideUnitRefusalReason;
 
 /// The exact deck a review reads.
 #[derive(Clone, Copy)]

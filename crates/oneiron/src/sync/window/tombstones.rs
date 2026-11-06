@@ -3,8 +3,8 @@
 use super::bridge::{self, BRIDGE_ORIGIN};
 use super::egress::export_scrubbed_window_snapshot;
 use super::loro_support::{
-    TombstoneIndex, doc_version_vector, export_updates_from, import_doc, map_delete,
-    map_for_each_bytes, map_get_bytes, map_insert_bytes,
+    TombstoneIndex, doc_version_vector, import_doc, map_delete, map_for_each_bytes,
+    map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -43,17 +43,7 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
     apply_tombstone_to_indexed_window_doc(doc, &tombstones, id, raw_value)
 }
 
-/// The entity carriers `ids` hold in `doc`, read before a local path removes
-/// them, so [`mark_removed_carriers_first`] can mark the task of an authority
-/// fact among them that this vault never admitted: removing its carrier
-/// before ingest saw it would otherwise read as a fact never made.
-pub(crate) fn entity_carriers(doc: &LoroDoc, ids: &[EntityId]) -> Vec<(EntityId, Vec<u8>)> {
-    let entities = doc.get_map("entities");
-    ids.iter()
-        .filter_map(|id| map_get_bytes(&entities, &id.to_hex()).map(|carrier| (*id, carrier)))
-        .collect()
-}
-
+pub(crate) use crate::store::loro_document::entity_carriers;
 pub(crate) use crate::store::window_rows::CarrierRemoval;
 /// [`crate::task_authority::mark_removed_carriers`], committed before `path`
 /// touches the document. The id is deleted here, so the fact can never be
@@ -70,8 +60,10 @@ pub(crate) fn mark_removed_carriers_first(
     carriers: &[(EntityId, Vec<u8>)],
 ) -> Result<()> {
     crate::task_authority::mark_removed_carriers(vault, carriers)?;
-    // A peer's record of a removed carrier leaves with it.
+    // A peer's record of a removed carrier leaves with it, as does the record
+    // of which machine wrote a removed MESSAGE (FIX 12113).
     crate::sync::ingest::forget_peer_rows(vault, carriers)?;
+    crate::sync::ingest::forget_written_rows(vault, carriers)?;
     #[cfg(test)]
     fail_after_carrier_mark(path)?;
     Ok(())
@@ -142,6 +134,7 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     // The deleted row's birth leaves with its carrier, and so does a peer's
     // origin for it (FIX 4550).
     crate::sync::row_birth::remove_birth_carrier(doc, id)?;
+    crate::sync::origin_positions::remove_carrier(doc, id)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, [*id])?;
     // FIX 7608 (KEY STORE = A, FIX 10799): a masked copy row a peer sent
     // under the item's derived copy id goes with it. Only a carrier present
@@ -152,6 +145,7 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     {
         map_delete(&entities, &copy.to_hex())?;
         crate::sync::row_birth::remove_birth_carrier(doc, &copy)?;
+        crate::sync::origin_positions::remove_carrier(doc, &copy)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, [copy])?;
     }
 
@@ -178,51 +172,9 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     Ok(())
 }
 
-/// A tombstone-commit delta authorized to be queued as DELETE-BEARING.
-///
-/// The `d:{seq:8BE}` sidecar marker exempts its `q:` row from every
-/// unconfirmed clear and from the carrier-15 scrub — protections built for
-/// tombstone deltas, not arbitrary payloads. The private field plus the
-/// single constructor ([`export_tombstone_commit_delta`]) are the
-/// type-system pin that delete-bearing = a real tombstone-commit delta:
-/// nothing outside the tombstone-commit path can mark bytes delete-bearing
-/// (ONE-1135 review item 14).
-pub(crate) struct DeleteBearingUpdate(Vec<u8>);
-
-impl DeleteBearingUpdate {
-    /// The delta bytes stored in the `q:` row.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Test-only escape hatch so queue unit tests can exercise the `d:`
-    /// row machinery with synthetic bytes. NOT part of the public API and
-    /// compiled out of every non-test build.
-    #[cfg(test)]
-    pub(crate) fn for_test(bytes: Vec<u8>) -> Self {
-        Self(bytes)
-    }
-}
-
-/// Exports the tombstone commit's delta as the [`DeleteBearingUpdate`]
-/// queued for transmission — the ONLY constructor of that type.
-///
-/// Call IMMEDIATELY after [`apply_tombstone_to_window_doc`] + commit;
-/// `vv_before` must be the doc's oplog version vector captured before the
-/// tombstone was applied. Returns `None` when the commit was a no-op
-/// (e.g. a blocked downgrade of an existing hard tombstone) — there is
-/// nothing to queue.
-pub(crate) fn export_tombstone_commit_delta(
-    doc: &LoroDoc,
-    vv_before: &loro::VersionVector,
-) -> Result<Option<DeleteBearingUpdate>> {
-    if doc.oplog_vv() == *vv_before {
-        return Ok(None);
-    }
-    Ok(Some(DeleteBearingUpdate(export_updates_from(
-        doc, vv_before,
-    )?)))
-}
+pub(crate) use crate::deletion::delete_bearing_update::{
+    DeleteBearingUpdate, export_tombstone_commit_delta,
+};
 
 /// Replays pending-tombstone markers (`pt:{window}:{entity_hex}`) into the
 /// window doc. OWNER-DECISION (ONE-1132 cfg-off durability): the marker is

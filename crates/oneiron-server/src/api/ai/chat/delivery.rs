@@ -10,13 +10,13 @@ use super::{
 };
 
 /// The NDJSON answer: accepted, each delta, the terminal, then saved or the
-/// error. A claimed invocation stays claimed until the last line goes out; a
-/// stream leaves no reply to send again, so a duplicate waiting on it is
-/// told to retry.
+/// error. A claimed invocation stays claimed until the producer ends, and
+/// keeps the turn's whole reply for each duplicate (FIX 2004).
 pub(in crate::api::ai::chat) fn streamed(
     started: Started,
     claim: Option<DoorInvocationClaim>,
 ) -> Response {
+    let started = kept_on_claim(started, claim);
     let Started {
         user_turn,
         answering,
@@ -92,10 +92,7 @@ pub(in crate::api::ai::chat) fn streamed(
             };
             std::future::ready(next)
         })
-        .map(move |bytes| {
-            let _claimed = &claim;
-            Ok::<_, std::io::Error>(bytes)
-        });
+        .map(Ok::<_, std::io::Error>);
     (
         [(header::CONTENT_TYPE, "application/x-ndjson")],
         Body::from_stream(body),
@@ -104,8 +101,14 @@ pub(in crate::api::ai::chat) fn streamed(
 }
 
 /// The whole-message answer, once the reply is saved. A reply cut short is
-/// answered as saved and incomplete; one that saved nothing is an error.
-pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
+/// answered as saved and incomplete; one that saved nothing is an error. A
+/// claimed invocation stays claimed until the producer ends, not until this
+/// request's future does, and keeps this reply for each duplicate (FIX 12315).
+pub(in crate::api::ai::chat) async fn whole(
+    started: Started,
+    claim: Option<DoorInvocationClaim>,
+) -> Response {
+    let started = kept_on_claim(started, claim);
     let Started {
         conversation_ref,
         turn,
@@ -158,6 +161,102 @@ pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
     .into_response()
 }
 
+/// `started` with its reply kept on `claim` for each duplicate of the turn
+/// (FIX 2004): once the producer ends, the claim saves the answer [`whole`]
+/// would send ([`whole_reply`]), and the outcome goes on to the stream or to
+/// [`whole`] (FIX 12315). Unclaimed, `started` is as it was.
+fn kept_on_claim(mut started: Started, claim: Option<DoorInvocationClaim>) -> Started {
+    let Some(claim) = claim else {
+        return started;
+    };
+    let conversation_ref = started.conversation_ref.clone();
+    let turn = started.turn;
+    let message_id = started.answering.handle.message_id();
+    let credential = started.credential.clone();
+    let board_omitted = started.board_omitted;
+    let peer = started.peer;
+    let reply_rows = started.reply_rows.clone();
+    let ended = std::mem::replace(
+        &mut started.answering.outcome,
+        tokio::sync::oneshot::channel().1,
+    );
+    started.answering.outcome =
+        crate::api::facade::finish_streamed_claim(claim, ended, move |outcome| {
+            whole_reply(
+                &conversation_ref,
+                turn,
+                message_id,
+                &credential,
+                board_omitted,
+                peer,
+                &reply_rows,
+                outcome,
+            )
+        });
+    started
+}
+
+/// The answer [`whole`] sends once a reply's producer ended with `outcome`
+/// (`None` when it stopped with none): refused once the turn's credential
+/// lapsed, an error when nothing was saved, and the saved message otherwise.
+fn whole_reply(
+    conversation_ref: &str,
+    turn: super::EntityId,
+    message_id: super::EntityId,
+    credential: &super::TurnCredential,
+    board_omitted: Option<super::recall::BoardOmission>,
+    peer: oneiron::authority::PeerMachine,
+    reply_rows: &[super::EntityId],
+    outcome: Option<&super::AnswerOutcome>,
+) -> Response {
+    if !credential.live() {
+        return refusal(
+            StatusCode::FORBIDDEN,
+            REVOKED,
+            "the credential this turn was admitted under is no longer live",
+        );
+    }
+    let Some(outcome) = outcome else {
+        return refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "turn_failed",
+            "the producer stopped",
+        );
+    };
+    let Some(receipt) = &outcome.saved else {
+        return match &outcome.result {
+            Ok(()) => refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "not_saved",
+                "the terminal message was not recorded",
+            ),
+            Err(message) => refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "turn_failed",
+                message.as_str(),
+            ),
+        };
+    };
+    let mut rows = reply_rows.to_vec();
+    rows.push(receipt.message_id);
+    rows.sort_unstable();
+    rows.dedup();
+    let released = crate::api::facade::FacadeReleased::sent_with_rows(peer, rows);
+    (
+        axum::Extension(released),
+        Json(ChatReply {
+            conversation_ref: conversation_ref.to_owned(),
+            turn_id: turn.to_hex(),
+            message_id: message_id.to_hex(),
+            text: outcome.text.clone(),
+            incomplete: !receipt.complete(),
+            finish_reason: receipt.finish_reason.clone(),
+            board_omitted,
+        }),
+    )
+        .into_response()
+}
+
 /// Drives the model stream into the presence plane and the bus. The run
 /// settles each rung: honest usage on a terminal (saved or not), the
 /// reservation of a rung that went out and failed, or was stopped. A
@@ -180,6 +279,7 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         container,
         mut wakes,
         assertions,
+        mut model_call,
     } = producer;
     let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
@@ -249,7 +349,9 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
             // The run settled the answer before it arrived: the provider
             // spent it whether or not the answer is saved. It asserts the
             // records this host gathered, never the ones it came with.
-            if let Err(error) = bus.publish(assertions.stamp(event)) {
+            let event = assertions.stamp(event);
+            model_call.record(&vault, &credential, container, &event);
+            if let Err(error) = bus.publish(event) {
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {

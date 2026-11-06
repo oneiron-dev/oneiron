@@ -528,11 +528,19 @@ impl<'a> DreamerRunnerStore<'a> {
         reader: crate::claim::WeaveDigestReader,
         scheduled_for: u64,
         rendered_at: u64,
+        report_revision: crate::EntityId,
+        enqueued_at: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let input = crate::claim::weave_lens_attempt_input(reader, scheduled_for, rendered_at);
+        let input = crate::claim::weave_lens_attempt_input(
+            reader,
+            scheduled_for,
+            rendered_at,
+            report_revision,
+        );
         let dedupe = format!(
-            "{DREAMER_WEAVE_LENS_ATTEMPT_KIND}:{}:{scheduled_for}:{rendered_at}",
-            reader.id().to_hex()
+            "{DREAMER_WEAVE_LENS_ATTEMPT_KIND}:{}:{scheduled_for}:{rendered_at}:{}",
+            reader.id().to_hex(),
+            report_revision.to_hex()
         );
         self.enqueue_kind_in_txn(
             wtxn,
@@ -544,7 +552,7 @@ impl<'a> DreamerRunnerStore<'a> {
             },
             Some(dedupe),
             None,
-            rendered_at,
+            enqueued_at,
         )
     }
 
@@ -617,6 +625,45 @@ impl<'a> DreamerRunnerStore<'a> {
         retry_at: u64,
         step_hashes: &[[u8; 32]],
     ) -> Result<()> {
+        self.requeue_deferred(
+            admitted,
+            budget,
+            retry_at,
+            step_hashes,
+            super::SELECTION_DEFERRED_REASON,
+        )
+    }
+
+    /// Requeues a leased try the pass's frozen preparation did not hold, as
+    /// [`Self::defer_selection`] does, under the backlog reason: it ran
+    /// nothing, so its next run is not a selection retry and widens over no
+    /// conversation peers.
+    pub(crate) fn defer_backlog(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+        step_hashes: &[[u8; 32]],
+    ) -> Result<()> {
+        self.requeue_deferred(
+            admitted,
+            budget,
+            retry_at,
+            step_hashes,
+            super::BACKLOG_DEFERRED_REASON,
+        )
+    }
+
+    /// The same-row requeue both deferrals share, with `reason` on its
+    /// history.
+    fn requeue_deferred(
+        &self,
+        admitted: &super::DreamerAdmittedAttempt,
+        budget: super::SettleDreamerBudget,
+        retry_at: u64,
+        step_hashes: &[[u8; 32]],
+        reason: &str,
+    ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
             return Err(invalid_dreamer_runner("invalid selection retry"));
@@ -634,7 +681,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    reason: super::SELECTION_DEFERRED_REASON.into(),
+                    reason: reason.into(),
                     due_at: retry_at,
                 },
             )?;
@@ -819,6 +866,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
                 turn,
             )?;
+            if let Some(record) = crate::agent_dispatch::requeue_workflow_tool_failure_in_txn(
+                self.vault, txn, &source, &input,
+            )? {
+                return Ok(record);
+            }
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
@@ -1164,6 +1216,15 @@ impl<'a> DreamerRunnerStore<'a> {
             .scan_keys(&self.vault.store, &rtxn, &[])?
             .into_iter()
             .collect())
+    }
+
+    /// The working attempts that hold a parked row, in creation order, each
+    /// read by its key on one snapshot, so a reader of parks decodes no
+    /// other attempt (FIX 12253).
+    pub fn parked_working_rows(&self) -> Result<Vec<AttemptRecord>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let ids = PARKED.scan_keys(&self.vault.store, &rtxn, &[])?;
+        self.attempts.working_rows_in_txn(&rtxn, ids)
     }
 
     /// Pure proposal step. This method performs no LMDB write and enqueues no

@@ -30,6 +30,12 @@ the C ABI's reads: `contextPack(text, vector, limit, format)` (UTF-8 in `json`, 
 from `bound(actorKey, session)` writes as that caller through the core's raw caller doors
 (OF-063); its `delete` is the owner-only `vault.delete` door, so an id naming no record throws.
 
+`nativeLimitQuestions()` reads the latest engine-limit questions this raw-opened vault asked
+(FIX 75): a JSON array string of exactly `{"row", "bound", "measured"}` per asked row, with
+full `u64` digits, `[]` when no row has crossed. A bound vault or an engine-shared vault
+carries none and answers `null`. The read does not clear. Whole FIX 75 stays PART for other
+language wrappers, queueing, memory floors, allocation and runtime.
+
 The Android workflow (`.github/workflows/android-embedded.yml`) builds
 `aarch64-linux-android` with NDK 27.2.12479018 and API 26, packages the `.so`,
 then runs the Kotlin open/put/get/reopen instrumentation test

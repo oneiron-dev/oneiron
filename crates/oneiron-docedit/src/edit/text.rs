@@ -25,6 +25,12 @@ use crate::retained_opc::Package;
 use build::{broken_run, insert_paragraphs, new_run};
 
 mod build;
+mod field_cut;
+mod parse;
+
+pub(crate) use field_cut::cell_text_cut;
+use parse::cell_paragraphs;
+pub(super) use parse::paragraphs;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
 pub(crate) const BREAK: char = '\u{b}';
@@ -51,6 +57,7 @@ enum Kind {
     Run,
     Field,
     Break,
+    Opaque,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -67,62 +74,9 @@ pub(super) struct Paragraph {
     node: usize,
     items: Vec<Item>,
     pub(super) text: Vec<char>,
-    /// A child the mapping does not know (not `pPr`, `r`, `br`, `fld` or
-    /// `endParaRPr`) holding text: such a paragraph is never rewritten. Any
-    /// other unknown child passes through unchanged (FIX 10385).
+    /// A text-bearing child the generic mapping does not know. Cells
+    /// instead represent such children as whole opaque items (FIX 10385).
     opaque: bool,
-}
-
-/// The paragraphs of a text body, with their text as the mapping counts it.
-pub(super) fn paragraphs(tree: &XmlTree, body: usize) -> Vec<Paragraph> {
-    tree.nodes[body]
-        .children
-        .iter()
-        .copied()
-        .filter(|&at| tree.nodes[at].is(A, "p"))
-        .map(|at| {
-            let mut paragraph = Paragraph {
-                node: at,
-                items: Vec::new(),
-                text: Vec::new(),
-                opaque: false,
-            };
-            for &child in &tree.nodes[at].children {
-                let node = &tree.nodes[child];
-                let (kind, text) = match (node.namespace.as_str(), node.name.as_str()) {
-                    (A, "r") => (Kind::Run, run_text(tree, child)),
-                    (A, "fld") => (Kind::Field, run_text(tree, child)),
-                    (A, "br") => (Kind::Break, BREAK.to_string()),
-                    (A, "pPr" | "endParaRPr") => continue,
-                    _ => {
-                        if holds_text(tree, child) {
-                            paragraph.opaque = true;
-                        }
-                        continue;
-                    }
-                };
-                let start = paragraph.text.len();
-                paragraph.text.extend(text.chars());
-                paragraph.items.push(Item {
-                    node: child,
-                    kind,
-                    start,
-                    end: paragraph.text.len(),
-                });
-            }
-            paragraph
-        })
-        .collect()
-}
-
-/// Whether the element's subtree holds an `a:t` with text (FIX 10385): an
-/// unknown paragraph child holding none passes through the mapping
-/// unchanged, as alternate content and math do.
-fn holds_text(tree: &XmlTree, at: usize) -> bool {
-    tree.nodes[at].children.iter().any(|&child| {
-        let node = &tree.nodes[child];
-        (node.is(A, "t") && !node.text.is_empty()) || holds_text(tree, child)
-    })
 }
 
 /// The characters run `run` holds in paragraph `paragraph`, runs and
@@ -546,7 +500,16 @@ pub(super) fn rewrite_body(
     body: usize,
     new: &[Vec<char>],
 ) -> Result<(Vec<Splice>, Option<usize>), EditRefusal> {
-    let old = paragraphs(tree, body);
+    rewrite_paragraphs(bytes, tree, body, &paragraphs(tree, body), new)
+}
+
+fn rewrite_paragraphs(
+    bytes: &[u8],
+    tree: &XmlTree,
+    body: usize,
+    old: &[Paragraph],
+    new: &[Vec<char>],
+) -> Result<(Vec<Splice>, Option<usize>), EditRefusal> {
     let mut head = 0;
     while head < old.len() && head < new.len() && old[head].text == new[head] {
         head += 1;
@@ -572,7 +535,7 @@ pub(super) fn rewrite_body(
     }
     if at < new_end {
         let added: Vec<&[char]> = new[at..new_end].iter().map(Vec::as_slice).collect();
-        edits.push(insert_paragraphs(bytes, tree, body, &old, at, &added)?);
+        edits.push(insert_paragraphs(bytes, tree, body, old, at, &added)?);
     }
     let structure = (old.len() != new.len()).then_some(at);
     Ok((edits, structure))
@@ -583,10 +546,11 @@ pub(super) fn rewrite_body(
 /// paragraphs, and every run, property, attribute and binding outside the
 /// changed text, keep their bytes. A cell's text counts no line break, so a
 /// paragraph whose text reads as before, its breaks aside, keeps them.
-/// `None` when the mapping refuses (a change cutting into a field, content
-/// holding text it does not know); the caller keeps its own rebuild then.
+/// Text-bearing unknown children keep their whole XML outside the changed
+/// span. `None` when the change cuts into a field or an opaque child; the
+/// caller keeps its own rebuild then.
 pub(crate) fn cell_text(bytes: &[u8], tree: &XmlTree, body: usize, value: &str) -> Option<Vec<u8>> {
-    let old = paragraphs(tree, body);
+    let old = cell_paragraphs(tree, body);
     let new: Vec<Vec<char>> = value
         .split('\n')
         .enumerate()
@@ -604,7 +568,7 @@ pub(crate) fn cell_text(bytes: &[u8], tree: &XmlTree, body: usize, value: &str) 
             _ => line.chars().collect(),
         })
         .collect();
-    let (edits, _) = rewrite_body(bytes, tree, body, &new).ok()?;
+    let (edits, _) = rewrite_paragraphs(bytes, tree, body, &old, &new).ok()?;
     xml::splice(bytes, edits).ok()
 }
 

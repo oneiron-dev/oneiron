@@ -11,16 +11,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/authority/agent_grant_act.rs` | src | s | 1 struct · 1 enum · 2 fn · 2 const · 2 crate-vis | AgentGrantActRecord, AgentGrantChange | The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its… |
+| `src/authority/agent_grant_act.rs` | src | m | 1 struct · 1 enum · 2 fn · 2 const · 2 crate-vis | AgentGrantActRecord, AgentGrantChange | The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its… |
 | `src/authority/agent_grant_act/git_push.rs` | src | s | 6 crate-vis | — | The owner's mint of a `git_push` Grant in his one signed Grant act (FIX 6867, G1-PUSH): the same… |
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 2 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
 | `src/authority/comm_reach.rs` | src | s | 1 enum · 3 fn | CommReach | FIX 1380 / FIX 3899: the comm reach, whom an agent may address |
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 6 fn · 2 const | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
-| `src/authority/constants.rs` | src | s | 1 type · 93 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
+| `src/authority/constants.rs` | src | s | 1 type · 105 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
 | `src/authority/conversation_training.rs` | src | s | 1 struct · 2 fn · 2 const · 2 crate-vis | ConversationTrainingSet | A person's own "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420), and its… |
 | `src/authority/conversation_training_vault.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | ConversationTrainingVaultSet | The vault's "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and its wire codec |
 | `src/authority/crypto.rs` | src | s | 2 struct · 3 enum · 12 fn | AuthorityAttestation, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier | Authority key material and signature verification |
 | `src/authority/device.rs` | src | s | 2 struct · 6 fn | DeviceAuthority, FoldedDevice | Device authority material and the folded-device consent predicates |
+| `src/authority/device_succession.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | DeviceSuccession | The owner's naming of a device key's successor (FIX 11135, Engine 11-06 06:58 = A), and its wire codec |
 | `src/authority/export_act.rs` | src | s | 1 struct · 1 fn · 4 const · 2 crate-vis | ExportActRecord | The owner's whole-vault export as a signed owner act (FIX 4624), and its wire codec |
 | `src/authority/federation_pact.rs` | src | m | 4 struct · 5 enum · 7 fn · 1 re-export | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationNarrowing, FederationPactGesture, FederationPactState, FederationPactStatus +1 | Federation lifecycle and pact types |
 | `src/authority/federation_pact/scope_key.rs` | src | s | 1 struct · 3 fn | ScopeOpeningAad | The keyed federation scope commitment and its per-grant opening key |
@@ -30,7 +31,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/home_pick.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | HomeNodePick | The owner's pick of his vault's home node (DOOR-101 PR2a; ARCH-0026: "The owner picks the home node in… |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 8 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
-| `src/authority/mod.rs` | src | s | 32 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/membership_execution.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | MembershipExecution, MembershipExecutionCause, MembershipHandover | A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)… |
+| `src/authority/mod.rs` | src | s | 37 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/origin_cut.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | OriginCut | The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: "Refs are… |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 3 enum · 7 fn · 1 const · 2 crate-vis | ActBy, ActSurface, OwnerAct, OwnerActKind | The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043, "Last-Owner successor… |
 | `src/authority/owner_key_enrollment.rs` | src | s | 1 struct · 6 fn · 4 const · 2 crate-vis | OwnerKeyEnroll | The owner's enrollment of one of his devices' own owner signing keys on the authority roster (FIX 4920… |
@@ -46,13 +49,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/policy_setting.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 const · 2 crate-vis | PolicySetting, PolicySettingSet | The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec |
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/residence.rs` | src | m | 2 struct · 2 enum · 5 fn · 4 const · 5 crate-vis | ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
-| `src/authority/slip_claims.rs` | src | s | 2 struct · 5 fn · 1 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
+| `src/authority/seat_claim_binding.rs` | src | s | 1 struct · 1 fn · 1 const | SeatClaimSlipBinding | FIX 10624: the seat claim a seat-child slip carries, signed in its claims beside `grant_ref` and… |
+| `src/authority/slip_claims.rs` | src | s | 2 struct · 5 fn · 2 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | m | 2 fn · 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/support_delegation.rs` | src | s | 1 struct · 1 enum · 5 fn · 5 const | SupportDelegation, SupportRepair | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
-| `src/authority/wire_decode.rs` | src | m | 13 fn · 1 crate-vis | — | `rmpv::Value` decoding for every authority type |
+| `src/authority/trusted_contact_binding.rs` | src | s | 1 struct · 1 fn | TrustedContactSlipBinding | FIX 4325: the trusted-contact binding a contact-bound slip carries, signed in its claims beside `grant_ref`… |
+| `src/authority/wire_decode.rs` | src | m | 14 fn · 1 crate-vis | — | `rmpv::Value` decoding for every authority type |
 | `src/authority/wire_encode.rs` | src | m | 7 fn · 1 crate-vis | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/world_key_wraps.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |
 | `src/authority/world_privacy.rs` | src | m | 2 struct · 4 enum · 3 fn · 2 const · 2 crate-vis | ModelOrder, PrivacyDirection, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
+| `src/channel_address.rs` | src | m | 4 struct · 16 fn | AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr | Identity-bearing address VALUES, and the canonical assignment key |
+| `src/channel_identity_manifest.rs` | src | s | 4 struct · 4 enum · 9 fn · 1 const | ChannelIdentityCapabilityMatrix, ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError, ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities, ChannelIdentityReputationSignal | Channel identity capability manifests (OF-347 CID-4) |
+| `src/channel_identity_shape.rs` | src | s | 2 enum · 5 fn | ChannelIdentityShape, SelfHeldShape | ChannelIdentity addressability shapes with wire serde |
+| `src/channel_selection_vocabulary.rs` | src | s | 3 enum · 7 fn · 3 const | ChannelIdentityFace, RelationshipContext, SelectionRuleWriterKind | Stable token vocabulary for channel-identity selection law |
+| `src/claim_history_handoff.rs` | src | m | 5 struct · 6 enum · 6 fn · 3 const | ClaimBirth, ClaimHistoryHandoff, ClaimHistoryHandoffPin, ClaimTransition, DeltaClosure, HandoffCodecError, HandoffKind, HandoffRefusal +3 | Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
 | `src/federation/git_push.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const | FederationGrantKind, GitPushBounds, GitPushRepo | The `git_push` Grant capability (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21): raw git… |
@@ -62,6 +72,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn · 1 const | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
 | `src/federation/scope_codec.rs` | src | s | 5 fn | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
-| `src/lib.rs` | src | s | 4 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
+| `src/lib.rs` | src | s | 9 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
 | `src/share_travel.rs` | src | s | 1 struct · 2 enum · 6 fn · 1 type | BornWithField, TravelChoice, TravelKind | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |

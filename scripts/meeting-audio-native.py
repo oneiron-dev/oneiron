@@ -29,7 +29,7 @@ import tempfile
 import time
 import uuid
 
-PROTOCOL = "oneiron.meeting_audio.host.v2"
+PROTOCOL = "oneiron.meeting_audio.host.v3"
 ASR_MODEL = "mlx-community/Qwen3-ASR-1.7B-8bit"
 COMMUNITY_MODEL = "pyannote/speaker-diarization-community-1"
 # A pack's ASR output budget grows with its audio: at least 8,192 tokens, and
@@ -64,8 +64,8 @@ class UnitGate:
 
     `run` names a unit to the host, waits for its answer, runs the call once
     admitted and reports its end with what it counted. Without an answer
-    stream (a nested process port, whose whole call its parent admitted as
-    one unit) a unit runs unasked and only its progress is written.
+    stream (standalone use, with no host to admit units) a unit runs unasked
+    and only its progress is written.
     """
 
     def __init__(self, request_id, output_stream, answers=None):
@@ -82,15 +82,17 @@ class UnitGate:
     def progress(self):
         self.write("progress")
 
-    def run(self, kind, audio_ms, call, usage=None):
+    def run(self, kind, audio_ms, call, usage=None, model=None):
         if self.answers is None:
             self.progress()
             result = call()
             self.progress()
             return result
+        if not isinstance(model, str) or not model:
+            raise Refusal("MissingUnitModel")
         index = self.counts.get(kind, 0)
         self.counts[kind] = index + 1
-        self.write("unit", unit={"kind": kind, "index": index, "audio_ms": audio_ms})
+        self.write("unit", unit={"kind": kind, "index": index, "audio_ms": audio_ms, "model": model})
         try:
             answer = json.loads(self.answers.readline())
         except (ValueError, UnicodeError):
@@ -113,7 +115,7 @@ def audio_milliseconds(samples):
     return (samples + 15) // 16
 
 
-def read_request(stream):
+def read_request(stream, exact_body=False):
     line = stream.readline()
     if not line.endswith(b"\n"):
         raise Refusal("InvalidHeader")
@@ -133,7 +135,9 @@ def read_request(stream):
             or not isinstance(header["operation"], str)
             or not isinstance(header["options"], dict)):
         raise Refusal("InvalidHeader")
-    body = stream.read(size + 1)
+    # A persistent stdin (the worker's answers share the stream) reads exactly
+    # its body; an EOF-terminated input also probes one byte past its end.
+    body = stream.read(size if exact_body else size + 1)
     if len(body) != size:
         raise Refusal("InputLengthMismatch")
     if sha256(body) != header["input_sha256"]:
@@ -182,6 +186,67 @@ def provenance(model, body, **details):
     }
 
 
+def vad_bundle_model():
+    """Actual installed silero_vad ONNX bundle identity, or None if unavailable.
+
+    Metadata/hash only; never loads or runs the model. Name is silero-vad,
+    digest is SHA-256 of the canonical relative-file -> SHA-256 map of the
+    package's real ONNX bytes (not package version or guessed rev).
+    """
+    try:
+        spec = importlib.util.find_spec("silero_vad")
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.origin:
+        return None
+    try:
+        package_dir = Path(spec.origin).parent
+        if not package_dir.is_dir():
+            return None
+        onnx_files = sorted(package_dir.rglob("*.onnx"))
+        if not onnx_files:
+            return None
+        manifest = {}
+        for path in onnx_files:
+            if not path.is_file():
+                return None
+            value = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    value.update(chunk)
+            manifest[path.relative_to(package_dir).as_posix()] = value.hexdigest()
+        canonical = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        return "silero-vad@" + hashlib.sha256(canonical).hexdigest()
+    except OSError:
+        return None
+
+
+def asr_snapshot_model(snapshot):
+    """Actual validated local ASR snapshot identity for the no-profile path.
+
+    Derives from real file bytes via canonical manifest; never @local,
+    snapshot.name or empty revision. No new file-count/size caps.
+    """
+    try:
+        if not snapshot.is_absolute() or not snapshot.is_dir():
+            return None
+        files = {}
+        for path in snapshot.rglob("*"):
+            if not path.is_file():
+                continue
+            value = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    value.update(chunk)
+            files[path.relative_to(snapshot).as_posix()] = value.hexdigest()
+        if not files:
+            return None
+        canonical = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        return ASR_MODEL + "@" + hashlib.sha256(canonical).hexdigest()
+    except OSError:
+        return None
+
+
 class NativeHost:
     def __init__(self, workspace, ffmpeg, model_snapshot, runtime_profile=None, runtime_profile_sha256=None):
         self.workspace = workspace
@@ -218,7 +283,17 @@ class NativeHost:
             raise Refusal("AsrSnapshotBindingMismatch")
         decoder_ready = self.ffmpeg.is_absolute() and self.ffmpeg.is_file()
         missing = {"alignment": "forced_word_alignment", "diarization": "community1_exclusive_full_file", "cleanup": "cleanup_model"}
+        vad_model = vad_bundle_model()
+        unit_models = {"vad": [vad_model] if vad_model else [], "asr": [], "diarization": [],
+                       "alignment_window": [], "cleanup_group": []}
+        if runtime is not None:
+            runtime_models = runtime.unit_models()
+            for key in unit_models:
+                if key == "vad":
+                    continue
+                unit_models[key] = list(runtime_models.get(key, []))
         return {
+            "unit_models": unit_models,
             "packages": {name: package_version(name) for name in [
                 "mlx", "mlx-metal", "mlx-lm", "mlx-audio", "torch", "silero-vad",
                 "onnxruntime", "pyannote.audio", "qwen-asr",
@@ -227,12 +302,13 @@ class NativeHost:
             "asr_snapshot": str(self.model_snapshot),
             "operations": ["decode", "silero_vad", "transcribe_text"] + [port for stage, port in ports.items() if available[stage]]
                           + (["moss_e3_full_file"] if runtime is not None and runtime.available("moss") else []),
-            "artifact_capable": all(available.values()) and asr_ready and decoder_ready,
+            "artifact_capable": all(available.values()) and asr_ready and decoder_ready and vad_model is not None,
             "alignment_languages": alignment_languages,
             "transcribe_pack_languages": pack_languages,
             "missing": [missing[stage] for stage in ports if not available[stage]]
                        + ([] if runtime is None or asr_ready else ["pinned_asr_model"])
-                       + ([] if runtime is None or decoder_ready else ["decoder"]),
+                       + ([] if runtime is None or decoder_ready else ["decoder"])
+                       + ([] if vad_model is not None else ["vad_model"]),
             "runtime_profile_sha256": self.runtime_profile_sha256,
             "runtime_helper_sha256": sha256(Path(__file__).with_name("meeting_audio_runtime.py").read_bytes()),
             "runtime_components_sha256": runtime_source_hashes(),
@@ -304,12 +380,15 @@ class NativeHost:
         from silero_vad import get_speech_timestamps, load_silero_vad
         # This loader reads the wheel's own ONNX file, never torch.hub or HF.
         model = load_silero_vad(onnx=True)
+        bundle = vad_bundle_model()
+        if bundle is None:
+            raise Refusal("MissingUnitModel")
         # Engine packing owns the 250ms padding. VAD gets the COMPLETE PCM.
         segments = self.units.run("vad", audio_milliseconds(len(audio)), lambda: get_speech_timestamps(
             audio, model, sampling_rate=16000, threshold=0.5,
             min_speech_duration_ms=0, min_silence_duration_ms=100,
             speech_pad_ms=0, return_seconds=False,
-        ))
+        ), model=bundle)
         previous_end = 0
         spans = []
         for segment in segments:
@@ -369,12 +448,18 @@ class NativeHost:
         context = json.dumps(glossary, ensure_ascii=False, separators=(",", ":"))
         # Do not let the library re-split a core-owned pack or pad its short tail.
         max_tokens = max(ASR_MIN_TOKENS, -(-len(audio) // 16000) * ASR_TOKENS_PER_SECOND)
+        if runtime is not None:
+            asr_wire = runtime.wire_model("asr")
+        else:
+            asr_wire = asr_snapshot_model(snapshot)
+            if asr_wire is None:
+                raise Refusal("AsrModelUnavailable")
         output = self.units.run("asr", audio_milliseconds(len(audio)), lambda: model.generate(
             audio, language=language, system_prompt=context,
             chunk_duration=max(1200.0, len(audio) / 16000.0 + 1.0),
             min_chunk_duration=0.0, batch_size=1, max_tokens=max_tokens,
             temperature=0.0, verbose=False,
-        ), usage=lambda output: {"output_tokens": output.generation_tokens})
+        ), usage=lambda output: {"output_tokens": output.generation_tokens}, model=asr_wire)
         if output.generation_tokens >= max_tokens:
             raise Refusal("AsrTokenBudgetExhausted")
         if not output.text.strip():
@@ -446,11 +531,17 @@ class NativeHost:
         raise Refusal("UnknownOperation")
 
 
-def serve(host, input_stream, output_stream, answers=None):
+def serve(host, input_stream, output_stream, answers=None, exact_body=None):
     request_id = None
     started = time.monotonic()
+    if exact_body is None:
+        exact_body = answers is input_stream
+    if exact_body:
+        # FIX 11501 C8: an exact body is only sound when the answers share
+        # the request's own stdin object (no second wrapper on fd 0).
+        assert answers is input_stream
     try:
-        header, body = read_request(input_stream)
+        header, body = read_request(input_stream, exact_body)
         request_id = header["request_id"]
         host.units = UnitGate(request_id, output_stream, answers)
         # Third-party Python progress output must not corrupt the frame.

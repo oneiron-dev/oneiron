@@ -104,8 +104,9 @@ fn live_only_at(home: &Path) -> Result<Vec<u8>> {
 
 /// The `vault_meta` rows a vault's live custody state is read from: its
 /// custody binding, its archive mark, its store identity, its body erase
-/// receipts (FIX 9066), its key-retirement intents, and its host orders,
-/// whose target index the intents read.
+/// receipts (FIX 9066), its key-retirement intents with the customer-hold
+/// target index they read, and its host orders, carried whole (a host order
+/// indexes no target).
 fn live_custody_prefixes() -> Vec<&'static [u8]> {
     let mut prefixes = vec![
         key_custody::binding_key(),
@@ -120,13 +121,6 @@ fn live_custody_prefixes() -> Vec<&'static [u8]> {
     );
     prefixes.push(HOST_HOLD_PREFIX);
     prefixes
-}
-
-/// Whether a host-order row is one the key-retirement intents read.
-fn host_row_is_intent(key: &[u8]) -> bool {
-    retirement_prefixes()
-        .iter()
-        .any(|prefix| prefix.starts_with(HOST_HOLD_PREFIX) && key.starts_with(prefix))
 }
 
 /// Every host-order row of an open vault, read in `txn`.
@@ -179,9 +173,6 @@ impl LiveCustody {
             } else if key == key_custody::binding_key() {
                 // Read above.
             } else if key.starts_with(HOST_HOLD_PREFIX) {
-                if host_row_is_intent(&key) {
-                    intents.push((key.clone(), value.clone()));
-                }
                 host_holds.push((key, value));
             } else {
                 intents.push((key, value));
@@ -287,7 +278,7 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 /// parts are taken for the generations `copy` does not keep (FIX 11824).
 pub(crate) fn read_live_custody(
     vault_dir: &Path,
-    page_seal: Option<&crate::world_keys::VaultPageSeal>,
+    page_seal: Option<&oneiron_store::vault_page_seal::VaultPageSeal>,
     copy: &CopyGenerations,
 ) -> Result<LiveCustody> {
     // A shared directory on the source's path is no reason to refuse: the
@@ -355,6 +346,21 @@ fn names(path: &Path, opened: &FileIdentity) -> Result<bool> {
 #[cfg(not(unix))]
 fn names(_: &Path, (): &()) -> Result<bool> {
     Ok(true)
+}
+
+impl Store {
+    /// Whether this handle's own directory still sits at its vault's path
+    /// (FIX 12772; REVIEW-5620): a restore's swap exchanges the two
+    /// directories, and a handle any process opened before it keeps the one
+    /// moved aside, whose clock the replacement never read. A handle opened
+    /// without its directory's descriptor has nothing to compare and counts
+    /// as in place.
+    pub(crate) fn sits_at_its_path(&self) -> Result<bool> {
+        if self.owner.env._bound_root_dir.is_none() {
+            return Ok(true);
+        }
+        names(self.env.path(), &opened_directory(self)?)
+    }
 }
 
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.

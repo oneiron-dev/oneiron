@@ -43,6 +43,7 @@
 mod receipts;
 pub(crate) use receipts::{birth_process, cut_receipted_message};
 
+use std::collections::HashSet;
 use std::ops::ControlFlow;
 
 #[cfg(test)]
@@ -55,6 +56,7 @@ use super::{
     put_finalized_proposal_text,
 };
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::entity_doc::EntityDoc;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -69,6 +71,7 @@ const TEXT_CONTAINER: &str = "body";
 const META_CONTAINER: &str = "meta";
 const META_KEY_ARTIFACT: &str = "artifact";
 const META_KEY_SOURCE_TURN: &str = "source_turn";
+const META_KEY_BIRTH_ATTEMPT: &str = "birth_attempt";
 
 /// Commit-message segment carrying the actor.
 const STAMP_ACTOR_PREFIX: &str = "actor=";
@@ -108,6 +111,7 @@ pub struct ProposalTextArtifact {
     doc: EntityDoc,
     artifact_ref: ProposalArtifactRef,
     source_turn_ref: Option<EntityId>,
+    birth_attempt: Option<AttemptId>,
 }
 
 impl ProposalTextArtifact {
@@ -137,6 +141,8 @@ impl ProposalTextArtifact {
         source_turn_ref: Option<EntityId>,
         receipt: Option<crate::provenance::made_by::MadeBy>,
     ) -> Result<Self> {
+        let birth_attempt =
+            crate::skill_attribution::current_run_write_token().map(|token| token.attempt());
         let doc = LoroDoc::new();
         // Bind the fresh peer before choosing the birth timestamp, even when
         // registration crosses a second boundary.
@@ -171,6 +177,9 @@ impl ProposalTextArtifact {
                 if let Some(turn) = source_turn_ref {
                     map_insert_bytes(&meta, META_KEY_SOURCE_TURN, turn.as_bytes())?;
                 }
+                if let Some(attempt) = birth_attempt {
+                    map_insert_bytes(&meta, META_KEY_BIRTH_ATTEMPT, attempt.as_bytes())?;
+                }
                 Ok(())
             },
             &message,
@@ -179,6 +188,7 @@ impl ProposalTextArtifact {
             doc,
             artifact_ref,
             source_turn_ref,
+            birth_attempt,
         })
     }
 
@@ -195,6 +205,10 @@ impl ProposalTextArtifact {
             doc,
             artifact_ref,
             source_turn_ref: meta_entity_id(&meta, META_KEY_SOURCE_TURN)?,
+            birth_attempt: map_get_bytes(&meta, META_KEY_BIRTH_ATTEMPT)
+                .as_deref()
+                .map(AttemptId::from_bytes)
+                .transpose()?,
         })
     }
 
@@ -277,12 +291,15 @@ impl ProposalTextArtifact {
             ));
         }
 
+        let made_by_inputs = self.window_made_by_inputs(&proposed_frontiers, &final_frontiers)?;
         let record = FinalizedProposalText {
             artifact_ref: self.artifact_ref,
             proposed_ref: LoroOpRef::from_bytes(proposed_frontiers.encode()),
             final_ref: LoroOpRef::from_bytes(final_frontiers.encode()),
             ops_by_actor,
             source_turn_ref: self.source_turn_ref,
+            birth_attempt: self.birth_attempt,
+            made_by_inputs,
         };
         put_finalized_proposal_text(vault, &record, &self.doc)?;
         Ok(record)
@@ -342,6 +359,25 @@ impl ProposalTextArtifact {
             ));
         }
         Ok(spans)
+    }
+
+    /// Every MadeBy input row id the window's commits named (FIX 11350), in
+    /// first-seen order, deduped by id. Re-reads the window's messages: the
+    /// replay already validated the window, and this keeps the gathering in one
+    /// place rather than threading it through the replay.
+    fn window_made_by_inputs(&self, from: &Frontiers, to: &Frontiers) -> Result<Vec<EntityId>> {
+        let mut changes = self.window_changes(from, to)?;
+        changes.sort_by_key(|change| (change.lamport, change.peer_id));
+        let mut seen = HashSet::new();
+        let mut inputs = Vec::new();
+        for change in &changes {
+            for id in receipts::made_by_inputs_from_message(change.message.as_deref()) {
+                if seen.insert(id) {
+                    inputs.push(id);
+                }
+            }
+        }
+        Ok(inputs)
     }
 
     /// Every change (clipped to the window) between the two versions.

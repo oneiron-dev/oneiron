@@ -46,7 +46,18 @@ pub(super) fn terminal_turn(
     text: String,
     assertions: &WitnessAssertions,
 ) -> MessageStreamResult<WitnessTurn> {
-    let mut turn = seed.turn(text);
+    terminal_turn_with_parts(seed, text, None, assertions)
+}
+
+/// [`terminal_turn`], carrying the terminal's ordered output parts into the
+/// witnessed MESSAGE: birth facts like the seed's quote, kept verbatim.
+pub(super) fn terminal_turn_with_parts(
+    seed: &Seed,
+    text: String,
+    parts: Option<Vec<crate::ContentPart>>,
+    assertions: &WitnessAssertions,
+) -> MessageStreamResult<WitnessTurn> {
+    let mut turn = seed.turn_with_parts(text, parts);
     if silent(assertions) {
         return Ok(turn);
     }

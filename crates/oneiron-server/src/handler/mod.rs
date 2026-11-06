@@ -28,6 +28,7 @@ mod note_socket_tests;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+mod sealed_updates;
 pub(crate) mod selector_scope;
 mod socket_stop;
 mod transport;

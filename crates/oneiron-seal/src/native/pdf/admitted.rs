@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::mem::size_of;
 
 use lopdf::{Dictionary, Object};
@@ -41,7 +42,7 @@ pub(crate) fn reserve<T>(
     limits
         .memory
         .ledger()?
-        .release(u64::try_from(old_bytes).unwrap_or(u64::MAX));
+        .release_admitted(u64::try_from(old_bytes).unwrap_or(u64::MAX));
     Ok(())
 }
 
@@ -73,6 +74,24 @@ pub(crate) fn btree<K, V>(
         .and_then(|shares| shares.checked_add(btree_node_bytes::<K, V>()))
         .ok_or_else(|| floor(usize::MAX))?;
     limits.memory.admit::<u8>(bytes)
+}
+
+/// Admit a unique set insertion using the same node estimate as `btree`.
+/// The root is charged only for the first insertion into this set.
+pub(crate) fn btree_insert<T: Ord>(
+    limits: &SealResourceLimits,
+    output: &mut BTreeSet<T>,
+    value: T,
+) -> Result<bool, SealMemoryRefusal> {
+    if output.contains(&value) {
+        return Ok(false);
+    }
+    if output.is_empty() {
+        btree::<T, ()>(limits, 1)?;
+    } else {
+        limits.memory.admit::<u8>(btree_entry_bytes::<T, ()>())?;
+    }
+    Ok(output.insert(value))
 }
 
 pub(crate) fn vec<T>(limits: &SealResourceLimits, len: usize) -> Result<Vec<T>, SealMemoryRefusal> {
@@ -116,9 +135,9 @@ fn dictionary_node<'a>(
     Ok(())
 }
 
-fn traverse<'a>(
+fn traverse(
     limits: &SealResourceLimits,
-    mut pending: Vec<&'a Object>,
+    mut pending: Vec<&Object>,
 ) -> Result<(), SealMemoryRefusal> {
     while let Some(object) = pending.pop() {
         match object {

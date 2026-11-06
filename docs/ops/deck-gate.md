@@ -44,6 +44,15 @@ The case set is `scripts/office/pptx-live-v1.json`:
 Each step's outcome is the worse of its two halves. An unrun, timed-out or
 unsupported case is inconclusive, and the gate stays closed.
 
+## Held SVG picture fallbacks
+
+The projector can add a derived PNG for a held SVG in the existing closed SVG
+geometry subset, preserving the original and naming the conversion on the export
+receipt. Existing raster fallbacks and unsupported SVG paths stay unchanged.
+See [held SVG compatibility fallback](held-svg-fallback.md) for scope, resource
+residuals and the projector-version change. This does not open the gate or claim
+an Office oracle run.
+
 ## Before you start
 
 - The Mac mini's PowerPoint, macOS, PDFKit, observer and locale must match
@@ -111,7 +120,7 @@ git -C /Users/olety/Desktop/code/oneiron show "$sha:scripts/office/deck_gate_lin
 ## 1. Engine half (Linux fleet host)
 
 ```sh
-cd /Users/olety/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate engine half $run" --need rust-1.96 --host nelly --mem 20G --no-mem-floor --threads 8 --disk 30 --timeout 3h --sync /Users/olety/Desktop/temp/deck-gate/job -- bash deck_gate_linux.sh "$sha" "$run" > /Users/olety/Desktop/temp/deck-gate/$run-engine.log 2>&1
+cd /Users/olety/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate engine half $run" --need rust-1.96 --host nelly --mem 32G --no-mem-floor --threads 6 --disk 30 --timeout 3h --sync /Users/olety/Desktop/temp/deck-gate/job -- bash deck_gate_linux.sh "$sha" "$run" > /Users/olety/Desktop/temp/deck-gate/$run-engine.log 2>&1
 ```
 
 The job clones oneiron at `$sha`, runs `deck_gate.py acquire` for the PPTArena

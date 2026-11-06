@@ -173,6 +173,9 @@ features = ["serde_json"]
 
 [dependencies.loro-internal]
 version = "1.16.2"
+# FIX 6519: the sibling vendored copy (the root patch selects it too), named by
+# path so a maturin sdist carries it.
+path = "../loro-internal-1.16.2"
 
 [dependencies.loro-kv-store]
 version = "1.16.0"

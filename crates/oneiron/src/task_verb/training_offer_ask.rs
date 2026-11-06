@@ -4,9 +4,11 @@
 //! short pointer witnessed as a System TURN in that owner's private
 //! conversation with the Coach, and an ask on that TURN that offers the one
 //! approval fitting the candidate beside keep, decline and postpone, and
-//! holds by default. The TURN and MESSAGE ids are reserved once per offer,
-//! owner and digest, so a retry lands the same question and the nightly pass
-//! replays the same ask; a new offer has a new digest and is asked afresh.
+//! holds by default. The TURN and MESSAGE ids are reserved once per generation
+//! under one offer, owner and digest, so a retry lands the same question and
+//! the nightly pass replays the same ask; a new offer has a new digest and is
+//! asked afresh, and a Deadline-held question may renew as a new generation
+//! that keeps every prior route.
 //!
 //! Only the vault owner's own word settles the offer, through the offer's
 //! settlement door, in the ask's settling commit: a Human word under the
@@ -38,14 +40,15 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
 /// Every training offer ask's intent key starts so:
-/// `training_offer/<offer hex>/<digest>/<owner hex>`.
+/// `training_offer/<offer hex>/<digest>/<owner hex>/<turn hex>`.
 const INTENT_PREFIX: &str = "training_offer/";
 pub(crate) use crate::gate::training_ask_kind::OFFER_QUESTION_TYPE;
-/// The question message's metadata keys: the offer tuple. It locates the
-/// reservation and proves nothing by itself.
+/// The question message's metadata keys: the offer tuple plus the generation's
+/// turn. It locates the reservation and proves nothing by itself.
 const META_OFFER: &str = "training_offer";
 const META_DIGEST: &str = "training_offer_digest";
 const META_OWNER: &str = "training_offer_owner";
+const META_TURN: &str = "training_offer_turn";
 
 /// The options an offer ask may carry: stable id, the answer it settles and
 /// its label. One approval fits each candidate.
@@ -72,6 +75,14 @@ const OPTIONS: [(&str, OfferAnswer, &str); 5] = [
 /// `(offer, owner, offer digest)`: one owner asked about one offer snapshot.
 type OfferAskKey = (EntityId, EntityId, String);
 
+/// `(offer, owner, digest, turn)`: one generation of that question, named by
+/// its exact reserved turn. The turn is the generation identity.
+type OfferQuestionKey = (EntityId, EntityId, String, EntityId);
+
+fn base_key(question: &OfferQuestionKey) -> OfferAskKey {
+    (question.0, question.1, question.2.clone())
+}
+
 /// One owner's question about one offer: ids and time reserved before the
 /// witness, and the ask group once admitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,8 +105,9 @@ pub(crate) struct ReservedQuestion {
     pub(crate) message: EntityId,
 }
 
-/// `(offer, owner, digest)` → that owner's question about that offer.
-const ASKS: SideTable<OfferAskKey, OfferAskRoute, Named> =
+/// `(offer, owner, digest)` → that owner's questions about that offer, oldest
+/// first. A renewal appends a generation; no prior route is dropped.
+const ASKS: SideTable<OfferAskKey, Vec<OfferAskRoute>, Named> =
     SideTable::new(&side_table::TASK_TRAINING_OFFER_ASK);
 
 /// `ask group` → the reservation it carries.
@@ -122,12 +134,13 @@ fn ask_key(offer: &TrainingOffer, owner: EntityId) -> OfferAskKey {
     (offer.id, owner, offer.digest.clone())
 }
 
-fn intent_key(key: &OfferAskKey) -> String {
+fn intent_key(key: &OfferAskKey, turn: &EntityId) -> String {
     let (offer, owner, digest) = key;
     format!(
-        "{INTENT_PREFIX}{}/{digest}/{}",
+        "{INTENT_PREFIX}{}/{digest}/{}/{}",
         offer.to_hex(),
-        owner.to_hex()
+        owner.to_hex(),
+        turn.to_hex()
     )
 }
 
@@ -140,19 +153,24 @@ pub(super) fn canonical_digest(digest: &str) -> Option<String> {
     (digest.len() == 64 && digest.bytes().all(lower_hex)).then(|| digest.to_owned())
 }
 
-/// The offer tuple a training offer ask's intent key names, read whole and
+/// The offer question a training offer ask's intent key names, read whole and
 /// in canonical form; `None` for any other key.
-pub(crate) fn training_offer_ask_key(intent_key: &str) -> Option<OfferAskKey> {
+pub(crate) fn training_offer_ask_key(intent_key: &str) -> Option<OfferQuestionKey> {
     let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
-    let (Some(offer), Some(digest), Some(owner), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
+    let (Some(offer), Some(digest), Some(owner), Some(turn), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return None;
     };
     Some((
         canonical_id(offer)?,
         canonical_id(owner)?,
         canonical_digest(digest)?,
+        canonical_id(turn)?,
     ))
 }
 
@@ -172,28 +190,30 @@ pub(super) fn single_str<'a>(
     }
 }
 
-/// The offer tuple a question message's metadata names: exactly the three
+/// The offer question a question message's metadata names: exactly the four
 /// keys the Coach writes, each once, in canonical form.
-pub(crate) fn offer_question_key(metadata: &rmpv::Value) -> Option<OfferAskKey> {
+pub(crate) fn offer_question_key(metadata: &rmpv::Value) -> Option<OfferQuestionKey> {
     let rmpv::Value::Map(entries) = metadata else {
         return None;
     };
-    if entries.len() != 3 {
+    if entries.len() != 4 {
         return None;
     }
     Some((
         canonical_id(single_str(entries, META_OFFER)?)?,
         canonical_id(single_str(entries, META_OWNER)?)?,
         canonical_digest(single_str(entries, META_DIGEST)?)?,
+        canonical_id(single_str(entries, META_TURN)?)?,
     ))
 }
 
-fn offer_question_metadata(key: &OfferAskKey) -> serde_json::Value {
+fn offer_question_metadata(key: &OfferAskKey, turn: &EntityId) -> serde_json::Value {
     let (offer, owner, digest) = key;
     let mut metadata = serde_json::Map::new();
     metadata.insert(META_OFFER.to_owned(), offer.to_hex().into());
     metadata.insert(META_DIGEST.to_owned(), digest.clone().into());
     metadata.insert(META_OWNER.to_owned(), owner.to_hex().into());
+    metadata.insert(META_TURN.to_owned(), turn.to_hex().into());
     serde_json::Value::Object(metadata)
 }
 
@@ -253,20 +273,67 @@ fn offer_ask_spec(
     what.options = options;
     let who = TaskAskTarget::Responder(TaskAssignee::Human { actor_ref: key.1 });
     let mut spec = TaskAskSpec::shorthand(Some(who), what, None, TaskAskDefault::Hold);
-    spec.intent_key = intent_key(key);
+    spec.intent_key = intent_key(key, &turn);
     Ok(spec)
 }
 
-/// The ids reserved for the question `key` names, if any.
+/// Whether the bound `group` may renew as a new generation: its ask settled
+/// Deadline on the Hold fallback, under this node, with no real Human word of
+/// `owner` naming an option. `expected_intent` names the exact route identity
+/// the renewal must carry; a mismatch is not due. Unknown, missing,
+/// unsettled, Stale, or remote-owned reads as not due; storage errors fail.
+pub(super) fn renewal_due_for_deadline_hold_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group: EntityId,
+    owner: &EntityId,
+    expected_intent: Option<&str>,
+) -> Result<bool> {
+    let Some(asked) = ask_record::read_group(vault, txn, group)? else {
+        return Ok(false);
+    };
+    if expected_intent.is_some_and(|expected| asked.requested.intent_key != expected) {
+        return Ok(false);
+    }
+    if !ask_record::owns_revision(vault, txn, group, &asked)? {
+        return Ok(false);
+    }
+    let Some(result) = super::ask_settlement::read_result(vault, txn, group)? else {
+        return Ok(false);
+    };
+    if result.settlement.reason != TaskAskSettlementReason::Deadline {
+        return Ok(false);
+    }
+    if !result
+        .fallback
+        .as_ref()
+        .is_some_and(|fallback| fallback.branch == TaskAskDefault::Hold)
+    {
+        return Ok(false);
+    }
+    if result.evidence.iter().any(|entry| {
+        entry.answer.actor_ref == *owner
+            && entry.source == TaskAskSource::Human
+            && entry.word.option.is_some()
+    }) {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// The ids reserved for the question `key` names, if any: the history route
+/// with its exact turn.
 /// # Errors
 /// Storage errors.
 pub(crate) fn reserved_offer_question_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    key: &OfferAskKey,
+    key: &OfferQuestionKey,
 ) -> Result<Option<ReservedQuestion>> {
+    let base = base_key(key);
     Ok(ASKS
-        .get(&vault.store, txn, key)?
+        .get(&vault.store, txn, &base)?
+        .and_then(|history| history.into_iter().find(|route| route.turn == key.3))
         .map(|route| ReservedQuestion {
             conversation: route.conversation,
             turn: route.turn,
@@ -286,60 +353,115 @@ pub(super) fn owner_conversation_in(
     Ok(ASKS
         .scan(&vault.store, txn)?
         .into_iter()
-        .find(|(_, route)| route.owner == *owner)
-        .map(|(_, route)| route.conversation))
+        .flat_map(|(_, history)| history)
+        .find(|route| route.owner == *owner)
+        .map(|route| route.conversation))
 }
 
-/// The reservation for `key`, its ids minted on first use. An owner's later
-/// questions share the conversation of the first.
+/// The reservation for `key`: the latest generation, its ids minted on first
+/// use. An owner's later questions share the conversation of the first. A
+/// bound latest renews only Deadline-held with the offer still pending at the
+/// same digest for a live owner, appending one generation; concurrent callers
+/// reuse the latest unbound generation, and an ineligible latest returns as
+/// is so the caller admits nothing.
 fn reserve(vault: &Vault, key: &OfferAskKey, now: u64) -> Result<OfferAskRoute> {
     vault.with_write_txn_grouped(|txn| {
-        if let Some(route) = ASKS.get(&vault.store, txn, key)? {
-            return Ok(route);
+        let history = ASKS.get(&vault.store, txn, key)?;
+        let latest = history.as_ref().and_then(|history| history.last().cloned());
+        match latest {
+            None => {
+                let (offer, owner, digest) = key;
+                let conversation = match ASKS
+                    .scan(&vault.store, txn)?
+                    .into_iter()
+                    .flat_map(|(_, history)| history)
+                    .find(|route| route.owner == *owner)
+                {
+                    Some(route) => route.conversation,
+                    None => vault.store.clock.entity_id()?,
+                };
+                let route = OfferAskRoute {
+                    offer: *offer,
+                    digest: digest.clone(),
+                    owner: *owner,
+                    conversation,
+                    turn: vault.store.clock.entity_id()?,
+                    message: vault.store.clock.entity_id()?,
+                    at: now,
+                    group: None,
+                };
+                ASKS.put(&vault.store, txn, key, &vec![route.clone()])?;
+                Ok(route)
+            }
+            Some(latest) if latest.group.is_none() => Ok(latest),
+            Some(latest) => {
+                let Some(bound) = latest.group else {
+                    return Ok(latest);
+                };
+                let expected = intent_key(key, &latest.turn);
+                if !renewal_due_for_deadline_hold_in(
+                    vault,
+                    txn,
+                    bound,
+                    &key.1,
+                    Some(expected.as_str()),
+                )? {
+                    return Ok(latest);
+                }
+                let pending_same =
+                    crate::skill_optimize::pending_training_offer_in_txn(vault, txn, &key.0)?
+                        .is_some_and(|offer| offer.digest == key.2);
+                if !pending_same {
+                    return Ok(latest);
+                }
+                if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &key.1)? {
+                    return Ok(latest);
+                }
+                let route = OfferAskRoute {
+                    offer: key.0,
+                    digest: key.2.clone(),
+                    owner: key.1,
+                    conversation: latest.conversation,
+                    turn: vault.store.clock.entity_id()?,
+                    message: vault.store.clock.entity_id()?,
+                    at: now,
+                    group: None,
+                };
+                let mut history = history.unwrap_or_default();
+                history.push(route.clone());
+                ASKS.put(&vault.store, txn, key, &history)?;
+                Ok(route)
+            }
         }
-        let (offer, owner, digest) = key;
-        let conversation = match ASKS
-            .scan(&vault.store, txn)?
-            .into_iter()
-            .find(|(_, route)| route.owner == *owner)
-        {
-            Some((_, route)) => route.conversation,
-            None => vault.store.clock.entity_id()?,
-        };
-        let route = OfferAskRoute {
-            offer: *offer,
-            digest: digest.clone(),
-            owner: *owner,
-            conversation,
-            turn: vault.store.clock.entity_id()?,
-            message: vault.store.clock.entity_id()?,
-            at: now,
-            group: None,
-        };
-        ASKS.put(&vault.store, txn, key, &route)?;
-        Ok(route)
     })
 }
 
-/// Binds `group` to the reservation `key` and indexes it, once.
+/// Binds `group` to the generation `turn` of the reservation `key` and
+/// indexes it, once. A bound generation is never replaced.
 fn bind_group_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &OfferAskKey,
+    turn: &EntityId,
     group: EntityId,
 ) -> Result<()> {
-    let mut route = ASKS
+    let mut history = ASKS
         .get(&vault.store, txn, key)?
         .ok_or_else(ask_record::invalid)?;
+    let Some(route) = history.iter_mut().find(|route| route.turn == *turn) else {
+        return Err(ask_record::invalid());
+    };
     if route.group.is_none() {
         route.group = Some(group);
-        ASKS.put(&vault.store, txn, key, &route)?;
+        ASKS.put(&vault.store, txn, key, &history)?;
         GROUPS.put(&vault.store, txn, &group, key)?;
     }
     Ok(())
 }
 
-/// Each pending offer with the owners not asked about it yet.
+/// Each pending offer with the owners not asked about it yet. Only the latest
+/// generation per base reads: no history or an unbound latest retries, and a
+/// bound latest returns only when its Deadline-held ask is due to renew.
 fn unasked(vault: &Vault) -> Result<Vec<(TrainingOffer, Vec<EntityId>)>> {
     let offers = crate::skill_optimize::pending_training_offers(vault)?;
     if offers.is_empty() {
@@ -351,11 +473,27 @@ fn unasked(vault: &Vault) -> Result<Vec<(TrainingOffer, Vec<EntityId>)>> {
     for offer in offers {
         let mut left = Vec::new();
         for owner in &owners {
-            if !ASKS
-                .get(&vault.store, &txn, &ask_key(&offer, *owner))?
-                .is_some_and(|route| route.group.is_some())
-            {
-                left.push(*owner);
+            let base = ask_key(&offer, *owner);
+            let history = ASKS.get(&vault.store, &txn, &base)?;
+            match history.as_ref().and_then(|history| history.last()) {
+                None => left.push(*owner),
+                Some(route) if route.group.is_none() => left.push(*owner),
+                Some(route) => {
+                    let Some(bound) = route.group else {
+                        left.push(*owner);
+                        continue;
+                    };
+                    let expected = intent_key(&base, &route.turn);
+                    if renewal_due_for_deadline_hold_in(
+                        vault,
+                        &txn,
+                        bound,
+                        owner,
+                        Some(expected.as_str()),
+                    )? {
+                        left.push(*owner);
+                    }
+                }
             }
         }
         if !left.is_empty() {
@@ -396,7 +534,8 @@ fn issue_one(
                 author: WitnessAuthor::System,
                 message_type: OFFER_QUESTION_TYPE.to_owned(),
                 content: offer_question_text(offer),
-                metadata: Some(offer_question_metadata(&key)),
+                parts: None,
+                metadata: Some(offer_question_metadata(&key, &route.turn)),
                 is_visible: true,
                 order: 0,
                 quote: None,
@@ -407,11 +546,11 @@ fn issue_one(
     }
     let spec = offer_ask_spec(offer, &key, route.turn)?;
     let receipt = issuer.tasks_ask_with_txn_effect(&spec, |txn, group| {
-        bind_group_in(vault, txn, &key, group).map_err(MemoryError::from)
+        bind_group_in(vault, txn, &key, &route.turn, group).map_err(MemoryError::from)
     })?;
     if receipt.idempotent_replay {
         vault.with_write_txn_grouped(|txn| {
-            bind_group_in(vault, txn, &key, receipt.handle.group_ref)
+            bind_group_in(vault, txn, &key, &route.turn, receipt.handle.group_ref)
         })?;
     }
     Ok(!receipt.idempotent_replay)
@@ -469,7 +608,7 @@ pub(crate) fn issue_training_offer_asks(vault: &Vault, now: u64) -> usize {
 
 /// The reservation an ask group carries, when the Coach's issuance bound
 /// it; `None` for every other ask. A bound group whose reservation does not
-/// name it back fails closed.
+/// name it back fails closed. Every generation keeps resolving its own route.
 fn routed_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -482,9 +621,14 @@ fn routed_in(
     let Some(key) = GROUPS.get(&vault.store, txn, &id)? else {
         return Ok(None);
     };
-    let route = ASKS
-        .get(&vault.store, txn, &key)?
-        .filter(|route| route.group == Some(id) && intent_key(&key) == group.requested.intent_key)
+    let Some(history) = ASKS.get(&vault.store, txn, &key)? else {
+        return Err(ask_record::invalid());
+    };
+    let route = history
+        .into_iter()
+        .find(|route| {
+            route.group == Some(id) && intent_key(&key, &route.turn) == group.requested.intent_key
+        })
         .ok_or_else(ask_record::invalid)?;
     Ok(Some(route))
 }
@@ -665,20 +809,22 @@ pub(crate) fn void_training_offer_asks_in(
     except: Option<&EntityId>,
     now: u64,
 ) -> Result<()> {
-    for (_, route) in ASKS.scan_from(&vault.store, txn, offer.as_bytes())? {
-        let Some(group) = route.group else {
-            continue;
-        };
-        if except == Some(&group)
-            || super::ask_settlement::read_result(vault, txn, group)?.is_some()
-        {
-            continue;
-        }
-        let Some(asked) = ask_record::read_group(vault, txn, group)? else {
-            continue;
-        };
-        if ask_record::owns_revision(vault, txn, group, &asked)? {
-            super::ask_settlement::void_in(vault, txn, group, now)?;
+    for (_, history) in ASKS.scan_from(&vault.store, txn, offer.as_bytes())? {
+        for route in history {
+            let Some(group) = route.group else {
+                continue;
+            };
+            if except == Some(&group)
+                || super::ask_settlement::read_result(vault, txn, group)?.is_some()
+            {
+                continue;
+            }
+            let Some(asked) = ask_record::read_group(vault, txn, group)? else {
+                continue;
+            };
+            if ask_record::owns_revision(vault, txn, group, &asked)? {
+                super::ask_settlement::void_in(vault, txn, group, now)?;
+            }
         }
     }
     Ok(())

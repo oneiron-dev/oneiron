@@ -397,6 +397,8 @@ pub(super) fn compact_window_with(
     crate::sync::repo_manifests::scrub_repo_manifests(vault, &doc, None)?;
     // FIX 3877: an origin claim carrier names no erased actor.
     crate::sync::origin_claims::scrub_origin_claims(vault, &doc, None)?;
+    // FIX 12769: nor does a section-fit receipt carrier.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, &doc, None)?;
     // FIX 6387: nor does a birth carrier, so the history kept has no erased birth.
     crate::sync::row_birth::scrub_erased_births_for_compaction(vault, &doc)?;
     crate::workspace_roster::scrub_audience_edits(vault, &doc, None)?;
@@ -420,7 +422,13 @@ pub(super) fn compact_window_with(
         tracing::error!("sweep: shallow cut not rooted at the window's tip — deferred");
         return Ok(CompactOutcome::UnprovedDefer);
     }
-    let (shallow, vv) = (cut.bytes, cut.version.encode());
+    // Its pads rest by reference where custody here holds them (FIX 10527),
+    // as every persisted snapshot's do: a row kept raw in the rows it was
+    // rebuilt from does not outlive this cut so. A fault keeps the cut's
+    // bytes, warned.
+    let shallow =
+        crate::sync::window::persisted_window_pads(vault, key, &cut.bytes, None).into_owned();
+    let vv = cut.version.encode();
 
     let merged_keys: BTreeSet<Vec<u8>> = update_rows
         .iter()
@@ -501,7 +509,14 @@ pub(super) fn compact_window_with(
             wtxn,
             &crate::store::legal_hold::HoldActor::TIMER,
         ) {
-            held.set(super::holds::refused_by_hold(&refused));
+            let missing_hold = matches!(&refused, Error::CorruptedIndex("legal hold target"));
+            if missing_hold {
+                tracing::warn!(
+                    error = %refused,
+                    "sweep: indexed legal hold row missing — compaction deferred"
+                );
+            }
+            held.set(super::holds::refused_by_hold(&refused) || missing_hold);
             return Err(refused);
         }
 

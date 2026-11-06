@@ -37,7 +37,7 @@ use crate::workspace_roster::{
 pub(crate) const ROOM_TURNS_MAP: &str = "room_turns";
 
 /// The largest turn row a window carries.
-const MAX_ROW_BYTES: usize = 1 << 20;
+use super::room_parts::ROOM_TURN_MAX_ROW_BYTES as MAX_ROW_BYTES;
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("room turn row refused: {reason}"))
@@ -325,22 +325,37 @@ fn holds_room_turn_map(doc: &LoroDoc) -> bool {
     matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(ROOM_TURNS_MAP))
 }
 
-/// Merges each carried row into this vault's turn rows in one write.
-fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
-    let turns: Vec<RoomTurn> = rows
-        .into_iter()
-        .filter_map(|(map_key, bytes)| match decode_held(&bytes) {
-            Ok(turn) if admit_turn(&map_key, &turn).is_ok() => Some(turn),
-            _ => {
-                tracing::warn!(window, key = %map_key, "room turn row malformed; left out");
-                None
-            }
-        })
-        .collect();
-    if turns.is_empty() {
-        return;
+/// Decoded turn rows prepared before opening the materialization writer.
+pub(super) struct RoomTurnBatch {
+    turns: Vec<RoomTurn>,
+}
+
+impl RoomTurnBatch {
+    pub(super) fn prepare(window: &str, rows: Vec<(String, Vec<u8>)>) -> Self {
+        let turns: Vec<RoomTurn> = rows
+            .into_iter()
+            .filter_map(|(map_key, bytes)| match decode_held(&bytes) {
+                Ok(turn) if admit_turn(&map_key, &turn).is_ok() => Some(turn),
+                _ => {
+                    tracing::warn!(window, key = %map_key, "room turn row malformed; left out");
+                    None
+                }
+            })
+            .collect();
+        Self { turns }
     }
-    let outcome = vault.with_write_txn_grouped(|wtxn| {
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.turns.is_empty()
+    }
+
+    pub(super) fn stage_in_txn(
+        self,
+        vault: &Vault,
+        window: &str,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let Self { turns } = self;
         let mut merged = 0;
         for turn in turns {
             let id = turn.turn_id.clone();
@@ -353,7 +368,16 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
             }
         }
         Ok(merged)
-    });
+    }
+}
+
+/// Merges each carried row into this vault's turn rows in one write.
+fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
+    let staged = RoomTurnBatch::prepare(window, rows);
+    if staged.is_empty() {
+        return;
+    }
+    let outcome = vault.with_write_txn_grouped(|wtxn| staged.stage_in_txn(vault, window, wtxn));
     match outcome {
         Ok(merged) if merged > 0 => tracing::debug!(window, merged, "room turn rows merged"),
         Ok(_) => {}

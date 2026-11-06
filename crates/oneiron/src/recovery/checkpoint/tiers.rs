@@ -45,7 +45,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"retrieval_trace_key:",
                 b"tasks.create.rate.",
                 b"own_rate.",
-                b"vault_cleanup.scan",
                 b"self_heal:signed:",
                 b"booking:anti_abuse:v1:rate\0",
                 b"booking:anti_abuse:v1:cache\0",
@@ -88,6 +87,7 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // restore folds it again from the restored edges (OF-296).
                 b"conversation_dag:thread_meta:v1:",
                 b"conversation_dag:thread_meta_dirty:v1:",
+                b"office_body:export_token_index:v1:",
                 b"skill_hub/content_hash_index/v1\0",
                 b"skill_hub/content_hash_index_schema_version",
                 b"skill_convert/source_index/v1\0",
@@ -100,6 +100,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"ramp_stats:v1:",
                 b"human_task.followup.v1\0",
                 b"edit_distance/reservoir_candidate/v1\0",
+                // The authority rows' store-order index (FIX 12369): a
+                // restore resequences it in its rebuild.
+                b"authlog:store_order",
                 b"commitment_due_rev:v1:",
                 b"commitment_series_project:v1:",
                 b"outbound_grant/principal/v1\0",
@@ -163,6 +166,22 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"rb:n:",
                 b"rb:s:",
                 b"rb:u:",
+                // Each proposing actor's opaque handle is this vault's own
+                // erasable map (FIX 9870): no image may keep who stands
+                // behind a signed handle.
+                b"it:proposer-scope:",
+                // So is each author carrier's written-here mark: a digest of
+                // the carrier's body, which could confirm a guess of its
+                // author once that actor is erased (FIX 17143).
+                b"it:authored:",
+                // A body this install received from its home is this
+                // install's own evidence (FIX 14534): a restored install
+                // received nothing, so no image keeps it.
+                b"ab:h:",
+                // So is the record of which machine wrote a MESSAGE row: a
+                // digest of the row, and a restored install wrote nothing
+                // (FIX 12113).
+                b"mw:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

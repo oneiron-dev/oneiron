@@ -8,6 +8,7 @@
 //! caller that leaves ends it. Every other call keeps the vault's longest
 //! wait as the bound of its waits alone.
 use std::future::Future;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use oneiron::llm::media::MediaRequest;
@@ -26,6 +27,13 @@ use super::{Call, ModelCallBinding, OfferLadder};
 pub enum CallDeadline {
     /// The caller's own deadline: sends, waits and fallbacks all end by it.
     Caller(Instant),
+    /// The caller's deadline, with an earlier bound on cooling waits alone.
+    CallerWithWaitCap {
+        /// Every send and fallback ends by this instant.
+        caller_at: Instant,
+        /// Waits for offers back end by this instant.
+        waits_until: Instant,
+    },
     /// No deadline but the caller's presence: the call waits for offers
     /// back for as long as its caller holds it.
     Open,
@@ -43,6 +51,21 @@ impl CallDeadline {
             .map_or(Self::Open, Self::Caller)
     }
 
+    /// The caller's deadline, with cooling waits bounded separately from now.
+    pub(crate) fn caller_with_wait_cap(left: Duration, wait_budget: Duration) -> Self {
+        let now = Instant::now();
+        let Some(caller_at) = now.checked_add(left) else {
+            return Self::Open;
+        };
+        let waits_until = now
+            .checked_add(wait_budget)
+            .map_or(caller_at, |at| at.min(caller_at));
+        Self::CallerWithWaitCap {
+            caller_at,
+            waits_until,
+        }
+    }
+
     /// Waits for offers back bounded by `budget` from now, in all.
     #[must_use]
     pub fn waits_within(budget: Duration) -> Self {
@@ -56,21 +79,30 @@ impl CallDeadline {
     pub(super) fn wait_secs(self) -> u64 {
         match self {
             Self::Open => u64::MAX,
-            Self::Caller(at) | Self::Waits(at) => {
-                at.saturating_duration_since(Instant::now()).as_secs()
-            }
+            Self::Caller(at)
+            | Self::Waits(at)
+            | Self::CallerWithWaitCap {
+                waits_until: at, ..
+            } => at.saturating_duration_since(Instant::now()).as_secs(),
         }
     }
 
     /// Whether the caller's own deadline has passed. Only it ends a call.
     pub(super) fn expired(self) -> bool {
-        matches!(self, Self::Caller(at) if Instant::now() >= at)
+        match self {
+            Self::Caller(at) | Self::CallerWithWaitCap { caller_at: at, .. } => {
+                Instant::now() >= at
+            }
+            Self::Open | Self::Waits(_) => false,
+        }
     }
 
     /// `work`, up to the caller's deadline: `None` once it passed first.
     pub(super) async fn bound<T>(self, work: impl Future<Output = T>) -> Option<T> {
         match self {
-            Self::Caller(at) => tokio::time::timeout_at(at, work).await.ok(),
+            Self::Caller(at) | Self::CallerWithWaitCap { caller_at: at, .. } => {
+                tokio::time::timeout_at(at, work).await.ok()
+            }
             Self::Open | Self::Waits(_) => Some(work.await),
         }
     }
@@ -83,6 +115,11 @@ impl CallDeadline {
 }
 
 impl OfferLadder {
+    /// Cooling waits within both the vault's limit and the caller's work time.
+    pub(crate) fn cooling_wait_budget(&self, left: Duration) -> Duration {
+        left.min(Duration::from_secs(self.rests.max_wait_secs()))
+    }
+
     /// The vault's longest wait, from now, as the bound of a call's waits.
     pub(super) fn host_wait(&self) -> CallDeadline {
         CallDeadline::waits_within(Duration::from_secs(self.rests.max_wait_secs()))
@@ -93,8 +130,10 @@ impl OfferLadder {
     /// once the owner is asked about the parked offers; otherwise
     /// [`Self::unanswered`].
     pub(super) fn ended(&self, call: Call<'_>, walk: Walk) -> LlmError {
-        if matches!(call.deadline, CallDeadline::Caller(_))
-            && (call.deadline.expired() || walk.limited())
+        if matches!(
+            call.deadline,
+            CallDeadline::Caller(_) | CallDeadline::CallerWithWaitCap { .. }
+        ) && (call.deadline.expired() || walk.limited())
         {
             self.ask_parked(&walk, call.needs, call.run.principal());
             return CallDeadline::expiry();
@@ -175,6 +214,19 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_exact_while`] with the actual answering binding and
+    /// the same vault-longest-wait deadline.
+    pub(crate) async fn generate_exact_recorded_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
     /// [`Self::generate_exact_within`] on `deadline` (FIX 7792): only a
     /// ladder that is one picked model takes the call.
     pub async fn generate_exact_by(
@@ -185,12 +237,27 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         deadline: CallDeadline,
     ) -> LlmResult<LlmResponse> {
+        self.generate_exact_recorded_by(run, request, selector, may_send, deadline)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate_exact_by`], with the actual answering binding for
+    /// the model-call record. The picked-model guard and no-fallback walk
+    /// are the same call's, not a lookup after it answered (FIX 12742).
+    pub(crate) async fn generate_exact_recorded_by(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        deadline: CallDeadline,
+    ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
         self.generate_from(run, request, selector, may_send, deadline, false, None)
             .await
-            .map(|(response, _)| response)
     }
 
     /// [`Self::stream`] on `deadline` (FIX 8213).
@@ -201,7 +268,27 @@ impl OfferLadder {
         selector: Option<&str>,
         deadline: CallDeadline,
     ) -> LlmResult<LlmStream<'static>> {
-        self.stream_from(run, request, selector, true, deadline)
+        self.stream_from(run, request, selector, true, deadline, None)
+    }
+
+    /// [`Self::stream_by`], with the binding of the rung that answers for the
+    /// model-call record (FIX 12743): the exact answering rung's model,
+    /// locality, prompt and route pin, the owner's fallback included. The
+    /// receiver resolves exactly when a `Done` event goes out, sent before
+    /// it on the same task; any other end leaves it unresolved.
+    pub(crate) fn stream_recorded_by(
+        self: &std::sync::Arc<Self>,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        deadline: CallDeadline,
+    ) -> LlmResult<(
+        LlmStream<'static>,
+        tokio::sync::oneshot::Receiver<ModelCallBinding>,
+    )> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.stream_from(run, request, selector, true, deadline, Some(tx))
+            .map(|stream| (stream, rx))
     }
 
     /// [`Self::media`] on `deadline` (FIX 8134): the caller's one deadline
@@ -214,7 +301,7 @@ impl OfferLadder {
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices, None)
+        self.media_from(run, request, selector, deadline, true, voices, None, None)
             .await
     }
 
@@ -226,8 +313,11 @@ impl OfferLadder {
         voices: Option<&RungVoices>,
         deadline: CallDeadline,
         release: MediaDispatchRelease<'_>,
+        admitted: Option<&AtomicBool>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, deadline, true, voices, release)
-            .await
+        self.media_from(
+            run, request, selector, deadline, true, voices, release, admitted,
+        )
+        .await
     }
 }

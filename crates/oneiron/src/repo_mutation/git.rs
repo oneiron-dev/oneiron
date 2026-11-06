@@ -8,9 +8,9 @@ use std::path::{Component, Path, PathBuf};
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
-use crate::git_wire::{redact_bridged_failure, run_bridged_git_argv};
+use crate::git_wire::run_bridged_git_argv;
 
-use super::support::{path_arg, truncate_failure, utf8_trimmed};
+use super::support::{path_arg, utf8_trimmed};
 use crate::error::CodeError;
 
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4096;
@@ -30,58 +30,14 @@ pub(super) fn git_common_dir(repo_root: &Path) -> Result<PathBuf> {
     Ok(path.canonicalize()?)
 }
 
-pub(super) fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
-    let RepoRef::LocalFolder { path, .. } = repo_ref else {
-        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-            "only local repo_refs can be mutated",
-        )));
-    };
-    let output = run_git_at_path(
-        Path::new(path),
-        &["rev-parse".to_owned(), "--show-toplevel".to_owned()],
-    )?;
-    let root = utf8_trimmed(output, "git repo root must be UTF-8")?;
-    Ok(PathBuf::from(root).canonicalize()?)
-}
+pub(super) use crate::git_wire::mutation_commands::resolve_mutable_repo_root;
 
-/// The same canonical, commit-independent identity used by document ingress:
-/// a working tree's top level, or a bare repository's own directory, which
-/// is what a served repository is (FIX 12199).
-pub(crate) fn canonical_mutation_scope(repo_root: &Path) -> Result<String> {
-    let repo_ref = RepoRef::LocalFolder {
-        path: path_arg(repo_root)?,
-        commit: String::new(),
-    };
-    let bare = run_git_at_path(
-        repo_root,
-        &["rev-parse".to_owned(), "--is-bare-repository".to_owned()],
-    )?;
-    let root = if utf8_trimmed(bare, "git bare flag must be UTF-8")? == "true" {
-        repo_root.canonicalize()?
-    } else {
-        resolve_mutable_repo_root(&repo_ref)?
-    };
-    let canonical = canonical_repo_ref_for_root(&repo_ref, &root)?;
-    Ok(super::oplog::repo_mutation_repo_key(&canonical))
-}
+/// The same canonical, commit-independent repository document ingress
+/// names: a working tree's top level, or a bare repository's own directory,
+/// which is what a served repository is (FIX 12199).
+pub(crate) use crate::git_wire::mutation_commands::canonical_mutation_repo_ref;
 
-pub(super) fn canonical_repo_ref_for_root(repo_ref: &RepoRef, repo_root: &Path) -> Result<RepoRef> {
-    let RepoRef::LocalFolder { commit, .. } = repo_ref else {
-        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-            "only local repo_refs can be mutated",
-        )));
-    };
-    let path = repo_root
-        .to_str()
-        .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
-            "local repo path must be UTF-8",
-        )))?
-        .to_owned();
-    Ok(RepoRef::LocalFolder {
-        path,
-        commit: commit.clone(),
-    })
-}
+pub(super) use crate::git_wire::mutation_commands::canonical_repo_ref_for_root;
 
 /// The canonical ref a mutation or proposal row records. It must read back as
 /// itself, so a malformed commit pin is refused before any oplog row names it.
@@ -245,9 +201,7 @@ pub(super) fn validate_worktree_path(path: &Path) -> Result<()> {
 // Signatures are deliberately unchanged so every call site, and the `cfg(test)`
 // re-imports in `repo_mutation/mod.rs`, keep resolving exactly as before.
 
-pub(super) fn run_git(repo_root: &Path, args: &[String]) -> Result<Vec<u8>> {
-    run_git_at_path(repo_root, args)
-}
+pub(super) use crate::git_wire::mutation_commands::run_git;
 
 pub(super) fn git_status_success(path: &Path, args: &[String]) -> Result<bool> {
     Ok(run_bridged_git_argv(path, args)?.success)
@@ -273,15 +227,7 @@ pub(super) fn run_git_allow_exit_codes(
     )))
 }
 
-pub(super) fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
-    let output = run_bridged_git_argv(path, args)?;
-    if output.success {
-        return Ok(output.stdout);
-    }
-    Err(Error::Code(CodeError::RepoMutationFailed(
-        format_git_failure(args, output.exit_code, &output.stderr),
-    )))
-}
+pub(super) use crate::git_wire::mutation_commands::run_git_at_path;
 
 pub(super) fn git_output_optional(repo_root: &Path, args: &[String]) -> Result<Option<Vec<u8>>> {
     let output = run_bridged_git_argv(repo_root, args)?;
@@ -325,11 +271,4 @@ pub(super) fn git_commit_object_available(
     Ok(!output
         .split(|byte| *byte == b'\n')
         .any(|line| line.first() == Some(&b'?')))
-}
-
-/// Repo-mutation failures are durable: the queue stores them on the oplog row.
-/// They therefore carry only what GitWire's redaction allows — a classified
-/// cause, the exit code, and a digest of the diagnostics.
-fn format_git_failure(args: &[String], code: Option<i32>, stderr: &[u8]) -> String {
-    truncate_failure(&redact_bridged_failure(args, code, stderr))
 }

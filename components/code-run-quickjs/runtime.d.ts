@@ -129,16 +129,34 @@ declare interface QuerySelection {
   limit?: number;
   cursor?: QueryCursor;
 }
-declare interface QueryCursor { offset?: number; row?: number; skip?: number }
+declare interface QueryCursor {
+  offset?: number;
+  row?: number;
+  /** Document candidate ordinal, or a picked value within a table row. */
+  skip?: number;
+  /** Continue the same query within one selected JSON value, in bytes. */
+  within?: number;
+}
+/** Re-encoded JSON bytes, not a range of the source result. Resume the same
+ * query with QueryReply.next; these offsets cannot be passed to slice. */
+declare interface QueryValuePage {
+  start: number;
+  end: number;
+  bytes: number;
+  text: string;
+  done: boolean;
+}
 /** `value` for a path that picks one value, `values` for a `[*]` path,
- * `rows` with `columns` or `where`. A selection too big for one reply is
- * stored as a new result of the run and comes back as `derived`. */
+ * `rows` with `columns` or `where`. A new selection too big for one reply is
+ * stored as a new result of the run and comes back as `derived`. An explicit
+ * byte continuation returns `paged`; its next query cursor continues it. */
 type QueryReply =
   | {
       ref: string;
       value?: unknown;
       values?: unknown[];
       rows?: Record<string, unknown>[];
+      paged?: QueryValuePage | (SliceReply & { bytes: number });
       count: number;
       done: boolean;
       next?: QueryCursor;
@@ -189,7 +207,9 @@ declare interface ResultChunks extends AsyncIterable<ChunkRef> {
   page(cursor?: ChunkCursor): Promise<ChunkPage | WithheldReply>;
 }
 /** Stores `value` as a result of the run and binds it to `name`, or to the
- * next free `r<n>`: a string as given, any other value as its JSON. The name
+ * next free `r<n>`: a string as given, a byte value (a Uint8Array, an
+ * ArrayBuffer, or another view) as its bytes, any other value as its JSON.
+ * The name
  * outlives the step; the value is never held whole in the interpreter.
  * `sources` are the results the value was made from: it inherits their
  * taint. `receipt` names a fold's inputs (the source it read, the reader
@@ -241,16 +261,25 @@ declare function readAll(r: ResultRef, opts: { ask: string; by?: ChunkBy; window
  * and text that is not JSON `invalid_json_reply`: neither is an empty reply.
  * Call it on a reply before reading its fields; no card is read unasked. */
 declare function readJsonReply(value: unknown): Promise<unknown>;
+/** A resume point for `diff`: each side's own next offset (`a`/`b`, lines
+ * or bytes by the mode), mid-window when a read stopped there. A cursor
+ * with only `window` (from before per-side offsets) still reads as that
+ * many whole windows on both sides. */
+declare interface DiffCursor { window: number; a?: number; b?: number }
 /** A diff of two results (an SDK helper, not an engine verb), stated in
- * `algorithm`: by lines, Myers' O(ND) inside lockstep windows of 4096 lines,
- * a hunk a window edge cuts closed there (`edge`), and a window past 512
- * edits one `coarse` hunk; by bytes, 64 KiB blocks compared. Hunks carry no
- * context lines, with both sides' offsets (from 0). Hunk text past 1 MiB is
- * stored as a result made from both (`stored`). Past one step's calls it
- * answers `next`: pass it back as `from`. */
-declare function diff(a: ResultRef, b: ResultRef, opts?: { by?: "lines" | "bytes"; from?: { window: number }; name?: string }):
-  Promise<{ algorithm: "myers-windowed/v1" | "blocks/v1"; window: number; by: "lines" | "bytes"; count: number; done: boolean; next?: { window: number };
-    hunks?: { a: [number, number]; b: [number, number]; text: string; edge?: true; coarse?: true }[]; stored?: StoredResult } | { refused: string; ref: string; detail?: unknown }>;
+ * `algorithm`: by lines, Myers' O(ND) inside windows of 4096 lines, hunks
+ * with 3 context lines either side of each change, a hunk a window edge
+ * cuts closed there (`edge`), and a window pair past one 512-edit pass
+ * split and diffed in halves so only a small segment is one `coarse`
+ * hunk; by bytes, 64 KiB blocks compared, a changed block's hunk naming
+ * its first differing byte `runs` (`truncated` past the named runs or hex).
+ * Hunks carry both sides' offsets (from 0). Hunk text past 1 MiB is stored
+ * as a result made from both (`stored`). Past one step's calls it answers
+ * `next`: pass it back as `from`. */
+declare function diff(a: ResultRef, b: ResultRef, opts?: { by?: "lines" | "bytes"; from?: DiffCursor; name?: string }):
+  Promise<{ algorithm: "myers-windowed/v2" | "blocks/v2"; window: number; by: "lines" | "bytes"; count: number; done: boolean; next?: { window: number; a: number; b: number };
+    hunks?: { a: [number, number]; b: [number, number]; text: string; edge?: true; coarse?: true;
+      runs?: { a: [number, number]; b: [number, number]; aHex: string; bHex: string }[]; truncated?: true }[]; stored?: StoredResult } | { refused: string; ref: string; detail?: unknown }>;
 /** The card of a result of this run, by its name, its handle, a range or its
  * card. An unknown name throws `unknown_handle` with the live names. Start a
  * big result here: its `shape` says which read fits. A whole fold result's

@@ -270,9 +270,11 @@ impl Vault {
                 .find(|r| r.id == cap.recipient)
                 .cloned()
                 .ok_or_else(|| invalid("recipient removed"))?;
+            // An owned snapshot: `state` is reassigned by the appends below.
             let progress = state
                 .recipients
                 .get(&cap.recipient)
+                .cloned()
                 .ok_or_else(|| invalid("recipient missing"))?;
             // Gate 1: a later sequential recipient is not even marked viewed.
             if progress.signing == SigningStatus::Waiting && state.status == DocumentStatus::Pending

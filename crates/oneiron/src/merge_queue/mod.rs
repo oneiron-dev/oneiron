@@ -3,13 +3,16 @@
 //! Checks never mutate the live repository. Landing needs a host gate adapter and
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
+mod batch_index;
 mod candidate_intake;
 mod check_execute;
+mod check_exhaust;
 mod check_inputs;
 mod check_requests;
 mod check_store;
 mod check_tree;
 mod checks;
+mod composition;
 mod driver;
 mod driver_materialize;
 mod driver_store;
@@ -19,6 +22,7 @@ mod initialize;
 mod landing;
 mod mirror_green;
 mod plan;
+mod receipt_index;
 mod received_enqueue;
 mod review_policy;
 mod reviewed;
@@ -47,13 +51,18 @@ use crate::{
 pub use check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
     QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation,
-    QueueCheckLimits, QueueCheckNeed, QueueCheckReceipt, QueueCheckRun, QueueCheckTarget,
-    QueueCheckTreeSource, QueueCommandReceipt,
+    QueueCheckLimits, QueueCheckNeed, QueueCheckOutputRef, QueueCheckReceipt, QueueCheckRun,
+    QueueCheckTarget, QueueCheckTreeSource, QueueCommandReceipt, StoredQueueCheckReceipt,
 };
 pub use check_store::{
     DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,
     QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus, QueueCheckWork,
 };
+// FIX 7227: the unforgeable completion token (private fields, no pub ctor),
+// minted only in finish after SAME plus closed-approval validation; the BLOB
+// child and the versions authority name it via this parent alias, never via
+// the private child path. Child modules stay PRIVATE (no pub(crate) mod).
+pub(crate) use check_exhaust::QueueCheckFieldToken;
 // The restart driver and overlap handoff (FIX 6868, G2 PR2).
 pub(crate) use driver_types::QueueStageOverlap;
 pub use driver_types::{
@@ -62,11 +71,15 @@ pub use driver_types::{
     QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
+// Same-file line composition and the staged-tree file reader a reviewed
+// stack's application proof reads (FIX 4360).
+pub(crate) use check_tree::read_tree_file;
+pub(crate) use composition::LineComposition;
 // The vault's opt-in review policy (FIX 8268).
 pub(crate) use review_policy::{
     ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
-    QueueReviewRequirement, StoredQueueReviewPolicy, queue_review_requirement_in_txn,
-    review_policy_unreadable_hold,
+    QueueReviewRequirement, StoredQueueReviewPolicy, erase_review_policy_actor_in_txn,
+    queue_review_requirement_in_txn, review_policy_unreadable_hold,
 };
 pub use review_policy::{
     QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
@@ -88,7 +101,8 @@ pub use tested_types::{
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
-    MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,
+    MergeFileExpected, MergeLanding, MergeProposal, MergeQueuePointers, Quarantine,
+    SpeculativePath, TestedBatch,
 };
 
 pub struct MergeQueue<'a> {
@@ -97,11 +111,21 @@ pub struct MergeQueue<'a> {
 }
 
 impl<'a> MergeQueue<'a> {
+    /// The proven repository this queue opened, including a served source.
+    pub(crate) fn repository(&self) -> &GitWireRepo {
+        &self.repo
+    }
+
+    /// Take the proven repository for a pinned proposal's snapshot read.
+    pub(crate) fn into_repository(self) -> GitWireRepo {
+        self.repo
+    }
+
     /// Bind to one proven local object store. `initialize` records its initial
     /// green baseline; reopening never overwrites existing pointers.
     pub fn open(vault: &'a Vault, repo_ref: RepoRef) -> Result<Self> {
         let RepoRef::LocalFolder { path, .. } = &repo_ref else {
-            return Err(crate::contract_oracle::invalid(
+            return Err(crate::store::contract_oracle::invalid(
                 "merge queue needs a local repository",
             ));
         };
