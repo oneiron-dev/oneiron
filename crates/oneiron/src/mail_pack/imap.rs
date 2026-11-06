@@ -1,0 +1,1103 @@
+//! The IMAP mail wire (FIX 12559 row 4, fix list row 15425): one IMAP4rev1
+//! mailbox over implicit TLS, through the engine's own client
+//! ([`super::imap_client`]).
+//!
+//! - **Credential.** The source's custody record, read at its door with
+//!   effector `connector:imap`, is JSON: `host`, `port` (993 when absent),
+//!   `username`, and `password` or an OAuth `access_token` (`XOAUTH2`). The
+//!   source's provider account is `<username>@<host>`: a credential for
+//!   another account never fills it. One session serves one wire, opened at
+//!   the first read and opened again when the record changes.
+//! - **Ids.** A message is named as an mbox import names it: `mbox` and the
+//!   first 32 hex of the BLAKE3 of its `Message-ID`. So an mbox import and
+//!   the live mailbox land a message once, and one filed in two folders is
+//!   one message. One with no `Message-ID` is named by where it is:
+//!   `imapuid.<folder digest>.<UIDVALIDITY>.<UID>`.
+//! - **Folders are labels.** Every selectable folder is read but drafts and
+//!   the all-mail, flagged and important views; trash and junk are looked in
+//!   only to see that a message went there.
+//! - **Changes.** The anchor holds each folder's UIDVALIDITY, UIDNEXT and the
+//!   count of messages below it. New UIDs are added mail; a folder holding
+//!   fewer of its old messages than it did lost some, and each copy labelled
+//!   with it that it no longer holds is looked for in the other folders:
+//!   moved, it carries its new folders; in trash or junk, or nowhere, it was
+//!   deleted at the provider. A changed UIDVALIDITY expires the anchor.
+//!
+//! Call it from a blocking context: each call is socket I/O.
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+
+use serde::Deserialize;
+
+use super::credential::WireReads;
+use super::gmail::{address_list, rfc2822_seconds};
+use super::imap_client::{
+    Fetched, FolderStatus, ImapSession, Item, ListedFolder, decode_mailbox_name, uid_set,
+};
+use super::mime::MimeMessage;
+use super::rest::refused;
+use super::source::MailProvider;
+use super::state::{MailPresence, OCCURRENCES, occurrence_key};
+use super::wire::{
+    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
+    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+};
+use crate::Vault;
+use crate::error::Result;
+
+/// The effector an IMAP source's credential is injected at.
+pub const IMAP_CONNECTOR_EFFECTOR: &str = "connector:imap";
+
+/// The messages one listing page names.
+const LIST_PAGE: u64 = 100;
+/// The new messages one change read takes from one folder.
+const NEW_PER_FOLDER: usize = 200;
+/// The most folders one mailbox is read through.
+const MAX_FOLDERS: usize = 128;
+/// The largest message read whole: a bigger one lands by its headers.
+const MAX_MESSAGE_BYTES: u64 = 40 * 1024 * 1024;
+/// The prefix of an anchor this wire wrote.
+const ANCHOR_PREFIX: &str = "imap1";
+
+/// The custody record of an IMAP source.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImapCredential {
+    host: String,
+    #[serde(default)]
+    port: Option<u16>,
+    username: String,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    access_token: Option<String>,
+}
+
+/// What a folder is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FolderRole {
+    /// Mail the mailbox received or keeps.
+    Mail,
+    /// Mail it sent.
+    Sent,
+    /// Trash or junk: a message there is deleted at the provider.
+    Discarded,
+}
+
+#[derive(Debug, Clone)]
+struct Folder {
+    /// Its name as the server spells it.
+    name: String,
+    /// Its name as text: the message's label.
+    label: String,
+    role: FolderRole,
+    /// The first 16 hex of the BLAKE3 of its label.
+    digest: String,
+}
+
+impl Folder {
+    const fn read(&self) -> bool {
+        !matches!(self.role, FolderRole::Discarded)
+    }
+}
+
+/// Where a message is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Location {
+    folder: usize,
+    uid_validity: u64,
+    uid: u64,
+}
+
+struct OpenSession {
+    session: ImapSession,
+    /// The keyed digest of the credential it signed in with.
+    credential: [u8; 32],
+    folders: Vec<Folder>,
+}
+
+/// The IMAP wire for one host's sync step.
+pub struct ImapMailWire<'v> {
+    vault: &'v Vault,
+    /// This wire's own key for credential digests; it never leaves it.
+    key: [u8; 32],
+    session: RefCell<Option<OpenSession>>,
+    /// The headers this wire read, by message id, and where it read them.
+    seen: RefCell<BTreeMap<String, (MailHeaders, Location)>>,
+}
+
+impl<'v> ImapMailWire<'v> {
+    /// Builds the wire; it connects at its first read.
+    #[must_use]
+    pub fn new(vault: &'v Vault) -> Self {
+        Self {
+            vault,
+            key: rand::random(),
+            session: RefCell::new(None),
+            seen: RefCell::new(BTreeMap::new()),
+        }
+    }
+}
+
+impl Drop for ImapMailWire<'_> {
+    fn drop(&mut self) {
+        if let Some(open) = self.session.get_mut().take() {
+            open.session.logout();
+        }
+    }
+}
+
+fn digest_of(label: &str) -> String {
+    blake3::hash(label.as_bytes()).to_hex()[..16].to_owned()
+}
+
+/// The folders a mailbox is read through, INBOX first.
+fn folders_of(listed: Vec<ListedFolder>) -> Vec<Folder> {
+    let mut folders: Vec<Folder> = listed
+        .into_iter()
+        .filter_map(|folder| {
+            let has = |attribute: &str| folder.attributes.iter().any(|held| held == attribute);
+            if has("\\noselect") || has("\\nonexistent") {
+                return None;
+            }
+            let label = decode_mailbox_name(&folder.name);
+            let lower = label.to_lowercase();
+            let leaf = lower.rsplit(['/', '.']).next().unwrap_or(&lower).trim();
+            if has("\\drafts")
+                || has("\\all")
+                || has("\\flagged")
+                || has("\\important")
+                || matches!(leaf, "drafts" | "draft")
+            {
+                return None;
+            }
+            let role = if has("\\trash")
+                || has("\\junk")
+                || matches!(
+                    leaf,
+                    "trash"
+                        | "deleted items"
+                        | "deleted messages"
+                        | "junk"
+                        | "junk e-mail"
+                        | "junk email"
+                        | "spam"
+                        | "bulk mail"
+                ) {
+                FolderRole::Discarded
+            } else if has("\\sent")
+                || matches!(leaf, "sent" | "sent items" | "sent messages" | "sent mail")
+            {
+                FolderRole::Sent
+            } else {
+                FolderRole::Mail
+            };
+            Some(Folder {
+                digest: digest_of(&label),
+                name: folder.name,
+                label,
+                role,
+            })
+        })
+        .collect();
+    folders.sort_by_key(|folder| {
+        (
+            !folder.name.eq_ignore_ascii_case("INBOX"),
+            folder.name.clone(),
+        )
+    });
+    folders.truncate(MAX_FOLDERS);
+    folders
+}
+
+/// A message's id from its `Message-ID`, as an mbox import gives it.
+fn content_id(rfc_message_id: &str) -> String {
+    format!(
+        "mbox{}",
+        &blake3::hash(rfc_message_id.as_bytes()).to_hex()[..32]
+    )
+}
+
+fn place_id(folder: &Folder, uid_validity: u64, uid: u64) -> String {
+    format!("imapuid.{}.{uid_validity}.{uid}", folder.digest)
+}
+
+/// An `INTERNALDATE` (`17-Jul-1996 02:44:25 -0700`) as Unix seconds.
+fn internal_seconds(value: &str) -> Option<u64> {
+    let at = chrono::DateTime::parse_from_str(value.trim(), "%d-%b-%Y %H:%M:%S %z").ok()?;
+    u64::try_from(at.timestamp()).ok()
+}
+
+/// A day as `SEARCH SINCE` takes it: `6-Nov-2026`.
+fn search_date(seconds: u64) -> Option<String> {
+    let at = chrono::DateTime::from_timestamp(i64::try_from(seconds).ok()?, 0)?;
+    Some(at.format("%-d-%b-%Y").to_string())
+}
+
+/// What the attributes of one fetched message say of it, with its parsed
+/// header block.
+struct MessageRead<'f> {
+    uid: u64,
+    flags: Vec<String>,
+    received_at: Option<u64>,
+    thread: Option<String>,
+    raw: &'f [u8],
+}
+
+fn read_of<'f>(fetched: &'f Fetched, section: &str) -> Option<MessageRead<'f>> {
+    let uid = fetched.uid()?;
+    let raw = fetched.value(section)?.bytes()?;
+    let flags = fetched
+        .value("FLAGS")
+        .and_then(Item::list)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Item::atom)
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let received_at = fetched
+        .value("INTERNALDATE")
+        .and_then(Item::bytes)
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .and_then(internal_seconds);
+    let thread = fetched
+        .value("THREADID")
+        .and_then(Item::list)
+        .and_then(|items| items.first())
+        .and_then(Item::atom)
+        .map(str::to_owned);
+    Some(MessageRead {
+        uid,
+        flags,
+        received_at,
+        thread,
+        raw,
+    })
+}
+
+/// A message's headers from its header block (or the whole message), read
+/// in `folder`.
+fn headers_of(
+    read: &MessageRead<'_>,
+    folder: &Folder,
+    uid_validity: u64,
+    labels: Vec<String>,
+) -> MailHeaders {
+    let parsed = MimeMessage::parse(read.raw);
+    let rfc_message_id = parsed.header("message-id").filter(|id| !id.is_empty());
+    let provider_id = rfc_message_id
+        .as_deref()
+        .map_or_else(|| place_id(folder, uid_validity, read.uid), content_id);
+    let addresses = |name: &str| {
+        parsed
+            .header(name)
+            .map(|value| address_list(&value))
+            .unwrap_or_default()
+    };
+    let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
+    let flagged = |flag: &str| read.flags.iter().any(|held| held == flag);
+    MailHeaders {
+        provider_id,
+        thread_id: read.thread.clone(),
+        in_reply_to: parsed.header("in-reply-to").filter(|id| !id.is_empty()),
+        references: parsed
+            .header("references")
+            .map(|value| value.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default(),
+        from: parsed.header("from").filter(|from| !from.is_empty()),
+        to: addresses("to"),
+        cc: addresses("cc"),
+        reply_to: addresses("reply-to"),
+        subject: parsed.header("subject"),
+        date,
+        received_at: read.received_at.or(date).unwrap_or(0),
+        sent_by_mailbox: folder.role == FolderRole::Sent,
+        // A message marked deleted waits for its expunge.
+        trash_or_spam: folder.role == FolderRole::Discarded || flagged("\\deleted"),
+        draft: flagged("\\draft"),
+        rfc_message_id,
+        labels,
+    }
+}
+
+/// One folder's entry in an anchor: `digest:uidvalidity:uidnext:count`,
+/// `count` the messages it held below `uidnext`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Mark {
+    uid_validity: u64,
+    uid_next: u64,
+    count: u64,
+}
+
+fn parse_anchor(anchor: &str) -> Option<BTreeMap<String, Mark>> {
+    let mut parts = anchor.split(';');
+    if parts.next()? != ANCHOR_PREFIX {
+        return None;
+    }
+    let mut marks = BTreeMap::new();
+    for part in parts.filter(|part| !part.is_empty()) {
+        let mut fields = part.split(':');
+        let digest = fields.next()?.to_owned();
+        let mut number = || fields.next()?.parse::<u64>().ok();
+        let mark = Mark {
+            uid_validity: number()?,
+            uid_next: number()?,
+            count: number()?,
+        };
+        marks.insert(digest, mark);
+    }
+    Some(marks)
+}
+
+fn write_anchor(marks: &BTreeMap<String, Mark>) -> String {
+    let mut anchor = ANCHOR_PREFIX.to_owned();
+    for (digest, mark) in marks {
+        let _ = write!(
+            anchor,
+            ";{digest}:{}:{}:{}",
+            mark.uid_validity, mark.uid_next, mark.count
+        );
+    }
+    anchor
+}
+
+/// Where a listing stands: the folder (by its place in the read folders
+/// and its digest), its UIDVALIDITY, the UID the next page is below, and the
+/// sequence number it ends at.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ListCursor {
+    folder: usize,
+    digest: String,
+    uid_validity: u64,
+    below: Option<u64>,
+    end: Option<u64>,
+}
+
+impl ListCursor {
+    fn parse(page: Option<&str>) -> Result<Self> {
+        let Some(page) = page else {
+            return Ok(Self::default());
+        };
+        let fields: Vec<&str> = page.split(':').collect();
+        let number = |at: usize| -> Result<Option<u64>> {
+            match fields.get(at) {
+                Some(&"") => Ok(None),
+                Some(field) => field
+                    .parse()
+                    .map(Some)
+                    .map_err(|_| refused("imap_list_page_unreadable")),
+                None => Err(refused("imap_list_page_unreadable")),
+            }
+        };
+        if fields.first() != Some(&ANCHOR_PREFIX) || fields.len() != 6 {
+            return Err(refused("imap_list_page_unreadable"));
+        }
+        Ok(Self {
+            folder: number(1)?
+                .and_then(|folder| usize::try_from(folder).ok())
+                .unwrap_or(0),
+            digest: fields[2].to_owned(),
+            uid_validity: number(3)?.unwrap_or(0),
+            below: number(4)?,
+            end: number(5)?,
+        })
+    }
+
+    fn write(&self) -> String {
+        let text = |value: Option<u64>| value.map(|value| format!("{value}")).unwrap_or_default();
+        format!(
+            "{ANCHOR_PREFIX}:{}:{}:{}:{}:{}",
+            self.folder,
+            self.digest,
+            self.uid_validity,
+            text(self.below),
+            text(self.end)
+        )
+    }
+}
+
+/// The attributes a header read fetches.
+fn header_attributes(session: &ImapSession) -> &'static str {
+    if session.has("OBJECTID") {
+        "UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER] THREADID"
+    } else {
+        "UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER]"
+    }
+}
+
+impl ImapMailWire<'_> {
+    /// Runs `read` on this wire's session, through the source's credential
+    /// at its door: the session opens at the first read and again when the
+    /// record presented differs. A failed read closes it.
+    fn with_session<T>(
+        &self,
+        source: &MailSyncSource,
+        mut read: impl FnMut(&mut OpenSession) -> Result<T>,
+    ) -> Result<T> {
+        if source.provider != MailProvider::Imap {
+            return Err(refused("imap_mail_wire_reads_imap_mailboxes_only"));
+        }
+        let mut answer = None;
+        self.vault.with_source_token_at_door(
+            source,
+            WireReads::Mailbox,
+            IMAP_CONNECTOR_EFFECTOR,
+            &mut |secret: &[u8]| {
+                let credential = *blake3::keyed_hash(&self.key, secret).as_bytes();
+                let mut slot = self.session.borrow_mut();
+                if slot
+                    .as_ref()
+                    .is_none_or(|open| open.credential != credential)
+                {
+                    if let Some(old) = slot.take() {
+                        old.session.logout();
+                    }
+                    *slot = Some(open_session(source, secret, credential)?);
+                }
+                let open = slot
+                    .as_mut()
+                    .ok_or_else(|| refused("imap_session_unavailable"))?;
+                match read(open) {
+                    Ok(value) => {
+                        answer = Some(value);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        *slot = None;
+                        Err(error)
+                    }
+                }
+            },
+        )?;
+        answer.ok_or_else(|| refused("imap_session_unavailable"))
+    }
+
+    /// Reads the headers of `uids` in `folder`, keeping each as seen.
+    fn read_headers(
+        &self,
+        open: &mut OpenSession,
+        folder: usize,
+        status: FolderStatus,
+        uids: &[u64],
+    ) -> Result<Vec<MailHeaders>> {
+        if uids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let attributes = header_attributes(&open.session);
+        let fetched = open.session.uid_fetch(&uid_set(uids), attributes)?;
+        let place = &open.folders[folder];
+        let mut out = Vec::with_capacity(fetched.len());
+        for message in &fetched {
+            let Some(read) = read_of(message, "BODY[HEADER]") else {
+                continue;
+            };
+            let headers = headers_of(&read, place, status.uid_validity, vec![place.label.clone()]);
+            self.seen.borrow_mut().insert(
+                headers.provider_id.clone(),
+                (
+                    headers.clone(),
+                    Location {
+                        folder,
+                        uid_validity: status.uid_validity,
+                        uid: read.uid,
+                    },
+                ),
+            );
+            out.push(headers);
+        }
+        Ok(out)
+    }
+
+    /// The `Message-ID` the vault holds for `provider_id`, and the labels it
+    /// was last seen under.
+    fn held(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<(Option<String>, Vec<String>)> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(OCCURRENCES
+            .get(
+                &self.vault.store,
+                &txn,
+                &occurrence_key(source.source_ref, provider_id),
+            )?
+            .map(|occurrence| (occurrence.rfc_message_id, occurrence.labels))
+            .unwrap_or_default())
+    }
+
+    /// Every place the message `provider_id` is now: the folders it was last
+    /// seen in first; with `all`, every folder, else the first place found.
+    fn locate(
+        &self,
+        open: &mut OpenSession,
+        source: &MailSyncSource,
+        provider_id: &str,
+        all: bool,
+    ) -> Result<Vec<Location>> {
+        if !all && let Some((_, at)) = self.seen.borrow().get(provider_id) {
+            return Ok(vec![*at]);
+        }
+        if let Some(place) = provider_id.strip_prefix("imapuid.") {
+            let mut fields = place.split('.');
+            let (Some(digest), Some(uid_validity), Some(uid)) = (
+                fields.next(),
+                fields.next().and_then(|value| value.parse::<u64>().ok()),
+                fields.next().and_then(|value| value.parse::<u64>().ok()),
+            ) else {
+                return Ok(Vec::new());
+            };
+            let Some(folder) = open
+                .folders
+                .iter()
+                .position(|folder| folder.digest == digest)
+            else {
+                return Ok(Vec::new());
+            };
+            let name = open.folders[folder].name.clone();
+            let status = open.session.examine(&name)?;
+            if status.uid_validity != uid_validity
+                || open.session.uid_search(&format!("UID {uid}"))?.first() != Some(&uid)
+            {
+                return Ok(Vec::new());
+            }
+            return Ok(vec![Location {
+                folder,
+                uid_validity,
+                uid,
+            }]);
+        }
+        let (Some(message_id), labels) = self.held(source, provider_id)? else {
+            return Ok(Vec::new());
+        };
+        let Some(criterion) = search_string(&message_id) else {
+            return Ok(Vec::new());
+        };
+        let mut order: Vec<usize> = (0..open.folders.len()).collect();
+        order.sort_by_key(|&at| {
+            let folder = &open.folders[at];
+            (!labels.contains(&folder.label), !folder.read())
+        });
+        let mut found = Vec::new();
+        for folder in order {
+            let name = open.folders[folder].name.clone();
+            let status = open.session.examine(&name)?;
+            let uids = open
+                .session
+                .uid_search(&format!("HEADER Message-ID {criterion}"))?;
+            if let Some(&uid) = uids.last() {
+                found.push(Location {
+                    folder,
+                    uid_validity: status.uid_validity,
+                    uid,
+                });
+                if !all && open.folders[folder].read() {
+                    break;
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// The headers and the whole message at the first place `provider_id`
+    /// is; a message too large to read whole comes with its headers alone.
+    fn whole(
+        &self,
+        open: &mut OpenSession,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<Option<(MailHeaders, Vec<u8>)>> {
+        let places = self.locate(open, source, provider_id, false)?;
+        let Some(&at) = places.first() else {
+            return Ok(None);
+        };
+        let name = open.folders[at.folder].name.clone();
+        let status = open.session.examine(&name)?;
+        if status.uid_validity != at.uid_validity {
+            return Ok(None);
+        }
+        let uid = at.uid.to_string();
+        let sized = open.session.uid_fetch(&uid, "UID RFC822.SIZE")?;
+        let Some(size) = sized
+            .iter()
+            .find(|message| message.uid() == Some(at.uid))
+            .and_then(|message| message.value("RFC822.SIZE").and_then(Item::number))
+        else {
+            return Ok(None);
+        };
+        let whole = size <= MAX_MESSAGE_BYTES;
+        let (section, returned) = if whole {
+            ("BODY.PEEK[]", "BODY[]")
+        } else {
+            ("BODY.PEEK[HEADER]", "BODY[HEADER]")
+        };
+        let thread = if open.session.has("OBJECTID") {
+            " THREADID"
+        } else {
+            ""
+        };
+        let fetched = open
+            .session
+            .uid_fetch(&uid, &format!("UID FLAGS INTERNALDATE {section}{thread}"))?;
+        let Some(read) = fetched
+            .iter()
+            .find(|message| message.uid() == Some(at.uid))
+            .and_then(|message| read_of(message, returned))
+        else {
+            return Ok(None);
+        };
+        let folder = &open.folders[at.folder];
+        let headers = headers_of(&read, folder, at.uid_validity, vec![folder.label.clone()]);
+        let raw = if whole { read.raw.to_vec() } else { Vec::new() };
+        Ok(Some((headers, raw)))
+    }
+
+    /// The headers of the message at `at`.
+    fn headers_at(&self, open: &mut OpenSession, at: Location) -> Result<Option<MailHeaders>> {
+        let name = open.folders[at.folder].name.clone();
+        let status = open.session.examine(&name)?;
+        if status.uid_validity != at.uid_validity {
+            return Ok(None);
+        }
+        let attributes = header_attributes(&open.session);
+        let fetched = open.session.uid_fetch(&at.uid.to_string(), attributes)?;
+        let folder = &open.folders[at.folder];
+        Ok(fetched
+            .iter()
+            .find(|message| message.uid() == Some(at.uid))
+            .and_then(|message| read_of(message, "BODY[HEADER]"))
+            .map(|read| headers_of(&read, folder, at.uid_validity, vec![folder.label.clone()])))
+    }
+
+    /// The copies labelled with `folder` that it no longer holds below
+    /// `uid_next`, each as the change it is: moved (its folders now), or
+    /// deleted at the provider (in trash or junk, or nowhere).
+    fn departures(
+        &self,
+        open: &mut OpenSession,
+        source: &MailSyncSource,
+        folder: usize,
+        uid_next: u64,
+        changes: &mut Vec<MailHistoryChange>,
+    ) -> Result<()> {
+        let place = open.folders[folder].clone();
+        let mut held = BTreeSet::new();
+        if uid_next > 1 {
+            let status = open.session.examine(&place.name)?;
+            let fetched = open.session.uid_fetch(
+                &format!("1:{}", uid_next - 1),
+                "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
+            )?;
+            for message in &fetched {
+                let Some(uid) = message.uid() else {
+                    continue;
+                };
+                if uid >= uid_next {
+                    continue;
+                }
+                let id = message
+                    .value_starting("BODY[HEADER.FIELDS")
+                    .and_then(Item::bytes)
+                    .and_then(|raw| MimeMessage::parse(raw).header("message-id"))
+                    .filter(|id| !id.is_empty())
+                    .map_or_else(
+                        || place_id(&place, status.uid_validity, uid),
+                        |id| content_id(&id),
+                    );
+                held.insert(id);
+            }
+        }
+        let gone: Vec<String> = {
+            let txn = self.vault.store.env.read_txn()?;
+            let mut gone = Vec::new();
+            for occurrence in
+                OCCURRENCES.iter_from(&self.vault.store, &txn, source.source_ref.as_bytes())?
+            {
+                let (_, occurrence) = occurrence?;
+                if matches!(occurrence.presence, MailPresence::Present)
+                    && occurrence.labels.contains(&place.label)
+                    && !held.contains(&occurrence.provider_id)
+                {
+                    gone.push(occurrence.provider_id);
+                }
+            }
+            gone
+        };
+        for provider_id in gone {
+            let places = self.locate(open, source, &provider_id, true)?;
+            let kept: Vec<String> = places
+                .iter()
+                .filter(|at| open.folders[at.folder].read())
+                .map(|at| open.folders[at.folder].label.clone())
+                .collect();
+            if kept.is_empty() {
+                changes.push(MailHistoryChange::Deleted { provider_id });
+            } else {
+                changes.push(MailHistoryChange::Labels {
+                    provider_id,
+                    labels: dedup(kept),
+                    trash_or_spam: false,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn dedup(mut labels: Vec<String>) -> Vec<String> {
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+/// `message_id` quoted as a `SEARCH` string, when it can be one.
+fn search_string(message_id: &str) -> Option<String> {
+    if message_id.is_empty()
+        || message_id.len() > 998
+        || message_id
+            .chars()
+            .any(|c| c.is_control() || !c.is_ascii() || c == '"' || c == '\\')
+    {
+        return None;
+    }
+    Some(format!("\"{message_id}\""))
+}
+
+/// Opens a session with the credential `secret` for `source`.
+fn open_session(
+    source: &MailSyncSource,
+    secret: &[u8],
+    credential: [u8; 32],
+) -> Result<OpenSession> {
+    let stored: ImapCredential =
+        serde_json::from_slice(secret).map_err(|_| refused("imap_credential_unreadable"))?;
+    let host = stored.host.trim().to_ascii_lowercase();
+    if host.is_empty()
+        || host.len() > 253
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(refused("imap_credential_host_invalid"));
+    }
+    // The credential reads the account the source names, and no other.
+    let account = format!("{}@{host}", stored.username);
+    if !source.provider_account.eq_ignore_ascii_case(&account) {
+        return Err(refused("imap_credential_reads_another_account"));
+    }
+    let mut session = ImapSession::connect(&host, stored.port.unwrap_or(993))?;
+    session.authenticate(
+        &stored.username,
+        stored.password.as_deref(),
+        stored.access_token.as_deref(),
+    )?;
+    let folders = folders_of(session.list()?);
+    Ok(OpenSession {
+        session,
+        credential,
+        folders,
+    })
+}
+
+impl MailProviderWire for ImapMailWire<'_> {
+    fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
+        self.with_session(source, |open| {
+            let mut marks = BTreeMap::new();
+            let folders: Vec<Folder> = open.folders.iter().filter(|f| f.read()).cloned().collect();
+            for folder in folders {
+                let status = open.session.examine(&folder.name)?;
+                marks.insert(
+                    folder.digest,
+                    Mark {
+                        uid_validity: status.uid_validity,
+                        uid_next: uid_next_of(&mut open.session, status)?,
+                        count: status.exists,
+                    },
+                );
+            }
+            Ok(write_anchor(&marks))
+        })
+    }
+
+    fn list_page(
+        &self,
+        source: &MailSyncSource,
+        query: &MailListQuery,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        let mut cursor = ListCursor::parse(page)?;
+        self.with_session(source, |open| {
+            let read: Vec<usize> = (0..open.folders.len())
+                .filter(|&at| open.folders[at].read())
+                .collect();
+            // The folder the page names, found again by its digest when the
+            // folders changed meanwhile.
+            let place = read
+                .iter()
+                .position(|&at| open.folders[at].digest == cursor.digest)
+                .unwrap_or(cursor.folder);
+            let Some(&folder) = read.get(place) else {
+                return Ok(MailIdPage::default());
+            };
+            if open.folders[folder].digest != cursor.digest {
+                cursor = ListCursor {
+                    folder: place,
+                    digest: open.folders[folder].digest.clone(),
+                    ..ListCursor::default()
+                };
+            }
+            let name = open.folders[folder].name.clone();
+            let status = open.session.examine(&name)?;
+            if status.uid_validity != cursor.uid_validity {
+                cursor.uid_validity = status.uid_validity;
+                cursor.below = None;
+                cursor.end = None;
+            }
+            let below = cursor.below;
+            let (mut uids, more, end) = match query.newer_than {
+                Some(after) => {
+                    let since =
+                        search_date(after).ok_or_else(|| refused("imap_cutoff_unreadable"))?;
+                    let mut uids = open.session.uid_search(&format!("SINCE {since}"))?;
+                    uids.retain(|&uid| below.is_none_or(|below| uid < below));
+                    let start = uids
+                        .len()
+                        .saturating_sub(usize::try_from(LIST_PAGE).unwrap_or(usize::MAX));
+                    let more = start > 0;
+                    (uids.split_off(start), more, None)
+                }
+                None => {
+                    // Sequence numbers run in UID order, and only an expunge
+                    // below moves them, down: a page ending at the last one
+                    // read again reads no message twice past the UID filter
+                    // and skips none.
+                    let end = cursor.end.unwrap_or(status.exists).min(status.exists);
+                    if end == 0 {
+                        (Vec::new(), false, None)
+                    } else {
+                        let start = end.saturating_sub(LIST_PAGE - 1).max(1);
+                        let fetched = open.session.fetch_sequence(start, end, "UID")?;
+                        let uids: Vec<u64> = fetched
+                            .iter()
+                            .filter_map(Fetched::uid)
+                            .filter(|&uid| below.is_none_or(|below| uid < below))
+                            .collect();
+                        (uids, start > 1, Some(start - 1))
+                    }
+                }
+            };
+            uids.sort_unstable();
+            let headers = self.read_headers(open, folder, status, &uids)?;
+            let mut messages: Vec<MailMessageRef> = headers
+                .into_iter()
+                .map(|headers| MailMessageRef {
+                    provider_id: headers.provider_id,
+                    thread_id: headers.thread_id,
+                })
+                .collect();
+            messages.reverse();
+            let next = if more {
+                ListCursor {
+                    below: uids.first().copied().or(below),
+                    end: end.filter(|&end| end > 0),
+                    ..cursor.clone()
+                }
+            } else {
+                let next = place + 1;
+                match read.get(next) {
+                    Some(&folder) => ListCursor {
+                        folder: next,
+                        digest: open.folders[folder].digest.clone(),
+                        ..ListCursor::default()
+                    },
+                    None => {
+                        return Ok(MailIdPage {
+                            messages,
+                            next_page: None,
+                        });
+                    }
+                }
+            };
+            Ok(MailIdPage {
+                messages,
+                next_page: Some(next.write()),
+            })
+        })
+    }
+
+    fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
+        let seen = self
+            .seen
+            .borrow()
+            .get(provider_id)
+            .map(|(headers, _)| headers.clone());
+        if let Some(headers) = seen {
+            return Ok(Some(headers));
+        }
+        self.with_session(source, |open| {
+            let places = self.locate(open, source, provider_id, true)?;
+            let Some(&first) = places
+                .iter()
+                .find(|at| open.folders[at.folder].read())
+                .or_else(|| places.first())
+            else {
+                return Ok(None);
+            };
+            let Some(mut headers) = self.headers_at(open, first)? else {
+                return Ok(None);
+            };
+            let kept: Vec<String> = places
+                .iter()
+                .filter(|at| open.folders[at.folder].read())
+                .map(|at| open.folders[at.folder].label.clone())
+                .collect();
+            if !kept.is_empty() {
+                headers.labels = dedup(kept);
+            }
+            Ok(Some(headers))
+        })
+    }
+
+    fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
+        self.with_session(source, |open| {
+            let Some((headers, raw)) = self.whole(open, source, provider_id)? else {
+                return Ok(None);
+            };
+            if raw.is_empty() {
+                return Ok(Some(MailFull {
+                    headers,
+                    body_text: None,
+                    attachments: Vec::new(),
+                }));
+            }
+            let body = MimeMessage::parse(&raw).body();
+            Ok(Some(MailFull {
+                headers,
+                body_text: body.text,
+                attachments: body.attachments,
+            }))
+        })
+    }
+
+    fn history(
+        &self,
+        source: &MailSyncSource,
+        anchor: &str,
+        _page: Option<&str>,
+    ) -> Result<MailHistoryRead> {
+        let Some(marks) = parse_anchor(anchor) else {
+            return Ok(MailHistoryRead::Expired);
+        };
+        self.with_session(source, |open| {
+            let mut changes = Vec::new();
+            let mut reached = BTreeMap::new();
+            for (at, folder) in open.folders.clone().into_iter().enumerate() {
+                if !folder.read() {
+                    continue;
+                }
+                let status = open.session.examine(&folder.name)?;
+                // A folder new since the anchor: all its mail is added.
+                let mark = marks.get(&folder.digest).copied().unwrap_or(Mark {
+                    uid_validity: status.uid_validity,
+                    uid_next: 1,
+                    count: 0,
+                });
+                if mark.uid_validity != status.uid_validity {
+                    return Ok(MailHistoryRead::Expired);
+                }
+                let uid_next = uid_next_of(&mut open.session, status)?;
+                let mut new = if uid_next > mark.uid_next {
+                    open.session
+                        .uid_search(&format!("UID {}:*", mark.uid_next))?
+                } else {
+                    Vec::new()
+                };
+                new.retain(|&uid| uid >= mark.uid_next);
+                let count = |uids: usize| u64::try_from(uids).unwrap_or(u64::MAX);
+                let kept_old = status.exists.saturating_sub(count(new.len()));
+                let taken: Vec<u64> = new.iter().copied().take(NEW_PER_FOLDER).collect();
+                for headers in self.read_headers(open, at, status, &taken)? {
+                    changes.push(MailHistoryChange::Added(MailMessageRef {
+                        provider_id: headers.provider_id,
+                        thread_id: headers.thread_id,
+                    }));
+                }
+                if kept_old < mark.count {
+                    self.departures(open, source, at, mark.uid_next, &mut changes)?;
+                }
+                let next = match taken.last() {
+                    Some(&last) if taken.len() < new.len() => last + 1,
+                    _ => uid_next.max(mark.uid_next),
+                };
+                reached.insert(
+                    folder.digest,
+                    Mark {
+                        uid_validity: status.uid_validity,
+                        uid_next: next,
+                        count: kept_old + count(taken.len()),
+                    },
+                );
+            }
+            // A folder gone since the anchor: each copy under it is looked
+            // up again.
+            for digest in marks.keys().filter(|digest| !reached.contains_key(*digest)) {
+                for label in self.labels_with_digest(source, digest)? {
+                    changes.push(MailHistoryChange::LabelGone { label });
+                }
+            }
+            Ok(MailHistoryRead::Page(MailHistoryPage {
+                changes,
+                next_page: None,
+                anchor: write_anchor(&reached),
+            }))
+        })
+    }
+
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>> {
+        self.with_session(source, |open| {
+            let Some((_, raw)) = self.whole(open, source, provider_id)? else {
+                return Ok(None);
+            };
+            Ok(MimeMessage::parse(&raw).part_bytes(&attachment.part_id))
+        })
+    }
+}
+
+impl ImapMailWire<'_> {
+    /// The labels the source's copies carry whose digest is `digest`.
+    fn labels_with_digest(&self, source: &MailSyncSource, digest: &str) -> Result<Vec<String>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let mut labels = BTreeSet::new();
+        for occurrence in
+            OCCURRENCES.iter_from(&self.vault.store, &txn, source.source_ref.as_bytes())?
+        {
+            let (_, occurrence) = occurrence?;
+            for label in occurrence.labels {
+                if digest_of(&label) == digest {
+                    labels.insert(label);
+                }
+            }
+        }
+        Ok(labels.into_iter().collect())
+    }
+}
+
+/// The open folder's UIDNEXT, read from its highest UID when the server
+/// did not say it.
+fn uid_next_of(session: &mut ImapSession, status: FolderStatus) -> Result<u64> {
+    if status.uid_next > 0 {
+        return Ok(status.uid_next);
+    }
+    if status.exists == 0 {
+        return Ok(1);
+    }
+    let last = session.uid_search("ALL")?.last().copied().unwrap_or(0);
+    Ok(last + 1)
+}
