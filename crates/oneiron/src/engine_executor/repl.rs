@@ -37,7 +37,8 @@ use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
+    WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -324,6 +325,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
@@ -369,6 +371,7 @@ impl EngineNativeExecutor<'_> {
                     captured,
                     bound,
                     receipts,
+                    host.context_capture,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -412,6 +415,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!(
@@ -539,7 +543,8 @@ impl EngineNativeExecutor<'_> {
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
-
+            let (end, context) =
+                self.step_context(config, &record, bridge_start, host.context_capture)?;
             let checkpoint = CodeRunStepCheckpoint::new(
                 completed_steps,
                 checkpoint_label(completed_steps),
@@ -555,12 +560,14 @@ impl EngineNativeExecutor<'_> {
                     &step_result,
                     implicit_speak_bytes.as_deref(),
                     &record.bridge_calls[bridge_start..],
+                    end,
                 )?,
                 config
                     .determinism
                     .frozen_unix_ms
                     .saturating_add(completed_steps),
-            )?;
+            )?
+            .ending_at(end.bridge_end);
             let bridge_end = record.bridge_calls.len();
             record
                 .step_checkpoints
@@ -583,6 +590,7 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
+                    &context,
                 ) {
                 Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                     tracing::warn!(
@@ -595,6 +603,7 @@ impl EngineNativeExecutor<'_> {
                             repairs.healed().then_some(&config.model),
                             &host.receipts,
                             parked.as_ref(),
+                            &context,
                         )?
                 }
                 result => result?,
