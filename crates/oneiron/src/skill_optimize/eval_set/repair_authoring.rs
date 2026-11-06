@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use super::doors::EvalAuthoringRef;
 use super::repair_case::record_repair_case_in_txn;
 use super::{
-    EvalRepairCaseRead, EvalRepairCaseRequest, EvalRepairNominationRequest, EvalRepairNominations,
+    EvalAuthoringInventory, EvalRepairAuthoringPlan, EvalRepairCaseRead, EvalRepairCaseRecipe,
+    EvalRepairCaseRequest, EvalRepairCohortReport, EvalRepairNominationRequest,
+    EvalRepairNominations,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::claim::{ClaimReadStatus, maintenance_kind::COACH_HOST_QUEUE_KIND};
@@ -159,6 +161,77 @@ impl Vault {
 }
 
 impl EvalRepairAuthoringSource<'_> {
+    fn check_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let payload = job_payload_in_txn(
+            self.reader.vault(),
+            txn,
+            self.job.id,
+            &self.job.lease_owner,
+            self.job.generation,
+        )?;
+        if payload != self.job.payload {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    fn check(&self) -> Result<()> {
+        let txn = self.reader.vault().store.env.read_txn()?;
+        self.check_in_txn(&txn)
+    }
+
+    pub(super) fn nominated(&self, recipe: &EvalRepairCaseRecipe) -> bool {
+        self.nominations
+            .sources
+            .iter()
+            .flat_map(|source| &source.tasks)
+            .filter_map(|read| read.as_ref().ok())
+            .any(|read| read.recipe.as_ref() == Some(recipe))
+    }
+
+    /// Ordinary authoring metadata plus the actual nominated seats and source
+    /// rows. A new seat need not already have receipt-derived cases.
+    pub fn inventory_sourced(
+        &self,
+        now: u64,
+    ) -> MemoryResult<(EvalAuthoringInventory, Option<Vec<EntityId>>)> {
+        self.check()?;
+        Ok(super::authoring::repair_authoring_inventory_sourced(
+            self.reader.vault(),
+            &self.nominations,
+            now,
+        )?)
+    }
+
+    /// Apply the loaded skill's whole plan, with Repair writes before scoped
+    /// cut audits and the real Skill author on cuts and retirements. Each stage
+    /// retains its ordinary transaction; this is not a whole-plan rollback.
+    /// Actual source/audit rows survive a later error in the second result.
+    pub fn apply_plan_listing(
+        &self,
+        input: EvalRepairAuthoringPlan,
+        inventory: &EvalAuthoringInventory,
+        skill: (EntityId, String),
+        now: u64,
+    ) -> (MemoryResult<EvalRepairCohortReport>, Vec<EntityId>) {
+        let mut rows = Vec::new();
+        let answer: MemoryResult<EvalRepairCohortReport> = (|| {
+            self.check()?;
+            super::authoring::apply_repair_authoring_plan(
+                &self.reader,
+                self,
+                input,
+                inventory,
+                (self.job.id, skill),
+                now,
+                &mut rows,
+            )
+        })();
+        rows.sort_unstable();
+        rows.dedup();
+        (answer, rows)
+    }
+
     /// Original per-source/task errors and scoped receipts, without task bodies
     /// or expected responses. Only successful recipes can be selected to write.
     pub fn nominations(&self) -> &EvalRepairNominations {
@@ -169,14 +242,7 @@ impl EvalRepairAuthoringSource<'_> {
     /// Source/hash reconstruction, family assignment and case admission share
     /// the same writer with the canonical job's current stamp and lease check.
     pub fn record_case(&self, input: &EvalRepairCaseRequest) -> MemoryResult<EvalRepairCaseRead> {
-        let nominated = self
-            .nominations
-            .sources
-            .iter()
-            .flat_map(|source| &source.tasks)
-            .filter_map(|read| read.as_ref().ok())
-            .any(|read| read.recipe.as_ref() == Some(&input.recipe));
-        if !nominated {
+        if !self.nominated(&input.recipe) {
             return Err(invalid().into());
         }
         let source = &input.recipe.source;
@@ -191,16 +257,7 @@ impl EvalRepairAuthoringSource<'_> {
         let _bodies = vault.pin_all_result_bodies();
         let now = vault.now_recorded_at();
         Ok(vault.with_write_txn_grouped(|txn| {
-            let payload = job_payload_in_txn(
-                vault,
-                txn,
-                self.job.id,
-                &self.job.lease_owner,
-                self.job.generation,
-            )?;
-            if payload != self.job.payload {
-                return Err(invalid());
-            }
+            self.check_in_txn(txn)?;
             record_repair_case_in_txn(vault, txn, &lane, id, &source_pin, input, now)
         })?)
     }

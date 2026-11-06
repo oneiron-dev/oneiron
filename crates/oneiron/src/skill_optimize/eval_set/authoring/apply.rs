@@ -2,7 +2,13 @@
 //! inventory and applied in order: families for whole groups first, then
 //! cases and their fixed-code labels, then each cut with its audit, then
 //! retirements. A decision a door refuses is reported, never forced.
+mod repair;
 mod scoped;
+
+pub use repair::EvalRepairAuthoringPlan;
+pub(in crate::skill_optimize::eval_set) use repair::{
+    apply_repair_authoring_plan, repair_authoring_inventory_sourced,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -273,7 +279,7 @@ pub struct EvalAuthoringReport {
     pub cases_reused: usize,
     pub labels_added: usize,
     pub cohorts_cut: Vec<EntityId>,
-    /// Original scoped receipts for Repair sources compared by owner setup.
+    /// Original scoped receipts for Repair sources compared by setup or authoring.
     pub source_receipts: Vec<crate::claim::ScopedReadReceipt>,
     /// Cuts whose audit could not read every compared case's text.
     pub cuts_with_coverage_gaps: usize,

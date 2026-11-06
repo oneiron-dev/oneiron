@@ -187,17 +187,18 @@ pub use self::eval_set::{
     sufficiency_card,
 };
 pub use self::eval_set::{
+    COACH_EVAL_REPAIR_AUTHORING_FACET, EvalRepairAction, EvalRepairAuthoringPlan,
+    EvalRepairAuthoringSource, EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe,
+    EvalRepairCaseReference, EvalRepairCaseRequest, EvalRepairGrader, EvalRepairNominationRequest,
+    EvalRepairNominations, EvalRepairPrecondition, EvalRepairSourceNominations, EvalRepairTask,
+    EvalRepairTaskRead, EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
+};
+pub use self::eval_set::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
     EvalMeasurement, EvalMeasurementRef, EvalMeasurementRequest, EvalMeasurementSource,
     EvalMeasurementSourceRead, EvalReleasedTask, EvalTaskInput, EvalTaskRead, FloorSlicePolicy,
     JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
     MeasurementUnavailable, ScoreDirection, eval_seat_canary,
-};
-pub use self::eval_set::{
-    COACH_EVAL_REPAIR_AUTHORING_FACET, EvalRepairAuthoringSource, EvalRepairAction, EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe,
-    EvalRepairCaseReference, EvalRepairCaseRequest, EvalRepairGrader, EvalRepairPrecondition,
-    EvalRepairNominationRequest, EvalRepairNominations, EvalRepairSourceNominations,
-    EvalRepairTask, EvalRepairTaskRead, EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
 };
 pub(crate) use self::eval_set::{
     erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,

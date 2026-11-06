@@ -109,9 +109,22 @@ inside the case writer. It shares the existing source projection, full task
 rebuild, family-before-case admission, and exact case reuse machinery. It does
 not fabricate owner proof for a background job.
 
+The source's native `inventory_sourced` adds successfully nominated seats to
+the ordinary metadata inventory, including seats with no receipt history yet.
+It retains the ordinary inventory digest and the discovered source rows; the
+reads do not promise a shared batch snapshot. `apply_plan_listing` accepts an
+`EvalRepairAuthoringPlan` with the ordinary `authoring` plan and explicit
+`repairs`. It validates the whole ordinary plan and every selected recipe before
+writing, applies the existing receipt-family/case decisions, records Repair
+cases, then performs scoped cut audits and cuts, and finally retirements. Cuts
+and retirements name the actual attempt and loaded Skill revision, never an
+invented owner. Repair results retain their own case refs and scoped receipts;
+the ordinary case counters still count only receipt-derived decisions. Actual
+Repair/audit rows remain listed when a later stage fails. Stages keep their
+existing separate transactions, not a whole-plan rollback.
+
 This is a native source/write interface, not a published automatic-authoring
-endpoint. The server's loaded-skill input/output, scoped Skill-authored cuts,
-retirements, and read-set integration still need a consumer for this explicit
-job. Existing manual owner calls and receipt-based nightly authoring are
-unchanged. No new source ledger, training permission, label, or read grant is
-created.
+endpoint. The server's loaded-skill input/output and attempt read-set integration
+still need a consumer for this explicit job. Existing manual owner calls and
+receipt-based nightly authoring are unchanged. No new source ledger, training
+permission, label, or read grant is created.
