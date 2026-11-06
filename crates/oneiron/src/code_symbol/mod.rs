@@ -3,6 +3,7 @@
 //! Child modules own the types, codecs, graph builders and views re-exported here.
 
 mod actor_erase;
+mod cjs_source;
 mod codec;
 mod document_view;
 mod keys;
