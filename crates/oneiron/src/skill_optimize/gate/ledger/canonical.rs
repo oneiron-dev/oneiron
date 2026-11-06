@@ -33,6 +33,10 @@ impl CanonicalSkillEditVerdict {
         &self.verdict
     }
 
+    pub(crate) fn read_position(&self) -> Option<&SkillVerdictReadPosition> {
+        self.verdict.read_position.as_ref()
+    }
+
     fn into_verdict(self) -> HeldOutVerdict {
         self.verdict
     }
@@ -107,7 +111,7 @@ pub(super) fn verdict_rows_observed_in_txn(
         })
         .collect::<Result<Vec<_>>>()?;
     observer(VerdictRead::ScanComplete {
-        prefix: VERDICT_PREFIX,
+        prefix: VERDICTS.decl().prefix,
     });
     Ok(verdicts)
 }

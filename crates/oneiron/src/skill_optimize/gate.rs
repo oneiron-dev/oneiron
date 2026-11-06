@@ -153,10 +153,12 @@ mod live;
 mod measurement;
 mod preflight;
 mod project_goal;
+mod read_position;
 mod rule_policy;
 mod tradeoff;
 mod tradeoff_capacity;
 mod verdict;
+pub use read_position::SkillVerdictReadPosition;
 
 pub(crate) use decision::score_gate_skill_edit_as_owner;
 pub(crate) use live::measure_skill_edit_goal_axes_as_owner;
@@ -173,7 +175,8 @@ pub use basis::{
     skill_edit_cycle_cap, skill_edit_score_call_purpose,
 };
 pub use decision::{
-    score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
+    score_gate_skill_edit, score_gate_skill_edit_in_cycle,
+    score_gate_skill_edit_in_cycle_positioned, score_gate_skill_edit_with_scorer,
 };
 pub use goal_axis::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, SkillEditGoal, set_skill_edit_goal_axes,
@@ -343,6 +346,7 @@ const KEY_PROPOSAL_TIER: &str = "proposal_tier";
 const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
+const KEY_READ_POSITION: &str = "read_position";
 const KEY_MEASUREMENTS: &str = "measurements";
 const KEY_GOAL_AXES: &str = "goal_axes";
 const KEY_GOAL_REVISION: &str = "goal_revision";

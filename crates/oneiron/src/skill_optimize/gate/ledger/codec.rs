@@ -177,6 +177,16 @@ pub(super) fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict>
             None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
         },
         displaced_by_revision: None,
+        read_position: field(KEY_READ_POSITION)
+            .map(|value| {
+                serde_json::from_str(
+                    value
+                        .as_str()
+                        .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+                )
+                .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))
+            })
+            .transpose()?,
         id,
         proposal: entity(KEY_PROPOSAL)?,
         skill: entity(KEY_SKILL)?,
