@@ -315,7 +315,8 @@ pub(super) fn wait_holder_runs_in_txn(
 /// and so does the settled row of each code consent wait bound to one of
 /// them, which that run alone holds. Another run's membership and delivery,
 /// a shared settled reply, and a consent wait's settlement and consumption
-/// digests and receipts stay. A row that does not decode takes the bare
+/// digests and receipts stay; a connector call's settled reply whose caller
+/// was already released goes once no run keeps it (FIX 19257). A row that does not decode takes the bare
 /// erased form, so it never fails the erase.
 ///
 /// # Errors
@@ -343,11 +344,13 @@ pub(super) fn erase_actor_wait_holds_in_txn(
     }
     let mut scope = runs.clone();
     let mut called = BTreeSet::new();
+    let mut joined = BTreeSet::new();
     for &((wait, run, generation), _) in &held {
         if generation == CALLER_GENERATION {
             called.insert(wait);
         } else {
             scope.insert(run);
+            joined.insert(wait);
         }
     }
     for (key, holder) in held {
@@ -363,6 +366,7 @@ pub(super) fn erase_actor_wait_holds_in_txn(
             }
         }
         for ((_, wait, generation), erased, delivery) in delivered {
+            joined.insert(wait);
             let key = (wait, *run, generation);
             let holder = HOLDERS.get_lenient(store, wtxn, &key)?;
             HOLDERS.put(store, wtxn, &key, &scrubbed_holder(scrub, holder, *actor))?;
@@ -380,8 +384,16 @@ pub(super) fn erase_actor_wait_holds_in_txn(
     }
     // A connector call's settled copy its caller held goes once no other
     // membership of the wait keeps it.
-    for wait in called {
+    for &wait in &called {
         erase_settled_unheld_in_txn(store, wtxn, wait)?;
+    }
+    // A wait whose caller's erase already released its hold keeps its
+    // settled copy only while a run's membership keeps it, so the erase of
+    // a run's membership checks that copy again (FIX 19257).
+    for &wait in joined.difference(&called) {
+        if caller_released_in_txn(store, wtxn, wait)? {
+            erase_settled_unheld_in_txn(store, wtxn, wait)?;
+        }
     }
     Ok(())
 }
