@@ -204,6 +204,30 @@ fn known_file_residue(
     check.reads_known(&copy)
 }
 
+/// The current known-value residue of the actual stored ASSET at `key`.
+/// Proposal closure and reopening read it in the same writer as the verdict.
+pub(super) fn known_file_residue_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    key: &[u8],
+    known: &KnownValues,
+) -> Result<bool> {
+    let Some(id) = record_id(key) else {
+        return Ok(false);
+    };
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
+        return Ok(false);
+    };
+    if EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != ENTITY_TYPE_ASSET)
+    {
+        return Ok(false);
+    }
+    let raw = materialized(vault, txn, &id, &raw)?;
+    let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    known_file_residue(vault, txn, &id, bytes, known)
+}
+
 /// The values custody knows in the file `bytes` ASSET `id` stores, marked
 /// beside its marks, past the owner's rulings in the record; `true` when
 /// one was added.
