@@ -23,6 +23,7 @@ mod ask_world_hold;
 mod attendee_answer;
 mod board_task;
 mod comm_widen;
+mod contribution_pair;
 pub(crate) use board_task::board_task_for_id;
 pub use comm_widen::CommWidenRevokeReceipt;
 mod brief;
@@ -92,6 +93,7 @@ mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
 mod refusal;
+pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
@@ -118,6 +120,12 @@ mod training_swap_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use contribution_pair::{
+    CONTRIBUTION_PAIR_QUESTION_TYPE, ask_contribution_pair, coach_owner_conversation_in,
+    contribution_pair_ask_permitted_in, contribution_pair_erase_targets_in_txn,
+    contribution_pair_question_permitted_in, is_contribution_pair_ask_intent,
+    retire_contribution_pair_asks_in,
+};
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use training_offer_ask::{
     OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,

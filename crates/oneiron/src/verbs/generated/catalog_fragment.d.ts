@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1307 code-mode rows (1267 host rows, 40 run rows), 4604 declarations.
-// Replies: 1120 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4637 declarations.
+// Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 116; unread shapes: none.
+// Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -77,8 +77,8 @@ declare namespace Sdk {
   type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
   type LiveRunRequest<T> = { live_run: string; spec: T };
   type BoardWakeRequest = Record<string, never>;
-  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null };
-  type BoardWakeReply = { wakes: WakeEnvelope[] };
+  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null; room_ref?: string | null; turn_ref?: string | null };
+  type BoardWakeReply = { wakes: WakeEnvelope[]; opener?: string | null };
   type ScratchpadRecallRequest = { session_id: string; query: string };
   type EntityId = string;
   type ScratchpadRecallMark = "keep" | "scratch";
@@ -383,8 +383,9 @@ declare namespace Sdk {
   type TaskCallReceipt = { handle: TaskHandle; related: TaskHandle[]; outcome: TaskOutcome; receipt_ref?: string | null; lifecycle?: TaskLifecycleRecord | null; idempotent_replay: boolean };
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
-  type FoldKind = "repl_output";
-  type FoldedOutput = { step: number; handles: string[]; ids: string[] };
+  type FoldKind = "repl_output" | "program";
+  type FoldedSpeech = { verb: string; call: number };
+  type FoldedOutput = { step: number; handles: string[]; ids: string[]; said?: FoldedSpeech[] };
   type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[]; kind?: FoldKind | null; note?: string | null; outputs?: FoldedOutput[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null; kind?: FoldKind | null };
   type Care = "light" | "medium" | "high" | "xhigh" | "max";
   type BriefIntent = { need: string; care?: Care | null };
@@ -1203,7 +1204,7 @@ declare namespace Sdk {
   type SlateDraftRow = { tool: string; disposition: SlateDisposition; data_class: SlateDataClass; rationale: string };
   type SlateOwnerOverride = { disposition: SlateDisposition };
   type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
-  type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
+  type SlateRow = { settings_act: EntityId; draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
   type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
   type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; staged: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
   type ConnectorPackGetRequest = { connector: string };
@@ -1870,6 +1871,30 @@ declare namespace Sdk {
   type ReservoirSourcePeople = "others" | "unknown";
   type ReservoirSourceRow = { source: EntityId; people: ReservoirSourcePeople; pairs: number; consented: boolean };
   type ReservoirSourcePreview = { carried: number; excluded: Record<string, number>; sources: ReservoirSourceRow[] };
+  type DrafterTarget = { model: string; tokenizer: string; runtime: string };
+  type DrafterListRequest = { target?: DrafterTarget | null };
+  type DrafterServing = "stock" | { version: EntityId };
+  type DrafterVersionState = "prepared" | "training" | "returned" | "qualified" | "rejected" | "erased";
+  type DrafterVersionView = { id: EntityId; target: DrafterTarget; parent: DrafterServing; recipe: string; state: DrafterVersionState; generation: number; created_at: number; updated_at: number; sources: number; retained: boolean; serving: boolean; revertible: boolean };
+  type DrafterStatusRequest = { events_after?: EntityId | null };
+  type DrafterRecipe = { id: string; revision: SourcePin; settings: unknown; gpu_seconds: number; device_memory_mib: number };
+  type DrafterActor = { owner: EntityId } | { agent: EntityId } | "coach" | "host" | "erase" | "erased";
+  type DrafterPolicy = { enabled: boolean; excluded_worlds: EntityId[]; recipe?: DrafterRecipe | null; revision: number; set_by?: DrafterActor | null; set_at?: number | null };
+  type DrafterBinding = { target: DrafterTarget; serving: DrafterServing; generation: number; previous: DrafterServing; changed_by?: EntityId | null; changed_at: number };
+  type DrafterUnservedReason = "no_serving_host" | "no_serving_worker" | "unsupported_shared_worker" | "unsupported_external_worker" | "unsupported_runtime" | "vault_locked" | "version_not_servable" | "load_set_unverified" | "worker_rejected" | "superseded";
+  type DrafterServedView = { target: DrafterTarget; serving?: DrafterServing | null; generation?: number | null; draft_digest?: string | null; worker?: string | null; epoch?: string | null; applying: boolean; reason?: DrafterUnservedReason | null };
+  type DrafterSkipReason = "policy_off";
+  type DrafterHoldReason = "no_trainer_recipe" | "no_drafter_target" | "policy_moved" | "empty_corpus" | "corpus_missing" | "training_in_progress" | "no_admission";
+  type DrafterTrainingFailure = "refused" | "trainer_failed" | "receipt_unverified" | "seal_failed" | "over_budget" | "lost" | "cancelled" | "erased";
+  type DrafterRetrainOutcome = { skipped: { reason: DrafterSkipReason } } | { held: { reason: DrafterHoldReason } } | { trained: { version: EntityId } } | { failed: { version: EntityId; reason: DrafterTrainingFailure } };
+  type DrafterRollbackReason = "slowdown" | "output_mismatch" | "worker_error";
+  type DrafterEventKind = { retrain: { attempt: AttemptId; policy_revision: number; cutoff: number; outcome: DrafterRetrainOutcome } } | { qualify: { version: EntityId; passed: boolean; evaluation?: EntityId | null } } | { activate: { version: EntityId } } | { rollback: { version: EntityId; reason: DrafterRollbackReason } } | { revert: { version: EntityId } } | { erase: { versions: EntityId[]; jobs: AttemptId[] } } | { policy: { revision: number } } | { served: { target: DrafterTarget; serving: DrafterServing; generation: number; draft_digest?: string | null } };
+  type DrafterBindingChange = { target: DrafterTarget; from: DrafterServing; to: DrafterServing; generation: number };
+  type DrafterEvent = { id: EntityId; at: number; by: DrafterActor; kind: DrafterEventKind; change?: DrafterBindingChange | null };
+  type DrafterStatus = { policy: DrafterPolicy; bindings: DrafterBinding[]; served: DrafterServedView[]; events: DrafterEvent[] };
+  type DrafterPolicySetRequest = { expected_revision: number; enabled: boolean; excluded_worlds?: EntityId[]; recipe?: DrafterRecipe | null };
+  type DrafterRevertRequest = { version: EntityId; expected_binding_generation: number };
+  type DrafterRevertReceipt = { binding: DrafterBinding; event?: DrafterEvent | null };
   type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
@@ -2176,7 +2201,14 @@ declare namespace Sdk {
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
   type SlideReviewPolicyRow = { scope: "precedence"; value: SlideReviewPrecedence } | { scope: "vault"; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "route"; first: DecisionRung; ceiling: DecisionRung } | { scope: "holder"; holder: string; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "holder_route"; holder: string; first: DecisionRung; ceiling: DecisionRung };
-  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null; slide_review_policy?: SlideReviewPolicyRow[] | null };
+  type PolicyGrantMapEntry = { key: PolicyGrantValue; value: PolicyGrantValue };
+  type PolicyGrantExtension = { tag: number; data: number[] };
+  type PolicyGrantValue = { kind: "nil" } | { kind: "boolean"; value: boolean } | { kind: "integer"; value: string } | { kind: "float32"; value: number[] } | { kind: "float64"; value: number[] } | { kind: "string"; value: string } | { kind: "raw_string"; value: number[] } | { kind: "binary"; value: number[] } | { kind: "array"; value: PolicyGrantValue[] } | { kind: "map"; value: PolicyGrantMapEntry[] } | { kind: "extension"; value: PolicyGrantExtension };
+  type PolicyScopedGrantRow = { actor_class?: string | null; actor_ref?: string | null; effector: string; scope: Scope; selectors?: PolicyGrantValue | null; budget?: PolicyGrantValue | null; receipt_required: boolean };
+  type TeacherProbeHolderFloor = { holder_ref: string; min_f1_millionths: number };
+  type TeacherProbePolicy = { probe_id: string; min_f1_millionths: number; holders?: TeacherProbeHolderFloor[] };
+  type SheetAnswerLimit = { artifact_ref?: string | null; sheet?: string | null; max_count: number };
+  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null; slide_review_policy?: SlideReviewPolicyRow[] | null; scoped_grants?: PolicyScopedGrantRow[] | null; teacher_probe?: TeacherProbePolicy | null; sheet_answer_limits?: SheetAnswerLimit[] | null };
   type PolicyManifestView = { manifest_ref: string; body_hash: string; trusted: boolean; quarantined: boolean; manifest: PolicyManifest };
   type PolicyManifestsView = { default_manifest_ref: string; read_frontier_hash: string; manifests: PolicyManifestView[] };
   type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
@@ -2537,10 +2569,11 @@ declare namespace Sdk {
   type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
-  type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; word_ref: EntityId };
+  type CodeWaitRememberScope = "connection" | "asking_lineage";
+  type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; remember_scope?: CodeWaitRememberScope | null; word_ref: EntityId };
   type CodeWaitState = "waiting" | "settling" | "settled" | "consumed";
   type CodeWaitBrowserAction = { act: string; class: string; role: string; name: string; locator: string; page?: string | null; press: string };
-  type CodeWaitAnswerView = { answer: CodeWaitChoice; word_ref: EntityId; decision_ref: string; answered_at_ms: number };
+  type CodeWaitAnswerView = { answer: CodeWaitChoice; word_ref: EntityId; remember_scope?: CodeWaitRememberScope | null; remembered_grant_ref?: string | null; decision_ref: string; answered_at_ms: number };
   type CodeWaitSettleOutcome = "delivered" | "refused" | "delivery_unknown";
   type CodeWaitLedgerLinks = { prior_ref?: string | null; word_ref?: EntityId | null; facts_digest: string };
   type CodeWaitSettlementView = { receipt_ref: string; outcome: CodeWaitSettleOutcome; reason_codes: string[]; settled_at_ms: number; ledger?: CodeWaitLedgerLinks | null };
@@ -4530,7 +4563,7 @@ declare namespace Sdk {
   type FrameKind = { kind: "keyframe"; payload: string } | { kind: "delta"; payload: DeltaRow[] };
   type BoardStreamFrame = { epoch: number; kind: FrameKind };
   type StreamConnectionId = string;
-  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews";
+  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews" | "room_turns";
   type BoardVerbOutputWire = { kind: "expanded"; key: string; lines: string[] } | { kind: "frame"; frame: BoardStreamFrame } | { kind: "subscription"; connection: StreamConnectionId; active: SubscriptionScope[] };
   type BoardVerbOutput = BoardVerbOutputWire;
   type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };
@@ -6137,6 +6170,22 @@ declare const vault: Sdk.VaultHost & {
       /** The owner approves once, approves standing, or denies the exact frozen reveal ask. */
       answer(input: Sdk.RevealAnswerRequest): Promise<Sdk.RevealAnsweredView | StoredResult>;
     };
+  };
+  drafters: {
+    /** The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible. */
+    list(input: Sdk.DrafterListRequest): Promise<Sdk.DrafterVersionView[] | StoredResult>;
+    /** An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read. */
+    list_as(input: Sdk.DrafterListRequest): Promise<Sdk.DrafterVersionView[] | StoredResult>;
+    policy: {
+      /** The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock. */
+      set(input: Sdk.DrafterPolicySetRequest): Promise<Sdk.DrafterPolicy | StoredResult>;
+    };
+    /** The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back. */
+    revert(input: Sdk.DrafterRevertRequest): Promise<Sdk.DrafterRevertReceipt | StoredResult>;
+    /** An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert. */
+    revert_as(input: Sdk.DrafterRevertRequest): Promise<Sdk.DrafterRevertReceipt | StoredResult>;
+    /** The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor. */
+    status(input: Sdk.DrafterStatusRequest): Promise<Sdk.DrafterStatus | StoredResult>;
   };
   edges: {
     put(input: Sdk.MemoryEdgeInput): Promise<Sdk.MemoryEdgeOutput | StoredResult>;

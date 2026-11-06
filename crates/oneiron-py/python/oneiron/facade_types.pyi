@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1256 facade rows, 4547 declarations.
-Inputs: 1187 of 1256 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1090 of 1256 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 120; unread shapes: 0.
+Census: 1262 facade rows, 4580 declarations.
+Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -300,8 +300,11 @@ class WakeEnvelope(TypedDict):
     actor_ref: str
     line: str
     review_ref: NotRequired[str | None]
+    room_ref: NotRequired[str | None]
+    turn_ref: NotRequired[str | None]
 class BoardWakeReply(TypedDict):
     wakes: list[WakeEnvelope]
+    opener: NotRequired[str | None]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -6046,6 +6049,7 @@ class SlateHolderNarrow(TypedDict):
     actor: str
     at: int
 class SlateRow(TypedDict):
+    settings_act: EntityId
     draft: SlateDraftRow
     owner_override: NotRequired[SlateOwnerOverride | None]
     holder_narrow: NotRequired[SlateHolderNarrow | None]
@@ -9402,6 +9406,154 @@ class ReservoirSourcePreview(TypedDict):
     carried: int
     excluded: dict[str, int]
     sources: list[ReservoirSourceRow]
+class DrafterTarget(TypedDict):
+    model: str
+    tokenizer: str
+    runtime: str
+class DrafterListRequest(TypedDict):
+    target: NotRequired[DrafterTarget | None]
+class DrafterServingVersion(TypedDict):
+    version: EntityId
+DrafterServing = Literal["stock"] | DrafterServingVersion
+DrafterVersionState = Literal["prepared", "training", "returned", "qualified", "rejected", "erased"]
+class DrafterVersionView(TypedDict):
+    id: EntityId
+    target: DrafterTarget
+    parent: DrafterServing
+    recipe: str
+    state: DrafterVersionState
+    generation: int
+    created_at: int
+    updated_at: int
+    sources: int
+    retained: bool
+    serving: bool
+    revertible: bool
+class DrafterStatusRequest(TypedDict):
+    events_after: NotRequired[EntityId | None]
+class DrafterRecipe(TypedDict):
+    id: str
+    revision: SourcePin
+    settings: Any
+    gpu_seconds: int
+    device_memory_mib: int
+class DrafterActorOwner(TypedDict):
+    owner: EntityId
+class DrafterActorAgent(TypedDict):
+    agent: EntityId
+DrafterActor = Literal["coach", "host", "erase", "erased"] | DrafterActorOwner | DrafterActorAgent
+class DrafterPolicy(TypedDict):
+    enabled: bool
+    excluded_worlds: list[EntityId]
+    recipe: NotRequired[DrafterRecipe | None]
+    revision: int
+    set_by: NotRequired[DrafterActor | None]
+    set_at: NotRequired[int | None]
+class DrafterBinding(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    previous: DrafterServing
+    changed_by: NotRequired[EntityId | None]
+    changed_at: int
+DrafterUnservedReason = Literal["no_serving_host", "no_serving_worker", "unsupported_shared_worker", "unsupported_external_worker", "unsupported_runtime", "vault_locked", "version_not_servable", "load_set_unverified", "worker_rejected", "superseded"]
+class DrafterServedView(TypedDict):
+    target: DrafterTarget
+    serving: NotRequired[DrafterServing | None]
+    generation: NotRequired[int | None]
+    draft_digest: NotRequired[str | None]
+    worker: NotRequired[str | None]
+    epoch: NotRequired[str | None]
+    applying: bool
+    reason: NotRequired[DrafterUnservedReason | None]
+DrafterSkipReason = Literal["policy_off"]
+DrafterHoldReason = Literal["no_trainer_recipe", "no_drafter_target", "policy_moved", "empty_corpus", "corpus_missing", "training_in_progress", "no_admission"]
+DrafterTrainingFailure = Literal["refused", "trainer_failed", "receipt_unverified", "seal_failed", "over_budget", "lost", "cancelled", "erased"]
+class DrafterRetrainOutcomeSkippedBody(TypedDict):
+    reason: DrafterSkipReason
+class DrafterRetrainOutcomeSkipped(TypedDict):
+    skipped: DrafterRetrainOutcomeSkippedBody
+class DrafterRetrainOutcomeHeldBody(TypedDict):
+    reason: DrafterHoldReason
+class DrafterRetrainOutcomeHeld(TypedDict):
+    held: DrafterRetrainOutcomeHeldBody
+class DrafterRetrainOutcomeTrainedBody(TypedDict):
+    version: EntityId
+class DrafterRetrainOutcomeTrained(TypedDict):
+    trained: DrafterRetrainOutcomeTrainedBody
+class DrafterRetrainOutcomeFailedBody(TypedDict):
+    version: EntityId
+    reason: DrafterTrainingFailure
+class DrafterRetrainOutcomeFailed(TypedDict):
+    failed: DrafterRetrainOutcomeFailedBody
+DrafterRetrainOutcome = DrafterRetrainOutcomeSkipped | DrafterRetrainOutcomeHeld | DrafterRetrainOutcomeTrained | DrafterRetrainOutcomeFailed
+DrafterRollbackReason = Literal["slowdown", "output_mismatch", "worker_error"]
+class DrafterEventKindRetrainBody(TypedDict):
+    attempt: AttemptId
+    policy_revision: int
+    cutoff: int
+    outcome: DrafterRetrainOutcome
+class DrafterEventKindRetrain(TypedDict):
+    retrain: DrafterEventKindRetrainBody
+class DrafterEventKindQualifyBody(TypedDict):
+    version: EntityId
+    passed: bool
+    evaluation: NotRequired[EntityId | None]
+class DrafterEventKindQualify(TypedDict):
+    qualify: DrafterEventKindQualifyBody
+class DrafterEventKindActivateBody(TypedDict):
+    version: EntityId
+class DrafterEventKindActivate(TypedDict):
+    activate: DrafterEventKindActivateBody
+class DrafterEventKindRollbackBody(TypedDict):
+    version: EntityId
+    reason: DrafterRollbackReason
+class DrafterEventKindRollback(TypedDict):
+    rollback: DrafterEventKindRollbackBody
+class DrafterEventKindRevertBody(TypedDict):
+    version: EntityId
+class DrafterEventKindRevert(TypedDict):
+    revert: DrafterEventKindRevertBody
+class DrafterEventKindEraseBody(TypedDict):
+    versions: list[EntityId]
+    jobs: list[AttemptId]
+class DrafterEventKindErase(TypedDict):
+    erase: DrafterEventKindEraseBody
+class DrafterEventKindPolicyBody(TypedDict):
+    revision: int
+class DrafterEventKindPolicy(TypedDict):
+    policy: DrafterEventKindPolicyBody
+class DrafterEventKindServedBody(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    draft_digest: NotRequired[str | None]
+class DrafterEventKindServed(TypedDict):
+    served: DrafterEventKindServedBody
+DrafterEventKind = DrafterEventKindRetrain | DrafterEventKindQualify | DrafterEventKindActivate | DrafterEventKindRollback | DrafterEventKindRevert | DrafterEventKindErase | DrafterEventKindPolicy | DrafterEventKindServed
+DrafterBindingChange = TypedDict("DrafterBindingChange", {"target": DrafterTarget, "from": DrafterServing, "to": DrafterServing, "generation": int})
+class DrafterEvent(TypedDict):
+    id: EntityId
+    at: int
+    by: DrafterActor
+    kind: DrafterEventKind
+    change: NotRequired[DrafterBindingChange | None]
+class DrafterStatus(TypedDict):
+    policy: DrafterPolicy
+    bindings: list[DrafterBinding]
+    served: list[DrafterServedView]
+    events: list[DrafterEvent]
+class DrafterPolicySetRequest(TypedDict):
+    expected_revision: int
+    enabled: bool
+    excluded_worlds: NotRequired[list[EntityId]]
+    recipe: NotRequired[DrafterRecipe | None]
+class DrafterRevertRequest(TypedDict):
+    version: EntityId
+    expected_binding_generation: int
+class DrafterRevertReceipt(TypedDict):
+    binding: DrafterBinding
+    event: NotRequired[DrafterEvent | None]
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -10813,6 +10965,64 @@ class SlideReviewPolicyRowHolderRoute(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung
 SlideReviewPolicyRow = SlideReviewPolicyRowPrecedence | SlideReviewPolicyRowVault | SlideReviewPolicyRowRoute | SlideReviewPolicyRowHolder | SlideReviewPolicyRowHolderRoute
+class PolicyGrantMapEntry(TypedDict):
+    key: PolicyGrantValue
+    value: PolicyGrantValue
+class PolicyGrantExtension(TypedDict):
+    tag: int
+    data: list[int]
+class PolicyGrantValueNil(TypedDict):
+    kind: Literal["nil"]
+class PolicyGrantValueBoolean(TypedDict):
+    kind: Literal["boolean"]
+    value: bool
+class PolicyGrantValueInteger(TypedDict):
+    kind: Literal["integer"]
+    value: str
+class PolicyGrantValueFloat32(TypedDict):
+    kind: Literal["float32"]
+    value: list[int]
+class PolicyGrantValueFloat64(TypedDict):
+    kind: Literal["float64"]
+    value: list[int]
+class PolicyGrantValueString(TypedDict):
+    kind: Literal["string"]
+    value: str
+class PolicyGrantValueRawString(TypedDict):
+    kind: Literal["raw_string"]
+    value: list[int]
+class PolicyGrantValueBinary(TypedDict):
+    kind: Literal["binary"]
+    value: list[int]
+class PolicyGrantValueArray(TypedDict):
+    kind: Literal["array"]
+    value: list[PolicyGrantValue]
+class PolicyGrantValueMap(TypedDict):
+    kind: Literal["map"]
+    value: list[PolicyGrantMapEntry]
+class PolicyGrantValueExtension(TypedDict):
+    kind: Literal["extension"]
+    value: PolicyGrantExtension
+PolicyGrantValue = PolicyGrantValueNil | PolicyGrantValueBoolean | PolicyGrantValueInteger | PolicyGrantValueFloat32 | PolicyGrantValueFloat64 | PolicyGrantValueString | PolicyGrantValueRawString | PolicyGrantValueBinary | PolicyGrantValueArray | PolicyGrantValueMap | PolicyGrantValueExtension
+class PolicyScopedGrantRow(TypedDict):
+    actor_class: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    effector: str
+    scope: Scope
+    selectors: NotRequired[PolicyGrantValue | None]
+    budget: NotRequired[PolicyGrantValue | None]
+    receipt_required: bool
+class TeacherProbeHolderFloor(TypedDict):
+    holder_ref: str
+    min_f1_millionths: int
+class TeacherProbePolicy(TypedDict):
+    probe_id: str
+    min_f1_millionths: int
+    holders: NotRequired[list[TeacherProbeHolderFloor]]
+class SheetAnswerLimit(TypedDict):
+    artifact_ref: NotRequired[str | None]
+    sheet: NotRequired[str | None]
+    max_count: int
 class PolicyManifest(TypedDict):
     schema_version: str
     pack_id: str
@@ -10826,6 +11036,9 @@ class PolicyManifest(TypedDict):
     signatures: NotRequired[list[PolicySignature]]
     auto_checker: NotRequired[str | None]
     slide_review_policy: NotRequired[list[SlideReviewPolicyRow] | None]
+    scoped_grants: NotRequired[list[PolicyScopedGrantRow] | None]
+    teacher_probe: NotRequired[TeacherProbePolicy | None]
+    sheet_answer_limits: NotRequired[list[SheetAnswerLimit] | None]
 class PolicyManifestView(TypedDict):
     manifest_ref: str
     body_hash: str
@@ -12477,15 +12690,19 @@ class CodeWaitTarget(TypedDict):
     step_hash: str
     effect_digest: str
 CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
+CodeWaitRememberScope = Literal["connection", "asking_lineage"]
 class CodeWaitResolveRequest(TypedDict):
     target: CodeWaitTarget
     answer: CodeWaitChoice
+    remember_scope: NotRequired[CodeWaitRememberScope | None]
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
 CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
+    remember_scope: NotRequired[CodeWaitRememberScope | None]
+    remembered_grant_ref: NotRequired[str | None]
     decision_ref: str
     answered_at_ms: int
 CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
@@ -22185,11 +22402,15 @@ class FoldUnfoldRequest(TypedDict):
 class FoldReplyRefused(TypedDict):
     error: str
 FoldReply = T | FoldReplyRefused
-FoldKind = Literal["repl_output"]
+FoldKind = Literal["repl_output", "program"]
+class FoldedSpeech(TypedDict):
+    verb: str
+    call: int
 class FoldedOutput(TypedDict):
     step: int
     handles: list[str]
     ids: list[str]
+    said: NotRequired[list[FoldedSpeech]]
 FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str], "kind": NotRequired[FoldKind | None], "note": NotRequired[str | None], "outputs": NotRequired[list[FoldedOutput]]})
 FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None], "kind": NotRequired[FoldKind | None]})
 FoldDescription = FoldDescriptionFolded | FoldDescriptionPending
@@ -23513,7 +23734,7 @@ class BoardStreamFrame(TypedDict):
     kind: FrameKind
 class BoardFrameReply(TypedDict):
     frame: BoardStreamFrame
-SubscriptionScope = Literal["my_tasks", "my_children", "consults_to_me", "memories", "worlds", "presence", "counts", "diary_reviews"]
+SubscriptionScope = Literal["my_tasks", "my_children", "consults_to_me", "memories", "worlds", "presence", "counts", "diary_reviews", "room_turns"]
 class BoardSubscriptionRequest(TypedDict):
     scopes: list[SubscriptionScope]
 class BoardSubscriptionReply(TypedDict):
