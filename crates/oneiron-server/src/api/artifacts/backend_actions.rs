@@ -58,7 +58,15 @@ pub(super) async fn fetch(
             Arc::clone(&server),
             crate::wire_telemetry::observe_http,
         ))
-        .layer(middleware::from_fn(crate::api::body_codec::body_codec))
+        .layer(crate::api::request_floor::request_floor_layer(&server))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&server),
+            crate::api::request_floor::name_request_floor,
+        ))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&server),
+            crate::api::body_codec::body_codec,
+        ))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&server),
             crate::auth::admit_http_binding,
