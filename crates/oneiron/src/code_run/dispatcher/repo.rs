@@ -122,7 +122,37 @@ impl HostSelfDispatcher<'_> {
                     &binding,
                     input,
                     self.repo_review_policy.as_deref(),
-                    |stamp| match self.repo_run_sources(vault, stamp, &change) {
+                    |stamp| match self.repo_run_sources(vault, stamp, &change, effect) {
+                        Ok(sources) => sources,
+                        Err(error) => {
+                            *failed.borrow_mut() = Some(error);
+                            Err(MemoryError::new(
+                                crate::memory::MEMORY_CODE_INTERNAL,
+                                "the proposal's attribution was not minted",
+                                &[],
+                            ))
+                        }
+                    },
+                );
+                if let Some(error) = failed.into_inner() {
+                    return Err(error);
+                }
+                answered(effect, answer)
+            }
+            RepoRunCall::ProposalResolve(input) => {
+                let change = RepoChange {
+                    path: input.path.clone(),
+                    content_hash: *blake3::hash(&input.content).as_bytes(),
+                };
+                // A store or gate failure while the host mints the
+                // proposal's attribution ends the call as any memory
+                // write's does; it is not a door answer.
+                let failed = RefCell::new(None);
+                let answer = memory.repo_proposal_resolve_for_run(
+                    &binding,
+                    input,
+                    self.repo_review_policy.as_deref(),
+                    |stamp| match self.repo_run_sources(vault, stamp, &change, effect) {
                         Ok(sources) => sources,
                         Err(error) => {
                             *failed.borrow_mut() = Some(error);

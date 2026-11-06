@@ -20443,6 +20443,14 @@
       "effect": "RepoProposalSubmit"
     },
     {
+      "name": "self.code.proposal_resolve",
+      "input": "crate::memory::repo_doors::RepoProposalResolveInput",
+      "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoProposalResolve"
+    },
+    {
       "name": "self.code.merge_queue.enqueue",
       "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
       "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",

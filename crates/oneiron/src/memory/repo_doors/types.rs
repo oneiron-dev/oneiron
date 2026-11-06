@@ -157,6 +157,24 @@ pub struct RepoProposalSubmitInput {
     pub declaration: Option<EntityId>,
 }
 
+/// `self.code.proposal_resolve`: one file resolving a typed repo conflict,
+/// proposed against the run's own pinned work. Review and landing are separate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoProposalResolveInput {
+    pub work: EntityId,
+    pub branch_subject: EntityId,
+    pub conflict: EntityId,
+    pub branch: String,
+    /// The normalized repo-relative path of one conflicted file.
+    pub path: String,
+    pub content: Vec<u8>,
+    pub message: String,
+    /// The current run declaration, under the same rules as proposal_submit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<EntityId>,
+}
+
 /// `self.code.merge_queue.enqueue`: queues the run's own stored proposals
 /// of one work as one batch, under the declaration they were made under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
