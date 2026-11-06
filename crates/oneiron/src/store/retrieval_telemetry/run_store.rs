@@ -154,7 +154,7 @@ impl SessionStoreView<'_> {
         record: &RetrievalRunRecord,
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
-        stage_retrieval_run_with_visibility(self, wtxn, record, true)
+        stage_retrieval_run_with_visibility(self, wtxn, record, true, None)
     }
 
     /// Session sibling of `Store::record_context_pack_provisional_retrieval_run`.
@@ -163,7 +163,7 @@ impl SessionStoreView<'_> {
         wtxn: &mut RwTxn<'_>,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
-        stage_retrieval_run_with_visibility(self, wtxn, record, false)
+        stage_retrieval_run_with_visibility(self, wtxn, record, false, None)
     }
 
     /// Session sibling of `Store::finalize_context_pack_retrieval_run`.
@@ -206,9 +206,14 @@ struct ProvisionalRetrievalRun {
 }
 
 impl ProvisionalRetrievalRun {
-    fn stage(self, core: &StoreCore, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        let staged =
-            stage_retrieval_run_with_visibility(&core.canonical_dbs(), wtxn, &self.record, false);
+    fn stage(mut self, core: &StoreCore, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let staged = stage_retrieval_run_with_visibility(
+            &core.canonical_dbs(),
+            wtxn,
+            &self.record,
+            false,
+            self._replay_inputs_memory.as_mut(),
+        );
         if staged.is_err() {
             core.retrieval_writes_disabled
                 .store(true, std::sync::atomic::Ordering::Release);
@@ -384,7 +389,7 @@ impl Store {
             if published {
                 super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
             }
-            stage_retrieval_run_with_visibility(self, wtxn, record, published)?;
+            stage_retrieval_run_with_visibility(self, wtxn, record, published, None)?;
             if published {
                 super::retention::put_retrieval_age(
                     self,
@@ -683,6 +688,7 @@ fn stage_retrieval_run_with_visibility(
     wtxn: &mut RwTxn<'_>,
     record: &RetrievalRunRecord,
     published: bool,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     record.state.validate()?;
     if let Some(trace) = &record.policy_trace {
@@ -692,7 +698,13 @@ fn stage_retrieval_run_with_visibility(
         super::turn_index::delete(target, wtxn, &existing)?;
         delete_retrieval_trace_fork_indexes_for_run(target, wtxn, record.run_id)?;
     }
-    RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
+    if let Some(memory) = memory {
+        let row = RETRIEVAL_RUN.stage(&record.run_id, record)?;
+        memory.materialized(0, row.value_capacity_bytes());
+        row.put(target, wtxn)?;
+    } else {
+        RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
+    }
     if published {
         super::turn_index::put(target, wtxn, record)?;
         RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &record.run_id)?;
