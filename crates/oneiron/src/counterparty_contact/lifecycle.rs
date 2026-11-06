@@ -394,10 +394,10 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
-    counterparty_contact_record_from_heads(
-        contact_claim_values_in_txn(vault, rtxn, contact_id, None)
-            .map_err(ClaimBodyReadError::into_unbound_error)?,
-    )
+    contact_claim_values_in_txn(vault, rtxn, contact_id, None)
+        .map_err(ClaimBodyReadError::into_unbound_error)?
+        .into_read()
+        .map(CounterpartyContactRead::into_unbound_record)
 }
 
 /// The record `contact_id`'s own `counterparty_contact.*` heads describe, or
@@ -434,7 +434,8 @@ fn live_counterparty_contact_heads_with_memory_in_txn(
     if bodies.is_empty() {
         return Ok(None);
     }
-    counterparty_contact_read_from_heads(bodies)
+    bodies
+        .into_read()
         .map(Some)
         .map_err(ClaimBodyReadError::from)
 }
@@ -544,6 +545,12 @@ fn duplicate_contact_head_error() -> Error {
     ))
 }
 
+fn missing_contact_head_error() -> Error {
+    Error::Record(RecordError::InvalidCounterpartyContactBody(
+        "counterparty contact claim family is missing a live head",
+    ))
+}
+
 fn counterparty_contact_record_from_heads(
     bodies: Vec<ContactClaimValue>,
 ) -> Result<CounterpartyContactRecord> {
@@ -565,9 +572,7 @@ fn counterparty_contact_read_from_heads(
 
     for head in &heads {
         if head.is_none() {
-            return Err(Error::Record(RecordError::InvalidCounterpartyContactBody(
-                "counterparty contact claim family is missing a live head",
-            )));
+            return Err(missing_contact_head_error());
         }
     }
     CounterpartyContactRead::from_heads(heads)

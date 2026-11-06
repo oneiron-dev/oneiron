@@ -511,3 +511,25 @@ Valid contacts still hold required values across later canonical reads. Their
 retained-input FIFO progress, scalar staging, allocation peaks and other
 remaining custody work are not solved by this change. No cap, deadline,
 refusal, default, authority or wire-format policy changes.
+
+## Contact scalar-head input retirement
+
+The Vault contact-head reader parses identity, first-touch, status, creation and
+update timestamps, revocation timestamp, and promotional consent into scalar
+results as their live heads arrive. It drops each scalar's original canonical
+Value and read guard before reading the next claim. These results contain no
+string, array, map, or canonical backing. Later reads pin only the retained
+counterparty, opt-out, and notes values, in addition to the caller's own pins.
+
+Scalar failures remain deferred. Every original canonical read still runs;
+a later read error wins over duplicate-head, missing-head, and field errors.
+If reads succeed, duplicate and missing checks precede the original field-error
+order. The notes wire-type and first content passes still precede state
+validation, and the second content pass still follows it. Opt-out parsing and
+its key-validation scratch allocation stay in that original field order.
+The Store-only reader keeps its original collection and decoding path.
+
+This retires scalar input backing, not all retained inputs. Counterparty, notes,
+and opt-out can still remain live while another canonical read needs memory.
+It does not establish FIFO progress, a global heap bound, or custody for a new
+owned copy. The full retained-input and typed-output findings remain open.

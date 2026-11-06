@@ -125,32 +125,13 @@ pub(super) fn decode_counterparty_contact_fields_borrowed<'a>(
     let counterparty = field(KEY_COUNTERPARTY)?
         .as_str()
         .ok_or_else(invalid_contact)?;
-    let first_touch = CounterpartyFirstTouch::parse(
-        field(KEY_FIRST_TOUCH)?
-            .as_str()
-            .ok_or_else(invalid_contact)?,
-    )
-    .ok_or_else(invalid_contact)?;
-    let status =
-        CounterpartyContactStatus::parse(field(KEY_STATUS)?.as_str().ok_or_else(invalid_contact)?)
-            .ok_or_else(invalid_contact)?;
-    let created_at = field(KEY_CREATED_AT)?
-        .as_u64()
-        .ok_or_else(invalid_contact)?;
-    let updated_at = field(KEY_UPDATED_AT)?
-        .as_u64()
-        .ok_or_else(invalid_contact)?;
-    let revoked_value = field(KEY_REVOKED_AT)?;
-    let revoked_at = if matches!(revoked_value, Value::Nil) {
-        None
-    } else {
-        Some(revoked_value.as_u64().ok_or_else(invalid_contact)?)
-    };
+    let first_touch = decode_first_touch(field(KEY_FIRST_TOUCH)?)?;
+    let status = decode_status(field(KEY_STATUS)?)?;
+    let created_at = decode_timestamp(field(KEY_CREATED_AT)?)?;
+    let updated_at = decode_timestamp(field(KEY_UPDATED_AT)?)?;
+    let revoked_at = decode_revoked_at(field(KEY_REVOKED_AT)?)?;
     let opt_out = decode_opt_out(field(KEY_OPT_OUT)?)?;
-    let promo_consent = match field(KEY_PROMO_CONSENT)? {
-        Value::Boolean(value) => *value,
-        _ => return Err(invalid_contact()),
-    };
+    let promo_consent = decode_promo_consent(field(KEY_PROMO_CONSENT)?)?;
     let notes = decode_notes_borrowed(field(KEY_NOTES)?)?;
     let state = super::read_memory::CounterpartyContactState {
         identity_ref,
@@ -162,6 +143,14 @@ pub(super) fn decode_counterparty_contact_fields_borrowed<'a>(
         opt_out,
         promo_consent,
     };
+    finish_contact_fields(state, counterparty, notes)
+}
+
+fn finish_contact_fields<'a>(
+    state: super::read_memory::CounterpartyContactState,
+    counterparty: &'a str,
+    notes: &'a [Value],
+) -> Result<CounterpartyContactFields<'a>> {
     state.validate(counterparty)?;
     // Keep record.validate's final note validation after the state invariants.
     for note in notes {
@@ -172,6 +161,116 @@ pub(super) fn decode_counterparty_contact_fields_borrowed<'a>(
         counterparty,
         notes,
     })
+}
+
+/// Deferred scalar results hold no canonical value backing.
+#[derive(Default)]
+pub(super) struct CounterpartyContactScalarHeads {
+    identity_ref: Option<std::result::Result<EntityId, ()>>,
+    first_touch: Option<std::result::Result<CounterpartyFirstTouch, ()>>,
+    status: Option<std::result::Result<CounterpartyContactStatus, ()>>,
+    created_at: Option<std::result::Result<u64, ()>>,
+    updated_at: Option<std::result::Result<u64, ()>>,
+    revoked_at: Option<std::result::Result<Option<u64>, ()>>,
+    promo_consent: Option<std::result::Result<bool, ()>>,
+}
+
+impl CounterpartyContactScalarHeads {
+    pub(super) fn stage(&mut self, key: &str, value: &Value) -> bool {
+        match key {
+            KEY_IDENTITY_REF => self.identity_ref = Some(decode_entity_ref(value).map_err(|_| ())),
+            KEY_FIRST_TOUCH => self.first_touch = Some(decode_first_touch(value).map_err(|_| ())),
+            KEY_STATUS => self.status = Some(decode_status(value).map_err(|_| ())),
+            KEY_CREATED_AT => self.created_at = Some(decode_timestamp(value).map_err(|_| ())),
+            KEY_UPDATED_AT => self.updated_at = Some(decode_timestamp(value).map_err(|_| ())),
+            KEY_REVOKED_AT => self.revoked_at = Some(decode_revoked_at(value).map_err(|_| ())),
+            KEY_PROMO_CONSENT => {
+                self.promo_consent = Some(decode_promo_consent(value).map_err(|_| ()))
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    pub(super) fn decode_fields<'a>(
+        self,
+        field: impl Fn(&str) -> Result<&'a Value>,
+    ) -> Result<CounterpartyContactFields<'a>> {
+        // Preserve the original field-error order after all reads and head checks.
+        let identity_ref = self
+            .identity_ref
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let counterparty = field(KEY_COUNTERPARTY)?
+            .as_str()
+            .ok_or_else(invalid_contact)?;
+        let first_touch = self
+            .first_touch
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let status = self
+            .status
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let created_at = self
+            .created_at
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let updated_at = self
+            .updated_at
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let revoked_at = self
+            .revoked_at
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let opt_out = decode_opt_out(field(KEY_OPT_OUT)?)?;
+        let promo_consent = self
+            .promo_consent
+            .expect("complete contact scalar heads")
+            .map_err(|()| invalid_contact())?;
+        let notes = decode_notes_borrowed(field(KEY_NOTES)?)?;
+        let state = super::read_memory::CounterpartyContactState {
+            identity_ref,
+            first_touch,
+            status,
+            created_at,
+            updated_at,
+            revoked_at,
+            opt_out,
+            promo_consent,
+        };
+        finish_contact_fields(state, counterparty, notes)
+    }
+}
+
+fn decode_first_touch(value: &Value) -> Result<CounterpartyFirstTouch> {
+    CounterpartyFirstTouch::parse(value.as_str().ok_or_else(invalid_contact)?)
+        .ok_or_else(invalid_contact)
+}
+
+fn decode_status(value: &Value) -> Result<CounterpartyContactStatus> {
+    CounterpartyContactStatus::parse(value.as_str().ok_or_else(invalid_contact)?)
+        .ok_or_else(invalid_contact)
+}
+
+fn decode_timestamp(value: &Value) -> Result<u64> {
+    value.as_u64().ok_or_else(invalid_contact)
+}
+
+fn decode_revoked_at(value: &Value) -> Result<Option<u64>> {
+    if matches!(value, Value::Nil) {
+        Ok(None)
+    } else {
+        Ok(Some(value.as_u64().ok_or_else(invalid_contact)?))
+    }
+}
+
+fn decode_promo_consent(value: &Value) -> Result<bool> {
+    match value {
+        Value::Boolean(value) => Ok(*value),
+        _ => Err(invalid_contact()),
+    }
 }
 
 /// Returns whether `predicate` belongs to the CounterpartyContact claim family.
