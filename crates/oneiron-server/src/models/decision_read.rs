@@ -52,7 +52,9 @@ use crate::config::models::{
 };
 
 mod host;
+mod prepared;
 use host::HostSlot;
+use prepared::PreparedDecisionRead;
 
 const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
@@ -582,33 +584,7 @@ impl DecisionReader {
         release: Option<ReadRelease<'_>>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
     ) -> LlmResult<LabelReadGenerationOutcome> {
-        // Before the state renders or the tokenizer and completion are asked.
-        if !self.permitted {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        if request.questions.is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let prompts = request
-            .questions
-            .iter()
-            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(refused)?;
-        let read = async {
-            let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions, release, admit_next)
-                .await
-        };
-        // One bound for the tokenizer and completion waits: the decision's work cutoff.
-        match request.work_until {
-            Some(until) => self.runtime.block_on(async {
-                tokio::time::timeout_at(until.into(), read)
-                    .await
-                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
-            }),
-            None => self.runtime.block_on(read),
-        }
+        PreparedDecisionRead::new(self, request)?.read(release, admit_next)
     }
 
     /// Waits for the rung's managed worker to be ready and holds it for the

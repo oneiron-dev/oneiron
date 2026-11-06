@@ -388,6 +388,7 @@ fn extraction_admission_request(
             role: oneiron::LlmMessageRole::User,
             content: vec![oneiron::ContentPart::Text {
                 text: text.to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),

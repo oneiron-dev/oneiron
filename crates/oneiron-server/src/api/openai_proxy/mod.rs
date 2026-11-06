@@ -453,7 +453,7 @@ async fn recall(
     }
     Ok(Some(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }))
 }
 
