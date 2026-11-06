@@ -2370,6 +2370,16 @@ export class Oneiron {
         /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
         publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
       },
+      secrets: {
+        purge: {
+          /** Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves. */
+          request: (input: Facade.RepoSecretPurgeRequest): Facade.RepoSecretPurgePlan => this.#call(() => this.#client.vaultCodeSecretsPurgeRequest(input) as Facade.RepoSecretPurgePlan),
+          /** Read one of the owner's secret purge plans and, once executed, its receipt. */
+          get: (input: Facade.RepoSecretPurgeIdRequest): Facade.RepoSecretPurgeView => this.#call(() => this.#client.vaultCodeSecretsPurgeGet(input) as Facade.RepoSecretPurgeView),
+          /** Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed. */
+          execute: (input: Facade.RepoSecretPurgeIdRequest): Facade.RepoSecretPurgeReceipt => this.#call(() => this.#client.vaultCodeSecretsPurgeExecute(input) as Facade.RepoSecretPurgeReceipt),
+        },
+      },
       checkout: {
         /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
         bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),

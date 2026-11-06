@@ -55,4 +55,5 @@ pub mod secret_manifest;
 pub(crate) mod secret_marks;
 pub(crate) mod secret_projection;
 pub mod secret_publication;
+pub mod secret_purge;
 pub mod tree;

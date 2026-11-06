@@ -437,6 +437,32 @@ impl FrozenGitArgv {
         )
     }
 
+    /// `reflog expire --expire=now --all`: drops every reflog entry of the
+    /// store (FIX 7608 slice 10). No argument is the caller's; its stdout
+    /// is spooled, so a store of any size runs with no wall-clock bound
+    /// (Rule 5).
+    pub(super) fn expire_reflogs() -> Self {
+        let mut argv = Self::frozen(
+            GitWireOperation::ExpireReflogs,
+            os_args(&["reflog", "expire", "--expire=now", "--all"]),
+        );
+        argv.retained = RetainedGitIo::default().with_spooled_stdout();
+        argv
+    }
+
+    /// `gc --prune=now --quiet`: repacks what refs reach and deletes every
+    /// object none reaches (FIX 7608 slice 10). No argument is the
+    /// caller's; its stdout is spooled, so a store of any size runs with no
+    /// wall-clock bound (Rule 5).
+    pub(super) fn collect_objects() -> Self {
+        let mut argv = Self::frozen(
+            GitWireOperation::CollectObjects,
+            os_args(&["gc", "--prune=now", "--quiet"]),
+        );
+        argv.retained = RetainedGitIo::default().with_spooled_stdout();
+        argv
+    }
+
     pub(super) const fn operation(&self) -> GitWireOperation {
         self.operation
     }

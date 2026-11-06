@@ -4125,6 +4125,9 @@ class Oneiron:
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs":
             return Oneiron._VaultCodeOriginVerbs(self._client)
         @property
+        def secrets(self) -> "Oneiron._VaultCodeSecretsVerbs":
+            return Oneiron._VaultCodeSecretsVerbs(self._client)
+        @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
             return Oneiron._VaultCodeCheckoutVerbs(self._client)
         @property
@@ -4280,6 +4283,24 @@ class Oneiron:
         def set(self, spec):
             """Cut over one existing served origin under the owner proof and expected authority epoch."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_authority_set(json.dumps(spec))))
+    class _VaultCodeSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def purge(self) -> "Oneiron._VaultCodeSecretsPurgeVerbs":
+            return Oneiron._VaultCodeSecretsPurgeVerbs(self._client)
+    class _VaultCodeSecretsPurgeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def request(self, spec):
+            """Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_purge_request(json.dumps(spec))))
+        def get(self, spec):
+            """Read one of the owner's secret purge plans and, once executed, its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_purge_get(json.dumps(spec))))
+        def execute(self, spec):
+            """Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_purge_execute(json.dumps(spec))))
     class _VaultCodeCheckoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

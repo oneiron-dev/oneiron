@@ -3943,6 +3943,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.secrets.purge.request",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::RepoSecretPurgeRequest,
+                >(),
+            ),
+            (
+                "vault.code.secrets.purge.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+                >(),
+            ),
+            (
+                "vault.code.secrets.purge.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+                >(),
+            ),
+            (
                 "vault.code.checkout.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::CheckoutDoorBindRequest,
@@ -7778,6 +7796,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
+    "vault.code.secrets.purge.request",
+    "vault.code.secrets.purge.get",
+    "vault.code.secrets.purge.execute",
     "vault.code.checkout.bind",
     "vault.code.checkout.claim",
     "vault.code.checkout.get",
@@ -9723,6 +9744,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.publications" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginPublicationsView,
+        >(),
+        "vault.code.secrets.purge.request" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::RepoSecretPurgePlan,
+        >(),
+        "vault.code.secrets.purge.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::RepoSecretPurgeView,
+        >(),
+        "vault.code.secrets.purge.execute" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::RepoSecretPurgeReceipt,
         >(),
         "vault.code.checkout.bind" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CheckoutDoorBinding,
@@ -15832,6 +15862,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.publications" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.purge.request" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.purge.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.purge.execute" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -22061,6 +22112,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::origin_doors::OriginPublicationsRequest =
                 decode(value.clone())?;
         }
+        "vault.code.secrets.purge.request" => {
+            let _input: crate::memory::origin_doors::RepoSecretPurgeRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.secrets.purge.get" => {
+            let _input: crate::memory::origin_doors::RepoSecretPurgeIdRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.secrets.purge.execute" => {
+            let _input: crate::memory::origin_doors::RepoSecretPurgeIdRequest =
+                decode(value.clone())?;
+        }
         "vault.code.checkout.bind" => {
             let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
                 decode(value.clone())?;
@@ -25500,6 +25563,15 @@ pub fn invoke(
         }
         "vault.code.origin.publications" => {
             encode(vault_code_origin_publications(memory, decode(value)?)?)
+        }
+        "vault.code.secrets.purge.request" => {
+            encode(vault_code_secrets_purge_request(memory, decode(value)?)?)
+        }
+        "vault.code.secrets.purge.get" => {
+            encode(vault_code_secrets_purge_get(memory, decode(value)?)?)
+        }
+        "vault.code.secrets.purge.execute" => {
+            encode(vault_code_secrets_purge_execute(memory, decode(value)?)?)
         }
         "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
         "vault.code.checkout.claim" => encode(vault_code_checkout_claim(memory, decode(value)?)?),
@@ -32708,6 +32780,33 @@ pub fn vault_code_origin_publications(
 ) -> MemoryResult<crate::memory::origin_doors::OriginPublicationsView> {
     memory.origin_publications_as(
         &memory.embedded_owner("vault.code.origin.publications")?,
+        input,
+    )
+}
+pub fn vault_code_secrets_purge_request(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::RepoSecretPurgeRequest,
+) -> MemoryResult<crate::memory::origin_doors::RepoSecretPurgePlan> {
+    memory.code_secrets_purge_request_as(
+        &memory.embedded_owner("vault.code.secrets.purge.request")?,
+        input,
+    )
+}
+pub fn vault_code_secrets_purge_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+) -> MemoryResult<crate::memory::origin_doors::RepoSecretPurgeView> {
+    memory.code_secrets_purge_get_as(
+        &memory.embedded_owner("vault.code.secrets.purge.get")?,
+        input,
+    )
+}
+pub fn vault_code_secrets_purge_execute(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+) -> MemoryResult<crate::memory::origin_doors::RepoSecretPurgeReceipt> {
+    memory.code_secrets_purge_execute_as(
+        &memory.embedded_owner("vault.code.secrets.purge.execute")?,
         input,
     )
 }

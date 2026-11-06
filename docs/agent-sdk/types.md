@@ -3228,6 +3228,8 @@ class Oneiron:
         @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
         @property
+        def secrets(self) -> "Oneiron._VaultCodeSecretsVerbs": ...
+        @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
         @property
         def views(self) -> "Oneiron._VaultCodeViewsVerbs": ...
@@ -3319,6 +3321,16 @@ class Oneiron:
             """Read one served origin authority and this host identity under the owner credential."""
         def set(self, spec: Facade.OriginAuthoritySetRequest) -> Facade.OriginAuthorityView:
             """Cut over one existing served origin under the owner proof and expected authority epoch."""
+    class _VaultCodeSecretsVerbs:
+        @property
+        def purge(self) -> "Oneiron._VaultCodeSecretsPurgeVerbs": ...
+    class _VaultCodeSecretsPurgeVerbs:
+        def request(self, spec: Facade.RepoSecretPurgeRequest) -> Facade.RepoSecretPurgePlan:
+            """Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves."""
+        def get(self, spec: Facade.RepoSecretPurgeIdRequest) -> Facade.RepoSecretPurgeView:
+            """Read one of the owner's secret purge plans and, once executed, its receipt."""
+        def execute(self, spec: Facade.RepoSecretPurgeIdRequest) -> Facade.RepoSecretPurgeReceipt:
+            """Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."""
     class _VaultCodeCheckoutVerbs:
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
