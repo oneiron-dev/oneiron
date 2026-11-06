@@ -41387,6 +41387,8 @@ pub struct ExternalImportReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub publication: Option<String>,
+    #[serde(rename = "lfs_daemon_residual")]
+    pub lfs_daemon_residual: bool,
 }
 
 /// `oneiron::repo_mutation::external_import::types::ExternalImportLookup`.
