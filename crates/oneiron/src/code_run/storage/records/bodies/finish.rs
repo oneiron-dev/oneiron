@@ -89,13 +89,15 @@ pub(in crate::code_run::storage) fn finish_output_sourced(
     })
 }
 
-/// `output` as an occurrence `owner` holds: one per owner and path.
+/// `output` as an occurrence `owner` holds: one per owner and path, which
+/// it names as its code-run output origin (FIX 7365).
 pub(in crate::code_run::storage) fn owned_body(
     owner: EntityId,
     output: &CodeRunRawOutput,
     body: &StoredBody,
 ) -> Result<crate::provenance::body::OwnedBody> {
     use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
+    use crate::store::body_descriptor::CodeRunOutputOrigin;
     let body = BodyRef {
         blake3: output.raw_blake3,
         bytes: output.raw_len,
@@ -115,6 +117,9 @@ pub(in crate::code_run::storage) fn owned_body(
             }
         },
         result: None,
+        code_run_output: Some(CodeRunOutputOrigin {
+            path: output.path.clone(),
+        }),
     })
 }
 

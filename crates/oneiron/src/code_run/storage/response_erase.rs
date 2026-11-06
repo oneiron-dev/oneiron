@@ -1,7 +1,9 @@
 //! An erase of a code run's actor, over the reply content its runs kept
 //! (FIX 5718, KEY STORE = A): the replay rows (a run's own and its write
 //! receipts', bridge outcomes and output previews) and the bodies of the
-//! outputs that hold reply content.
+//! outputs that hold reply content. A run's reply bodies are the outputs its
+//! record lists and each body its own descriptors hold at a code-run output
+//! path that holds reply content, such as a raw put's (FIX 7365).
 //!
 //! The actor scrub ([`erase_actor_responses_in_txn`], from the capsule
 //! table's one callback) runs on a soft delete too, so it only releases: each
@@ -39,9 +41,10 @@ use super::response_owners::{
 use super::spawn_erase::fence_spawn_targets_in_txn;
 use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
 use crate::engine_executor::holds_reply_content;
-use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
+use crate::provenance::body::{owned_bodies_in_txn, owned_body_in_txn, release_body_in_txn};
 use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
+use crate::store::result_body_rows::body_handle;
 use crate::{EntityId, Result, Vault};
 
 /// One body occurrence a run holds: the run, the path and the body's handle.
@@ -180,7 +183,7 @@ pub(crate) fn retire_actor_responses_in_txn(
         .collect();
     for (record_id, _) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            held.extend(reply_occurrences(&record));
+            held.extend(run_reply_occurrences_in_txn(store, wtxn, &record)?);
         }
     }
     let mut digests: BTreeMap<EntityId, Vec<[u8; 32]>> = BTreeMap::new();
@@ -241,8 +244,9 @@ fn actor_records_in_txn(
     Ok(records)
 }
 
-/// The record's owned reply occurrences. An exact canonical native receipt
-/// keeps its original standing independently of its shared content hash.
+/// The record's owned reply occurrences of the outputs it lists. An exact
+/// canonical native receipt keeps its original standing independently of
+/// its shared content hash.
 fn reply_occurrences(record: &CodeRunReplayRecord) -> Vec<Occurrence> {
     record
         .outputs
@@ -254,14 +258,57 @@ fn reply_occurrences(record: &CodeRunReplayRecord) -> Vec<Occurrence> {
         .collect()
 }
 
-/// Releases the record's reply occurrences with each occurrence's own taint
-/// and secret marks, never another holder's or a retained receipt's.
+/// The path namespace of the bodies a run holds for its replay capsules and
+/// contribution forks (`replay/capsule/`, `replay/contribution/`): the
+/// capsule erase releases them, the hard erase retires them from the
+/// capsule rows, and a soft delete keeps them, so no descriptor there is a
+/// reply body.
+const CAPSULE_BODY_PATH_PREFIX: &str = "replay/";
+
+/// [`reply_occurrences`], then each reply body `record`'s run holds that
+/// the record does not list (FIX 7365): a descriptor the run owns whose
+/// code-run output path holds reply content, such as a raw put's
+/// observation, once by its owner and occurrence, its handle its held
+/// digest's. A descriptor with no such path, one whose occurrence that path
+/// does not derive, and one that holds no bytes name none. The run's
+/// control bodies, its fallback-speech marker among them, and its capsule
+/// bodies ([`CAPSULE_BODY_PATH_PREFIX`]) stay.
+fn run_reply_occurrences_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &CodeRunReplayRecord,
+) -> Result<Vec<Occurrence>> {
+    let run = record.run_id;
+    let mut listed = BTreeSet::new();
+    for output in &record.outputs {
+        listed.insert(ResultOccurrence::owned(run, &output.path)?.id());
+    }
+    let mut held = reply_occurrences(record);
+    for body in owned_bodies_in_txn(store, txn, &run)? {
+        let (Some(origin), Some(bytes)) = (&body.code_run_output, body.state.held()) else {
+            continue;
+        };
+        if origin.path.starts_with(CAPSULE_BODY_PATH_PREFIX)
+            || !holds_reply_content(&origin.path)
+            || ResultOccurrence::owned(run, &origin.path)?.id() != body.occurrence
+            || !listed.insert(body.occurrence)
+        {
+            continue;
+        }
+        held.push((run, origin.path.clone(), body_handle(&bytes.blake3)));
+    }
+    Ok(held)
+}
+
+/// Releases each of `record`'s reply occurrences
+/// ([`run_reply_occurrences_in_txn`]), with each occurrence's own taint and
+/// secret marks, never another holder's or a retained receipt's.
 fn release_reply_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
 ) -> Result<()> {
-    for (owner, path, handle) in reply_occurrences(record) {
+    for (owner, path, handle) in run_reply_occurrences_in_txn(store, wtxn, record)? {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
     Ok(())

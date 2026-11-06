@@ -192,6 +192,7 @@ impl Vault {
                 },
             },
             result: None,
+            code_run_output: None,
         };
         let dir = self.store.body_dir()?;
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
