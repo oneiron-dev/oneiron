@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1314 code-mode rows (1274 host rows, 40 run rows), 4652 declarations.
-// Replies: 1125 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4654 declarations.
+// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -3229,6 +3229,8 @@ declare namespace Sdk {
   type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
   type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
   type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null };
+  type RoomLeaveRequest = { room: EntityId; person: EntityId };
+  type RoomLeaveOutcome = { member_ids: EntityId[] };
   type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
   type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" };
@@ -7316,6 +7318,8 @@ declare const vault: Sdk.VaultHost & {
     invite(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** Files and decides a request to take part in a room or one of its threads. */
     join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
+    /** Ends a person's current membership of a room as the bound caller; saving that rode on it stops, and a later vault.rooms.join opens a new membership. */
+    leave(input: Sdk.RoomLeaveRequest): Promise<Sdk.RoomLeaveOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */
     list(input: Sdk.EmptyRequest): Promise<Sdk.RoomEntry[] | StoredResult>;
     /** One page of the turns in a room this reader may read; with thread_ref, of that one thread alone. */

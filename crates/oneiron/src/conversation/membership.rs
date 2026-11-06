@@ -358,6 +358,28 @@ impl Vault {
             None,
         )
     }
+    /// [`Self::leave_member`] in the caller's write transaction: the typed
+    /// room leave door (FIX 3968) reads the room's members in the same commit.
+    pub(crate) fn leave_member_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+    ) -> Result<()> {
+        self.change_membership_in_txn(
+            txn,
+            conversation,
+            person,
+            actor,
+            at,
+            MembershipAction::Leave,
+            None,
+            None,
+            None,
+        )
+    }
     /// Joins the PERSON in this handoff's window and keeps the same
     /// receipt on its membership row (FIX 3634).
     pub(super) fn join_member_from_in_txn(

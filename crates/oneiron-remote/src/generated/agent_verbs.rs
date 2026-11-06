@@ -2668,6 +2668,9 @@ impl OneironClient {
                 "vault.rooms.consent" => remote_agent_verb_output::<
                     oneiron::workspace_roster::JoinOutcome,
                 >(client, verb, &input),
+                "vault.rooms.leave" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomLeaveOutcome,
+                >(client, verb, &input),
                 "vault.rooms.offer" => remote_agent_verb_output::<
                     oneiron::workspace_roster::OfferCard,
                 >(client, verb, &input),
@@ -14483,6 +14486,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.consent", value)
+    }
+    pub fn vault_rooms_leave(
+        &self,
+        input: &oneiron::workspace_roster::RoomLeaveRequest,
+    ) -> Result<oneiron::workspace_roster::RoomLeaveOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.leave", value)
     }
     pub fn vault_rooms_offer(
         &self,
