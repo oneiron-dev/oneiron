@@ -268,23 +268,48 @@ impl HostSelfDispatcher<'_> {
                     && answer.output.get("outcome").and_then(Value::as_str)
                         == Some("delivered") =>
             {
-                publisher.publish(&mut answer.output)?
+                let (rows, observations, hooks) =
+                    (&answer.rows, &answer.observations, &answer.hooks);
+                publisher.publish(&mut answer.output, &mut |wtxn, card, reply| {
+                    let answer = SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+                        output: card.clone(),
+                        rows: rows.clone(),
+                        observations: observations.clone(),
+                        hooks: hooks.clone(),
+                    });
+                    let mut row = CodeRunBridgeCall::record(
+                        0,
+                        &SelfCall::AgentVerb(call.clone()),
+                        &answer,
+                        0,
+                        0,
+                    )?;
+                    reply.keep(&mut row.outcome)?;
+                    receipt.bridge_calls.push(row);
+                    self.put_write_receipt_in_txn(wtxn, &receipt, generation, program.as_ref())?;
+                    Ok(())
+                })?
             }
             _ => None,
         };
-        // A receipt keeps its call's answer as its record's first row.
-        let mut row = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(call), &outcome, 0, 0)?;
-        if let Some(reply) = &published {
-            reply.keep(&mut row.outcome)?;
+        // A placed body already committed its receipt in the publishing writer.
+        // Inline and unplaceable answers keep their original receipt path.
+        if published.is_none() {
+            receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                0,
+                &SelfCall::AgentVerb(call),
+                &outcome,
+                0,
+                0,
+            )?);
+            self.put_write_receipt(
+                &receipt,
+                Some(generation),
+                program.as_ref(),
+                true,
+                site.run_id,
+            )?;
         }
-        receipt.bridge_calls.push(row);
-        self.put_write_receipt(
-            &receipt,
-            Some(generation),
-            program.as_ref(),
-            true,
-            site.run_id,
-        )?;
         // The replay row is persisted; the door releases what the answer held (FIX 10633).
         door.answer_recorded();
         if let (Some(reply), Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =

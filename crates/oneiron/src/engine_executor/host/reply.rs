@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 
 use super::*;
+use crate::code_run::storage::ReplyBody;
 use crate::code_run::{ExecutorReply, ExecutorReplyPublisher};
 
 pub(super) struct CallReplyPublisher<'a, 's> {
@@ -38,7 +39,18 @@ impl<'a, 's> CallReplyPublisher<'a, 's> {
 }
 
 impl ExecutorReplyPublisher for CallReplyPublisher<'_, '_> {
-    fn publish(&self, value: &mut serde_json::Value) -> Result<Option<ExecutorReply>> {
+    fn publish(
+        &self,
+        value: &mut serde_json::Value,
+        commit: &mut dyn FnMut(
+            &mut heed::RwTxn<'_>,
+            &serde_json::Value,
+            &ExecutorReply,
+        ) -> Result<()>,
+    ) -> Result<Option<ExecutorReply>> {
+        let ExecutorStorage::Canonical(vault) = self.storage else {
+            return Ok(None);
+        };
         let mut size = ByteCount::default();
         serde_json::to_writer(&mut size, &*value).map_err(|error| {
             Error::InvalidConfig(format!("verb answer encoding failed: {error}"))
@@ -51,14 +63,29 @@ impl ExecutorReplyPublisher for CallReplyPublisher<'_, '_> {
             .and_then(|share| share.hold(size.0 as u64, self.storage.limit_watch()));
         let mut sink = self.storage.code_run_reply_spool()?;
         write_json(&mut sink, &*value)?;
-        let output = match self.storage.publish_code_run_reply(
+        let output = match vault.publish_admitted_code_run_output_and(
             bridge_result_output_path(self.seq),
             sink,
+            true,
             self.run_id,
+            |wtxn, output| {
+                let reply = ExecutorReply {
+                    owner: self.run_id,
+                    name: self.name.clone(),
+                    output: output.clone(),
+                };
+                let mut card = result_handle_json(self.run_id, output);
+                card["name"] = json!(self.name);
+                commit(wtxn, &card, &reply)
+            },
         )? {
-            Ok(output) => output,
-            Err(unavailable) => {
-                *value = unavailable;
+            ReplyBody::Published(output) => output,
+            ReplyBody::Unplaceable {
+                bytes,
+                text,
+                reason,
+            } => {
+                *value = crate::code_run::result_read::unplaced_answer(bytes, text, reason);
                 return Ok(None);
             }
         };
