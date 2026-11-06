@@ -284,14 +284,14 @@ impl Frame {
                     insert(&mut entries, id, entry, &table)?;
                 }
             }
-            leading_dictionary(&part[end + 7..])?.0
+            leading_dictionary(&part[end + 7..], &table)?.0
         } else {
             let header = part
                 .windows(3)
                 .position(|v| v == b"obj")
                 .filter(|v| *v < 64)
                 .ok_or(PdfPreparationError::MalformedPdf)?;
-            let (dict, consumed) = leading_dictionary(&part[header + 3..])?;
+            let (dict, consumed) = leading_dictionary(&part[header + 3..], &table)?;
             if !dict.has_type(b"XRef") {
                 return Err(PdfPreparationError::MalformedPdf);
             }
@@ -479,12 +479,17 @@ fn operand_bytes(bytes: usize) -> usize {
     input.saturating_add(input.saturating_mul(trees::TREE_BYTES_PER_SOURCE_BYTE))
 }
 
-fn operand(bytes: &[u8]) -> Result<Object> {
+fn operand_in(bytes: &[u8], stage: &Stage) -> Result<Object> {
     source::reject_inline_images(bytes)?;
-    let mut input = Vec::with_capacity(bytes.len().saturating_add(OPERAND_END.len()));
+    let capacity = bytes.len().saturating_add(OPERAND_END.len());
+    stage.admit(capacity)?;
+    let mut input = Vec::with_capacity(capacity);
     input.extend_from_slice(bytes);
     input.extend_from_slice(OPERAND_END);
-    let mut content = Content::decode_strict(&input)?;
+    let mut content = match stage.decode_admission() {
+        Some(admission) => Content::decode_strict_admitted(&input, &*admission)?,
+        None => Content::decode_strict(&input)?,
+    };
     if content.operations.len() != 1 {
         return Err(PdfPreparationError::MalformedPdf);
     }
@@ -493,4 +498,8 @@ fn operand(bytes: &[u8]) -> Result<Object> {
         return Err(PdfPreparationError::MalformedPdf);
     }
     Ok(operation.operands.remove(0))
+}
+
+fn operand(bytes: &[u8]) -> Result<Object> {
+    operand_in(bytes, &Stage::UNADMITTED)
 }
