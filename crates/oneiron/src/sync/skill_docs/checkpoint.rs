@@ -42,6 +42,7 @@ struct RefinementContent {
 /// codec. This is checkpoint data, never native operation admission.
 pub(crate) struct SplitRecordDocument {
     pub(crate) entity: EntityId,
+    pub(crate) row: Vec<u8>,
     pub(crate) content: Vec<u8>,
     pub(crate) actors: Vec<Atom>,
 }
@@ -49,9 +50,16 @@ pub(crate) struct SplitRecordDocument {
 /// The actual restored head and each leg's pieces, kept apart even when a
 /// digest occurs in both legs or more than once within one leg.
 pub(crate) struct RecordDocumentTransport {
+    pub(crate) row: Vec<u8>,
     pub(crate) head: Vec<u8>,
     pub(crate) snapshot: Vec<(String, Vec<u8>)>,
     pub(crate) refinement: Vec<(String, Vec<u8>)>,
+}
+
+impl RecordDocumentTransport {
+    pub(crate) fn entity(&self) -> Result<EntityId> {
+        super::decode(&self.head).map(|(_, entity)| entity)
+    }
 }
 
 /// Splits one captured historical head with its exact entities-map row and
@@ -100,6 +108,7 @@ pub(crate) fn split<B: AsRef<[u8]>>(
     join(&content, split.atoms.clone()).map_err(|_| Unresolved::Undecodable)?;
     Ok(SplitRecordDocument {
         entity,
+        row: row.to_vec(),
         content,
         actors: split.atoms,
     })
@@ -153,6 +162,7 @@ pub(crate) fn join(content: &[u8], actors: Vec<Atom>) -> Result<RecordDocumentTr
         refinement,
     })?;
     Ok(RecordDocumentTransport {
+        row: decoded.row,
         head,
         snapshot: snapshot_pieces,
         refinement: refinement_pieces,
