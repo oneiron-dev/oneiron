@@ -12,6 +12,8 @@ use crate::{EntityId, Result, Vault};
 const FIELD_RUN_REF: &str = "run_ref";
 /// The handle `vault.runs.revert` takes for the run.
 const FIELD_REVERT_HANDLE: &str = "revert_handle";
+/// The owner decision the settlement recorded, as `gate:<id>`.
+const FIELD_DECISION_REF: &str = "decision_ref";
 /// How many changes the settlement names, and how many of them landed.
 const FIELD_CHANGE_COUNT: &str = "change_count";
 const FIELD_LANDED_COUNT: &str = "landed_count";
@@ -53,8 +55,20 @@ pub(crate) fn run_settlement_receipts(
             .iter()
             .filter(|change| change.verdict == RunChangeVerdict::Landed)
             .count();
+        // A credential-bound reader sees the settlement through a row it
+        // settles: the first member that names one. A settlement of external
+        // effects alone keeps its owner decision, which no credential reads.
+        let trigger = stored
+            .changes
+            .iter()
+            .find_map(|change| change.member.rows().ok()?.first().copied())
+            .map_or_else(
+                || settlement.receipt.clone(),
+                |row| format!("run_change:{}", row.to_hex()),
+            );
         let fields = BTreeMap::from([
             (FIELD_RUN_REF.to_owned(), format!("run:{run}")),
+            (FIELD_DECISION_REF.to_owned(), settlement.receipt.clone()),
             (
                 FIELD_REVERT_HANDLE.to_owned(),
                 settlement.revert_handle.clone(),
@@ -73,7 +87,7 @@ pub(crate) fn run_settlement_receipts(
             on_behalf_of: None,
             outcome: verdict_word(settlement.verdict).to_owned(),
             job_ref: Some(run.clone()),
-            trigger_ref: Some(settlement.receipt.clone()),
+            trigger_ref: Some(trigger),
             policy_trace: Vec::new(),
             fields,
         };
