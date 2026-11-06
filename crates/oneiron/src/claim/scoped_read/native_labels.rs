@@ -89,7 +89,7 @@ impl ScopedRead<'_> {
             || !position
                 .scope
                 .sensitivity
-                .is_narrowing_of(&filter.read_scope().sensitivity)
+                .is_narrowing_of(filter.read_scope().sensitivity)
             || !crate::gate::scoped_read_record_allowed(&policy, &self.actor_key, &position.scope)
             || !self
                 .actor_key
