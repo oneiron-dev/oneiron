@@ -38,7 +38,7 @@ use oneiron::sync::WindowManager;
 use oneiron::sync::bridge::Materializer;
 
 mod lane_events;
-use lane_events::{LaneMark, lane_observer};
+use lane_events::{LaneMark, RefusedUpgrades, lane_observer};
 
 /// How often one env's membership is re-checked: leave is rare, and each
 /// check is one authenticated POST per membership.
@@ -124,6 +124,8 @@ struct SharedEnvEntry {
     /// The last unix second a leave check ran clean (`None` answered).
     /// Failures leave the stamp alone, so they retry on the next round.
     last_leave_check: u64,
+    /// The lane's 401 upgrades, and those a clean check covers (FIX 12442).
+    refused: RefusedUpgrades,
 }
 
 /// One opened env before its run starts: the vault, its leave state read, and
@@ -279,6 +281,7 @@ impl SharedEnvRegistry {
                         lane,
                         purge_complete,
                         last_leave_check: 0,
+                        refused: RefusedUpgrades::default(),
                     },
                 );
             }
@@ -322,12 +325,13 @@ impl SharedEnvRegistry {
     /// caller holds each handle so shutdown joins the checks. A refusal or
     /// failure (a 401 included) warns and retries, never reads as a leave.
     pub(crate) fn leave_check_round(&self, now: u64) -> Vec<tokio::task::JoinHandle<()>> {
-        let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>, bool)> = {
+        let due: Vec<(SharedEnvKey, Arc<Vault>, Arc<SyncConnection>, bool, u64)> = {
             let envs = self.lock();
             envs.iter()
                 .filter_map(|(key, entry)| {
                     if entry.purge_complete
-                        || now.saturating_sub(entry.last_leave_check) < LEAVE_CHECK_EVERY_SECS
+                        || (now.saturating_sub(entry.last_leave_check) < LEAVE_CHECK_EVERY_SECS
+                            && !entry.refused.owed())
                     {
                         return None;
                     }
@@ -340,17 +344,18 @@ impl SharedEnvRegistry {
                         Arc::clone(&entry.vault),
                         Arc::clone(&entry.connection),
                         direct,
+                        entry.refused.seen(),
                     ))
                 })
                 .collect()
         };
         let mut checks = Vec::with_capacity(due.len());
-        for (key, vault, connection, direct) in due {
+        for (key, vault, connection, direct, refused) in due {
             if !direct {
                 // Throttled like a clean round, so the misconfiguration
                 // warns hourly instead of every tick; the purge stays
                 // unconfirmed until the URL is direct.
-                self.note_leave_check(&key, now);
+                self.note_leave_check(&key, now, refused);
                 tracing::warn!(
                     vault_id = key.0,
                     "shared env home_url is not direct; its leave check stays unsent"
@@ -360,7 +365,7 @@ impl SharedEnvRegistry {
             // A receipt is not purge completion: every recorded left gets the
             // same idempotent confirmation again until it finishes.
             match oneiron::sync::shared_leave::has_left(&vault) {
-                Ok(true) | Ok(false) => checks.push(self.spawn_leave_check(key, connection, now)),
+                Ok(_) => checks.push(self.spawn_leave_check(key, connection, now, refused)),
                 Err(error) => tracing::warn!(
                     vault_id = key.0,
                     kind = ?error.kind(),
@@ -394,12 +399,14 @@ impl SharedEnvRegistry {
     }
 
     /// One env's check: the POST, bounded; the outcome applied back to the
-    /// registry from the task itself.
+    /// registry from the task itself. A clean answer covers the `refused`
+    /// 401 upgrades its round read.
     fn spawn_leave_check(
         &self,
         key: SharedEnvKey,
         connection: Arc<SyncConnection>,
         now: u64,
+        refused: u64,
     ) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
         let (vault_id, member) = key.clone();
@@ -415,7 +422,7 @@ impl SharedEnvRegistry {
                         "shared env left; its lane is detached and its vault stays open"
                     );
                 }
-                Ok(Ok(None)) => this.note_leave_check(&key, now),
+                Ok(Ok(None)) => this.note_leave_check(&key, now, refused),
                 Ok(Err(error)) => tracing::warn!(
                     vault_id = vault_id,
                     reason = leave_check_refusal(&error),
@@ -459,10 +466,12 @@ impl SharedEnvRegistry {
     }
 
     /// Notes a clean check round for one env: its next check is an hour
-    /// out. Failures leave the stamp alone, so they retry next round.
-    fn note_leave_check(&self, key: &SharedEnvKey, now: u64) {
+    /// out, unless a 401 upgrade came after the round read `refused`.
+    /// Failures leave both alone, so they retry next round.
+    fn note_leave_check(&self, key: &SharedEnvKey, now: u64, refused: u64) {
         if let Some(entry) = self.lock().get_mut(key) {
             entry.last_leave_check = now;
+            entry.refused.covered(refused);
         }
     }
 

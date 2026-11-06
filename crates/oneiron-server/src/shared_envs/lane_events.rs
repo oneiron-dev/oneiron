@@ -5,6 +5,35 @@ use std::sync::{Arc, Weak};
 
 use super::{SharedEnvInner, SharedEnvKey, SharedEnvRegistry};
 
+/// One env's 401 upgrades: how many the lane saw, and how many a clean leave
+/// check covers. A clean answer covers only the refusals counted before its
+/// round read them, so one that lands while a check is in flight stays owed.
+#[derive(Clone, Copy, Default)]
+pub(super) struct RefusedUpgrades {
+    seen: u64,
+    covered: u64,
+}
+
+impl RefusedUpgrades {
+    /// A refusal no clean check covers yet: the env's check is due.
+    pub(super) fn owed(self) -> bool {
+        self.seen > self.covered
+    }
+
+    pub(super) fn seen(self) -> u64 {
+        self.seen
+    }
+
+    /// A clean check whose round read `seen` refusals answered.
+    pub(super) fn covered(&mut self, seen: u64) {
+        self.covered = self.covered.max(seen);
+    }
+
+    fn note(&mut self) {
+        self.seen = self.seen.saturating_add(1);
+    }
+}
+
 /// The env a lane runs for, with the registry held weakly so a running lane
 /// never keeps the registry alive.
 #[derive(Clone)]
@@ -25,18 +54,18 @@ impl LaneMark {
         self.key.0
     }
 
-    /// Makes this env's leave check due at the next lifecycle round, as a
-    /// freshly opened env's is. The home refused the lane's credential, and
-    /// a removed membership is one cause. Only the signed check decides; the
-    /// refusal itself is never a leave. Refusals before that round share its
-    /// one check.
+    /// Makes this env's leave check due at the next lifecycle round. The
+    /// home refused the lane's credential, and a removed membership is one
+    /// cause. Only the signed check decides; the refusal itself is never a
+    /// leave. Refusals before that round share its one check, and the check
+    /// stays owed until a clean one started after the refusal answers.
     fn owe_leave_check(&self) {
         let Some(inner) = self.registry.upgrade() else {
             return;
         };
         let registry = SharedEnvRegistry { inner };
         if let Some(entry) = registry.lock().get_mut(&self.key) {
-            entry.last_leave_check = 0;
+            entry.refused.note();
         }
     }
 }
