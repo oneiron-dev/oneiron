@@ -456,8 +456,9 @@ after the head, middle and tail all succeed. The styled path keeps those origina
 property bytes unchanged. Added or fallback lines borrowing that paragraph's
 properties then keep the same style without copying identities still carried
 by the original paragraph. Failed styled attempts and field-containing paragraphs
-do not gain these property-source entries; properties with no retained original
-source keep the prior template behavior.
+do not gain these property-source entries. With no retained original source,
+the first successful fresh property copy keeps its identity; later copies of that
+same property source omit only the XML-namespace `id` attributes.
 
 The leading-empty-run source case can therefore retain its original `rPr xml:id`
 once at the original edge while the inserted middle keeps the same style without
@@ -484,3 +485,28 @@ Internal-boundary empties, field-containing paragraphs, matching and field-cut
 receipts keep their prior behavior. This is source-only work in the existing
 17480/18510 pack, not full table-cell fallback, OF-509/OF-510, compiler, runtime or
 Office fidelity proof.
+
+
+## Same-source identities across fresh table-cell property copies
+
+A rebuilt cell also tracks the exact original property spans used by successful
+fresh outputs in document order. When no retained original owns the property,
+the first fresh copy keeps its original bytes, including XML-namespace `id`.
+Later copies from that same property span omit only those identity attributes
+through the existing namespace-aware property copier. The original-source plan
+still takes precedence when the second render knows a retained original survives.
+This covers global run-template sharing across changed and added lines even
+when no original run property survives, and applies the same rule to fresh
+paragraph property copies. Distinct property sources are not deduplicated.
+
+The reservation is per emitted run or break, not per `run_xml` call: each
+nonempty text piece and requested break chooses its own property copy in output
+order. Empty text reserves nothing. Styled and fallback paragraph attempts stage
+fresh reservations locally and publish them only after the whole attempt succeeds.
+A temporary static run replaced by the existing native partial-run serializer
+also releases its fresh reservation; its original source owns that identity.
+Selection, original raw and native-partial bytes, styles, namespace bindings,
+relationship references, errors and field-removal receipts keep their prior paths.
+No identities are minted and no style source is replaced or dropped. This is
+source-only work in the existing 17480/18510/20096 pack; it is not a global
+identity, compiler, runtime or Office fidelity certificate.
