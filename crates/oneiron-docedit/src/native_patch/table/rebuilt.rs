@@ -39,8 +39,10 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// A second render knows the exact original edge, whole-paragraph, whole-run,
 /// native single-piece partial-run, interior-zero and opaque-child identity sources.
 /// Fresh run and paragraph property template copies omit only XML-namespace id
-/// attributes that survive in those original sources. A successful styled paragraph
-/// also owns its original pPr and endParaRPr sources; their original bytes stay.
+/// attributes that survive in those original sources or an earlier fresh copy.
+/// With no retained original, the first emitted fresh copy keeps its identity;
+/// failed render attempts do not reserve a fresh property source. A successful
+/// styled paragraph also owns its original pPr and endParaRPr sources; their original bytes stay.
 /// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
@@ -73,6 +75,7 @@ fn rebuilt_pass(
     retained_sources: &[std::ops::Range<usize>],
 ) -> Result<(Vec<u8>, Vec<std::ops::Range<usize>>), NativeRefusal> {
     let mut emitted_sources = Vec::new();
+    let mut copied_sources = Vec::new();
     let (first, first_node) = paragraphs[0];
     let last_node = paragraphs[paragraphs.len() - 1].1;
     let piece = |node: Option<(usize, &Node)>| {
@@ -83,25 +86,33 @@ fn rebuilt_pass(
     let source_run = within(tree, body)
         .find(|(_, node)| node.is(DML, "r"))
         .or_else(|| within(tree, body).find(|(_, node)| node.is(DML, "fld")));
-    let template_property = |property: Option<(usize, &Node)>| match property {
-        Some((at, node))
-            if retained_sources
-                .iter()
-                .any(|span| span.start <= node.span.start && node.span.end <= span.end) =>
-        {
-            copied_properties(bytes, tree, at)
-        }
-        _ => piece(property).to_owned(),
-    };
+    let template_property =
+        |property: Option<(usize, &Node)>, copied_sources: &mut Vec<std::ops::Range<usize>>| {
+            match property {
+                Some((at, node))
+                    if retained_sources
+                        .iter()
+                        .any(|span| span.start <= node.span.start && node.span.end <= span.end)
+                        || copied_sources.contains(&node.span) =>
+                {
+                    copied_properties(bytes, tree, at)
+                }
+                Some((_, node)) => {
+                    copied_sources.push(node.span.clone());
+                    piece(property).to_owned()
+                }
+                None => String::new(),
+            }
+        };
     let run_xml = |selected: Option<(usize, &Node)>,
                    para_node: &Node,
-                   text: &str|
+                   text: &str,
+                   copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Result<String, NativeRefusal> {
         let property = selected
             .map(|(run, _)| tree.child(run, DML, "rPr"))
             .transpose()?
             .flatten();
-        let r_pr = template_property(property);
         let (r, t, run_bindings) = match selected {
             Some((at, node)) => (
                 node.child_name("r"),
@@ -118,7 +129,7 @@ fn rebuilt_pass(
                 String::new(),
             ),
         };
-        let static_run = |part: &str| {
+        let static_run = |part: &str, r_pr: &str| {
             format!(
                 "<{r}{run_bindings}>{r_pr}<{t}>{}</{t}></{r}>",
                 escape_text(part)
@@ -127,20 +138,22 @@ fn rebuilt_pass(
         if text.is_empty() {
             Ok(String::new())
         } else if !text.contains('\u{b}') {
-            Ok(static_run(text))
+            let r_pr = template_property(property, copied_sources);
+            Ok(static_run(text, &r_pr))
         } else {
             let br = match selected {
                 Some((_, node)) => node.child_name("br"),
                 None => para_node.child_name("br"),
             };
-            let line_break = format!("<{br}{run_bindings}>{r_pr}</{br}>");
             let mut out = String::new();
             for (index, part) in text.split('\u{b}').enumerate() {
                 if index > 0 {
-                    out.push_str(&line_break);
+                    let r_pr = template_property(property, copied_sources);
+                    out.push_str(&format!("<{br}{run_bindings}>{r_pr}</{br}>"));
                 }
                 if !part.is_empty() {
-                    out.push_str(&static_run(part));
+                    let r_pr = template_property(property, copied_sources);
+                    out.push_str(&static_run(part, &r_pr));
                 }
             }
             Ok(out)
@@ -148,19 +161,23 @@ fn rebuilt_pass(
     };
     let render = |paragraph: (usize, &Node),
                   selected: Option<(usize, &Node)>,
-                  line: &str|
+                  line: &str,
+                  copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Result<String, NativeRefusal> {
+        let mut pending_sources = copied_sources.clone();
         let (para, para_node) = paragraph;
-        let p_pr = template_property(tree.child(para, DML, "pPr")?);
-        let run = run_xml(selected, para_node, line)?;
-        let end = template_property(tree.child(para, DML, "endParaRPr")?);
+        let p_pr = template_property(tree.child(para, DML, "pPr")?, &mut pending_sources);
+        let run = run_xml(selected, para_node, line, &mut pending_sources)?;
+        let end = template_property(tree.child(para, DML, "endParaRPr")?, &mut pending_sources);
         let p = para_node.qualified.as_str();
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
+        *copied_sources = pending_sources;
         Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
     };
     let mut styled = |paragraph: (usize, &Node),
                       selected: Option<(usize, &Node)>,
-                      line: &str|
+                      line: &str,
+                      copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Option<String> {
         let (para, para_node) = paragraph;
         let p_pr_node = tree.child(para, DML, "pPr").ok()?;
@@ -248,7 +265,11 @@ fn rebuilt_pass(
             }
         }
         let mut original_sources = Vec::new();
-        let mut retained_runs = |from: usize, to: usize| -> Option<String> {
+        let mut pending_sources = copied_sources.clone();
+        let mut retained_runs = |from: usize,
+                                 to: usize,
+                                 pending_sources: &mut Vec<std::ops::Range<usize>>|
+         -> Option<String> {
             let mut runs = String::new();
             let mut position = 0;
             let mut previous: Option<(usize, &Node)> = None;
@@ -284,7 +305,9 @@ fn rebuilt_pass(
                         original_sources.push(node.span.clone());
                     } else if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
-                        let mut run = run_xml(Some((*at, *node)), para_node, &part).ok()?;
+                        let copied_before = pending_sources.len();
+                        let mut run =
+                            run_xml(Some((*at, *node)), para_node, &part, pending_sources).ok()?;
                         // A split run keeps the old wrappers; one retained piece keeps its attrs once.
                         if field_free
                             && node.is(DML, "r")
@@ -294,6 +317,7 @@ fn rebuilt_pass(
                                 partial_run(bytes, tree, *at, start - position..end - position)
                             {
                                 run = original;
+                                pending_sources.truncate(copied_before);
                                 original_sources.push(node.span.clone());
                             } else {
                                 let attributes: String = node
@@ -409,14 +433,15 @@ fn rebuilt_pass(
             }
             _ => "",
         };
-        let head = retained_runs(0, prefix)?;
+        let head = retained_runs(0, prefix, &mut pending_sources)?;
         let middle = if prefix + suffix == new.len() {
             String::new()
         } else {
             let text: String = new[prefix..new.len() - suffix].iter().collect();
-            run_xml(selected, para_node, &text).ok()?
+            run_xml(selected, para_node, &text, &mut pending_sources).ok()?
         };
-        let tail = retained_runs(old.len() - suffix, old.len())?;
+        let tail = retained_runs(old.len() - suffix, old.len(), &mut pending_sources)?;
+        *copied_sources = pending_sources;
         if field_free {
             original_sources.extend(
                 [p_pr_node, end_node]
@@ -500,18 +525,18 @@ fn rebuilt_pass(
             }
         }
         let rendered = if same_count && index == 0 {
-            match styled((first, first_node), source_run, line) {
+            match styled((first, first_node), source_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => render((first, first_node), source_run, line)?,
+                None => render((first, first_node), source_run, line, &mut copied_sources)?,
             }
         } else if same_count && index > 0 {
             let actual = paragraphs[index];
             let actual_run = paragraph_run(actual.0);
-            match styled(actual, actual_run, line) {
+            match styled(actual, actual_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => match render(actual, actual_run, line) {
+                None => match render(actual, actual_run, line, &mut copied_sources) {
                     Ok(xml) => xml,
-                    Err(_) => render((first, first_node), source_run, line)?,
+                    Err(_) => render((first, first_node), source_run, line, &mut copied_sources)?,
                 },
             }
         } else if !same_count && (index < head || index >= new_count - tail) {
@@ -520,17 +545,17 @@ fn rebuilt_pass(
             } else {
                 paragraphs[paragraphs.len() - (new_count - index)]
             };
-            match styled(actual, paragraph_run(actual.0), line) {
+            match styled(actual, paragraph_run(actual.0), line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => render((first, first_node), source_run, line)?,
+                None => render((first, first_node), source_run, line, &mut copied_sources)?,
             }
         } else if !same_count && index >= head && index < head + paired {
-            match styled(paragraphs[index], source_run, line) {
+            match styled(paragraphs[index], source_run, line, &mut copied_sources) {
                 Some(xml) => xml,
-                None => render((first, first_node), source_run, line)?,
+                None => render((first, first_node), source_run, line, &mut copied_sources)?,
             }
         } else {
-            render((first, first_node), source_run, line)?
+            render((first, first_node), source_run, line, &mut copied_sources)?
         };
         out.extend_from_slice(rendered.as_bytes());
     }
@@ -538,7 +563,7 @@ fn rebuilt_pass(
     Ok((out, emitted_sources))
 }
 
-/// A fresh template copy borrows style, not an identity carried by its retained source.
+/// A later style copy does not repeat an identity carried by an original or fresh source.
 fn copied_properties(bytes: &[u8], tree: &XmlTree, property: usize) -> String {
     let original = &tree.nodes[property];
     let mut identities = Vec::new();
