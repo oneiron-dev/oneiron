@@ -18,11 +18,15 @@ use crate::vault::Vault;
 use super::act_admission::{ResolvedSeal, SealAuthority, SealStanding};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-/// The seal transcript's domain: v3 signs a decision's causal point, the
-/// authority-log heads its carrier held (FIX 4649), beside the carrier, the
-/// deciding authority, the core digest, verdict and reason (mesh
-/// PR2-topology).
-const DOMAIN: &[u8] = b"oneiron.identity-topology.admission.v3\0";
+/// The seal transcript's domain: v4 signs a proposal's proposer scope handle
+/// (FIX 9870) beside v3's fields.
+const DOMAIN: &[u8] = b"oneiron.identity-topology.admission.v4\0";
+/// The domain of a seal signed before seals bound a proposer: a decision's
+/// causal point, the authority-log heads its carrier held (FIX 4649), beside
+/// the carrier, the deciding authority, the core digest, verdict and reason
+/// (mesh PR2-topology). It still verifies, and its proposal reads
+/// unattributed (Engine 05:46).
+const DOMAIN_V3: &[u8] = b"oneiron.identity-topology.admission.v3\0";
 /// The domain of a decision seal's act token: what a carrier's removal lists
 /// as seen to keep the decision standing (FIX 4649, CALLS "FIX 4649 seal
 /// causal envelope").
@@ -81,6 +85,29 @@ impl AdmissionVerdict {
     }
 }
 
+/// What a seal says of its proposal's proposer (FIX 9870): the opaque
+/// handle the ARCH-0055 ramp scope groups a proposer's outcomes by, never an
+/// actor ref, so the signed row holds nothing an erasure must scrub.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposerStamp {
+    /// A v3 seal, signed before seals bound a proposer: its proposal reads
+    /// unattributed.
+    Unbound,
+    /// A v4 seal: the proposer scope handle of a validated merge or split
+    /// proposal, `None` for every other decision.
+    Bound(Option<String>),
+}
+
+impl ProposerStamp {
+    /// The handle this seal binds, if any.
+    pub(super) fn scope_actor(&self) -> Option<&str> {
+        match self {
+            Self::Bound(Some(actor)) => Some(actor),
+            Self::Unbound | Self::Bound(None) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionDisposition {
     pub target: EntityId,
@@ -97,6 +124,8 @@ pub struct AdmissionDisposition {
     /// (FIX 4649), one to [`crate::authority::MAX_PARENTS`]. An engine seal
     /// names none.
     pub authority_heads: BTreeSet<AuthorityEntryHash>,
+    /// The proposal's proposer scope, under the same signature (FIX 9870).
+    pub proposer: ProposerStamp,
     pub signer_pk: [u8; 32],
     pub signature: [u8; 64],
 }
@@ -104,7 +133,7 @@ pub struct AdmissionDisposition {
 impl AdmissionDisposition {
     /// The one signed transcript: the target, the core digest, the verdict,
     /// the optional reason, the carrier, the deciding authority and its
-    /// causal heads.
+    /// causal heads, then, under the v4 domain, the proposer stamp.
     fn transcript(
         target: &EntityId,
         digest: &[u8; 32],
@@ -112,9 +141,13 @@ impl AdmissionDisposition {
         reason: Option<EntityId>,
         carrier: &EntityId,
         (authority, heads): (&SealAuthority, &BTreeSet<AuthorityEntryHash>),
+        proposer: &ProposerStamp,
     ) -> Result<Vec<u8>> {
         let mut bytes = Vec::with_capacity(DOMAIN.len() + 16 + 32 + 32 + 17 + 16 + 256);
-        bytes.extend_from_slice(DOMAIN);
+        bytes.extend_from_slice(match proposer {
+            ProposerStamp::Unbound => DOMAIN_V3,
+            ProposerStamp::Bound(_) => DOMAIN,
+        });
         bytes.extend_from_slice(target.as_bytes());
         bytes.extend_from_slice(digest);
         bytes.extend_from_slice(verdict.as_str().as_bytes());
@@ -132,6 +165,16 @@ impl AdmissionDisposition {
         for head in heads {
             bytes.extend_from_slice(head);
         }
+        if let ProposerStamp::Bound(actor) = proposer {
+            match actor {
+                Some(actor) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&(actor.len() as u64).to_be_bytes());
+                    bytes.extend_from_slice(actor.as_bytes());
+                }
+                None => bytes.push(0),
+            }
+        }
         Ok(bytes)
     }
 
@@ -143,6 +186,7 @@ impl AdmissionDisposition {
             self.reason,
             &self.carrier,
             (&self.authority, &self.authority_heads),
+            &self.proposer,
         )
     }
 
@@ -169,7 +213,8 @@ impl AdmissionDisposition {
 
     /// A seal of `target`'s decision `core`, signed by `signer`'s carrier
     /// with `authority`, in the one transcript. A decision signs the causal
-    /// point `signer` captured; an engine seal signs none.
+    /// point `signer` captured; an engine seal signs none. A validated merge
+    /// or split proposal signs its proposer scope handle (FIX 9870).
     pub(super) fn signed(
         signer: &ResolvedSeal,
         target: EntityId,
@@ -177,7 +222,9 @@ impl AdmissionDisposition {
         verdict: AdmissionVerdict,
         reason: Option<EntityId>,
         authority: SealAuthority,
+        proposer_scope: Option<&str>,
     ) -> Result<Self> {
+        let proposer = ProposerStamp::Bound(proposer_scope.map(str::to_owned));
         let core_digest = core_digest(core)?;
         let carrier = signer.carrier();
         let authority_heads = match authority {
@@ -191,6 +238,7 @@ impl AdmissionDisposition {
             reason,
             &carrier,
             (&authority, &authority_heads),
+            &proposer,
         )?;
         Ok(Self {
             target,
@@ -200,6 +248,7 @@ impl AdmissionDisposition {
             carrier,
             authority,
             authority_heads,
+            proposer,
             signer_pk: signer.key().verifying_key().to_bytes(),
             signature: signer.key().sign(&transcript).to_bytes(),
         })
@@ -239,6 +288,7 @@ impl AdmissionDisposition {
             verdict,
             reason,
             SealAuthority::Engine(cause),
+            None,
         )?;
         sealed.record_sealed_here(vault, wtxn, fact)?;
         Ok(sealed)
@@ -277,6 +327,13 @@ impl AdmissionDisposition {
             SealAuthority::Engine(_) => self.authority_heads.is_empty(),
         };
         if !heads_ok {
+            return Err(malformed());
+        }
+        // Only a validated decision binds a proposer, in its one spelling.
+        if let Some(actor) = self.proposer.scope_actor()
+            && (self.verdict != AdmissionVerdict::Validated
+                || !super::proposer_scope::is_scope_actor_spelling(actor))
+        {
             return Err(malformed());
         }
         let bad_signature =
@@ -320,6 +377,12 @@ impl AdmissionDisposition {
                         .map(|head| Value::Binary(head.to_vec()))
                         .collect(),
                 ),
+            ));
+        }
+        if let ProposerStamp::Bound(actor) = &self.proposer {
+            entries.push((
+                BODY_KEY_PROPOSER_SCOPE_ACTOR.into(),
+                actor.as_deref().map_or(Value::Nil, Value::from),
             ));
         }
         entries.push((
@@ -373,6 +436,14 @@ impl AdmissionDisposition {
                 }
             }
         }
+        // A v3 seal carries no proposer field; a v4 seal always does.
+        let proposer = match map_field(map, BODY_KEY_PROPOSER_SCOPE_ACTOR) {
+            None => ProposerStamp::Unbound,
+            Some(Value::Nil) => ProposerStamp::Bound(None),
+            Some(value) => {
+                ProposerStamp::Bound(Some(value.as_str().ok_or_else(malformed)?.to_owned()))
+            }
+        };
         let signer_pk: [u8; 32] = field(BODY_KEY_SIGNER)?
             .try_into()
             .map_err(|_| malformed())?;
@@ -387,6 +458,7 @@ impl AdmissionDisposition {
             carrier,
             authority,
             authority_heads,
+            proposer,
             signer_pk,
             signature,
         };
@@ -494,7 +566,14 @@ impl SealTrust {
             SealAuthority::Decision(act) => {
                 let act_at = super::seal_standing::external_act(fact, act)?;
                 let causal = self.causal_standing(store, rtxn, &act_at)?;
-                super::act_admission::decision_standing_in_txn(store, rtxn, causal, act, core.at)
+                super::act_admission::decision_standing_in_txn(
+                    store,
+                    rtxn,
+                    causal,
+                    self.fold(store, rtxn)?,
+                    fact,
+                    core,
+                )
             }
         }
     }
@@ -609,6 +688,62 @@ pub(super) fn joined_verdict_for_store_in_txn(
     Ok(refused
         .map(|(verdict, _)| verdict)
         .or(validated.then_some(AdmissionVerdict::Validated)))
+}
+
+/// The proposer scope handle the validated seals `trust` attributes bind
+/// for `target`'s decision `core` (FIX 9870): `None` when none binds one (a
+/// v3 seal, an unsealed or untrusted proposal). Two attributed seals that
+/// bind different handles fail closed.
+///
+/// # Errors
+/// A store failure, a seal that does not verify, or conflicting handles.
+pub(super) fn trusted_proposer_scope_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    target: &EntityId,
+    core: &StoredIdentityOpEvent,
+    trust: &mut SealTrust,
+) -> Result<Option<String>> {
+    let digest = core_digest(core)?;
+    let mut bound: Option<String> = None;
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        store,
+        rtxn,
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        None,
+    )? {
+        let id = id?;
+        let row = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+            store, rtxn, &id,
+        )?
+        .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        let StoredIdentityOpAction::AdmissionDisposition(fact) = row.action else {
+            continue;
+        };
+        if fact.target != *target
+            || fact.core_digest != digest
+            || fact.verdict != AdmissionVerdict::Validated
+        {
+            continue;
+        }
+        let Some(actor) = fact.proposer.scope_actor().map(str::to_owned) else {
+            continue;
+        };
+        fact.verify()
+            .map_err(|_| Error::CorruptedIndex("identity topology admission signature"))?;
+        if !trust.attributed(store, rtxn, &id, &fact, core)? {
+            continue;
+        }
+        match &bound {
+            Some(held) if *held != actor => {
+                return Err(Error::CorruptedIndex(
+                    "conflicting identity topology proposer scopes",
+                ));
+            }
+            _ => bound = Some(actor),
+        }
+    }
+    Ok(bound)
 }
 
 /// Whether seal standing lets `core` count as a completed act (H161): an

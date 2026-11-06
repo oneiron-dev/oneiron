@@ -37,6 +37,7 @@ use engines::{Admission, BaselineCalibration, COREML_ABSENT, MLX_ABSENT, Platfor
 use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
+pub(crate) use local::{QuestionHead, QuestionTokenizer};
 
 pub(crate) mod bundle;
 mod coreml;
@@ -148,8 +149,9 @@ impl ProviderTagger {
         &self,
         claim: DispatchClaim,
         planned: oneiron::Result<InferenceWindows>,
+        context: Option<oneiron::llm::TaggerCallContext>,
     ) -> Completion {
-        claim.submit_planned(planned)
+        claim.submit_planned_in(planned, context)
     }
 
     /// The dispatcher's pending cap of `work`'s class, from its policy: the
@@ -219,6 +221,16 @@ impl ExtractionEncoder for ProviderTagger {
         caller: &ExtractionCaller,
     ) -> EncoderAttempt {
         self.dispatcher.call(input, work, caller)
+    }
+
+    fn infer_in(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+        context: &oneiron::llm::TaggerCallContext,
+    ) -> EncoderAttempt {
+        self.dispatcher.call_in(input, work, caller, context)
     }
 }
 

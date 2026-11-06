@@ -1,0 +1,180 @@
+/* ── the inbox lens — what app-inbox.html carries beyond the chassis ── */
+
+/* the sheet holds body + a summoned context column (owner 08-15, the
+   Slack model) — same anatomy as the vault's inspector */
+main.pane {
+  overflow: hidden;
+  flex-direction: row; padding: 0; gap: 0;
+}
+.pane-body {
+  flex: 1; min-width: 0;
+  position: relative;                 /* the summon verb anchors here */
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+aside.context {
+  width: var(--ctx-w); flex: none;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: var(--ctx-bg);         /* a tinted zone divides, not a line */
+  display: flex; flex-direction: column; gap: 12px;
+}
+aside.context[hidden] { display: none; }
+.ctx-head { display: flex; align-items: center; gap: 10px; }
+.ctx-crumb { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--silver-4); }
+.ctx-title { font-family: var(--serif); font-size: 16px; font-weight: 550; color: var(--silver-1); line-height: 1.35; }
+.ctx-by { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: 11px; }
+.brow.sel .brow-line { background: var(--bg-well); }
+
+/* the agent's words live under the heading, in their own register
+   (owner 08-14 eve): serif voice + byline, never chrome mono */
+.sec-voice { display: flex; gap: 9px; align-items: baseline; font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); max-width: 76ch; padding: 1px 0 3px; }
+
+/* headings collapse (owner 08-14 eve): the head is a quiet toggle,
+   the chevron appears on hover */
+.bundle .head { cursor: pointer; }
+.bundle .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.bundle .head:hover .fold-hint, .bundle .head:focus-visible .fold-hint { opacity: 1; }
+.bundle.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.bundle.closed .brows, .bundle.closed .bmore, .bundle.closed .sec-voice { display: none; }
+
+/* the unfold is a mini-thread (owner): the message it answers, then
+   herald's draft — editable, send beside it — then the reply line */
+.bd-msg { display: flex; gap: 9px; align-items: flex-start; max-width: 56ch; margin-right: 24px; }
+.bd-msg .seal { margin-top: 1px; }
+.bd-msg-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bd-msg-meta { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-4); }
+.bd-msg-text { font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-2); }
+.bd-msg .meta-line { flex: none; }
+/* the counterpart speaks from the left; the draft answers from a right
+   inset — two voices, one lane. the reply line is a whisper until the
+   caret arrives (one input-object at rest, not two) */
+.bd-inner .draft-card { margin-left: 24px; width: auto; }
+.bd-inner .bd-msg + .draft-card { margin-top: 4px; }
+.reply-input {
+  font-family: var(--serif); font-size: 12.5px; color: var(--silver-2);
+  background: transparent; border: 0; border-radius: 6px;
+  padding: 4px 11px; width: 100%; max-width: 62ch;
+  transition: background 160ms ease;
+}
+.bd-inner .draft-card ~ .reply-preview { margin-left: 24px; width: auto; }
+.reply-input::placeholder { color: var(--silver-4); }
+.reply-input:focus { outline: none; background: var(--bg-well); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+
+/* ── bundles = FLAT sections on the one sheet (owner 08-14 eve):
+   card-on-card read wrong — the sheet is the only card. a section is
+   a serif baseline row over one hairline; its one-line rows (state
+   dot + serif claim + verbs) sit straight on the sheet; the row
+   unfolds in place; outcomes settle in place. ── */
+.bundle { display: flex; flex-direction: column; }
+.bundle + .bundle { margin-top: 20px; }
+.bundle.closed + .bundle { margin-top: 0; }   /* collapsed heads stack tight */
+/* dividers are SPACE, not lines (owner 08-14 eve): the serif head +
+   air separates sections; no rule under the head */
+.bundle .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; }
+.bundle .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+/* the head count exists ONLY when the rows are hidden (owner): open,
+   the rows speak for themselves — one place per fact */
+.bundle .head .meta-line { margin-left: auto; display: none; }
+.bundle.closed .head .meta-line { display: inline; }
+.brows { padding: 3px 0 0; }
+.brow { outline: none; }
+.brow-line { display: flex; gap: 9px; padding: 6px 8px 6px 6px; align-items: baseline; cursor: pointer; border-radius: 5px; transition: background 160ms ease; }
+.brow-line:hover, .brow:focus-visible .brow-line { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.brow .dot { flex: none; transform: translateY(-1px); }
+.brow .claim { flex: 1; min-width: 0; }
+.brow .rverbs { flex: none; display: flex; gap: 10px; }
+.brow .rtime { flex: none; }
+.brow-detail { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s linear 220ms; }
+.brow.open .brow-detail { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1), visibility 0s; }
+.brow-detail > .bd-inner { min-height: 0; overflow: hidden; }
+.bd-inner { padding: 1px 8px 0 22px; display: flex; flex-direction: column; gap: 6px; }
+.brow.open .bd-inner { padding-bottom: 11px; }
+.bd-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); max-width: 52ch; }
+.bd-acts { display: flex; gap: 12px; }
+.bmore { display: flex; gap: 14px; align-items: baseline; padding: 7px 8px 4px 6px; }
+/* the draft is CONTENT and it is speech: upright serif inside 「」,
+   no box, no italics on Japanese (owner 08-14 eve) */
+.draft-quote {
+  font-family: var(--serif); font-size: 13.5px;
+  color: var(--silver-2); line-height: 1.65;
+  margin: 1px 8px 3px 22px; max-width: 62ch;
+}
+@media (prefers-reduced-motion: reduce) {
+  .brow-detail { transition: none; }
+}
+
+/* the digest line — plain words, no jargon (owner 08-14 eve) */
+.quiet-line { display: block; padding-top: 6px; max-width: 78ch; }
+.quiet-line .digest { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); }
+.quiet-line .act { margin-left: 12px; }
+
+/* the live stream — renders only when the dial cranks to review
+   everything. one tight line per event: time · channel glyph · seal
+   · what happened. */
+.wire { display: none; flex-direction: column; gap: 6px; }
+body.dial-all .wire, .wire.revealed { display: flex; }
+body.dial-all .quiet-line { display: none; }
+.wire-head { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); padding-bottom: 2px; }
+/* a wire row clicks into the context column (owner 08-15) */
+.w-row {
+  display: flex; align-items: center; gap: 10px; padding: 3px 8px 3px 6px;
+  border-radius: 5px; cursor: pointer; transition: background 160ms ease;
+}
+.w-row:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.w-row.sel { background: var(--bg-well); }
+.w-row .w-by { font-family: var(--mono); font-size: 11px; }
+.w-time { font-family: var(--mono); font-size: 11px; color: var(--silver-4); width: 40px; flex: none; text-align: right; font-feature-settings: "tnum" 1; }
+.w-chan { flex: none; display: flex; align-items: center; color: var(--silver-3); }
+
+.w-chan svg { width: 13px; height: 13px; display: block; }
+/* ONE icon (owner): the channel glyph carries the state ink itself —
+   no dot beside it. amber = waits, green = done, struck silver = no. */
+.brow-line .w-chan { transform: translateY(2px); color: var(--amber); }
+.brow-line .w-chan svg { width: 14px; height: 14px; }
+.brow-line .w-chan.chan-ok { color: var(--dev-green); }
+.brow-line .w-chan.chan-no { color: var(--silver-4); }
+.wire .t-msg { font-size: 13px; }
+
+/* ── the empty inbox (08-15 eve): the flock (the queue flew off), one
+   line; the quiet-line receipt stays below it. red stays scarce: the
+   sun/moon spots are for non-working surfaces ── */
+.inbox-empty { display: flex; align-items: center; gap: 18px; padding: 18px 4px 6px; }
+.inbox-empty .spot { width: 150px; height: auto; }
+.inbox-empty .lead { font-family: var(--serif); font-size: 15px; color: var(--silver-2); line-height: 1.5; max-width: 40ch; }
+.inbox-empty .lead .sub { display: block; font-size: 13.5px; color: var(--silver-3); margin-top: 2px; }
+
+/* the open law switch (dev, 08-18): a wire row's glance rides under it */
+.w-glance { padding: 0; }
+.w-glance .bd-inner { padding-left: 58px; }
+aside.context .bd-msg { margin: 6px 0 2px; }
+aside.context .reply-input { margin-top: 4px; }
+
+/* Local preview notes use the existing quiet register, never a toast. */
+.inbox-preview-scope {
+  margin: 0; max-width: 88ch;
+  font-family: var(--sans); font-size: 12px; line-height: 1.5; color: var(--silver-3);
+}
+.fixture-feedback {
+  display: block; max-width: 68ch;
+  font-family: var(--sans); font-size: 12px; line-height: 1.5;
+  color: var(--silver-3); overflow-wrap: anywhere;
+}
+/* Keep empty live regions in the accessibility tree without spending layout space. */
+.fixture-feedback:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.brow > .fixture-feedback { margin: 2px 8px 6px 22px; }
+.reply-preview { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.reply-preview .fixture-feedback { padding: 0 11px; }
+.bmore, .bd-acts { flex-wrap: wrap; }
+.brow .rverbs { max-width: 50%; flex-wrap: wrap; justify-content: flex-end; }
+.brow .rverbs .meta-line { text-align: right; }
+
+/* Native row triggers keep the authored type, ink and silver focus ring. */
+.brow-line > button.claim { padding: 0; text-align: left; }
+button.w-row { width: 100%; text-align: left; }
+.brow-line:has(> button:focus-visible), .w-row:focus-visible {
+  background: color-mix(in srgb, var(--silver-4) 10%, transparent);
+}
+.wire:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: 2px; }
+.pane-body > .summon { max-width: min(40ch, 90%); }

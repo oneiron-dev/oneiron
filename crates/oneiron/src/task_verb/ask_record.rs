@@ -23,6 +23,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 mod attendee_entry;
+mod attendee_late_ask;
 mod consult_answer;
 mod link_proof;
 mod word_admission;

@@ -45,8 +45,9 @@ pub use self::authority_audit::{
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER, AUTHORITY_AUDIT_DEFAULT_LIMIT,
     AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW, AuthorityAuditEventKind,
     AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow,
-    ColdAuthorityAuditRow, authority_audit_embedded,
+    ColdAuthorityAuditRow, PendingMembershipExecutionRow, authority_audit_embedded,
 };
+pub(crate) use self::call::unread_call_receipt_actor_in_txn;
 pub use self::call::{
     ActionInputs, CALL_RECEIPT_REF_PREFIX, CONNECTION_CALL_ACTOR_CLASS, CallAttemptRef,
     CallAttemptWitness, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,

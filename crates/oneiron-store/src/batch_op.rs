@@ -17,6 +17,9 @@ pub enum BatchOp {
         entity_type: u8,
         occurred: TimeRange,
         learned_at: u64,
+        /// `None` for a local write; `Some` preserves an admitted row's or
+        /// session witness's original version. Ordering data, not authority.
+        row_version: Option<u64>,
         data: Vec<u8>,
         /// When `true`, `apply_put` validates the type byte through the
         /// registry-only entity-type gate (which permits the

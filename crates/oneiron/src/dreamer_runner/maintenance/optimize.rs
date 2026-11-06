@@ -22,10 +22,11 @@ use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_ATTEMPT_KEY,
-    SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition, SkillEditDraft, SkillOptimizeAuthor,
-    SkillOptimizeBrief, SkillOptimizeDecisions, SkillReplayResponses, measure_skill_edit_goal_axes,
-    run_skill_optimize, run_skill_optimize_for_resident, score_gate_skill_edit_in_cycle,
-    skill_edit_needs_goal_axis_report, skill_edit_verdict, skill_tradeoff_ask,
+    PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition,
+    SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief, SkillOptimizeDecisions,
+    SkillReplayResponses, measure_skill_edit_goal_axes, optimize_target_input,
+    run_skill_optimize_targeted, score_gate_skill_edit_in_cycle, skill_edit_needs_goal_axis_report,
+    skill_edit_verdict, skill_tradeoff_ask,
 };
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use rmpv::Value;
@@ -116,6 +117,14 @@ struct PassBoundBandit<'a> {
 }
 
 impl GoalAxisBandit for PassBoundBandit<'_> {
+    fn goal_revision(&self) -> Option<&str> {
+        self.inner.goal_revision()
+    }
+
+    fn arm_record(&self, arm: AxisArm) -> Option<(EntityId, &crate::skill::SkillRecord)> {
+        self.inner.arm_record(arm)
+    }
+
     fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
         if !self.clock.decision_may_start() {
             return Err(Error::InvalidConfig(
@@ -155,15 +164,9 @@ fn invalid() -> Error {
 }
 
 pub(crate) fn resident(input: &Value) -> Result<Option<EntityId>> {
-    match input {
-        Value::Nil => Ok(None),
-        Value::Map(fields) if fields.len() == 1 && fields[0].0.as_str() == Some("resident") => {
-            EntityId::from_hex(fields[0].1.as_str().ok_or_else(invalid)?)
-                .map(Some)
-                .map_err(|_| invalid())
-        }
-        _ => Err(invalid()),
-    }
+    optimize_target_input(input)
+        .map(|(resident, _)| resident)
+        .ok_or_else(invalid)
 }
 
 /// Called only after normal admission and inside the driver's panic boundary.
@@ -226,7 +229,8 @@ fn optimize(
         inner: optimizer.scorer,
         clock,
     };
-    let resident = resident(&attempt.status.payload.input)?;
+    let (resident, target) =
+        optimize_target_input(&attempt.status.payload.input).ok_or_else(invalid)?;
     let id = attempt.status.attempt.id;
     let author = OnAttempt {
         inner: optimizer.author,
@@ -235,17 +239,13 @@ fn optimize(
     let at = now_ms / 1000;
     // Resume an unscored proposal before drafting another one. A crash after
     // draft commit must not strand the candidate behind the open-edit filter.
-    let pending = pending_proposal(vault, resident, id)?;
+    let pending = pending_proposal(vault, resident, id, target)?;
     let (proposal, spent) = if let Some(proposal) = pending {
         (Some(proposal), true)
     } else {
         let occurred = TimeRange { start: at, end: at };
-        let outcome = match resident {
-            Some(resident) => {
-                run_skill_optimize_for_resident(vault, resident, id, &author, occurred, at)?
-            }
-            None => run_skill_optimize(vault, id, &author, occurred, at)?,
-        };
+        let outcome =
+            run_skill_optimize_targeted(vault, id, &author, occurred, at, resident, target)?;
         (
             outcome.proposal,
             outcome.skill.is_some() && outcome.affirmed_receipts.is_empty(),
@@ -320,6 +320,7 @@ fn pending_proposal(
     vault: &Vault,
     resident: Option<EntityId>,
     attempt: crate::attempt_queue::AttemptId,
+    target: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
     let mut after = None;
     let attempt_hex = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
@@ -353,6 +354,13 @@ fn pending_proposal(
                 })
             };
             if field(crate::skill_convert::PROVENANCE_BIRTH_KEY) != Some(SKILL_OPTIMIZE_BIRTH_PATH)
+            {
+                continue;
+            }
+            if let Some(target) = target
+                && field(PROVENANCE_OPTIMIZE_OF_ENTITY_KEY)
+                    .and_then(|parent| EntityId::from_hex(parent).ok())
+                    != Some(target)
             {
                 continue;
             }

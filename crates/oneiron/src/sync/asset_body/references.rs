@@ -114,7 +114,7 @@ impl AssetBodyRef {
         bytes.extend_from_slice(&self.body_blake3);
         bytes.extend_from_slice(&self.len.to_be_bytes());
         bytes.extend_from_slice(&self.xxh32.to_be_bytes());
-        bytes.push(kind_code(self.kind));
+        bytes.push(self.kind.code());
         bytes.push(u8::from(self.mime.is_some()));
         bytes.extend_from_slice(&mime_len.to_be_bytes());
         bytes.extend_from_slice(mime.as_bytes());
@@ -154,7 +154,7 @@ impl AssetBodyRef {
             carrier_blake3: *carrier,
             body_blake3: *body,
             len: u64::from_be_bytes(*len),
-            kind: kind_of(kind)?,
+            kind: AssetFileKind::from_code(kind)?,
             mime,
             xxh32: u32::from_be_bytes(*xxh32),
         })
@@ -264,20 +264,4 @@ pub(crate) fn copy_refs_within(source: &LoroDoc, out: &LoroDoc) -> Result<()> {
         out.commit();
     }
     Ok(())
-}
-
-/// A kind's byte in a reference: the manifest's code for it.
-const fn kind_code(kind: AssetFileKind) -> u8 {
-    match kind {
-        AssetFileKind::Opaque => 1,
-        AssetFileKind::Record => 2,
-    }
-}
-
-const fn kind_of(code: u8) -> Option<AssetFileKind> {
-    match code {
-        1 => Some(AssetFileKind::Opaque),
-        2 => Some(AssetFileKind::Record),
-        _ => None,
-    }
 }

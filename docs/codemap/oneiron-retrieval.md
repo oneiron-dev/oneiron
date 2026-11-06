@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/analyzer/token.rs` | src | m | 2 struct · 3 enum · 11 fn · 2 const | AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind | Token primitives emitted by analyzers |
 | `src/analyzer/vietnamese.rs` | src | s | 1 fn | — | Vietnamese analyzer (ARCH-0031 dispatch row "Vietnamese → Whitespace + NFC + lowercase", FIX 7780) |
 | `src/distance.rs` | src | s | 2 fn · 1 re-export | — | Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a… |
-| `src/distance/prepared.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | PreparedCosine | — |
+| `src/distance/prepared.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | PreparedCosine | Prepared cosine query with a cached norm for HNSW candidate scoring |
 | `src/fusion.rs` | src | m | 2 struct · 7 fn · 2 const · 2 crate-vis | LinearLogBlendScores, RetrievalBlendInput | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
 | `src/fusion/tests.rs` | test | s | — | — | — |
 | `src/hnsw_entry_point.rs` | src | m | 2 fn | — | Tarjan-SCC entry-point selection for an HNSW graph rebuild (the engine's `hnsw::rebuild` calls it) |

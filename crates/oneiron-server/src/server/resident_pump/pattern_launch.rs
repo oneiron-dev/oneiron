@@ -136,7 +136,7 @@ pub(in crate::server) fn agent_runner_for_attempt(
     let seat = seat?.clone();
     let lease_owner = attempt.lease_owner.clone()?;
     let (guard, payer) = line?;
-    let backend = provider.reader_backend(guard, payer, None, Vec::new())?;
+    let backend = provider.reader_backend(guard, payer, None, definition.models.clone())?;
     Some(Arc::new(AgentPatternLaunchRunner {
         vault: Arc::clone(vault),
         agent: actor.entity_ref(),

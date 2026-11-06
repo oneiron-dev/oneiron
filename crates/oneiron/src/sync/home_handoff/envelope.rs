@@ -250,7 +250,9 @@ pub(super) fn seal_handoff(
             &mut SysRng,
         )
         .map_err(|_| refused("sealing the handoff failed"))?;
-        sealed.extend_from_slice(&envelope.to_bytes());
+        envelope
+            .write_to(&mut sealed)
+            .map_err(|_| refused("sealing the handoff failed"))?;
     }
     let handoff = SealedHandoff {
         id,

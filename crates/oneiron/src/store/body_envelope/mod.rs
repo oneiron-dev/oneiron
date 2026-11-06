@@ -59,6 +59,10 @@ pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };
 pub(crate) use self::reader::BodyFile;
+pub(crate) use self::response::owners::{
+    bind_missing_response_owners_in_txn, bind_retained_response_owner_in_txn,
+    response_owners_bound_in_txn,
+};
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
@@ -66,13 +70,14 @@ pub(crate) use self::response::{
     settle_shared_response_in_txn,
 };
 pub(crate) use self::retention::{
-    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, note_settled_inline_in_txn,
-    release_body_in_txn, settle_inline_asset_in_txn,
+    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn,
+    governed_body_instances_in_txn, note_settled_inline_in_txn, release_body_in_txn,
+    settle_inline_asset_in_txn,
 };
 pub(crate) use self::rows::{
     BODY_INSTANCES, BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
-    remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
-    remembered_body_instances_in_txn, retire_body_key_in_txn,
+    journal_restored_body_key_in_txn, remember_body_instances_in_txn,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,
@@ -349,5 +354,63 @@ impl BodyDir {
             ))
             .ok()??;
         frames::read_line_index(file, &key, len)
+    }
+
+    /// Rebuilds the sparse line index of the body `digest`, `len` bytes long, as
+    /// `row` names it (FIX 1186b): streams the existing file whole, counts 64 KiB
+    /// blocks, checks length and digest, then publishes the derived sidecar.
+    /// `None` on any open, read, layout or digest failure. On success returns
+    /// the index and whether its best-effort publication is readable now, so a
+    /// detached caller can keep a failed publish queued. No missing/short/corrupt
+    /// detection and no trigger lives here.
+    pub(crate) fn rebuild_line_index(
+        &self,
+        digest: &[u8; 32],
+        len: u64,
+        row: Option<&BodyKeyRow>,
+    ) -> Option<(Vec<u64>, bool)> {
+        let mut file = self.open_reader(digest, len, row).ok()??;
+        let mut counter = frames::LineCounter::default();
+        let mut hasher = blake3::Hasher::new();
+        let mut total = 0u64;
+        let mut block = vec![0u8; super::LINE_INDEX_BLOCK_BYTES as usize];
+        loop {
+            let mut filled = 0usize;
+            while filled < block.len() {
+                match std::io::Read::read(&mut file, &mut block[filled..]) {
+                    Ok(0) => break,
+                    Ok(read) => filled += read,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => return None,
+                }
+            }
+            if filled == 0 {
+                break;
+            }
+            hasher.update(&block[..filled]);
+            counter.chunk(&block[..filled]);
+            total += filled as u64;
+            if filled < block.len() {
+                break;
+            }
+        }
+        if total != len {
+            return None;
+        }
+        if hasher.finalize().as_bytes() != digest {
+            return None;
+        }
+        let index = counter.index().to_vec();
+        if let (Some(row), Some(sealed)) = (row, &self.sealed) {
+            // Committed key only; a key that no longer opens skips publish but
+            // keeps the verified index for the caller.
+            if let Ok(Some(key)) = row.open(digest, sealed) {
+                spill::write_sealed_lines(self, digest, &key, &index);
+            }
+        } else {
+            self.write_line_index(&super::body_file_name(digest), &index);
+        }
+        let published = self.line_index_of(digest, len, row).is_some();
+        Some((index, published))
     }
 }

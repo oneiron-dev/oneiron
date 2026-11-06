@@ -1,0 +1,1 @@
+Which fix does this agent need so its work can go on? Choose skill_edit when the skill it ran is wrong, prompt_inject when it needs a nudge and a fresh start from before it failed, environment when a tool, a grant or a connector it needs is missing or broken, and person when none of these fits or a person must look.

@@ -401,7 +401,7 @@ impl RunReceiptSink for DiscardReceipts {
 
 async fn generate_private(
     request: LlmRequest,
-    offer: ServedOffer,
+    mut offer: ServedOffer,
     worker: Option<oneiron_driver::InferenceWorker>,
     budget: BudgetGuard,
 ) -> LlmResult<LlmResponse> {
@@ -422,17 +422,29 @@ async fn generate_private(
     };
     let run =
         crate::models::undeclared_run("anonymous-chat", budget, None, Arc::new(DiscardReceipts));
-    let call = RunCall {
-        selector: None,
-        request: &request,
-        offer: &offer.binding,
-    };
-    let permit = match offer.backend.request_digest(&request, false)? {
-        Some(digest) => run.admit_request(call, &digest)?,
-        None => run.admit(call)?,
-    };
-    let backend = run.gate(offer.backend, &offer.binding);
-    let response = backend.generate(request, permit.lease()).await?;
-    permit.settle(CallOutcome::Answered(&response.usage))?;
-    Ok(response)
+    loop {
+        let call = RunCall {
+            selector: None,
+            request: &request,
+            offer: &offer.binding,
+        };
+        let permit = match offer.backend.request_digest(&request, false)? {
+            Some(digest) => run.admit_request(call, &digest)?,
+            None => run.admit(call)?,
+        };
+        let backend = run.gate(Arc::clone(&offer.backend), &offer.binding);
+        match backend.generate(request.clone(), permit.lease()).await {
+            Ok(response) => {
+                permit.settle(CallOutcome::Answered(&response.usage))?;
+                return Ok(response);
+            }
+            Err(error) => {
+                let Some(fallback) = offer.backend.fallback(&error) else {
+                    return Err(error);
+                };
+                permit.settle(CallOutcome::Failed)?;
+                offer.backend = fallback;
+            }
+        }
+    }
 }

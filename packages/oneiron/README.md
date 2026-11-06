@@ -15,7 +15,7 @@ Node 20 or newer. The package ships prebuilt native artifacts for macOS
 SDKs, embedded `Oneiron.open()` is currently supported only on Unix
 (macOS/Linux). On other targets, including Windows, use `Oneiron.connect()`
 to reach a server on a supported host; embedded open fails closed because
-writer locking is unsupported.
+writer locking is unsupported. One verb is narrower: `putCodebaseSnapshot` refuses SharedArrayBuffer-backed inputs on Node runtimes below 22.21 (22.x) / 24.9 (24+), which cannot measure the shared backing.
 
 ## Quickstart
 
@@ -287,10 +287,10 @@ Every other verb in the SDK verb table sits at its SDK path on the handle
 Its input and result are typed by `Facade`, the wire declarations
 `scripts/sdk/generate.py` reads from the Rust types each row names, and its
 JSDoc is the row's own description. The keys are the engine's wire spelling
-(snake_case). Of the table's 170 facade rows, 148 inputs and 144 results are
-fully typed; the rest are typed down to a leaf that is opaque JSON by design (a
-claim's `value`, an entity `body`), and none is left untyped. The same
-declarations ship in `@oneiron/client` and, as TypedDicts, in the Python stubs.
+(snake_case). Inputs and results are fully typed or typed down to a leaf
+that is opaque JSON by design (a claim's `value`, an entity `body`); none is
+left untyped. The same declarations ship in `@oneiron/client` and, as
+TypedDicts, in the Python stubs.
 
 `vault.recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
@@ -429,9 +429,12 @@ history, or receipts. Keep the true source and use a separate key for generated
 output. Only a genuine new user statement may be submitted as `user_stated`.
 Never relabel model output or delete then put to bypass the protection.
 
-Erased shells and malformed rows are not live heads. Reads skip them and never
-fall back to superseded values. Unrelated keys remain usable. Replaying a
-request against an erased/malformed revision refuses instead of restoring it.
+Erased shells and malformed rows are not live heads. Nor is a value the
+canonical claim read withholds: deleted, archived or withdrawn words, a stale
+value, or a value whose recorded source was deleted or is being withdrawn.
+Reads skip them and never fall back to superseded values; a put at that key
+writes a fresh head. Unrelated keys remain usable. Replaying a request against
+an erased/malformed revision refuses instead of restoring it.
 
 Delete retracts the caller's current claim and returns `existed` plus receipt
 refs. It is idempotent while absent and retains history. It is not an owner

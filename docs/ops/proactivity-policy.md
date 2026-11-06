@@ -39,3 +39,29 @@ settings and marker but leaves the claim Proposed. Run-tray approval can settle
 that claim later without a second settings write. Neither route changes past
 digests. This feature needs the normal engine/server deployment; no migration or
 new configuration is needed.
+
+## Owner-stated intent timing
+
+`POST /v1/owner/intents` takes the owner's actual `text` (required), an
+optional `message` (32 hex, the MESSAGE the words came from), and an optional
+`needed_before` (u64 Unix seconds). Omitting the time keeps the original
+untimed intent; stating it keeps the same Approved `profile.intent` words
+with the time as factual evidence under the same intent hash, for example
+`{"text":"...","needed_before":1770000000}` (placeholder number, no default).
+The time adds no urgency gate and bypasses no quiet hours, grant, or outbound
+rule. This feature needs the normal matching engine/server rollout; no
+migration or new configuration is needed.
+
+## Read a saved digest
+
+Owner-grade agent clients can call `vault.proactivity.digest` with
+`{"id":"<64-hex source.result>"}` from a delivered digest notification,
+or `{}` for the latest digest. It returns the existing screened
+`ProactivityDigestView`, or `null` when no digest is stored there.
+The locator identifies the digest; it grants no access.
+
+This is the same live-owner read as
+`GET /v1/owner/proactivity/digest?id=<locator>`. Any live vault owner can
+read any saved locator, not only their own inbox's digests. Stored digest
+verification and viewer screening are unchanged. Non-owner credentials
+do not gain this owner-grade door. No new setting or migration is needed.
