@@ -197,3 +197,12 @@ trailing breaks emit each `br` with no empty run. No field wrapper survives and
 field-removal receipts are unchanged. This serializes only the requested break,
 not the original break's properties, and claims no PowerPoint or global
 fidelity proof.
+
+The original-break property carry (2026-11-06, FIX 17480) keeps a common
+retained direct DrawingML `br` in its actual source `rPr` and namespace
+bindings through the existing static `br` serializer. Requested new breaks
+still use the selected template's properties, and an omitted BREAK still drops
+the source `br`. Unknown text coverage still falls back to the existing
+one-template render, and field-removal receipts are unchanged. This is a
+source-only common-span correction, not full 17480, whole OF-509 or PowerPoint
+fidelity proof, and no Office runtime comparison is claimed.
