@@ -1,6 +1,7 @@
 //! Whose act a repo proposal records, and the erase that forgets it
-//! (FIX 3520): its proposer, the critics whose evidence judged it (FIX 4477)
-//! and the journal claims it wrote (FIX 4479).
+//! (FIX 3520): its proposer, the critics whose evidence judged it (FIX 4477),
+//! the journal claims it wrote (FIX 4479) and the owner who settled it, with
+//! that settlement's receipt claim (FIX 5220).
 
 use std::collections::BTreeSet;
 
@@ -168,6 +169,62 @@ fn erase_journal_in_txn(
     Ok(())
 }
 
+/// Rewrites a proposal's settlement receipt claim `receipt`, naming no one
+/// once `actor`, who settled it, was erased (FIX 5220): the value's actor
+/// reads [`ERASED_CALL_IDENTITY`] and any evidence goes. It keeps its id,
+/// proposal, decision and times, and its revision ledger starts over from
+/// the rewritten row, so no older revision keeps the actor.
+fn erase_settlement_receipt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: EntityId,
+    actor: &EntityId,
+) -> Result<()> {
+    let Some(raw) = vault.get_raw_in(wtxn, &receipt)? else {
+        return Ok(());
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("repository settlement header"))?;
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    if header.entity_type != ENTITY_TYPE_CLAIM || body.is_empty() {
+        return Ok(());
+    }
+    let mut claim = crate::claim::decode_claim_body(body, true)?;
+    if claim.predicate != "repo.proposal_settlement" {
+        return Ok(());
+    }
+    let named = actor.to_hex();
+    let mut erased = false;
+    if let Value::Map(entries) = &mut claim.value {
+        for (key, value) in entries.iter_mut() {
+            if key.as_str() == Some("actor") && value.as_str() == Some(named.as_str()) {
+                *value = Value::from(ERASED_CALL_IDENTITY);
+                erased = true;
+            }
+        }
+    }
+    if !erased {
+        return Ok(());
+    }
+    claim.evidence = None;
+    vault.put_reserved_claim_in_txn(
+        wtxn,
+        &receipt,
+        &claim,
+        crate::temporal::TimeRange {
+            start: header.learned_at,
+            end: header.learned_at,
+        },
+        header.learned_at,
+    )?;
+    crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, &receipt)?;
+    let raw = vault
+        .get_raw_in(wtxn, &receipt)?
+        .ok_or(Error::EntityNotFound)?;
+    crate::vault::entity_revision::capture_entity_revision(&vault.store, wtxn, &receipt, &raw)?;
+    Ok(())
+}
+
 /// What an actor's erase does with a proposal it opened that has not run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingRepoProposalErase {
@@ -191,8 +248,9 @@ pub const ACTOR_ERASE_PENDING_REPO_PROPOSAL: PendingRepoProposalErase =
 /// already ran a member keeps it as an erased slot and ends at its last landed
 /// member instead (FIX 5219). Either way its journal claims name no one (FIX
 /// 4479). Each proposal it judged as a critic keeps that evidence under an
-/// opaque ref (FIX 4477). One-way, in the erase's own transaction. An id whose
-/// entity is no actor scans nothing.
+/// opaque ref (FIX 4477). Each it settled keeps its decision and names no
+/// settler, in its row and in its receipt claim (FIX 5220). One-way, in the
+/// erase's own transaction. An id whose entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -213,14 +271,24 @@ pub(crate) fn erase_proposal_actor_in_txn(
         if proposer {
             proposal.actor = ProposalActor::Erased;
         }
-        if proposal.forget_critic(vault, &critic)? || proposer {
-            named.push((id, proposal, proposer));
+        let mut settled = None;
+        if let Some(settlement) = proposal.settlement.as_mut()
+            && settlement.actor == Some(*actor)
+        {
+            settlement.actor = None;
+            settled = Some(settlement.receipt);
+        }
+        if proposal.forget_critic(vault, &critic)? || proposer || settled.is_some() {
+            named.push((id, proposal, proposer, settled));
         }
     }
     let mut gone = BTreeSet::new();
-    for (id, proposal, proposer) in named {
+    for (id, proposal, proposer, settled) in named {
         if proposer {
             erase_journal_in_txn(vault, wtxn, &proposal, actor)?;
+        }
+        if let Some(receipt) = settled {
+            erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
         }
         let pending = proposer
             && proposal.operation_seq.is_none()
