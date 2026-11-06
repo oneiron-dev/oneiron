@@ -361,7 +361,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .with_state(server.clone())
         // OF-604: inside admission, outside every route and pre-reader, so
         // digests and body limits see the decoded bytes.
-        .layer(middleware::from_fn(self::body_codec::body_codec))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            self::body_codec::body_codec,
+        ))
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::auth::admit_http_binding,
