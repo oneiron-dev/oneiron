@@ -14245,7 +14245,7 @@
      "path": "src/claim/history_projection/pin.rs",
      "purpose": "The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -43527,7 +43527,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/llm/decision/generated/score.rs",
+     "path": "src/llm/decision/generated_read/score.rs",
      "purpose": "A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure…",
      "surface": {
       "crate-vis": 3
@@ -43539,7 +43539,7 @@
      "notable": [
       "DecisionWireLabels"
      ],
-     "path": "src/llm/decision/generated/wire.rs",
+     "path": "src/llm/decision/generated_read/wire.rs",
      "purpose": "A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each…",
      "surface": {
       "crate-vis": 3,
@@ -75446,11 +75446,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/machine_history.rs",
      "purpose": "The machine-claim history this machine is owed, from the home (FIX 3820)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/machine_history/freshness.rs",
+     "purpose": "Freshness for local pins whose history is no longer owed",
      "surface": {
       "crate-vis": 1
      }
@@ -90844,7 +90854,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 354,
+     "files": 355,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91056,7 +91066,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6397,
+   "source_files": 6398,
    "test_files": 895
   },
   "oneiron-android": {
