@@ -583,6 +583,27 @@ pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
     Ok(held == planned.0)
 }
 
+/// `value` in the one form [`admitted_from`] compares a held row and a raw
+/// offer in (FIX 6534): each secret the plan places, and each handle, as
+/// the plan's one stand-in. A held row and the raw value it was admitted
+/// from read the same here, so a digest of either is one identity. Nothing
+/// is minted, and the plan's copy is wiped.
+///
+/// # Errors
+///
+/// A value the plan cannot read.
+pub(crate) fn admission_form(value: &Value) -> Result<Value> {
+    let mut planned = PlanTree(value.clone());
+    Masker {
+        mints: true,
+        at: Some((origin("replay", &[])?, "replay".to_owned())),
+        ..Masker::default()
+    }
+    .mask_value(&mut planned.0)?;
+    stand_in_handles(&mut planned.0);
+    Ok(std::mem::replace(&mut planned.0, Value::Nil))
+}
+
 /// `value` as a MessagePack tree that keeps its field names, as a named row
 /// stores it, for the wall's field rule.
 pub(crate) fn named_tree<T: Serialize>(value: &T) -> Result<Value> {
