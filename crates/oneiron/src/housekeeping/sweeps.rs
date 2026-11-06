@@ -163,6 +163,9 @@ pub(super) fn run(
                 covered_until: None,
             });
         }
+        HousekeepingSweep::DrafterCorpusSweep => SweepWork::DrafterCorpora {
+            removed: vault.sweep_drafter_corpora()?,
+        },
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
