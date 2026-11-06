@@ -4,7 +4,8 @@ Saved-workflow steps stage the admitted request and keep an owned, call-local
 capture handle. After `generate_recorded_while` returns, that handle finalizes
 only its staged capsule with the returned `ModelCallBinding`. The answering
 rung may complete on another thread. No thread-local note or model-name lookup
-is needed for this workflow path.
+is needed for this workflow path. Executor steps still name their answering
+rung on the calling thread. Both paths finalize through the one capsule writer.
 
 A `self.use` conversation captures its first actual request after requester
 craft refresh. Only that first call's answer finalizes the capsule. Later tool
@@ -20,18 +21,37 @@ After the first successful answer, the exact returned binding finalizes the
 owned handle before that existing cursor is saved as completed. Checkpoint,
 hook-wait and retry records otherwise keep their current behavior.
 
-Contribution forks and strict shadow calls admit the captured model through the
-current native route, then restore the capsule's frozen route prompt on that
-call-local, one-picked-rung ladder. This also handles an owner fallback whose
-prompt differs from the model's current standalone prompt. It changes no live
-configuration or fallback behavior. Strict shadow calls still require equality
-of the full captured route pin, including the restored prompt digest.
+The capsule also keeps the role whose admission sent the call (FIX 6359). A
+workflow passes its call's chat role to its handle. An executor step's host
+notes the role that actually admitted the call: the browser role when its
+admission took the call, else the chat role. A capture with no noted role is
+never finalized.
 
-This does not repair the general executor's thread-local answering-rung capture
-or add a binding to the `LlmBackend` response. Other replay callers that still
-compare the current prompt are unchanged. Callable/result/verb-read exposure
-tracking is also separate work. No guest, image, artifact pin, deployment,
-configuration, default or cap changes are needed for this source change.
+The capsule writer keeps the answering rung's route prompt as a masked body
+the run owns, admitted through the side-row wall (FIX 6255). The capsule names
+that body by ref, with the digest of the prompt as sent. A prompt the wall
+refuses is withheld: no copy is kept.
+
+Contribution forks, strict shadow calls and code-fix exact replays use one
+replay path. Each admits the captured model through the current native route
+of the role that admitted the captured call (FIX 6359), and of no other role,
+and selects the rung that answered the capsule: the one picked rung of that
+model, served at the captured locality (`for_replay_binding`). A ladder with no
+such rung is no replay (`no_exact_rung` for a shadow call). The selected rung's
+configured prompt must match the stored digest; otherwise the replay is refused
+(`route_prompt_moved`). An owner fallback whose prompt differs from the model's
+current standalone prompt is therefore not replayed. The replay then reads the
+stored prompt through the admitted reader and sends it on that call only, in
+place of the configured prompt. A prompt that does not read sends nothing; a
+code-fix job latches `PromptUnavailable`. A replayed answer finalizes no
+capsule. It changes no live configuration or fallback behavior. Strict shadow
+calls still require equality of the full captured route pin, including its
+prompt digest.
+
+This does not add a binding to the `LlmBackend` response. Callable/result/
+verb-read exposure tracking is separate work. No guest, image, artifact pin,
+deployment, configuration, default or cap changes are needed for this source
+change.
 
 ## Windows native stack floor
 
