@@ -177,7 +177,7 @@ pub(super) fn facade_invoke_in_turn_with_notice(
             // Settlement's run of the call enters its boundary here as the drain's.
             let _drain = call.drain().map(VerbAskDrainPermit::enter);
             let (result, hook_notice) = match call.room_turn()? {
-                Some(room) => (memory.for_room_turn(room)?.invoke(verb, value), None),
+                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(verb, value),
                 None => {
                     // The owner's own request on the owner's own full credential:
                     // owner-authored writes carry their own confirmation. Any other
@@ -355,7 +355,7 @@ pub(super) fn facade_invoke_born_with_notice(
             let memory = facade_rewrites_admitted(server, auth, &value, memory);
             let _drain = call.drain().map(VerbAskDrainPermit::enter);
             let (result, hook_notice) = match call.room_turn()? {
-                Some(room) => (memory.for_room_turn(room)?.invoke(verb, value), None),
+                Some(room) => memory.for_room_turn(room)?.invoke_with_notice(verb, value),
                 None => {
                     let memory = match direct_authorship(auth, server, verb)? {
                         Some(owner) => memory

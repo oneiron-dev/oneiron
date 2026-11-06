@@ -295,12 +295,10 @@ pub(super) fn run(
     }
     let _draining = DrainScope::enter(invocation);
     Ok(match room {
-        Some(room) => (
-            memory
-                .for_room_turn(room)
-                .and_then(|turn| turn.invoke(verb, args)),
-            None,
-        ),
+        Some(room) => match memory.for_room_turn(room) {
+            Ok(turn) => turn.invoke_with_notice(verb, args),
+            Err(error) => (Err(error), None),
+        },
         None => crate::task_verb::sdk::invoke_with_notice(&memory, verb, args),
     })
 }

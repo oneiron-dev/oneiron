@@ -88,13 +88,14 @@ not certify that no arguments changed. Credential MCP and managed-owner MCP
 drains keep a positive flag from the same hook chain's existing notice,
 including a supplied error notice. A receipt failure does not discard an
 already supplied positive notice. Missing metadata remains unknown, not a
-claim that the arguments stayed unchanged. Core room-turn calls do not yet
-supply this metadata. These are separate from a saved HTTP reply, which already
+claim that the arguments stayed unchanged. Room-turn calls through the
+notice-aware facade and native drain paths keep the same hook-chain metadata;
+a turn that could not open supplies none. These are separate from a saved HTTP reply, which already
 keeps the notice flag described above. Saved metadata never grants authority
 to run a call.
 
-This HTTP slice does not cover those unsupported completion sources or room-turn
-paths, action-wrapper routes, custody-spool routes, non-facade calls, or errors
+This HTTP slice does not cover other unsupported completion sources or room-turn
+callers, action-wrapper routes, custody-spool routes, non-facade calls, or errors
 before a notice source was supplied. Other completion adapters outside the
 notice-aware core and facade pre-chain paths are not covered by this slice.
 It adds no notice to those
