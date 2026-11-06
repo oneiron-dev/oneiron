@@ -425,6 +425,11 @@ impl Vault {
         if let Some(existing) = OPEN_POINTER.get(&self.store, wtxn, &key.pointer())? {
             return Ok(SessionMintOutcome::AlreadyOpen(existing));
         }
+        if RECORDS.get(&self.store, wtxn, &id)?.is_some() {
+            return Err(Error::InvariantViolation(
+                "session id already has a lifecycle record",
+            ));
+        }
         let record = SessionLifecycleRecord {
             version: SESSION_LIFECYCLE_RECORD_VERSION,
             key,
