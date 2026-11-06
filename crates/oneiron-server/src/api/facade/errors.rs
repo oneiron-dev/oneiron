@@ -201,7 +201,18 @@ impl From<MemoryError> for FacadeApiError {
         }
         Self {
             status,
-            hook_notice: false,
+            hook_notice: matches!(
+                error.hook.as_deref(),
+                Some(
+                    VerbHookStop::Completed {
+                        hook_notice: Some(true),
+                        ..
+                    } | VerbHookStop::CompletedWithError {
+                        hook_notice: Some(true),
+                        ..
+                    }
+                )
+            ),
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: error.code,

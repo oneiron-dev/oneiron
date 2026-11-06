@@ -68,6 +68,11 @@ rows, destination release, program feedback and erasure owners are unchanged;
 a notice cannot make an otherwise valid result disappear. Session-only calls
 may carry the notice without adding a durable receipt or notice record.
 
+When a facade pre-chain receives a native saved completion, it forwards that
+completion's supplied positive notice beside the original typed stop or error.
+It reads the notice already retained with that same stop; it does not run the
+call again or turn the stop into a successful response.
+
 A core call reading a drained call's saved completion returns the original
 result or error and any notice metadata its source supplied. Non-room native drains
 keep the actual hook-chain bit for both outcomes. Credential facade drains
@@ -83,8 +88,9 @@ to run a call.
 
 This HTTP slice does not cover those unsupported completion sources or room-turn
 paths, action-wrapper routes, custody-spool routes, non-facade calls, or errors
-before a notice source was supplied. Completion adapters outside the ordinary
-notice-aware core path are not covered by this slice. It adds no notice to those
+before a notice source was supplied. Other completion adapters outside the
+notice-aware core and facade pre-chain paths are not covered by this slice.
+It adds no notice to those
 paths. The wider caller-notice
 row remains partial. Deploy matching engine/server and native SDK binaries;
 no guest artifact change is needed.
