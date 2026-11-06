@@ -556,7 +556,11 @@ pub(crate) fn reconcile_connector_intent_in_txn(
     now_ms: u64,
 ) -> IntentLedgerResult<Option<super::resolution::IntentResolution>> {
     let Some(mut record) = read_intent_for_attempt_in_txn(vault, &*wtxn, attempt_id, 0)? else {
-        return Ok(None);
+        // KS7-5 (FIX 12117): a send a restore kept only the accounting of
+        // settles as the owner's erase left it.
+        return checkpoint::call_accounting_in_txn(vault, &*wtxn, attempt_id, 0)?
+            .map(|accounting| super::resolution::IntentResolution::from_accounting(&accounting))
+            .transpose();
     };
     binding.verify(&record)?;
     if let Some(reason) = stop

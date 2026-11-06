@@ -2,7 +2,8 @@
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
 use super::types::{
-    OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
+    OutboundEffectCommand, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
+    PreparedEffect,
 };
 use crate::Vault;
 use crate::connector_key::{self, ConnectorKeyStatus, SlateDisposition};
@@ -640,11 +641,39 @@ pub(super) fn effect_result(
     )
 }
 
+/// The replay of a New or Park `command` whose call a restore kept only the
+/// accounting of (KS7-5, FIX 12117), read in `txn`: [`accounting_result`]
+/// under `intent_id`, or `None` for every other call.
+///
+/// # Errors
+///
+/// An accounting row that does not read; storage faults.
+pub(super) fn accounting_replay_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    command: &OutboundEffectCommand,
+    intent_id: IntentId,
+) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
+    let (OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared)) = command
+    else {
+        return Ok(None);
+    };
+    let accounting = crate::outbound_intent_ledger::checkpoint::call_accounting_in_txn(
+        vault,
+        txn,
+        prepared.attempt_id,
+        prepared.call_seq,
+    )?;
+    Ok(accounting.map(|accounting| accounting_result(intent_id, &accounting)))
+}
+
 /// The replay of call `intent_id`, which a restore kept only the accounting
 /// of (KS7-5, FIX 12117), as the owner's erase left it: acked, or stopped
 /// for its reason with whether it may have crossed the wire. A Done or
 /// Abandoned row replays the same way; nothing is gated, sent or charged.
-pub(super) fn accounting_result(
+/// A suppressed semantic duplicate replays suppressed, without the receipt
+/// the restore did not keep.
+fn accounting_result(
     intent_id: IntentId,
     accounting: &crate::outbound_intent_ledger::CallAccounting,
 ) -> OutboundEffectResult {
@@ -654,7 +683,7 @@ pub(super) fn accounting_result(
         Some(RecordedOutboundOutcome::Abandoned(reason)) => (None, Some(reason)),
         Some(RecordedOutboundOutcome::DefiniteNonDelivery) | None => (None, None),
     };
-    settled_result(
+    let mut result = settled_result(
         crate::outbound_intent_ledger::IntentResolution::from_accounting(accounting)
             .expect("validated outbound call accounting has a resolution"),
         intent_id,
@@ -662,7 +691,13 @@ pub(super) fn accounting_result(
         send_outcome,
         true,
         escalation_reason,
-    )
+    );
+    if escalation_reason == Some(IntentEscalationReason::DedupeSuppressed) {
+        result.gate_outcome = Some("allow".to_owned());
+        result.gate_reason_codes.push("gate.allow".to_owned());
+        result.dedupe_suppressed = true;
+    }
+    result
 }
 
 fn settled_result(
