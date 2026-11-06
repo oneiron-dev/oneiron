@@ -573,3 +573,23 @@ fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
         }
     }
 }
+
+/// Drops room-staged media rows and journal entries for a retired space.
+/// Run inside the retiring writer. A poisoned room stays unreadable until it closes.
+pub(super) fn drop_room_media_space_copies(store: &Store, space_id: &str, space_key: &[u8; 16]) {
+    let overlays = store.off_record_sessions.live_overlay_handles();
+    if overlays.is_empty() {
+        return;
+    }
+    let prefixes = super::space::repo_projection::media_row_prefixes();
+    for overlay in overlays {
+        if let Err(error) =
+            overlay.invalidate_repo_media_space_copies(&prefixes, space_key, space_id)
+        {
+            tracing::warn!(
+                error = %error,
+                "a room keeps its staged media copies of a retired space until it closes"
+            );
+        }
+    }
+}
