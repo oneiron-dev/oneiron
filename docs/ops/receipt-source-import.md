@@ -41,3 +41,24 @@ materialized for its inline put, and ordinary batch staging has its own copies.
 File-backed receipt custody/readback and pre-writer instance preparation remain
 separate work. This change does not claim bounded total import memory or a
 fully streaming receipt import.
+
+## Canonical reader seam
+
+Canonical decoding and archive identity now accept a frozen seekable reader.
+The existing slice entry points use that same reader path. Decoding reads the
+native MessagePack value, rewinds the same source, and compares its canonical
+encoding byte for byte through the existing I/O block size. Any trailing byte
+or canonical mismatch remains invalid. Identity hashes the same domain, salt,
+length and bytes; preparation shares that framing function. Reader I/O errors
+propagate rather than becoming absence. The caller must keep the source frozen
+and open across the decode, comparison and identity reads.
+
+`ExportReceiptSource::record` returns the record already decoded by its
+validation. It no longer serializes and decodes that same admitted body a
+second time. Credential nulling, attempt identity and body validation still run.
+
+These reader seams do not enable archive manifests. Current custody continues
+to read inline rows. A real file-backed path still needs the original batch
+file-admission facts, file-aware custody and retirement readers, checked file
+lifetimes and the real importer's pre-writer reservation. Neither a manifest's
+bytes nor an unminted temporary body supplies those facts.

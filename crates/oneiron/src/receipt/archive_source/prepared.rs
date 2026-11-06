@@ -1,7 +1,7 @@
 //! Canonical receipt preparation in one native, unlinked temporary body.
 use std::io::{self, Read, Write};
 
-use super::codec::{ID_DOMAIN, ReceiptArchive};
+use super::{codec::ReceiptArchive, reader::framed_id};
 use crate::{
     entity_id::{ENTITY_ID_LEN, EntityId},
     error::{Error, Result},
@@ -143,14 +143,6 @@ impl PreparedReceiptBytes {
             at: 0,
         }
     }
-}
-
-fn framed_id(salt: u64, len: u64) -> blake3::Hasher {
-    let mut hash = blake3::Hasher::new();
-    hash.update(ID_DOMAIN);
-    hash.update(&salt.to_le_bytes());
-    hash.update(&len.to_le_bytes());
-    hash
 }
 
 struct CountBytes(u64);
