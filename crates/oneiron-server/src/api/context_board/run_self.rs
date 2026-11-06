@@ -9,16 +9,16 @@
 //! from the run itself: the agent, the person its subject anchor names, the
 //! owner's agent Grants that stand for the agent, the run, credential and
 //! parent ceilings and the communication limits its host holds the facts
-//! for ([`BriefHostFacts`]), the policy's class ceilings, the line the run's
-//! entry spends on, the clock and the skills the run's own session loaded.
-//! Every field no host resolves is left out of the brief and named on one
-//! unavailable line ([`oneiron::context_board::SelfBrief::render`]), never
-//! stated as a value.
+//! for ([`BriefHostFacts`]), the policy's class ceilings, the scratchpad of
+//! the session its host binds, the line the run's entry spends on, the clock
+//! and the skills the run's own session loaded. Every field no host resolves
+//! is left out of the brief and named on one unavailable line
+//! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
-    BriefCredentialCeiling, BriefRunCeiling, BriefWorkingSet, CommunicationLimits, SelfBriefState,
-    SessionReadSet, StreamConnectionId,
+    BriefCredentialCeiling, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
+    CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
 };
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MemoryError, MemoryResult};
@@ -28,11 +28,12 @@ use crate::server::SyncServer;
 
 /// What the host that resolves a brief holds for it (FIX 17594, Engine
 /// ruling 21:47), each `None` where it holds none: the run ceiling of the
-/// dispatch attempt its run's entry in flight serves, and the credential
-/// ceiling and signed comm reach of the verified slip it admitted. A
-/// credential's call is bound to no attempt, so it holds no run ceiling;
-/// an ordinary pumped run holds no verified slip, so it holds neither
-/// credential value.
+/// dispatch attempt its run's entry in flight serves, the credential
+/// ceiling and signed comm reach of the verified slip it admitted, and the
+/// scratchpad of the session it binds. A credential's call is bound to no
+/// attempt, so it holds no run ceiling; an ordinary pumped run holds no
+/// verified slip, so it holds neither credential value, and binds no
+/// scratchpad session.
 #[derive(Debug, Default)]
 pub(crate) struct BriefHostFacts {
     pub(crate) run_ceiling: Option<BriefRunCeiling>,
@@ -40,6 +41,35 @@ pub(crate) struct BriefHostFacts {
     /// The verified slip's comm reach, every caveat met
     /// ([`oneiron::authority::VerifiedSlip::comm`]).
     pub(crate) communication_credential_ceiling: Option<CommReach>,
+    /// The working set's scratchpad family as the host read it for the
+    /// session it binds ([`scratchpad_family`]).
+    pub(crate) scratchpad: Option<Vec<BriefWorkingHandle>>,
+}
+
+/// The working set's scratchpad family (FIX 17594, WORKING SET A) for
+/// `session`, read through `memory`, the host's own surface for the agent:
+/// the session's live pad NOTE when the agent's own read admits it, as its
+/// board's SCRATCHPAD does, and an empty family when the session has no
+/// live pad. A read that fails logs and leaves the family `None`
+/// (unavailable). It opens, appends to and seals no pad.
+pub(super) fn scratchpad_family(
+    memory: &oneiron::memory::Memory<'_>,
+    session: &str,
+) -> Option<Vec<BriefWorkingHandle>> {
+    memory
+        .scratchpad_ref(session)
+        .inspect_err(|error| {
+            tracing::warn!(
+                code = %error.code,
+                "the self brief's scratchpad did not read; the brief names it unavailable"
+            );
+        })
+        .ok()
+        .map(|pad| {
+            pad.map(|note| BriefWorkingHandle::ScratchpadNote { note })
+                .into_iter()
+                .collect()
+        })
 }
 
 /// Answers a pumped run's `describe(self)` for its agent `actor`, over the
@@ -92,11 +122,12 @@ pub(crate) async fn describe_self_for_run(
 /// and the class ceilings when their read fails, so are the run and parent
 /// ceilings and the comm reach when the host bound no dispatch attempt, so
 /// are the credential ceiling and the credential's comm reach when it
-/// verified no slip, and so are the budget lease and budget when no line
-/// binds the run's entry. [`oneiron::context_board::SelfBrief::render`]
-/// leaves each `None` field out and names it unavailable. A credentialed agent's
-/// describe(self) with no installed snapshot resolves its brief here too,
-/// over its own session's reads and with no line (FIX 11461).
+/// verified no slip, so is the scratchpad when it binds no session, and so
+/// are the budget lease and budget when no line binds the run's entry.
+/// [`oneiron::context_board::SelfBrief::render`] leaves each `None` field
+/// out and names it unavailable. A credentialed agent's describe(self) with
+/// no installed snapshot resolves its brief here too, over its own
+/// session's reads and with no line (FIX 11461).
 pub(super) fn resolved_state(
     server: &SyncServer,
     actor: oneiron::WriteActor,
@@ -199,7 +230,7 @@ pub(super) fn resolved_state(
         clock_ms,
         skill_index,
         working_set: BriefWorkingSet {
-            scratchpad: None,
+            scratchpad: host.scratchpad.clone(),
             pins: None,
             replay: None,
         },
