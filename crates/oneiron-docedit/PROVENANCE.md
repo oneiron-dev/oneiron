@@ -460,9 +460,16 @@ original span at most once. A successful single-piece native partial run owns
 its unchanged identity attributes in the same way; the prior serializer still
 succeeds first, and unsupported native edits keep the same static attribute path.
 A run spanning both retained pieces keeps its previous wrappers, with no guessed
-identity side. Static fallback, opaque and interior-zero copies and other source
-sites are not added to this ledger, and arbitrary schema-specific identity
-attributes are not interpreted. Internal-boundary empties, field-containing
-paragraphs, matching and field-cut receipts keep their prior behavior. This is source-only work in the existing
+identity side. In a field-free paragraph, a successful raw copy of a zero-text
+child strictly inside a retained interval also owns its original property identities.
+A wholly retained opaque child owns the identities of its nested properties: its
+original bytes stay intact, apart from the existing insertion of inherited namespace
+bindings on its opening tag. Both source spans stay local until the head, middle
+and tail all render successfully. A later template copy can then omit only the
+same-source XML-namespace `id` attributes without changing the original opaque
+or zero-text child. Static fallback and other source sites are not added to this
+ledger, and arbitrary schema-specific identity attributes are not interpreted.
+Internal-boundary empties, field-containing paragraphs, matching and field-cut
+receipts keep their prior behavior. This is source-only work in the existing
 17480/18510 pack, not full table-cell fallback, OF-509/OF-510, compiler, runtime or
 Office fidelity proof.
