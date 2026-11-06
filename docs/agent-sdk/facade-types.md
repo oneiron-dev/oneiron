@@ -6101,10 +6101,12 @@ export type DeckDesignShortfall = { block: string; reason: DeckShortfallReason }
 export type DeckDesignDecision = { page: string; options: DeckDesignOption[]; shortfalls: DeckDesignShortfall[] }
 /** `oneiron::blob_artifact::deck_creation::DeckDesignView` */
 export type DeckDesignView = { spec: DesignSpec; plans: (DeckPlanView | null)[]; decisions: DeckDesignDecision[][]; presentation?: DeckPresentation }
+/** `oneiron_docedit::graphic::GraphicLimits` */
+export type GraphicLimits = { svg_bytes: number; raster_bytes: number; raster_pixels: number }
 /** `oneiron::blob_artifact::deck_creation::DeckEmissionNames` */
 export type DeckEmissionNames = { text: string; table: string; chart: string; picture: string; figure: string; sheet: string }
 /** `oneiron::blob_artifact::deck_creation::DeckEmissionRequest` */
-export type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null }
+export type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; graphics?: GraphicLimits | null; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null }
 /** `oneiron_store::blob_artifact::deck_creation::record::CreatedInput` */
 export type CreatedInput = { source: ArtifactVersionRef; content_hash: number[]; provenance_kind: string }
 /** `oneiron_store::blob_artifact::deck_creation::record::CreatedSlide` */
@@ -6137,8 +6139,6 @@ export type PptxInspection = { slides: PptxSlideIdentity[]; signature_parts: str
 export type DeckCommentInspection = { state: "inspected"; inspection: PptxInspection } | { state: "refused"; reason: string }
 /** `oneiron::blob_artifact::deck_doors::DeckInspectionView` */
 export type DeckInspectionView = { artifact_id: EntityId; version: number; base: Digest; marks: IdMarks; slides: DeckSlideInspection[]; ambiguities: DeckIdentityAmbiguity[]; comments: DeckCommentInspection }
-/** `oneiron_docedit::graphic::GraphicLimits` */
-export type GraphicLimits = { svg_bytes: number; raster_bytes: number; raster_pixels: number }
 /** `oneiron_docedit::edit::transaction::StepTarget` */
 export type StepTarget = { slide: string; shape: number; expected: Digest }
 /** `oneiron_docedit::edit::transaction::StepXfrm` */
