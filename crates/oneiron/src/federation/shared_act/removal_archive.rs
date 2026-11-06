@@ -520,6 +520,7 @@ impl Vault {
     fn rewrite_removal_archive(&self, row_key: &str, stored: &StoredRemovalExport) -> Result<bool> {
         let receipt = removal_export_receipt(row_key)
             .ok_or(Error::InvariantViolation("removal archive row key"))?;
+        let row_key = &row_key.to_owned();
         let rewritten = self.rewritten_removal_archive(receipt, stored)?;
         let mut txn = self.store.env.write_txn()?;
         let Some(mut current) = REMOVAL_EXPORT.get(&self.store, &txn, row_key)? else {
