@@ -542,7 +542,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/world_models.rs` | src | s | 1 enum · 5 fn · 1 crate-vis | WorldModelRoutes | Which model routes a call on some worlds may take, and in what order: the worlds' model orders (DEC-0005… |
 | `src/authority/world_privacy.rs` | src | m | 2 struct · 2 enum · 7 fn · 2 re-export · 22 crate-vis | EffectiveModelOrder, EffectiveWorldPrivacy, FoldedWorld, WorldEditStanding | Folds `WorldPrivacy` edits into each world's effective settings |
 | `src/authority/world_privacy_door.rs` | src | m | 1 struct · 1 enum · 10 fn · 7 crate-vis | EditOrigin, WorldPrivacyView | The signed half of the owner's world-settings door, and the one judge every egress door asks: may a world be… |
-| `src/authority/world_refold.rs` | src | s | 4 crate-vis | — | A world edit, a world key record, a grant travel choice, or a root request, the owner's cancel of one or its… |
+| `src/authority/world_refold.rs` | src | s | 5 crate-vis | — | A world edit, a world key record, a grant travel choice, or a root request, the owner's cancel of one or its… |
 | `src/authority/world_strength.rs` | src | m | 9 crate-vis | — | Each world's settings-edit frontier and the strength of its edits (world privacy P2, re-cut for the mesh… |
 | `src/authority/write_authorization.rs` | src | s | 1 fn · 6 crate-vis | — | Transaction-bound actor authorization for engine-owned write doors |
 | `src/autoreason_campaign.rs` | src | s | 1 enum · 1 type · 4 const · 7 mod · 4 re-export | CampaignError | Engine-side AR-3 campaign reports and read-only experiment selection |

@@ -6161,7 +6161,7 @@
      "path": "src/authority/world_refold.rs",
      "purpose": "A world edit, a world key record, a grant travel choice, or a root request, the owner's cancel of one or its…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
