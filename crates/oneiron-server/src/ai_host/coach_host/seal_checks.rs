@@ -6,8 +6,9 @@
 //! being met. A recheck shows what the agent confessed, to be examined
 //! directly; a random audit shows only the objectives, so the agent's own
 //! report does not steer it. The Coach pays for the calls. Each finding
-//! names the checker's protocol and the role its judge ran on, so a
-//! completed random audit freezes its contract (FIX 3611, [`checker`]).
+//! names the checker's protocol, the role its judge ran on and the rung that
+//! answered there, as the call returned it, so a completed random audit
+//! freezes its contract (FIX 3611, [`checker`]).
 use oneiron::EntityId;
 use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::compaction::output::{OutputRef, restore_output};
@@ -118,9 +119,10 @@ impl SealChecker for HostChecker<'_> {
             .map(|objective| objective_data(request.kind, objective))
             .collect();
         let messages = check_messages(request.kind, objectives, &result);
-        let Some((text, served)) = self.models.generate_served(role, messages)? else {
+        let Some((text, binding)) = self.models.generate_recorded(role, messages)? else {
             return Ok(SealCheck::Unavailable);
         };
+        let served = binding.rung.model.as_str().to_owned();
         // A fallback rung may be the executor's own model.
         if !independent(&served, executor) {
             return Ok(SealCheck::Inconclusive);
@@ -137,9 +139,12 @@ impl SealChecker for HostChecker<'_> {
                     checked_at: now,
                     findings,
                 },
+                // The rung that answered, as it answered: a contribution
+                // check's forks are scored on it alone.
                 protocol: CheckerProtocol {
                     digest: protocol_digest(),
                     role,
+                    judge_rung: binding.route.map(|route| (binding.rung.locality, route)),
                 },
             },
             None => SealCheck::Inconclusive,
