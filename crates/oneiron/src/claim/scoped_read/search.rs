@@ -1,6 +1,8 @@
 use super::access_gate::HeldAuthority;
 use super::*;
 
+mod native_query;
+
 /// The rows a bounded search's plan refused that its key's own ceiling
 /// admits: rows the request excluded, which its receipt counts (B7). A row
 /// the key cannot read is never among them. A text scan checks every
