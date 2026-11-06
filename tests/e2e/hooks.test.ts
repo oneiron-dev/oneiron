@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { McpClient } from "./support/clients.ts";
@@ -39,6 +40,21 @@ interface Corpus {
     annotation: string; packFiles: Record<string, string>;
   };
 }
+interface FactCorpus {
+  packName: string; hookName: string; hookVersion: string;
+  triggerPredicate: string; otherPredicate: string; outputPredicate: string;
+  matchingWorld: string; otherWorld: string; marker: string;
+  writes: {
+    id: string; match: boolean; axis: "matching" | "predicate" | "world" | "actor_class";
+    value: { sequence: number; fact: string };
+  }[];
+  expected: {
+    matchingSequences: number[];
+    landedEffects: { marker: string; sequence: number; fact: string }[];
+  };
+  packFiles: Record<string, string>;
+}
+
 async function packInput(catalog: FixtureCatalog, entries: Record<string, string>): Promise<Facade.PackPutRequest> {
   return { files: await Promise.all(Object.entries(entries).map(async ([path, id]) => ({
     path, text: new TextDecoder().decode(await catalog.readArchive(id)),
@@ -116,27 +132,156 @@ async function readHookReplay(
   }
 }
 
-/* HOOKS-01 — Fact hook commit and restart catchup should work. OF-579.
- * Canon: ARCH-0080 #fact-inputs/#fact-sources/#crash-safety/#hook-grant.
- * Install: vault.packs.put({files:[{path,text}]}) -> PackPutReceipt.
- * Canonical grant, not an invented callable verb:
- *   HookGrant { reader: EntityRef, reader_class: Human|Agent|System,
- *               predicates: PredicateGlob[], worlds: WorldRef[] }
- * The owner assigns it to a binding; a fact hook has no writer session.
- * Current owner hooks GET returns {id,binding}[], not the effective grant;
- * set_hook_grant exists only in the library, not HTTP/MCP/generated SDK/CLI.
- *
- * Once typed grant assignment/read exist, install the claim.landed fixture
- * with a narrow author grant. Commit two matching writes in known order,
- * interleaved with wrong predicate/world/class writes. Observe each public
- * write receipt before SIGKILL, restart the same EngineFixture, then await
- * Hook receipts and exactly one landed effect per envelope. Check per-source
- * commit order, author and Generated provenance, then restart again and require
- * unchanged effect ids/counts. A restart may deliver again, never land twice.
- * Do not fake a queue drain, grant record, cursor reset or crash transaction.
- * G09: use claim.landed only; no requirement for later source families is made.
+/* HOOKS-01 — OF-579, ARCH-0080 fact-inputs/fact-sources/crash-safety/hook-grant.
+ * Use the public owner grant doors and a NEW independent canonical body.js pack.
+ * Trigger actor class is not the observer grant's reader_class. The non-owner
+ * writer has a real principal and its own paired credential, not a forged actor.
+ * All five source receipts are observed before SIGKILL on the same fixture.
+ * Pending work at the instant of the kill is not forced or claimed here.
  */
-suite.todo(test, "HOOKS-01", "waits on typed hook grant assignment and effective-grant read — Fact hook commit and restart catchup should work");
+suite.test(test, "HOOKS-01", "Fact hook commit and restart catchup should work", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<Corpus>("hooks-scenarios");
+  const spec = await catalog.readJson<FactCorpus>("hooks-fact-scenario");
+  const engine = await EngineFixture.start({ id: "HOOKS-01", profile });
+  const owner = engine.pairedActor.principalRef;
+
+  // Create the agent through the stopped-vault CLI, before the journey's crash.
+  await engine.client.call("vault.receipts", { limit: 1 });
+  await engine.kill();
+  const minted = await engine.cli.run([
+    "token", "agent", "--name", "hooks-fact-nonmatch", "--tier", "full-access",
+    "--config", resolve(engine.root, "oneiron.toml"),
+    "--out", resolve(engine.root, "hooks-fact-nonmatch.credential"),
+  ], undefined, undefined, true);
+  expect(minted.exitCode).toBe(0);
+  const principal = JSON.parse(minted.stdout) as { principal_ref: string; actor_class: string };
+  expect(principal.principal_ref).toMatch(/^[a-f0-9]{32}$/);
+  expect(principal.actor_class).toBe("agent");
+  expect(principal.principal_ref).not.toBe(owner);
+  await engine.restart();
+  const agent = await engine.pairActor({
+    principalRef: principal.principal_ref, actorClass: "agent",
+    scope: ["core:read", "core:propose", "core:write"],
+  });
+  const baseScope = await ownerBaseClaimScope(engine.client, owner);
+  const installed = await engine.client.call("vault.packs.put", await packInput(catalog, spec.packFiles));
+  expect(installed.outcome).toBe("installed");
+  expect(installed.receipt?.pack_name).toBe(spec.packName);
+  expect(installed.receipt?.status).toBe("active");
+  const bindings = (await engine.client.call("vault.packs.hooks.list", {}))
+    .filter(row => row.binding.pack === spec.packName && row.binding.hook === spec.hookName);
+  expect(bindings).toHaveLength(1);
+  const binding = bindings[0]!;
+  expect(binding.binding.owner).toBe(owner);
+  expect(binding.binding.author).toEqual({ kind: "owner" });
+  expect(binding.binding.enabled).toBe(true);
+  expect(binding.binding.selector.phase).toBe("fact");
+  expect(binding.binding.selector.verbs).toEqual([`claim.landed:${spec.triggerPredicate}`]);
+  expect(binding.binding.selector.actors).toEqual(["human"]);
+  expect(binding.binding.selector.scope).toBe(`world:${spec.matchingWorld}`);
+  const grant: Facade.HookGrant = {
+    reader: owner, reader_class: "human",
+    predicates: [spec.triggerPredicate], worlds: [spec.matchingWorld],
+  };
+  expect(await engine.client.call("vault.packs.hooks.grant.set", { binding: binding.id, grant }))
+    .toEqual({ binding: binding.id, grant });
+  const readGrant = () => engine.client.call("vault.packs.hooks.grant.get", { binding: binding.id });
+  expect(await readGrant()).toEqual({ binding: binding.id, grant });
+
+  const matching = spec.writes.filter(row => row.match);
+  expect(matching.map(row => row.value.sequence)).toEqual(spec.expected.matchingSequences);
+  expect(spec.writes.filter(row => !row.match).map(row => row.axis))
+    .toEqual(["predicate", "world", "actor_class"]);
+  const sourceReceipts: Facade.MemoryReceipt[] = [];
+  for (const row of spec.writes) {
+    const writer = row.axis === "actor_class" ? agent : engine.pairedActor;
+    const world = row.axis === "world" ? spec.otherWorld : spec.matchingWorld;
+    const committed = await writer.client.call("vault.claims.upsert", {
+      id: row.id, subject_ref: owner,
+      predicate: row.axis === "predicate" ? spec.otherPredicate : spec.triggerPredicate,
+      value: row.value, confidence: 1, source: "user_stated", world_ref: world,
+      scope: { ...baseScope, world_id: world },
+    });
+    const page = await engine.client.call("vault.receipts", { limit: data.pageBound });
+    expect(page.undecodable).toBe(0);
+    expect(page.next_after == null).toBe(true);
+    const receipt = page.receipts.find(item => item.receipt_ref === committed.receipt_ref);
+    expect(receipt).toBeDefined();
+    expect(receipt!.outcome).toBe("allow");
+    expect(receipt!.actor_ref).toBe(writer.principalRef);
+    sourceReceipts.push(receipt!);
+  }
+  const hookReceipts = async () => (await readHookReceipts(
+    input => engine.client.call("vault.receipts", input), data.pageBound,
+  )).filter(row => row.fields?.hook === `${spec.packName}/${spec.hookName}`);
+  const readEffects = async () => {
+    const page = await engine.client.call("vault.claims.list", {
+      subject_ref: owner, predicate: spec.outputPredicate, limit: data.pageBound,
+    });
+    expect(page.value.length).toBeLessThan(data.pageBound);
+    return byClaimId(page.value);
+  };
+  const beforeKill = await hookReceipts();
+  await engine.kill();
+  await engine.restart();
+  expect(await readGrant()).toEqual({ binding: binding.id, grant });
+  const receipts = await awaitPublic(hookReceipts, rows => rows.length >= matching.length,
+    { label: "HOOKS-01 durable Hook receipts after SIGKILL" });
+  expect(receipts).toHaveLength(matching.length);
+  const effects = await awaitPublic(readEffects, rows => rows.length >= matching.length,
+    { label: "HOOKS-01 one landed effect per matching envelope" });
+  expect(effects).toHaveLength(spec.expected.landedEffects.length);
+  const ordered = matching.map(row => {
+    const found = receipts.filter(receipt => receipt.fields?.trigger_ref === row.id);
+    expect(found).toHaveLength(1);
+    return found[0]!;
+  });
+  const positions = ordered.map(row => receiptField(row, "position"));
+  for (const position of positions) expect(position).toMatch(/^[a-f0-9]+$/);
+  expect(BigInt(`0x${positions[0]!}`) < BigInt(`0x${positions[1]!}`)).toBe(true);
+  const runKeys = ordered.map(row => receiptField(row, "run_key"));
+  expect(new Set(runKeys).size).toBe(matching.length);
+  for (const key of runKeys) expect(key).toMatch(/^[a-f0-9]{64}$/);
+  // Positions prove source order; run clocks may tie. No public unique apply
+  // sequence exists, so these reads do not claim strict apply serialization.
+  const clocks = ordered.map(row => Number(receiptField(row, "now")));
+  expect(clocks.every(Number.isSafeInteger)).toBe(true);
+  expect(clocks[0]!).toBeLessThanOrEqual(clocks[1]!);
+  expect(ordered[0]!.created_at).toBeLessThanOrEqual(ordered[1]!.created_at);
+  for (const [index, receipt] of ordered.entries()) {
+    expect(receipt.outcome).toBe("propose");
+    expect(receipt.actor_ref).toBe(owner);
+    expect(receiptField(receipt, "binding")).toBe(binding.id);
+    expect(receiptField(receipt, "source")).toBe("claim_changelog");
+    expect(receiptField(receipt, "fact")).toBe("claim.landed");
+    expect(receiptField(receipt, "hook_version")).toBe(spec.hookVersion);
+    const expected = spec.expected.landedEffects[index]!;
+    const landed = effects.filter(row => typeof row.value === "object" && row.value !== null
+      && "sequence" in row.value && row.value.sequence === expected.sequence);
+    expect(landed).toHaveLength(1);
+    expect(landed[0]!.value).toEqual(expected);
+    expect(landed[0]!.subject_ref).toBe(owner);
+    expect(landed[0]!.source).toBe("generated");
+    expect(landed[0]!.approval).toBe("proposed");
+    // Author is public on the binding and Hook receipt, not made_by on this
+    // worker's Proposed row. Value echo and cardinality correlate the two.
+  }
+  await engine.artifacts.json("fact-commit-restart.json", {
+    sourceReceipts, beforeKill, receipts, effects, grant,
+    pendingAtKillForced: false,
+  });
+  await engine.kill();
+  await engine.restart();
+  expect(await readGrant()).toEqual({ binding: binding.id, grant });
+  expect(await readEffects()).toEqual(effects);
+  const afterSecond = await hookReceipts();
+  expect(afterSecond.map(row => row.receipt_ref).sort())
+    .toEqual(receipts.map(row => row.receipt_ref).sort());
+  await engine.artifacts.json("fact-second-restart.json", {
+    receipts: afterSecond, effects: await readEffects(),
+  });
+});
 
 suite.test(test, "HOOKS-02", "Hook replay lands nothing should work", async () => {
   const catalog = await loadFixtures();
