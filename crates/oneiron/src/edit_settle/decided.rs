@@ -208,7 +208,6 @@ impl Vault {
         deadline: Instant,
     ) -> Result<DecidedSheetAnswers> {
         let decoded_expected = expected.decode()?;
-        let expected = &decoded_expected;
         let key = settlement_key_parts(artifact, &row.request.run_ref);
         {
             let txn = self.store.env.read_txn()?;
@@ -216,14 +215,9 @@ impl Vault {
             if super::artifact_retention_deleted_in_txn(&self.store, &txn, artifact)? {
                 return Err(Error::EntityNotFound);
             }
-            let existing = DECIDED
-                .get(&self.store, &txn, &key)?
-                .ok_or(Error::EntityNotFound)?;
-            existing.matches(&row.request, row.unmasked)?;
-            if existing.generation != expected.generation {
-                return Err(Error::EntityNotFound);
-            }
-            if &existing != expected {
+            if let Some(existing) =
+                competing_answers(&self.store, &txn, &key, expected, &decoded_expected, &row)?
+            {
                 return Ok(existing);
             }
         }
@@ -233,14 +227,9 @@ impl Vault {
             if super::artifact_retention_deleted_in_txn(&self.store, txn, artifact)? {
                 return Err(Error::EntityNotFound);
             }
-            let existing = DECIDED
-                .get(&self.store, txn, &key)?
-                .ok_or(Error::EntityNotFound)?;
-            existing.matches(&row.request, row.unmasked)?;
-            if existing.generation != expected.generation {
-                return Err(Error::EntityNotFound);
-            }
-            if &existing != expected {
+            if let Some(existing) =
+                competing_answers(&self.store, txn, &key, expected, &decoded_expected, &row)?
+            {
                 return Ok(existing);
             }
             encoded.put(&self.store, txn)?;
@@ -306,6 +295,34 @@ impl DecidedSheetAnswers {
         }
         Ok(())
     }
+}
+
+fn competing_answers(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, [u8; 32]),
+    encoded_expected: &DecidedSheetExpected,
+    expected: &DecidedSheetAnswers,
+    proposed: &DecidedSheetAnswers,
+) -> Result<Option<DecidedSheetAnswers>> {
+    let bytes = DECIDED
+        .get_borrowed(store, txn, key)?
+        .ok_or(Error::EntityNotFound)?;
+    // Identical bytes already passed this codec outside the transaction.
+    // Non-reflexive values (NaN) must keep the original typed comparison.
+    if encoded_expected.matches_encoded(&bytes) && expected.eq(expected) {
+        expected.matches(&proposed.request, proposed.unmasked)?;
+        return Ok(None);
+    }
+    let existing = DECIDED.decode_value(&bytes)?;
+    existing.matches(&proposed.request, proposed.unmasked)?;
+    if existing.generation != expected.generation {
+        return Err(Error::EntityNotFound);
+    }
+    if &existing != expected {
+        return Ok(Some(existing));
+    }
+    Ok(None)
 }
 
 fn check_available(

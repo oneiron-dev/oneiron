@@ -79,6 +79,16 @@ manifest, consume-once, resource and transaction checks remain. In particular,
 folder-answer source changes keep the original held proposal retryable; the
 write batch does not repeat any of its decisions.
 
+Advancing retained answers decodes the expected snapshot once before opening
+its transaction. Each stored reread borrows the same row's bytes where the
+store can lend them. An exact encoding match reuses that decoded snapshot
+only when its typed equality is reflexive. Every other encoding, including a
+non-reflexive snapshot containing NaN, keeps the original full decoder path.
+Request, visibility, generation, typed comparison and competing-row returns
+stay unchanged, as do the availability and retention checks in both phases.
+An overlay can still copy the raw bytes, and the expected snapshot and any
+competing row still need owned decoding. This is not full decode-heap accounting.
+
 ## Remaining work
 
 This is a source implementation, not a production compile or runtime proof.
