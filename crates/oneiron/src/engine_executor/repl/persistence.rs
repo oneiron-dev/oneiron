@@ -77,7 +77,7 @@ impl EngineNativeExecutor<'_> {
         let mut sink = self.storage.code_run_output_sink()?;
         write_json(&mut sink, &resumed)?;
         let path = resumed_output_path(seq, wait.wait_id);
-        let output = publish_output(&self.storage, record, path.clone(), sink)?;
+        let output = publish_output(&self.storage, record, path.clone(), sink, None)?;
         let name = format!("wait{seq}");
         match record.bindings.iter_mut().find(|held| held.name == name) {
             Some(held) => {

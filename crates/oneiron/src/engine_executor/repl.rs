@@ -472,6 +472,7 @@ impl EngineNativeExecutor<'_> {
                 &mut record,
                 observation_output_path(completed_steps),
                 bodies.observation,
+                Some(bridge_start as u64),
             )?;
             // A finished step's console lines are evidence, not its result,
             // so they stay out of the step's result digests.
@@ -481,12 +482,19 @@ impl EngineNativeExecutor<'_> {
                     &mut record,
                     console_output_path(completed_steps),
                     console,
+                    Some(bridge_start as u64),
                 )?;
             }
             let mut outputs = Vec::with_capacity(bodies.files.len());
             let mut file_outputs = Vec::with_capacity(bodies.files.len());
             for ((path, sink), stored_path) in bodies.files.into_iter().zip(runtime_output_paths) {
-                let output = publish_output(&self.storage, &mut record, stored_path, sink)?;
+                let output = publish_output(
+                    &self.storage,
+                    &mut record,
+                    stored_path,
+                    sink,
+                    Some(bridge_start as u64),
+                )?;
                 outputs.push((path, output.raw_blake3));
                 file_outputs.push(output);
             }

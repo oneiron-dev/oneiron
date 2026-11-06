@@ -89,3 +89,17 @@ The current codec requires its nullable field; there is no old-format reader.
 The QuickJS bootstrap change is source-only until its controlled component
 build replaces the artifacts and manifest together. Do not claim the shipped
 component accepts this new option before that rebuild.
+
+## Streamed REPL step outputs
+
+A successful REPL step's observation, separate console evidence and output
+files carry the same `producing_step_start` bridge sequence supplied to its
+`RecordingJsHost` at entry. This is not the step ordinal or a clock value.
+The coordinate joins the existing source rows on the canonical or room
+publisher before the occurrence is written. The same guest filename in a
+later step already receives a distinct per-step output path.
+
+This carry does not change stored-value replay: those occurrences retain
+their original producer metadata. Generic evidence, scripts, resumed wait
+replies and pinned-entry observations still have no step coordinate here.
+No effect, media type, grant or fence is inferred for the streamed family.
