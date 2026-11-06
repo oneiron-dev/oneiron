@@ -122,7 +122,6 @@ impl ScopedRead<'_> {
             usize::MAX,
             false,
         )?;
-        let suppressed = admitted.source.suppression() + admitted.suppressed;
         let value = admitted.source.visible().then(|| {
             admitted
                 .edges
@@ -132,7 +131,7 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(None, &policy, &filter, suppressed),
+            receipt: self.receipt_for(None, &policy, &filter, 0),
         })
     }
 
@@ -146,13 +145,12 @@ impl ScopedRead<'_> {
                     .map(|visible| visible.then_some(()))
             })?;
             if !admitted.visible() {
-                let suppressed = admitted.suppression();
                 return Ok(ScopedReadResult {
                     value: MemoryTimeline {
                         anchor: *anchor,
                         records: Vec::new(),
                     },
-                    receipt: self.receipt_for(None, &policy, &filter, suppressed),
+                    receipt: self.receipt_for(None, &policy, &filter, 0),
                 });
             }
             (filter, policy)
@@ -162,7 +160,6 @@ impl ScopedRead<'_> {
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
             && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?;
-        let mut suppressed = 0;
         let mut kept = Vec::new();
         for record in timeline.records {
             let admitted = self.admit_in(&txn, &record.id, || {
@@ -176,7 +173,6 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
-            suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
             }
@@ -188,7 +184,7 @@ impl ScopedRead<'_> {
         }
         timeline.records = kept;
         let mut receipt = self.receipt_for(None, &policy, &filter, 0);
-        receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, suppressed));
+        receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
         Ok(ScopedReadResult {
             value: timeline,
             receipt,
@@ -330,13 +326,17 @@ impl ScopedRead<'_> {
             )? {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             }
             let Some(current) = self.entity_record_in(&txn, &id)?.map(|row| row.encode()) else {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             };
             let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
@@ -348,7 +348,9 @@ impl ScopedRead<'_> {
             else {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             };
             if blake3::hash(&raw).as_bytes() != &expected_hash {
@@ -362,7 +364,9 @@ impl ScopedRead<'_> {
             {
                 return Ok(ScopedReadResult {
                     value: None,
-                    receipt: receipt(1),
+                    receipt: receipt(
+                        self.supersession_pair_suppression_in(&txn, &policy, *old, *new, pair),
+                    ),
                 });
             }
             parts.push((
@@ -382,6 +386,60 @@ impl ScopedRead<'_> {
             value: Some((before, after)),
             receipt: receipt(0),
         })
+    }
+
+    fn supersession_pair_suppression_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        old: EntityId,
+        new: EntityId,
+        pair: crate::claim::supersession_diff::RevisionPair,
+    ) -> usize {
+        let readable = self.actor_retrieval_floor(policy).and_then(|floor| {
+            for (id, revision, expected_hash) in [
+                (old, pair.before, pair.before_hash),
+                (new, pair.after, pair.after_hash),
+            ] {
+                if !crate::vault::entity_revision::entity_owns_revision_in_txn(
+                    &self.vault.store,
+                    txn,
+                    &id,
+                    revision,
+                )? {
+                    return Ok(false);
+                }
+                let Some(current) = self.entity_record_in(txn, &id)?.map(|row| row.encode()) else {
+                    return Ok(false);
+                };
+                let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+                    self.vault,
+                    txn,
+                    &id,
+                    ReadMode::Pinned(revision),
+                )?
+                else {
+                    return Ok(false);
+                };
+                if blake3::hash(&raw).as_bytes() != &expected_hash {
+                    return Ok(false);
+                }
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("supersession revision header"))?;
+                if self.admit_in::<()>(txn, &id, || Ok(None))?.suppression() == 0
+                    || !crate::note::countable_read_suppression(
+                        header.entity_type,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    )
+                    || !self.history_row_readable_in(txn, policy, &floor, &id, &current)?
+                    || !self.history_row_readable_in(txn, policy, &floor, &id, &raw)?
+                {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        });
+        usize::from(readable.unwrap_or(false))
     }
 
     fn timeline_anchor_allowed_in(

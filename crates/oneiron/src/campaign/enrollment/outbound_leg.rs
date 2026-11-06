@@ -305,6 +305,31 @@ pub enum EnrollmentLegDrive {
     NoHomeNode,
 }
 
+impl Vault {
+    /// Drives the claimed enrollment attempt through this vault's record hooks.
+    ///
+    /// Uses the same native outward leg as [`drive_enrollment_outbound_leg`].
+    ///
+    /// # Errors
+    ///
+    /// Gate, budget, ledger and storage failures, as the leg returns them.
+    pub fn drive_enrollment_outbound_leg(
+        &self,
+        local_node_id: u64,
+        attempt: &AttemptRecord,
+        sender: &mut (dyn OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<EnrollmentLegDrive, IntentLedgerError> {
+        self.store.record_hooks.drive_enrollment_outbound_leg(
+            self,
+            local_node_id,
+            attempt,
+            sender,
+            now_ms,
+        )
+    }
+}
+
 /// Drives the outward leg of the claimed enrollment `attempt` through the
 /// host's `sender` (ONE-1778, FIX 2636), after its membership leg applied.
 /// The leg is the same self-contained bridge a crash resumes: the call's
@@ -316,7 +341,7 @@ pub enum EnrollmentLegDrive {
 /// # Errors
 ///
 /// Gate, budget, ledger and storage failures, as the leg returns them.
-pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
+pub fn drive_enrollment_outbound_leg<S: OutboundResultSender + ?Sized>(
     vault: &Vault,
     local_node_id: u64,
     attempt: &AttemptRecord,
@@ -360,9 +385,9 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
 /// The host's result sender as the chokepoint's transport. The leg keeps no
 /// result body, so only the send's outcome, its remote task, and its
 /// provider wait pass through.
-struct SenderTransport<'a, S>(&'a mut S);
+struct SenderTransport<'a, S: ?Sized>(&'a mut S);
 
-impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
+impl<S: OutboundResultSender + ?Sized> OutboundTransport for SenderTransport<'_, S> {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
         self.0.send(call).outcome
     }
