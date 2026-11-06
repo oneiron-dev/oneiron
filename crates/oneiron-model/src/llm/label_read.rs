@@ -9,7 +9,7 @@
 //! question renders over the shared state, and calibration. This seam carries only the
 //! probabilities and the usage to settle.
 
-use super::{BudgetLease, LlmResult, LlmUsage};
+use super::{BudgetLease, LlmResult, LlmUsage, WorkCancel};
 use serde_json::Value as JsonValue;
 
 /// The labels a readout scores, in the order its probabilities are reported.
@@ -109,4 +109,15 @@ pub trait LabelReadModel: Send + Sync {
         request: &LabelReadRequest<'_>,
         lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse>;
+
+    /// Reads with the caller's cancellation signal. Readers that can interrupt an
+    /// in-flight wait override this; the default keeps the ordinary read behavior.
+    fn read_with_cancel(
+        &self,
+        request: &LabelReadRequest<'_>,
+        lease: &BudgetLease,
+        _cancel: &WorkCancel,
+    ) -> LlmResult<LabelReadResponse> {
+        self.read(request, lease)
+    }
 }

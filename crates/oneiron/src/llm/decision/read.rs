@@ -224,7 +224,10 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 // An instant, not a duration, so the reader's own preparation spends it too.
                 work_until: Some(Instant::now() + deadline.decision_time_left()),
             };
-            GatedRead::Read(self.reader.read(&request, lease))
+            GatedRead::Read(
+                self.reader
+                    .read_with_cancel(&request, lease, &deadline.work_cancel()),
+            )
         })?;
         let read = match gated {
             GatedRead::NotStarted => {
