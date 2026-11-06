@@ -201,7 +201,7 @@ pub(super) use crate::store::snapshot_catalog::retire_in_txn;
 
 /// The wrapped key's bytes, checked to be the custody entry's width.
 fn checked_key(wrapped: WrappedSnapshotKey) -> Result<WrappedSnapshotKey> {
-    let width = Zeroizing::new(wrapped.to_bytes()).len();
+    let width = wrapped.bytes.len();
     if width == INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES {
         Ok(wrapped)
     } else {
