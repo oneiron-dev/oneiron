@@ -127,13 +127,7 @@ pub(super) fn apply_set_edge_weight(
     tgt: EntityId,
     weight: f32,
 ) -> Result<()> {
-    validate_edge_weight(weight)?;
-    crate::workspace_roster::validate_project_edge_put(store, wtxn, src, kind, tgt, weight)?;
-    let mut value = read_edge_value_for_setter(store, wtxn, &src, kind, &tgt)?;
-    value[0..4].copy_from_slice(&weight.to_le_bytes());
-    store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
-    crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
-    Ok(())
+    capture_edge_weight_set(store, wtxn, src, kind, tgt, weight)?.apply(store, wtxn)
 }
 
 /// ONE-1113 operational VAD setter: rewrites ONLY the VAD bytes (three
@@ -151,6 +145,46 @@ pub(super) fn apply_set_edge_vad(
     tgt: EntityId,
     vad: Vad,
 ) -> Result<()> {
+    capture_edge_vad_set(store, wtxn, src, kind, tgt, vad)?.apply(store, wtxn)
+}
+
+/// An operational setter's exact existing layout after its one field change.
+/// The original paired-direction write and membership pin consume it together.
+struct CapturedEdgeSetter {
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    value: Vec<u8>,
+}
+
+fn capture_edge_weight_set(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    weight: f32,
+) -> Result<CapturedEdgeSetter> {
+    validate_edge_weight(weight)?;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, src, kind, tgt, weight)?;
+    let mut value = read_edge_value_for_setter(store, wtxn, &src, kind, &tgt)?;
+    value[0..4].copy_from_slice(&weight.to_le_bytes());
+    Ok(CapturedEdgeSetter {
+        src,
+        kind,
+        tgt,
+        value,
+    })
+}
+
+fn capture_edge_vad_set(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    vad: Vad,
+) -> Result<CapturedEdgeSetter> {
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
@@ -163,9 +197,26 @@ pub(super) fn apply_set_edge_vad(
     value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
     value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
     value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
-    store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
-    crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
-    Ok(())
+    Ok(CapturedEdgeSetter {
+        src,
+        kind,
+        tgt,
+        value,
+    })
+}
+
+impl CapturedEdgeSetter {
+    fn apply(self, store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        let Self {
+            src,
+            kind,
+            tgt,
+            value,
+        } = self;
+        store.port_stage_edge_rows(wtxn, &src, kind, &tgt, &value)?;
+        crate::conversation_dag::pin_membership(store, wtxn, &src, kind, &tgt)?;
+        Ok(())
+    }
 }
 
 #[expect(
