@@ -364,7 +364,11 @@ impl ConsolidationExecutor<'_> {
                 return Ok(PortServed::End(PartitionRun::Checkpoint));
             }
             Err(error) => {
-                if let Some(usage) = unsaved_usage {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &error
+                {
+                    charges.record_usage(usage);
+                } else if let Some(usage) = unsaved_usage {
                     charges.record_usage(&usage);
                 }
                 table.refused.get_or_insert_with(|| error.to_string());
