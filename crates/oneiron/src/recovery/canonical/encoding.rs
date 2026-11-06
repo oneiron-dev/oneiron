@@ -3,7 +3,9 @@
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer as _};
 
-use super::{BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalSnapshot};
+use super::{
+    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalEntity, CanonicalSnapshot,
+};
 use crate::error::Result;
 
 /// Owns only the output and cursor; every page borrows the same immutable source.
@@ -11,7 +13,13 @@ pub(crate) struct CanonicalEncoding {
     out: BoundedWriter,
     started: bool,
     field: usize,
-    row: Option<usize>,
+    row: Option<RowCursor>,
+}
+
+#[derive(Debug, Default)]
+struct RowCursor {
+    next: usize,
+    blob: Option<usize>,
 }
 
 impl CanonicalEncoding {
@@ -64,7 +72,7 @@ impl CanonicalEncoding {
         } = source;
         let fields: &[(&str, &dyn Field)] = &[
             ("window", &Scalar(window)),
-            ("entity_blobs", &Rows(entity_blobs, false)),
+            ("entity_blobs", &Entities(entity_blobs)),
             ("retained_claim_worlds", &Rows(retained_claim_worlds, false)),
             ("base_edges", &Rows(base_edges, false)),
             ("tombstones", &Rows(tombstones, false)),
@@ -122,10 +130,10 @@ impl CanonicalEncoding {
     }
 }
 
-/// Only the top-level sequence is split. Each scalar and native row keeps its serializer.
+/// Scalar and ordinary row serializers stay native; entity blobs also yield within bytes.
 trait Field {
     fn present(&self) -> bool;
-    fn write(&self, out: &mut BoundedWriter, row: &mut Option<usize>) -> Result<bool>;
+    fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool>;
 }
 
 struct Scalar<'a, T>(&'a T);
@@ -135,7 +143,7 @@ impl<T: Serialize> Field for Scalar<'_, T> {
         true
     }
 
-    fn write(&self, out: &mut BoundedWriter, _row: &mut Option<usize>) -> Result<bool> {
+    fn write(&self, out: &mut BoundedWriter, _row: &mut Option<RowCursor>) -> Result<bool> {
         write_named(out, self.0)?;
         Ok(true)
     }
@@ -148,22 +156,73 @@ impl<T: Serialize> Field for Rows<'_, T> {
         !self.1 || !self.0.is_empty()
     }
 
-    fn write(&self, out: &mut BoundedWriter, row: &mut Option<usize>) -> Result<bool> {
+    fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool> {
         if let Some(next) = row {
-            write_named(out, &self.0[*next])?;
-            *next += 1;
-            return Ok(*next == self.0.len());
+            write_named(out, &self.0[next.next])?;
+            next.next += 1;
+            return Ok(next.next == self.0.len());
         }
-        let result = {
-            let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
-            serializer
-                .serialize_seq(Some(self.0.len()))
-                .and_then(SerializeSeq::end)
-        };
-        result.map_err(|_| out.refusal())?;
-        *row = Some(0);
+        write_array_header(out, self.0.len())?;
+        *row = Some(RowCursor::default());
         Ok(self.0.is_empty())
     }
+}
+
+struct Entities<'a>(&'a [CanonicalEntity]);
+
+impl Field for Entities<'_> {
+    fn present(&self) -> bool {
+        true
+    }
+
+    fn write(&self, out: &mut BoundedWriter, row: &mut Option<RowCursor>) -> Result<bool> {
+        let Some(cursor) = row else {
+            write_array_header(out, self.0.len())?;
+            *row = Some(RowCursor::default());
+            return Ok(self.0.is_empty());
+        };
+        let CanonicalEntity { id, blob } = &self.0[cursor.next];
+        if let Some(next) = cursor.blob {
+            let end = next.saturating_add(blake3::CHUNK_LEN).min(blob.len());
+            // Vec<u8> uses the native normal-mode array of compact integers, not bin.
+            for byte in &blob[next..end] {
+                write_named(out, byte)?;
+            }
+            cursor.blob = Some(end);
+            if end != blob.len() {
+                return Ok(false);
+            }
+        } else {
+            let result = {
+                let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
+                serializer
+                    .serialize_struct("CanonicalEntity", 2)
+                    .and_then(SerializeStruct::end)
+            };
+            result.map_err(|_| out.refusal())?;
+            write_named(out, "id")?;
+            write_named(out, id)?;
+            write_named(out, "blob")?;
+            write_array_header(out, blob.len())?;
+            cursor.blob = Some(0);
+            if !blob.is_empty() {
+                return Ok(false);
+            }
+        }
+        cursor.next += 1;
+        cursor.blob = None;
+        Ok(cursor.next == self.0.len())
+    }
+}
+
+fn write_array_header(out: &mut BoundedWriter, len: usize) -> Result<()> {
+    let result = {
+        let mut serializer = rmp_serde::Serializer::new(&mut *out).with_struct_map();
+        serializer
+            .serialize_seq(Some(len))
+            .and_then(SerializeSeq::end)
+    };
+    result.map_err(|_| out.refusal())
 }
 
 fn write_named<T: Serialize + ?Sized>(out: &mut BoundedWriter, value: &T) -> Result<()> {
