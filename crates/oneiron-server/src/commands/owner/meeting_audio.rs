@@ -41,9 +41,9 @@ pub struct MeetingTranscriptArgs {
     /// The recording's start in Unix milliseconds, when known.
     #[arg(long)]
     pub capture_started_at: Option<u64>,
-    /// The recording's language, passed to the configured native ASR.
+    /// The recording's language, supported by the native ASR and alignment runtime.
     #[arg(long)]
-    pub language: Option<String>,
+    pub language: String,
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -262,7 +262,7 @@ pub fn meeting_transcript(args: MeetingTranscriptArgs) -> anyhow::Result<()> {
             bytes: &bytes,
             source_name: &source_name,
             capture_started_at: args.capture_started_at.map(|millis| millis / 1_000),
-            language_hint: args.language.as_deref(),
+            language_hint: Some(args.language.as_str()),
         },
         &options,
         &mut host,
