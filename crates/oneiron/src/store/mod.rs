@@ -246,6 +246,7 @@ pub mod dreamer_wake_policy;
 pub use oneiron_store::setting_seed;
 pub use oneiron_store::snapshot_key;
 pub use oneiron_store::snapshot_lock_result;
+pub(crate) use oneiron_store::source_audience_obligation;
 
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 use oneiron_store::active_write_txn;
