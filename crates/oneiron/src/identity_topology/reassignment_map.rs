@@ -18,9 +18,7 @@ use crate::store::Store;
 use super::event_body_codec::{decode_id_bytes, decode_id_value, id_value, map_field};
 use super::ledger_fold::IdentityTopologyFold;
 use super::lifecycle_state::EntityLifecycleState;
-use super::store_entity_helpers::{
-    identity_topology_entity_type_for_store_in_txn, identity_topology_event_for_store_in_txn,
-};
+use super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn;
 use super::stored_event::StoredIdentityOpAction;
 use super::wire_keys::{MAP_KEY_FACET, MAP_KEY_HEAD, MAP_KEY_ITEM};
 use crate::error::SyncError;
@@ -601,7 +599,12 @@ pub(super) fn maintain_split_reassignment_projection_in_txn(
         let Some(event) = fold.current_event.get(origin) else {
             continue;
         };
-        let Some(record) = identity_topology_event_for_store_in_txn(store, &*wtxn, event)? else {
+        // The split read whole (FIX 10188): every head and map row of a split
+        // stored in operation parts.
+        let Some(record) = super::operation_parts::identity_topology_decision_for_store_in_txn(
+            store, &*wtxn, event,
+        )?
+        else {
             continue;
         };
         let StoredIdentityOpAction::Split {
