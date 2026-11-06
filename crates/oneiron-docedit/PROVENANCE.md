@@ -424,14 +424,17 @@ preservation, not full table-cell fallback, OF-509/OF-510 or Office fidelity pro
 
 ## XML identity of newly retained table-cell boundary sources
 
-The fallback first records exact original raw edge intervals only after the
-styled paragraph, including both retained intervals and its replacement, succeeds.
-Failed styled attempts and existing whole-paragraph copies record no new edge
-ownership. If such intervals exist, a second render uses that same original tree,
-text and interval plan. Property-template source selection and every fallback
-condition depend on unchanged original nodes and text, not the cloned attributes.
+The fallback records exact original raw source intervals from successful
+field-free styled output: retained edge clusters, whole unchanged paragraphs and
+wholly retained nonempty ordinary runs or direct breaks. Retained-loop source
+ranges stay local until both retained intervals and the replacement succeed; a
+whole-paragraph source is recorded only after its original XML string is ready.
+Failed styled attempts record no ownership. If such intervals exist, a second
+render uses that same original tree, text and interval plan. Property-template
+source selection and every fallback condition depend on unchanged original nodes
+and text, not the cloned attributes.
 
-When a selected `a:rPr` lies wholly inside a newly retained raw interval, its
+When a selected `a:rPr` lies wholly inside a recorded raw source interval, its
 original subtree survives verbatim there. Fresh copies of that subtree in any
 replacement run, requested break or added/fallback paragraph omit only attributes
 whose expanded name is XML-namespace `id`. Qualified attribute names resolve
@@ -445,9 +448,14 @@ copy without assigning new identities or choosing a different style template.
 The leading-empty-run source case can therefore retain its original `rPr xml:id`
 once at the original edge while the inserted middle keeps the same style without
 copying that identity. The plan covers cross-paragraph copies of the global run
-source as well as its own middle. It does not change unrelated existing template
-copies or establish identity semantics for arbitrary schema-specific attributes.
-Internal-boundary empties, field-containing paragraphs, matching and field-cut
-receipts keep their prior behavior. This is source-only work in the existing
+source as well as its own middle. A first ordinary run retained wholly in the
+common prefix likewise owns its original property identity when the middle uses
+that same style source. A whole unchanged paragraph owns its property identities
+when later paired or added lines borrow its global template. The disjoint
+prefix/suffix selection and actual paragraph selection still emit each such
+original span at most once. Partial/opaque/interior-zero copies and other original
+source sites are not added to this ledger, and arbitrary schema-specific identity
+attributes are not interpreted. Internal-boundary empties, field-containing
+paragraphs, matching and field-cut receipts keep their prior behavior. This is source-only work in the existing
 17480/18510 pack, not full table-cell fallback, OF-509/OF-510, compiler, runtime or
 Office fidelity proof.
