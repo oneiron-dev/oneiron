@@ -11,6 +11,8 @@
 //! the lineage never shares an operation with the source (C1 of the s4
 //! soundness read). Its disclosure floor names the copy's stamp: a re-mask
 //! reaches every peer as state, never as history holding an older copy (C3).
+//! A lineage that moves advances the vault's document-mutation head in its
+//! writer (FIX 2860).
 //!
 //! **Inbound.** A peer's update sent under the copy id is imported on the
 //! lineage. The lineage's new text goes through the shipped visible diff
@@ -29,7 +31,7 @@
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, Frontiers, ID, LoroDoc, UpdateOptions, VersionVector};
 
 use super::rows::HeldEdit;
 use super::{GENERATION_CONTEXT, SyncSecretProjection};
@@ -46,6 +48,7 @@ use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::secret_custody::KeyPlaces;
 use crate::sync::documents::storage;
+use crate::vault::entity_revision;
 
 /// The text root of an entity document.
 const BODY: &str = "body";
@@ -302,15 +305,33 @@ fn load_lineage(vault: &Vault, txn: &RoTxn<'_>, copy: EntityId) -> Result<LoroDo
     Ok(doc)
 }
 
-fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDoc) -> Result<()> {
+/// Stores `doc`, the copy lineage under `copy`, which this writer loaded at
+/// the frontier `stored`. A lineage that moved from `stored` advances the
+/// vault's document-mutation head in this writer, under its copy id (FIX
+/// 2860). A lineage still at `stored` keeps the head. The source's own edit
+/// advances the head in the source's writer, not here.
+fn save_lineage(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    copy: EntityId,
+    doc: &LoroDoc,
+    stored: &Frontiers,
+) -> Result<()> {
     let slot = DocumentSlot::of(copy);
+    let frontier = doc.oplog_frontiers();
+    let moved = frontier != *stored;
     let bytes = doc
         .export(ExportMode::Snapshot)
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?;
     vault.store.port_document_snapshot_put(txn, slot, &bytes)?;
     vault
         .store
-        .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())
+        .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())?;
+    if !moved {
+        return Ok(());
+    }
+    let revision = entity_revision::copy_lineage_revision(&copy, &frontier);
+    entity_revision::advance_document_mutation_head_in_txn(&vault.store, txn, &copy, revision)
 }
 
 /// Bring `lineage`'s text to `copy` as `source`'s lineage author, its
@@ -359,8 +380,9 @@ pub(crate) fn document_copy_in_txn(
     };
     let id = copy_id(&source)?;
     let lineage = load_lineage(vault, txn, id)?;
+    let stored = lineage.oplog_frontiers();
     if bring_current(vault, txn, &lineage, &source, &copy.copy)? {
-        save_lineage(vault, txn, id, &lineage)?;
+        save_lineage(vault, txn, id, &lineage, &stored)?;
     }
     Ok(Some(DocumentCopy {
         id,
@@ -444,6 +466,7 @@ where
         let id = copy_id(&source)?;
         let lineage = load_lineage(vault, txn, id)?;
         let stored = lineage.oplog_vv();
+        let stored_frontier = lineage.oplog_frontiers();
         bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
@@ -454,13 +477,13 @@ where
                 Ok(text) => Some(text),
                 Err(_) => {
                     let cause = RepoProjectionDiffResult::ProjectionEditConflict;
-                    save_lineage(vault, txn, id, &lineage)?;
+                    save_lineage(vault, txn, id, &lineage, &stored_frontier)?;
                     return Ok(Some(held(source, cause, bytes, stored)));
                 }
             },
             cause @ (RepoProjectionDiffResult::SealedFileEdited
             | RepoProjectionDiffResult::ProjectionEditConflict) => {
-                save_lineage(vault, txn, id, &lineage)?;
+                save_lineage(vault, txn, id, &lineage, &stored_frontier)?;
                 return Ok(Some(held(source, cause, bytes, stored)));
             }
         };
@@ -498,7 +521,7 @@ where
                 source,
             )?;
         }
-        save_lineage(vault, txn, id, &lineage)?;
+        save_lineage(vault, txn, id, &lineage, &stored_frontier)?;
         Ok(None)
     })?;
     let Some((edit, vector)) = held else {
