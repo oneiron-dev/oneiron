@@ -215,6 +215,9 @@ pub struct RuntimeConfigOverride {
     /// `[runtime.host_destinations]`, environment variable to effector; a
     /// layer that names it replaces the whole table.
     pub host_destinations: Option<std::collections::BTreeMap<String, String>>,
+    /// `[runtime.helper_destinations]`, name to credential-helper binding
+    /// (FIX 10624 step 2); a layer that names it replaces the whole table.
+    pub helper_destinations: Option<std::collections::BTreeMap<String, super::HelperDestination>>,
     /// `[runtime] seat_host`: whether this host runs queued official CLI
     /// attempts itself.
     pub seat_host: Option<bool>,
@@ -263,6 +266,9 @@ impl RuntimeConfigOverride {
         }
         if other.host_destinations.is_some() {
             self.host_destinations = other.host_destinations;
+        }
+        if other.helper_destinations.is_some() {
+            self.helper_destinations = other.helper_destinations;
         }
         if other.seat_host.is_some() {
             self.seat_host = other.seat_host;
