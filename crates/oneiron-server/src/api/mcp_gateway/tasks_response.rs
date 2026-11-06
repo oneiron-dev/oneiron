@@ -839,23 +839,36 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
 /// takes the person's own proof (OF-417), an attendee ask's answer the
-/// owner's own authorship (OF-365). Every other row binds none here, and a
-/// code-mode call's host origin suppresses either in the engine.
+/// owner's own authorship (OF-365), and the owner's own `vault.delete` his
+/// authorship and this host's slip issuer, so deleting a Connect guest's
+/// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
+/// none here, and a code-mode call's host origin suppresses either in the
+/// engine.
 fn mcp_direct_authorship<'a>(
-    server: &SyncServer,
+    server: &'a SyncServer,
     tool: &str,
     actor: &McpCallContext,
     memory: oneiron::Memory<'a>,
 ) -> Result<oneiron::Memory<'a>, McpGatewayError> {
-    if !matches!(tool, "vault.workspace.work_companion.set" | "tasks.answer") {
+    if !matches!(
+        tool,
+        "vault.workspace.work_companion.set" | "tasks.answer" | "vault.delete"
+    ) {
         return Ok(memory);
     }
     let Some(auth) = actor.auth.as_ref() else {
         return Ok(memory);
     };
+    let Some(owner) =
+        crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)?
+    else {
+        return Ok(memory);
+    };
+    let memory = memory.with_owner_authorship(&owner);
+    // With no host key the delete runs as before (FIX 3875).
     Ok(
-        match crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)? {
-            Some(owner) => memory.with_owner_authorship(&owner),
+        match server.host_issuer().filter(|_| tool == "vault.delete") {
+            Some(issuer) => memory.with_host_slip_issuer(issuer),
             None => memory,
         },
     )

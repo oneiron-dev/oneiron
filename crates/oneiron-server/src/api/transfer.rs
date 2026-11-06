@@ -527,12 +527,9 @@ pub(super) fn spawn_worker<T: Send + 'static>(
     let (answer, answered) = tokio::sync::oneshot::channel();
     // A thread that cannot start drops `work`, and with it the permit; the
     // caller reads a worker that ended without an answer.
-    if let Err(error) = std::thread::Builder::new()
-        .name("transfer-worker".to_owned())
-        .spawn(move || {
-            let _ = answer.send(work());
-        })
-    {
+    if let Err(error) = crate::engine_thread("transfer-worker".to_owned()).spawn(move || {
+        let _ = answer.send(work());
+    }) {
         tracing::warn!(kind = ?error.kind(), "a transfer worker thread did not start");
     }
     answered

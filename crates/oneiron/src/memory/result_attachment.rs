@@ -21,6 +21,8 @@ use crate::store::result_manifest::CodeRunOutputPreview;
 use crate::store::result_manifest::CodeRunRawOutput;
 use crate::store::result_manifest::ResultOccurrence;
 
+mod reference;
+
 /// The metadata key a MESSAGE's result attachment sits under. Only the
 /// executor door writes it.
 pub const MESSAGE_RESULT_METADATA_KEY: &str = "result";

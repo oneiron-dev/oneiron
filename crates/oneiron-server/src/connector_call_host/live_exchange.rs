@@ -424,8 +424,7 @@ pub(super) struct Worker {
 impl Worker {
     /// Runs the worker on its own thread; `false` when it could not start.
     pub(super) fn start(self) -> bool {
-        std::thread::Builder::new()
-            .name("connector-elicitation".to_owned())
+        crate::engine_thread("connector-elicitation".to_owned())
             .spawn(move || self.run())
             .is_ok()
     }

@@ -101,6 +101,10 @@ pub(crate) async fn vault_records_erase_confirm(
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
+    // The vault owner's own erase also withdraws a Connect guest PERSON's
+    // grants, signed by this host's key, as his direct delete does (FIX
+    // 3875, 5317). Any other caller, or a host with no key, erases as before.
+    let owner = super::owner_authorship(auth, server).ok().flatten();
     let held = Arc::clone(server);
     let answer = off_runtime_listing(VERB, move |producers| {
         let memory = held
@@ -110,7 +114,16 @@ pub(crate) async fn vault_records_erase_confirm(
                 EdgeActorClass::Human,
             )
             .listing_producers(producers);
-        sdk::confirm_record_erase(&memory, &caller, input)
+        match (owner, held.host_issuer()) {
+            (Some(owner), Some(issuer)) => sdk::confirm_record_erase(
+                &memory
+                    .with_owner_authorship(&owner)
+                    .with_host_slip_issuer(issuer),
+                &caller,
+                input,
+            ),
+            _ => sdk::confirm_record_erase(&memory, &caller, input),
+        }
     })
     .await;
     crate::device_local::act_answer(server.vault(), &auth.destination(), answer)

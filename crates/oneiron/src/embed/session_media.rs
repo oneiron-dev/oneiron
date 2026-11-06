@@ -539,7 +539,8 @@ impl Drop for RoomMediaDrops<'_> {
 /// ([`super::delete_media_vectors_in_txn`]), FIX 9398. It runs before that writer commits, so no
 /// older room write can publish a dropped row again: at once, or as the open [`RoomMediaDrops`]
 /// of a batch in the same store closes. A promotion keeps the room's copies of the vectors it
-/// replayed, so without this they would outlive the record until the room closes.
+/// replayed, so without this they would outlive the record until the room closes. Its copies of
+/// the record's own text index rows and vector go the same way (FIX 17382).
 pub(crate) fn drop_room_media_copies_in_txn(store: &Store, _writer: &RwTxn<'_>, id: &EntityId) {
     let collected = PENDING_ROOM_DROPS.with(|pending| match pending.borrow_mut().as_mut() {
         Some((owner, ids)) if std::ptr::eq(*owner, store) => {
@@ -553,8 +554,10 @@ pub(crate) fn drop_room_media_copies_in_txn(store: &Store, _writer: &RwTxn<'_>, 
     }
 }
 
-/// Drops every room's staged media copies of `ids`. A room whose overlay lock is poisoned serves
-/// no read; it keeps its rows until it closes.
+/// Drops every room's staged media copies of `ids`, and its copies of their own text index rows
+/// and vectors (FIX 17382): a promotion keeps those byte-equal to base's, and base's go with the
+/// record. A room whose overlay lock is poisoned serves no read; it keeps its rows until it
+/// closes.
 fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
     if ids.is_empty() {
         return;
@@ -569,6 +572,12 @@ fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
             tracing::warn!(
                 error = %error,
                 "a room keeps its staged media copies of a deleted record until it closes"
+            );
+        }
+        if let Err(error) = overlay.invalidate_retrieval_copies(ids) {
+            tracing::warn!(
+                error = %error,
+                "a room keeps its index copies of a deleted record until it closes"
             );
         }
     }

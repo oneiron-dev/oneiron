@@ -2926,6 +2926,11 @@ export_facade! {
     let output = client.vault_secrets_code_run_lifts(&input)?;
     crate::codec::lift_record("vault.secrets.code_run_lifts", &output)
 };
+"vault.secrets.code_run_room_lifts" => fn vault_secrets_code_run_room_lifts(&self, input: CodeRunRoomSecretLiftRequest) -> Vec<CodeRunSecretLiftProposalView> = |client| {
+    let input: oneiron::code_run::CodeRunRoomSecretLiftRequest = crate::codec::lower_record("vault.secrets.code_run_room_lifts", input)?;
+    let output = client.vault_secrets_code_run_room_lifts(&input)?;
+    crate::codec::lift_record("vault.secrets.code_run_room_lifts", &output)
+};
 "vault.secrets.lift_history" => fn vault_secrets_lift_history(&self, input: SecretLiftRequest) -> SecretLiftStatus = |client| {
     let input: oneiron::policy_model::SecretLiftRequest = crate::codec::lower_record("vault.secrets.lift_history", input)?;
     let output = client.vault_secrets_lift_history(&input)?;

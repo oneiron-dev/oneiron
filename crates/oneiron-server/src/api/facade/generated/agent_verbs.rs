@@ -659,6 +659,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.settings.learning.put", post(facade_route))
         .route("/vault.settings.learning.clear", post(facade_route))
         .route("/vault.secrets.code_run_lifts", post(facade_route))
+        .route("/vault.secrets.code_run_room_lifts", post(facade_route))
         .route("/vault.secrets.lift_history", post(facade_route))
         .route("/vault.secrets.register", post(facade_route))
         .route("/vault.secrets.rotate", post(facade_route))

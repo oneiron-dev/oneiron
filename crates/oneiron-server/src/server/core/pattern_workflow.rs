@@ -246,8 +246,8 @@ impl HostPatternLaunchRunner {
         let caller = self.caller;
         let vault = &self.vault;
         std::thread::scope(|scope| {
-            scope
-                .spawn(move || -> Result<LlmResponse> {
+            crate::engine_thread("pattern-workflow".into())
+                .spawn_scoped(scope, move || -> Result<LlmResponse> {
                     let reactor = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
@@ -273,6 +273,7 @@ impl HostPatternLaunchRunner {
                         })
                         .map_err(unanswered)
                 })
+                .expect("failed to spawn thread")
                 .join()
         })
         .unwrap_or_else(|_| Err(fault(STOPPED)))

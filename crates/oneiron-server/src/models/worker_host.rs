@@ -849,10 +849,9 @@ pub(super) fn external_workers(
     for row in rows {
         if row.binding.provider != provider_name
             || row.mode != WorkerMode::External
-            || row
-                .endpoint
-                .as_deref()
-                .is_some_and(|endpoint| endpoint != provider.base_url.as_str())
+            || row.endpoint.as_deref().is_some_and(|endpoint| {
+                endpoint.trim_end_matches('/') != provider.base_url.trim_end_matches('/')
+            })
             || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
         {
             continue;
