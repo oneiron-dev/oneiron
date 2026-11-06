@@ -81,9 +81,9 @@ use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
-/// `PartialEq` is not decoration: I9 compares a reopen's options against the
-/// registered ones and refuses a divergent pair, so equality IS the
-/// same-vault test.
+/// I9 compares normalized options and refuses a divergent pair. The registry
+/// resolves an omitted device class to `Computer` before comparing every
+/// option with `PartialEq`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpenOptions {
     /// Embedding vector dimensions; `None` takes the engine default.
