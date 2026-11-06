@@ -48,8 +48,9 @@ server label, world list, unverified token or authority-vault byte array.
 First-party device-sync adoption still needs a qualified shared-vault/member
 target supplier and is not claimed here.
 
-The existing ten-second leave-quiescence timeout is unchanged. Its possible
-late-flush receipt undercount remains FIX 12816; this API does not prove that
-case closed. Leave deletion remains best effort. A personal vault is not the
+The existing ten-second leave-quiescence timeout is unchanged. If the lane
+has not stopped when it expires, the native confirmation returns an error
+before binding a receipt, counting or purging. The verified leave still stops
+new connects. Leave deletion remains best effort. A personal vault is not the
 shared replica to pass to this method, and removing a member does not erase
 company-owned claims at the home.
