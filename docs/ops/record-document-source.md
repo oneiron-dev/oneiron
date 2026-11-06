@@ -41,3 +41,11 @@ Every batch-consumption recheck repeats the metadata and durable-carrier compari
 ## Admission boundary
 
 Retained transport selection supplies transport facts to the existing record/document candidate. It is not retained native-operation admission. The candidate and every original record phase still judge the current local document, exact source records and native continuations. A persisted source row is not `SkillStateWrite`, a native final input, or a commit receipt. The full retained native source/admission producers, mirror and native root-list activation remain separate work; capture, persistence and transport readmission alone do not supply them.
+
+## Native materializer failure
+
+A native put's real `AppliedRecordDocument` now stays owned through the entity savepoint and the observer's outer materializer. It is produced only after the original batch checks; a selected pair or lower installer cannot fabricate it. The original row's final caller checks still run before it is returned.
+
+If the outer grouped writer reports an error, the observer compares each real native result with one committed read view: the physical row, head, all document rows and ordered updates, FIRST origins, and refinement control. The read view closes before the existing retry-marker writes. A mismatch or read error leaves that entity for replay. A later error can occur after commit, so an error alone is not proof that the native write was lost.
+
+Only the exact native `(entity, raw row)` uses this complete-output comparison. Other operations keep the original physical parity and echo handling, with comparison before de-duplication. A match is retry bookkeeping, not native admission or an outer commit receipt. Successful materializer outputs and watch/revision handling stay unchanged.

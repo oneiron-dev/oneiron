@@ -111,6 +111,9 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
+    /// The real native record result survived this row's final caller checks.
+    /// Its enclosing materializer still owns the outer commit or retry.
+    NativeRecordApplied(crate::batch::AppliedRecordDocument),
     /// The carrier's row is not ready to land, including a missing referenced
     /// body or an unmerged native document. Nothing its landing discharges is
     /// discharged while it remains pending.
@@ -126,6 +129,7 @@ impl EntityStep {
     pub(in crate::sync) fn written(&self) -> Option<EntityId> {
         match self {
             Self::Materialized(id) | Self::Protected { id, wrote: true } => Some(*id),
+            Self::NativeRecordApplied(applied) => Some(applied.entity()),
             _ => None,
         }
     }
@@ -608,9 +612,11 @@ fn admit(
         return asset_ref::land(ctx, wtxn, id, header, body);
     }
     let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
-    let written = match applied {
-        Ok(crate::batch::IngestedPutOutcome::Applied) => id,
-        Ok(crate::batch::IngestedPutOutcome::NativeRecordApplied(applied)) => applied.into_entity(),
+    let (written, native_record) = match applied {
+        Ok(crate::batch::IngestedPutOutcome::Applied) => (id, None),
+        Ok(crate::batch::IngestedPutOutcome::NativeRecordApplied(applied)) => {
+            (applied.entity(), Some(applied))
+        }
         Ok(crate::batch::IngestedPutOutcome::DocumentStands(stand)) => {
             if let Some(quota_debit) = quota_debit {
                 quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
@@ -633,7 +639,10 @@ fn admit(
         refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
         return Ok(EntityStep::Protected { id, wrote: true });
     }
-    Ok(EntityStep::Materialized(written))
+    Ok(match native_record {
+        Some(applied) => EntityStep::NativeRecordApplied(applied),
+        None => EntityStep::Materialized(written),
+    })
 }
 
 /// Delete wins over a lingering entities-map body.
