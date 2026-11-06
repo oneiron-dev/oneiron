@@ -3,13 +3,17 @@
 //! as the rung that answered it sent it (FIX 4933), and each call of the
 //! flight forks it on that rung: the prefix unchanged with its end marked
 //! as a cache boundary, then the house compaction's instruction, the
-//! agent's home and the span's input after it. A call is admitted on the live role as exactly that
-//! rung's model, sent on that rung alone with a permit of its own on the
-//! run's compaction meter, and files, lands and is checked as any other
-//! self-written pass. Under a row on `auto` (FIX 6029) the fork is bound
-//! only while the live prefix is still warm on its rung, and its flight's
-//! first call goes out only while it still is; otherwise the cheap writer
-//! writes as the agent.
+//! agent's home and the span's input after it. The span's input sends each
+//! step the prefix already holds as a reference to it, never its text again
+//! (FIX 4931); the gate still judges the full sealed window. A call is
+//! admitted on the live role as exactly that rung's model, sent on that
+//! rung alone with a permit of its own on the run's compaction meter, and
+//! files, lands and is checked as any other self-written pass. Under a row
+//! on `auto` (FIX 6029) the fork is bound only while the live prefix is
+//! still warm on its rung, and its flight's first call goes out only while
+//! it still is; otherwise the cheap writer writes as the agent.
+
+mod input;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -145,7 +149,9 @@ impl ServedCompactionBackend {
 
     /// The fork's request: the live request unchanged, its end marked as a
     /// cache boundary beside any it carried, then one user message holding
-    /// the house compaction's instruction and the span's input. It takes
+    /// the house compaction's instruction and the span's input, in which a
+    /// step the prefix holds byte for byte is a reference to where it sits
+    /// there and every other step keeps its text (FIX 4931). It takes
     /// the house call's purpose, class and tier, and keeps the live
     /// request's route, effort, scope and reply format, so the prefix's wire
     /// is the live call's. Its tools are sent, never run.
@@ -167,13 +173,19 @@ impl ServedCompactionBackend {
             tier: house.envelope.tier,
             ..call.envelope
         };
+        let mut suffix: Vec<ContentPart> = house
+            .messages
+            .into_iter()
+            .flat_map(|message| message.content)
+            .collect();
+        // The span's input, last, names each step the prefix already holds
+        // by where it sits there, never by its text again (FIX 4931).
+        if let Some(ContentPart::Text { text }) = suffix.last_mut() {
+            *text = input::live_fork_span_input(fork.request(), request, retry);
+        }
         call.messages.push(LlmMessage {
             role: LlmMessageRole::User,
-            content: house
-                .messages
-                .into_iter()
-                .flat_map(|message| message.content)
-                .collect(),
+            content: suffix,
         });
         Ok(call)
     }
