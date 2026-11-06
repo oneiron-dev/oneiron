@@ -549,7 +549,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/code_mode_verbs/task_workflow.rs` | src | s | 2 crate-vis | — | The strict library try a TASK-bound browser program takes before its run's planner (CUA E4; owner pick C1 =… |
 | `src/api/mcp_gateway/code_mode_verbs/verdict.rs` | src | s | 2 crate-vis | — | The decision ladder a code-mode run's routine steps ask before they act |
 | `src/api/mcp_gateway/device_release.rs` | src | m | 12 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
-| `src/api/mcp_gateway/envelope.rs` | src | s | 15 crate-vis | — | JSON-RPC envelope types and request dispatch |
+| `src/api/mcp_gateway/envelope.rs` | src | s | 16 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/envelope/http.rs` | src | m | 9 crate-vis | — | The MCP gateway's HTTP side: its routes, its connection stamp and each POST's JSON-RPC reply |
 | `src/api/mcp_gateway/envelope/request.rs` | src | s | 2 crate-vis | — | One MCP JSON-RPC request: its id and its dispatch to initialize, tools/list or tools/call |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | L | 12 crate-vis | — | Execute-code and board-verb executors |
