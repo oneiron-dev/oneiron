@@ -56,6 +56,27 @@ fn stored_group(
     .ok_or_else(invalid)
 }
 
+/// The stored intent a relayed intent's result answers (FIX 7494). A result
+/// can arrive before its intent: absence stays retryable, as a group's does.
+/// A present row that is not a relayed intent is a bad fact.
+fn stored_intent(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    intent: EntityId,
+) -> Result<crate::task_verb::ask_forward::AskForwardIntent> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &intent)?
+        .ok_or(Error::Record(RecordError::AskDependencyPending))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Err(invalid());
+    }
+    decode(
+        raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?,
+        crate::task_verb::ask_forward::INTENT,
+    )?
+    .ok_or_else(invalid)
+}
+
 pub(crate) fn guard_ask_fact_put(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -231,11 +252,15 @@ pub(crate) fn guard_ask_fact_put(
             }
         }
         Some(crate::task_verb::ask_forward::RESULT) => {
-            // Only the group's issuer key signs a result: its admitting node's.
+            // FIX 7494: a result lands only after the intent it answers. It
+            // names that intent's group and payload digest, and only that
+            // group's issuer key, its admitting node's, verifies it. A result
+            // that names another group is refused here and never stored.
             let result: crate::task_verb::ask_forward::AskForwardResult =
                 decode(data, crate::task_verb::ask_forward::RESULT)?.ok_or_else(invalid)?;
             result.validate_put(id, occurred, learned_at)?;
-            result.verify_origin(&stored_group(store, txn, result.group)?)?;
+            let intent = stored_intent(store, txn, result.intent)?;
+            result.verify_for(&intent, &stored_group(store, txn, intent.group)?)?;
         }
         _ => {}
     }
