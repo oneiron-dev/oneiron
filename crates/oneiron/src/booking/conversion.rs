@@ -230,9 +230,7 @@ pub fn booking_snippet_selection_from_url(
 /// engine's JSON model route. A query is a hint, never booking authority.
 #[must_use]
 pub fn parse_booking_snippet_query(query: &str) -> Option<BookingSnippetSelection> {
-    if query.len() > 512 {
-        return None;
-    }
+    // A query of any length (ABC row 67): a long event type's hint parses.
     let mut parts = query.split('&');
     let event_type = decode_component(parts.next()?.strip_prefix("event_type=")?)?;
     let start_utc = parts.next()?.strip_prefix("start_utc=")?.parse().ok()?;

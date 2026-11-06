@@ -223,23 +223,3 @@ pub(super) fn measure_authenticated(vault: &oneiron::Vault, request: &BookingOpe
         _ => {}
     }
 }
-
-/// A constraint's distinct local windows, counted as canonical form keeps
-/// them, against `booking_local_time_windows` (ABC row 74), where the solve
-/// is admitted: once free text is parsed, so a prebuilt and a parsed
-/// constraint are measured alike. Past the row it asks, and every window is
-/// solved.
-pub(super) fn measure_local_time_windows(
-    vault: &oneiron::Vault,
-    constraint: Option<&oneiron::booking::agent_api::BookingConstraintInput>,
-) {
-    let Some(oneiron::booking::agent_api::BookingConstraintInput::Object(object)) = constraint
-    else {
-        return;
-    };
-    let distinct: std::collections::BTreeSet<_> = object.local_time_windows.iter().collect();
-    let _ = vault.measure_limit(
-        oneiron::limit_ask::EngineLimit::BookingLocalTimeWindows,
-        distinct.len() as u64,
-    );
-}

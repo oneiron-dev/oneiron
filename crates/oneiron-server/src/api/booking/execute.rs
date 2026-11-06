@@ -207,7 +207,6 @@ async fn execute(
                     input.visitor_tz = visitor_tz;
                 }
             }
-            validate::measure_local_time_windows(&server.vault, input.constraint.as_ref());
             let (response, sources) = public_availability::solve(
                 server,
                 page_ref,
