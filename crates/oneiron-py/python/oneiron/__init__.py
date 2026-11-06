@@ -744,6 +744,9 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
         @property
+        def drafters(self) -> "Oneiron._VaultDraftersVerbs":
+            return Oneiron._VaultDraftersVerbs(self._client)
+        @property
         def roots(self) -> "Oneiron._VaultRootsVerbs":
             return Oneiron._VaultRootsVerbs(self._client)
         @property
@@ -3232,6 +3235,33 @@ class Oneiron:
         def pick(self, spec):
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
             return json.loads(_translate(lambda: self._client.vault_evals_labels_pick(json.dumps(spec))))
+    class _VaultDraftersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_list(json.dumps(spec))))
+        def list_as(self, spec):
+            """An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_list_as(json.dumps(spec))))
+        def status(self, spec):
+            """The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_status(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultDraftersPolicyVerbs":
+            return Oneiron._VaultDraftersPolicyVerbs(self._client)
+        def revert(self, spec):
+            """The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_revert(json.dumps(spec))))
+        def revert_as(self, spec):
+            """An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_revert_as(json.dumps(spec))))
+    class _VaultDraftersPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."""
+            return json.loads(_translate(lambda: self._client.vault_drafters_policy_set(json.dumps(spec))))
     class _VaultRootsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5874,6 +5904,9 @@ class Oneiron:
         def focus(self) -> "Oneiron._SelfFocusVerbs":
             return Oneiron._SelfFocusVerbs(self._client)
         @property
+        def board(self) -> "Oneiron._SelfBoardVerbs":
+            return Oneiron._SelfBoardVerbs(self._client)
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
@@ -5987,6 +6020,27 @@ class Oneiron:
         def seal(self, spec):
             """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
             return json.loads(_translate(lambda: self._client.self_focus_scratchpad_seal(json.dumps(spec))))
+    class _SelfBoardVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def layout(self, spec):
+            """The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."""
+            return json.loads(_translate(lambda: self._client.self_board_layout(json.dumps(spec))))
+        def fold(self, spec):
+            """Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_fold(json.dumps(spec))))
+        def unfold(self, spec):
+            """Unfolds one section of the bound actor's context board; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_unfold(json.dumps(spec))))
+        def size(self, spec):
+            """Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_size(json.dumps(spec))))
+        def filter(self, spec):
+            """Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."""
+            return json.loads(_translate(lambda: self._client.self_board_filter(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the whole layout the bound actor's next turn applies to its context board."""
+            return json.loads(_translate(lambda: self._client.self_board_replace(json.dumps(spec))))
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

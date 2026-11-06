@@ -299,7 +299,7 @@ impl Vault {
             let wait =
                 (CONNECTOR_REPLY_RETRY_FIRST_SECS << shift).min(CONNECTOR_REPLY_RETRY_MAX_SECS);
             self.keep_connector_reply_result(claimed, job, result, now)?;
-            queue.requeue(RequeueAttempt {
+            queue.requeue_coalescing(RequeueAttempt {
                 id: claimed.id,
                 lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
                 attempt_count: claimed.attempt_count,
