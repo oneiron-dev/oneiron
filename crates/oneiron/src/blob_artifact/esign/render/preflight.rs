@@ -175,7 +175,7 @@ fn load_objects(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Docum
             let object = operand(source)?;
             // Check every embedded object for signatures, including stale entries.
             // Signature names normally are direct. Full indirect checks follow on doc.
-            reject_direct_signature(&object)?;
+            reject_direct_signature(&object, &parse)?;
             if matches!(doc.reference_table.entries.get(&number),
                 Some(XrefEntry::Compressed { container, index }) if *container == id.0 && usize::from(*index) == position)
             {
@@ -197,36 +197,38 @@ fn load_objects(bytes: &[u8], bound: StreamBound, stage: &Stage) -> Result<Docum
     }
     Ok(doc)
 }
-fn reject_direct_signature(object: &Object) -> Result<()> {
-    fn scan(o: &Object) -> Result<()> {
-        match o {
-            Object::Dictionary(d) => {
+fn reject_direct_signature(object: &Object, stage: &Stage) -> Result<()> {
+    let mut backing = stage.nested();
+    let mut pending = Vec::new();
+    stage.reserve(&mut pending, 1, &mut backing)?;
+    pending.push(object);
+    while let Some(object) = pending.pop() {
+        match object {
+            Object::Dictionary(dictionary) => {
                 if [b"ByteRange".as_slice(), b"DocMDP", b"FieldMDP"]
                     .iter()
-                    .any(|k| d.has(k))
-                    || [b"Type".as_slice(), b"FT"].iter().any(|k| {
-                        d.get(k)
+                    .any(|key| dictionary.has(key))
+                    || [b"Type".as_slice(), b"FT"].iter().any(|key| {
+                        dictionary
+                            .get(key)
                             .ok()
-                            .and_then(|o| o.as_name().ok())
-                            .is_some_and(|n| matches!(n, b"Sig" | b"DocTimeStamp"))
+                            .and_then(|object| object.as_name().ok())
+                            .is_some_and(|name| matches!(name, b"Sig" | b"DocTimeStamp"))
                     })
                 {
                     return Err(PdfPreparationError::AlreadySigned);
                 }
-                for (_, v) in d {
-                    scan(v)?;
-                }
+                stage.reserve(&mut pending, dictionary.len(), &mut backing)?;
+                pending.extend(dictionary.iter().rev().map(|(_, value)| value));
             }
-            Object::Array(v) => {
-                for o in v {
-                    scan(o)?;
-                }
+            Object::Array(values) => {
+                stage.reserve(&mut pending, values.len(), &mut backing)?;
+                pending.extend(values.iter().rev());
             }
             _ => {}
         }
-        Ok(())
     }
-    scan(object)
+    Ok(())
 }
 
 impl Frame {
