@@ -368,7 +368,8 @@ pub(super) fn convert(
 
 /// Re-projects one cell and writes its head: a new superseding claim when the
 /// estimate moved, nothing when one head already says it, and a retraction of
-/// every head when the window has left no own runs.
+/// every head when the window has left no own runs. A hard-deleted subject is
+/// passed over without projecting a new head.
 pub(crate) fn project_cell_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -378,6 +379,13 @@ pub(crate) fn project_cell_in_txn(
     let row = CELL
         .get(&vault.store, wtxn, digest)?
         .ok_or(Error::CorruptedIndex("learning cell"))?;
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &row.cell.subject)? {
+        tracing::warn!(
+            subject = %row.cell.subject.to_hex(),
+            "a learning cell was not projected: its subject was hard-deleted"
+        );
+        return Ok(None);
+    }
     let (estimate, tally, cited, frozen) =
         fold_cell_with_snapshot_in_txn(vault, wtxn, &row, digest, now)?;
     let heads = active_heads_in_txn(vault, wtxn, &row.cell)?;
