@@ -349,6 +349,7 @@ pub(crate) fn run_in_txn(
             // Proposal equality is a text-value claim, never proof that a
             // nested Loro snapshot has no erased history. Rebuild even when
             // the current text matches; live value-equal docs remain untouched.
+            crate::note::documents::admit_value_fields_in_txn(&vault.store, txn, &row.metadata)?;
             let doc = crate::note::documents::proposal_value(note, &row.text, &row.metadata)?;
             NOTE_PROPOSAL_DOC.put(
                 &vault.store,

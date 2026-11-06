@@ -166,24 +166,6 @@ fn decode_title(bytes: &[u8]) -> Result<String> {
     Ok(title.to_owned())
 }
 
-fn collect_texts(value: &rmpv::Value, texts: &mut Vec<String>) {
-    match value {
-        rmpv::Value::String(text) => texts.extend(text.as_str().map(str::to_owned)),
-        rmpv::Value::Array(values) => {
-            for value in values {
-                collect_texts(value, texts);
-            }
-        }
-        rmpv::Value::Map(fields) => {
-            for (key, value) in fields {
-                collect_texts(key, texts);
-                collect_texts(value, texts);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// `title` in the common encoding, checked as a load checks it.
 pub(super) fn encode_title(title: &str) -> Result<Vec<u8>> {
     validate_title(title)?;
@@ -391,19 +373,6 @@ impl NoteDocument {
     /// encoding: never the identity or the pins (FIX 7784).
     pub(super) fn metadata(&self) -> Result<BTreeMap<String, Vec<u8>>> {
         editable_fields(&self.doc.get_map(META))
-    }
-
-    /// Every string the editable fields other than the title hold. No writer
-    /// on this host masks one, so a persist under the owner's scan switch
-    /// scans each as it scans a citation's quote (FIX 7784).
-    pub(super) fn field_texts(&self) -> Result<Vec<String>> {
-        let mut texts = Vec::new();
-        for (field, bytes) in self.metadata()? {
-            if field != TITLE {
-                collect_texts(&decode_metadata_value(&bytes)?, &mut texts);
-            }
-        }
-        Ok(texts)
     }
 
     /// Rewrites the live body to `text` by the smallest edits that make it:
