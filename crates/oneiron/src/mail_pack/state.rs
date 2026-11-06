@@ -117,6 +117,10 @@ pub(super) struct MailOccurrence {
     pub(super) searched: bool,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
+    /// The header-only revisions the body superseded, owed their delete
+    /// (FIX 15413): each leaves once its delete returns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) superseded_headers: Vec<EntityId>,
 }
 
 /// The key of the provider message `provider_id` of `source`.
@@ -149,6 +153,7 @@ impl MailOccurrence {
         self.rfc_message_id = None;
         self.from = None;
         self.subject = None;
+        self.superseded_headers.clear();
         self.updated_at = at;
     }
 }
@@ -164,6 +169,21 @@ pub(super) fn record_occurrence_rows_in_txn(
 ) -> Result<()> {
     for row in rows {
         OCCURRENCE_ROWS.put(&vault.store, txn, &(*row, key.0, key.1), &at)?;
+    }
+    Ok(())
+}
+
+/// Takes `rows` out of the erase reach of the provider message keyed `key`,
+/// so a superseded header revision's delete leaves the message as it stands
+/// (FIX 15413).
+pub(super) fn release_occurrence_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, [u8; 32]),
+    rows: &[EntityId],
+) -> Result<()> {
+    for row in rows {
+        OCCURRENCE_ROWS.delete(&vault.store, txn, &(*row, key.0, key.1))?;
     }
     Ok(())
 }
