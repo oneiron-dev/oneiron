@@ -155,10 +155,13 @@ pub struct AgentDispatchInput {
     /// work, which runs as before. Never part of `spawn_intent`.
     pub requester: Option<super::QueuedRequester>,
     /// FIX 7766: the owner's agent Grant this work is funded by, when no
-    /// spend root carries it: an unmetered root's, chosen and validated once
-    /// at its dispatch, and its descendants', inherited from their parent,
-    /// never named by a child. A spend root's own funding comes first.
-    /// `None`: no Grant funds it.
+    /// spend root carries it: a root's that the authenticated owner selected
+    /// and its dispatch writer proved ([`AgentDispatcher::funded_by`]), and
+    /// its descendants', inherited from their parent, never named by a
+    /// child. A spend root's own funding comes first. `None`: no Grant funds
+    /// it.
+    ///
+    /// [`AgentDispatcher::funded_by`]: super::AgentDispatcher::funded_by
     pub funding: Option<super::GrantSpendBinding>,
 }
 
@@ -254,12 +257,6 @@ pub struct AgentSpawnContext {
     /// dispatch its request queues. `None` keeps the parent's, or none for a
     /// root. Outside the intent digest.
     pub requester: Option<super::QueuedRequester>,
-    /// FIX 7766: the owner's agent Grant an UNMETERED root launch is funded
-    /// by, chosen explicitly here: one that grants the launched agent and
-    /// names a wallet, validated and frozen in the dispatch writer. A
-    /// metered root's funding is its spend root's, named when the owner
-    /// opens it; a child and a workflow name none and inherit.
-    pub funding_grant_ref: Option<EntityId>,
 }
 
 impl AgentSpawnContext {
@@ -301,14 +298,6 @@ impl AgentSpawnContext {
     #[must_use]
     pub fn with_spend(mut self, spend: super::SpawnSpend) -> Self {
         self.spend = Some(spend);
-        self
-    }
-
-    /// This unmetered root launch, funded by the owner's agent Grant
-    /// `grant` (FIX 7766).
-    #[must_use]
-    pub const fn with_funding_grant(mut self, grant: EntityId) -> Self {
-        self.funding_grant_ref = Some(grant);
         self
     }
 

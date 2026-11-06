@@ -154,10 +154,10 @@ impl AgentDispatcher<'_> {
         task: Option<&WorkflowTaskBinding>,
     ) -> Result<AgentDispatchOutcome> {
         // FIX 7766: a workflow is funded by its spend root's grant or, run
-        // unmetered under an agent, by its parent's; it names none itself.
-        if spawn.funding_grant_ref.is_some() {
+        // unmetered under an agent, by its parent's; it takes no selection.
+        if self.selected_funding_grant().is_some() {
             return Err(invalid(
-                "a workflow is funded by its spend root's or its parent's grant and names none",
+                "a workflow is funded by its spend root's or its parent's grant and takes none",
             ));
         }
         let (definition, mut intent) = self.workflow_intent(txn, &input, &spawn)?;
