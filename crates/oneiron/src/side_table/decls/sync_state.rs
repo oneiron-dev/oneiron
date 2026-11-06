@@ -314,10 +314,11 @@ side_tables! {
     /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
     /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
     OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
-    /// The bytes a federation peer's import brought for one row of a window whose door judges a
-    /// peer's row apart from this vault's own (Docs Q04): their blake3 digest (32 bytes), recorded
-    /// before the import lands them. Local to this vault, never replicated. Key: hex32 (entity
-    /// id) ":" window key.
+    /// Latest peer carrier's wire digest (32 bytes), plus an ASSET logical body digest (32).
+    /// A distinct still-canonical peer ASSET entry (wire + logical, 64 bytes) precedes it:
+    /// pending replacement never erases the stored row's origin. Logical identity survives
+    /// native inline/file/reference echoes; each wire digest binds exact carrier cleanup.
+    /// Local to this vault, never replicated. Key: hex32 (entity id) ":" window key.
     SYNC_PEER_ORIGIN: SyncState b"po:" Raw;
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
@@ -554,6 +555,10 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
+    /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before
+    /// its window brings it back. Key: hex32 (entity id).
+    SYNC_DISCARDED_WORLD_ROW: SyncState b"wd:e:" Raw;
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
     /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
