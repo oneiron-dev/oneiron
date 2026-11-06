@@ -31,9 +31,11 @@ pub(crate) type AttributionKey = (EntityId, [u8; 32]);
 
 /// The author carriers this vault wrote itself, by carrier row: a digest of
 /// the row's body. Local truth that never replicates, so no peer can make its
-/// own carrier read as this vault's. A restore keeping this vault's authority
-/// takes it from this vault, never from the image (`restore_class`), and keeps
-/// only the marks whose carrier the restored vault holds.
+/// own carrier read as this vault's. No checkpoint image keeps it: the digest
+/// could confirm a guess of the author after the actor's erase (FIX 17143). A
+/// restore keeps this vault's marks (`recovery::checkpoint::tiers`, Runtime,
+/// carried from the live vault), and only those whose carrier the restored
+/// vault holds.
 const AUTHORED_HERE: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE);
 
@@ -49,6 +51,23 @@ struct Carrier {
 struct AttributionState {
     carriers: BTreeMap<AttributionKey, Vec<Carrier>>,
     redacted: BTreeSet<AttributionKey>,
+}
+
+/// The actor an author carrier attributes, when `row` (a raw entity row,
+/// header included) is one: an identity-topology event row whose body
+/// decodes as an [`StoredIdentityOpAction::AuthorAttribution`]. A checkpoint puts such a
+/// row, and every row that hashes it, under that actor (FIX 17143), so an
+/// erase of the actor reaches an image that holds it.
+pub(crate) fn author_carrier_actor(row: &[u8]) -> Option<EntityId> {
+    let header = EntityMetadataHeader::parse(row)?;
+    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return None;
+    }
+    let body = row.get(ENTITY_METADATA_HEADER_LEN..)?;
+    match decode_identity_topology_event_body(body).ok()?.action {
+        StoredIdentityOpAction::AuthorAttribution { actor, .. } => Some(actor.entity_ref()),
+        _ => None,
+    }
 }
 
 fn scan_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<AttributionState> {
@@ -413,6 +432,8 @@ pub(crate) fn redact_actor_in_txn(
                 .map(|carrier| (*key, carrier.source))
         })
         .collect();
+    // FIX 9870: the actor's proposer handle no longer resolves to it.
+    super::proposer_scope::forget_actor_in_txn(&vault.store, wtxn, actor)?;
     let mut scrubbed = Vec::new();
     for (key, source) in keys {
         scrubbed.extend(
@@ -443,6 +464,7 @@ fn held_decision_digest_in_txn(
         StoredIdentityOpAction::AdmissionDisposition(_)
             | StoredIdentityOpAction::AuthorAttribution { .. }
             | StoredIdentityOpAction::AuthorRedaction { .. }
+            | StoredIdentityOpAction::OperationPart { .. }
     ) {
         return Ok(None);
     }
