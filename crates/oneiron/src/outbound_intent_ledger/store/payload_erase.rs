@@ -157,6 +157,22 @@ impl Vault {
 /// # Errors
 ///
 /// Storage faults, and an incarnation row that does not decode.
+/// Rolls the checkpoint compartment of the call `attempt_id`/`call_seq` to a
+/// fresh generation (FIX 17393): the next capture reseals the row as this
+/// transaction leaves it, and the older generations retire, so no old
+/// checkpoint opens an id the row no longer keeps. The actor's payload stays.
+pub(crate) fn roll_call_compartment_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    attempt_id: &AttemptId,
+    call_seq: u64,
+) -> crate::Result<()> {
+    let owner = call(attempt_id, call_seq)?;
+    vault
+        .store
+        .roll_checkpoint_payload_of_owner_in_txn(wtxn, &owner)
+}
+
 pub(crate) fn erase_call_compartment_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
