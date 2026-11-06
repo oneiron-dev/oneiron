@@ -23,6 +23,26 @@ use crate::repo_mutation::snapshot::SnapshotCustody;
 use crate::secret_manifest::{SECRET_MANIFEST_SCHEMA_VERSION, parse_secret_manifest};
 
 /// The example file the names of moved literals go into.
+/// The ignore rule naming the removed dotenv file whose path text is `path`
+/// (FIX 21326): the path itself when it is UTF-8. A byte outside UTF-8 cannot
+/// stand in the ignore file, which lands as a UTF-8 code document, so each
+/// one is written `?`, which Git's matcher reads as any one byte but `/`:
+/// the rule still matches the file's exact bytes.
+fn ignore_rule(path: &str) -> Result<String> {
+    let bytes = git_path_bytes(path)?;
+    if std::str::from_utf8(&bytes).is_ok() {
+        return Ok(path.to_owned());
+    }
+    let mut rule = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        rule.push_str(chunk.valid());
+        for _ in chunk.invalid() {
+            rule.push('?');
+        }
+    }
+    Ok(rule)
+}
+
 const ROOT_EXAMPLE_PATH: &str = ".env.example";
 
 /// The ignore file a remediation extends.
@@ -449,43 +469,38 @@ impl Plan {
     }
 
     /// The ignore file gains `.env` and each removed dotenv file's exact
-    /// path, unless a line already names it. An ignore rule is bytes, as Git
-    /// matches it: a removed file's name outside UTF-8 is written and matched
-    /// as its own bytes, never as its path text's escape (FIX 21326).
+    /// path, unless a line already names it. The ignore file lands as a code
+    /// document, so it stays UTF-8: a removed file's name outside UTF-8 is
+    /// written as [`ignore_rule`], which still matches its exact bytes
+    /// (FIX 21326).
     fn write_ignore(&mut self, files: &BTreeMap<String, CommitFile>) -> Result<()> {
         let mut text = files
             .get(IGNORE_PATH)
             .map(|file| file.content.clone())
             .unwrap_or_default();
-        let present: BTreeSet<&[u8]> = text
+        let present: BTreeSet<String> = text
             .split(|byte| *byte == b'\n')
-            .map(|line| {
-                let mut rule = line.trim_ascii();
-                while let Some(rest) = rule.strip_prefix(b"/") {
-                    rule = rest;
-                }
-                rule
-            })
+            .filter_map(|line| std::str::from_utf8(line).ok())
+            .map(|line| line.trim().trim_start_matches('/').to_owned())
             .collect();
         let mut wanted = std::mem::take(&mut self.ignored);
         wanted.insert(".env".to_owned());
-        let mut missing = Vec::new();
-        let mut rules = Vec::new();
-        for entry in wanted {
-            let rule = git_path_bytes(&entry)?.into_owned();
-            if !present.contains(rule.as_slice()) {
-                rules.push(rule);
-                missing.push(entry);
+        let mut rules = BTreeSet::new();
+        for entry in &wanted {
+            let rule = ignore_rule(entry)?;
+            if !present.contains(&rule) {
+                rules.insert(rule);
             }
         }
+        let missing: Vec<String> = rules.into_iter().collect();
         if missing.is_empty() {
             return Ok(());
         }
         if !text.is_empty() && !text.ends_with(b"\n") {
             text.push(b'\n');
         }
-        for rule in &rules {
-            text.extend_from_slice(rule);
+        for entry in &missing {
+            text.extend_from_slice(entry.as_bytes());
             text.push(b'\n');
         }
         self.files.insert(
