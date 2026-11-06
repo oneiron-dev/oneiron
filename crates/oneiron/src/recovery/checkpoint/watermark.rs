@@ -8,7 +8,10 @@
 //! and a commit that changes nothing a restore needs still reads as a change
 //! (CALLS BACKUP_CHANGED_ANY_COMMIT), save the classed writes that say so: a
 //! host's telemetry, and the backup's own incarnation and chain advance
-//! (FIX 6730, `store::backup_change`). Hosts compare two for equality only.
+//! (FIX 6730, `store::backup_change`). The selection is also part of the mark:
+//! an automatic copy never certifies a whole-vault request. Hosts use equality
+//! for the same selection or [`BackupWatermark::covers`] when a whole-vault
+//! artifact may also satisfy an automatic backup duty.
 //!
 //! The incarnation is 16 random bytes kept in a Runtime-tier row
 //! ([`side_table::BACKUP_INCARNATION`]): minted at a store's first backup,
@@ -52,9 +55,20 @@ const INCARNATION: SideTable<(), [u8; 16], Named> = SideTable::new(&side_table::
 /// (`oneiron_crypto::backup`), built by the writer from what it wrote.
 pub type BackupArtifactEvidence = oneiron_crypto::backup::BackupEvidence;
 
+/// Which rows a backup snapshot was asked to select.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupSelection {
+    /// The existing whole-vault canonical snapshot, including private worlds.
+    WholeVault,
+    /// An automatic copy selected by the worlds' sealed-copy settings.
+    Automatic,
+}
+
 /// Where a vault stood for whether it changed since a backup. Two compare
-/// equal only when no content was committed and custody did not move
-/// between them, within one store incarnation. Fixed-size; its fields are read-only.
+/// equal only when their selections match, no content was committed and custody
+/// did not move between them, within one store incarnation. Fixed-size; its fields
+/// are read-only.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupWatermark {
@@ -63,6 +77,7 @@ pub struct BackupWatermark {
     db_txn: u64,
     custody_epoch: u64,
     custody_seq: u64,
+    selection: BackupSelection,
 }
 
 impl BackupWatermark {
@@ -87,6 +102,26 @@ impl BackupWatermark {
     pub fn custody_seq(&self) -> u64 {
         self.custody_seq
     }
+
+    /// The selection whose snapshot this mark describes.
+    pub fn selection(&self) -> BackupSelection {
+        self.selection
+    }
+
+    /// Whether this snapshot covers the requested selection at exactly the same
+    /// content and custody position. A whole-vault snapshot also covers an
+    /// automatic selection, never the other way around.
+    pub fn covers(&self, requested: &Self) -> bool {
+        self.incarnation == requested.incarnation
+            && self.db_txn == requested.db_txn
+            && self.custody_epoch == requested.custody_epoch
+            && self.custody_seq == requested.custody_seq
+            && (self.selection == requested.selection
+                || matches!(
+                    (self.selection, requested.selection),
+                    (BackupSelection::WholeVault, BackupSelection::Automatic)
+                ))
+    }
 }
 
 impl fmt::Debug for BackupWatermark {
@@ -99,6 +134,7 @@ impl fmt::Debug for BackupWatermark {
             .field("db_txn", &self.db_txn)
             .field("custody_epoch", &self.custody_epoch)
             .field("custody_seq", &self.custody_seq)
+            .field("selection", &self.selection)
             .finish()
     }
 }
@@ -108,7 +144,9 @@ impl fmt::Debug for BackupWatermark {
 pub struct BackupSnapshotReceipt {
     /// BLAKE3 of the image, hex: the checkpoint id.
     pub image_digest: String,
-    /// The vault as the snapshot read it, its own chain advance excluded.
+    /// The content and custody position the snapshot read for its selection,
+    /// its own chain advance excluded. An automatic selection is not a
+    /// whole-vault coverage promise.
     pub covered: BackupWatermark,
     /// The written artifact's evidence.
     pub evidence: BackupArtifactEvidence,
@@ -143,7 +181,7 @@ pub struct BackupSnapshotReceipt {
 /// The suffix of the marker beside a label's newest backup:
 /// `.<label>.backup-watermark.json`.
 pub const BACKUP_WATERMARK_MARKER_SUFFIX: &str = ".backup-watermark.json";
-const MARKER_SCHEMA_VERSION: u32 = 1;
+const MARKER_SCHEMA_VERSION: u32 = 2;
 
 /// What a label's newest backup covered, as its host recorded it.
 #[derive(Serialize, Deserialize)]
@@ -321,12 +359,13 @@ impl SnapshotMark {
 
     /// What the backup covered: the content its snapshot saw. Its own chain
     /// advance, backup metadata, leaves that mark as it was (FIX 6730).
-    pub(super) fn covered(&self) -> BackupWatermark {
+    pub(super) fn covered(&self, selection: BackupSelection) -> BackupWatermark {
         BackupWatermark {
             incarnation: self.incarnation,
             db_txn: self.snapshot_txn,
             custody_epoch: self.custody_epoch,
             custody_seq: self.custody_seq,
+            selection,
         }
     }
 }
@@ -345,15 +384,19 @@ impl Vault {
     /// no walk. A store with no incarnation yet (none backed up, or a
     /// restored one) or one that does not read is an error, never unchanged.
     pub fn backup_watermark(&self) -> Result<BackupWatermark> {
+        self.backup_watermark_for(BackupSelection::WholeVault)
+    }
+
+    /// Where this vault stands for its automatic backup selection. This mark
+    /// cannot certify a whole-vault backup, even when the selection omits nothing.
+    pub fn automatic_backup_watermark(&self) -> Result<BackupWatermark> {
+        self.backup_watermark_for(BackupSelection::Automatic)
+    }
+
+    fn backup_watermark_for(&self, selection: BackupSelection) -> Result<BackupWatermark> {
         let _custody = self.store.gate_custody_read_guard()?;
         let txn = self.store.env.read_txn()?;
-        let mark = SnapshotMark::read(self, &txn)?;
-        Ok(BackupWatermark {
-            incarnation: mark.incarnation,
-            db_txn: mark.snapshot_txn,
-            custody_epoch: mark.custody_epoch,
-            custody_seq: mark.custody_seq,
-        })
+        Ok(SnapshotMark::read(self, &txn)?.covered(selection))
     }
 
     /// Mints this store's backup incarnation when it has none, in a write of

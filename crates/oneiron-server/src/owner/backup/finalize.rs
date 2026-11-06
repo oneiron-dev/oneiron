@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 
 use oneiron::recovery::checkpoint::{
-    BackupMarker, BackupSnapshotReceipt, CheckpointSigner, backup_marker_with_pins,
+    BackupMarker, BackupSelection, BackupSnapshotReceipt, CheckpointSigner, backup_marker_with_pins,
 };
 use oneiron_vault_contract::backup_handoff::write_private_file;
 
@@ -78,6 +78,23 @@ pub(crate) fn produce(
     plan: &BackupPlan,
     owner: Option<&oneiron::consent::AuthenticatedOwner>,
 ) -> Result<Produced, Unproduced> {
+    produce_selected(vault, plan, owner, BackupSelection::WholeVault)
+}
+
+/// Writes an automatic copy whose receipt retains that selection.
+pub(crate) fn produce_automatic(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> Result<Produced, Unproduced> {
+    produce_selected(vault, plan, None, BackupSelection::Automatic)
+}
+
+fn produce_selected(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    owner: Option<&oneiron::consent::AuthenticatedOwner>,
+    selection: BackupSelection,
+) -> Result<Produced, Unproduced> {
     create_private_dir(&plan.dir).map_err(Unproduced::Snapshot)?;
     let sequence = list(plan)
         .map_err(Unproduced::Snapshot)?
@@ -97,13 +114,21 @@ pub(crate) fn produce(
     let floors = write_budget::landing_floors(plan.floor.as_ref(), &plan.dir);
     let snapshot = vault.ensure_vault_key().and_then(|()| {
         let room = write_budget::WriteClaim::on_each(&floors);
-        vault.snapshot_backup_within(
-            &partial,
-            vault.now_recorded_at(),
-            owner,
-            plan.registry.as_deref(),
-            &room,
-        )
+        match selection {
+            BackupSelection::WholeVault => vault.snapshot_backup_within(
+                &partial,
+                vault.now_recorded_at(),
+                owner,
+                plan.registry.as_deref(),
+                &room,
+            ),
+            BackupSelection::Automatic => vault.snapshot_automatic_backup_within(
+                &partial,
+                vault.now_recorded_at(),
+                plan.registry.as_deref(),
+                &room,
+            ),
+        }
     });
     let receipt = match snapshot {
         Ok(receipt) => receipt,
