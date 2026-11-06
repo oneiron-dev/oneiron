@@ -57,6 +57,7 @@ struct Exchange {
     shape: Shape,
     path: String,
     content_type: Option<String>,
+    headers: BTreeMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -178,9 +179,11 @@ impl BrokerMedia {
             shape,
             path,
             content_type,
+            headers: request_headers,
             body,
         } = exchange;
         let mut headers = self.headers.clone();
+        headers.extend(request_headers);
         if let Some(kind) = content_type {
             headers.insert("content-type".to_owned(), kind);
         }
@@ -227,7 +230,12 @@ impl BrokerMedia {
 
     /// An OpenAI-compatible media request as its broker shape takes it.
     fn openai(&self, request: OpenAiMediaHttpRequest) -> LlmResult<Exchange> {
-        let OpenAiMediaHttpRequest { method, path, body } = request;
+        let OpenAiMediaHttpRequest {
+            method,
+            path,
+            headers,
+            body,
+        } = request;
         // Cohere's v2 embed route has its own broker shape (FIX 11467 H7):
         // exactly `POST /v2/embed` as JSON takes it, before the existing
         // `/v1/` classification below, which is otherwise unchanged.
@@ -307,6 +315,7 @@ impl BrokerMedia {
             shape,
             path: join(&self.prefix, &path),
             content_type,
+            headers,
             body,
         })
     }
@@ -325,12 +334,14 @@ impl BrokerMedia {
                 },
                 path: format!("{}{path}", self.prefix),
                 content_type: Some(JSON.to_owned()),
+                headers: BTreeMap::new(),
                 body: json_bytes(&body)?,
             },
             GeminiMediaHttpRequest::Get { path } => Exchange {
                 shape: Shape::GeminiOperation,
                 path: format!("{}{path}", self.prefix),
                 content_type: None,
+                headers: BTreeMap::new(),
                 body: Vec::new(),
             },
             GeminiMediaHttpRequest::Fetch { uri } => {
@@ -345,6 +356,7 @@ impl BrokerMedia {
                         None => target.path().to_owned(),
                     },
                     content_type: None,
+                    headers: BTreeMap::new(),
                     body: Vec::new(),
                 }
             }
