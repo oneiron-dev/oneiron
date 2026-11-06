@@ -14,46 +14,128 @@
 //! above what lands. The final row admission (`landing_rows`) still claims
 //! the exact rows.
 //!
+//! FIX 4192 review fix: a census carries every content piece of a carried
+//! start without its bytes, so the republish lands each of them again, not
+//! one piece per carried ask. Their rows are known before any body is read
+//! ([`StrippedPieces`]), and each counts once, with the first live start
+//! whose run and actor hold it. Their bytes count with each start that
+//! lands them, within that start's recomposed length.
+//!
 //! The final row admission alone claims what depends on bytes this count
 //! does not read: a secret mark that the scan of a new piece's bytes adds,
 //! and the pieces of a start kept as one piece whose recomposed form cuts
-//! into many. A piece that two starts share lands once and counts with each
-//! start.
+//! into many.
 
-use super::super::super::replay::CodeRunRawOutput;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::ExecutorStepStart;
 use super::super::records::{RAW_OUTPUTS, code_run_body_row_key};
 use super::CAPSULES;
 use super::pieces::PieceScope;
 use super::spawn_erase::republished_start_body;
 use super::start_parts::{
-    NamingRows, Rows, capsule_scope, naming_rows, place, republished_step_start,
+    BODY_DIGEST_ROWS, NamingRows, Rows, capsule_scope, naming_rows, place, republished_step_start,
 };
 use super::start_pieces::{WIDEST_DIGEST, ref_change_growth, widest_node_len};
 use crate::compaction::output::OutputRef;
-use crate::store::{BODY_KEYS, BodyKeyRow};
+use crate::side_table::SideKey;
+use crate::store::BODY_KEYS;
 use crate::{EntityId, Error, Result};
+
+/// FIX 11415: the content pieces a census carried without their bytes (FIX
+/// 4192 review fix), as an image's raw rows show them before any body is
+/// read, each by the run whose holder row names it and the occurrence it
+/// holds it under. A piece counts with the first live start whose run and
+/// actor hold it at a start piece path: whichever start lands it, its row
+/// lands once.
+pub(crate) struct StrippedPieces {
+    held: BTreeMap<EntityId, Vec<([u8; 32], EntityId)>>,
+    scopes: BTreeSet<(EntityId, EntityId)>,
+    counted: BTreeSet<[u8; 32]>,
+}
+
+impl StrippedPieces {
+    /// The pieces `digests` names, each by the holder rows among `rows` that
+    /// name it. A holder row that does not decode names none.
+    pub(crate) fn of(rows: &Rows, digests: &BTreeSet<[u8; 32]>) -> Self {
+        let prefix = BODY_DIGEST_ROWS.decl().prefix;
+        let mut held: BTreeMap<EntityId, Vec<([u8; 32], EntityId)>> = BTreeMap::new();
+        for digest in digests {
+            let mut holders = prefix.to_vec();
+            holders.extend_from_slice(digest);
+            let (Ok(from) | Err(from)) = place(rows, &holders);
+            for (key, value) in rows[from..]
+                .iter()
+                .take_while(|(key, _)| key.starts_with(&holders))
+            {
+                let holder = key
+                    .strip_prefix(prefix)
+                    .and_then(<([u8; 32], EntityId) as SideKey>::decode_key);
+                if let (Some((_, occurrence)), Ok(run)) =
+                    (holder, BODY_DIGEST_ROWS.decode_value(value))
+                {
+                    held.entry(run).or_default().push((*digest, occurrence));
+                }
+            }
+        }
+        Self {
+            held,
+            scopes: BTreeSet::new(),
+            counted: BTreeSet::new(),
+        }
+    }
+
+    /// The pieces `scope`'s run holds at its actor's start piece paths that
+    /// no start counted yet; none once a start of `scope` took them.
+    ///
+    /// # Errors
+    ///
+    /// An occurrence that does not derive.
+    fn take(&mut self, scope: PieceScope) -> Result<Vec<[u8; 32]>> {
+        let mut taken = Vec::new();
+        if !self.scopes.insert((scope.run, scope.actor)) {
+            return Ok(taken);
+        }
+        let Some(held) = self.held.get_mut(&scope.run) else {
+            return Ok(taken);
+        };
+        let mut others = Vec::with_capacity(held.len());
+        for (digest, occurrence) in held.drain(..) {
+            let path = scope.start_path(&digest);
+            if ResultOccurrence::owned(scope.run, &path)?.id() != occurrence {
+                others.push((digest, occurrence));
+            } else if self.counted.insert(digest) {
+                taken.push(digest);
+            }
+        }
+        *held = others;
+        Ok(taken)
+    }
+}
 
 /// FIX 11415: the length each row lands at once the republish of the step
 /// start the capsule row `row` names runs among an image's raw `vault_meta`
 /// rows, counted before any body is read. `len` is the recomposed start's
 /// length. `asks` names each carried ask by its call's place among the
 /// start's calls, and whether its instance is live, as the restore finds
-/// it. Each row the image holds that the republish or the settle rewrites
-/// comes at its new length. The capsule's row comes at its new length, and
-/// carries beside it every row the republish inserts and what the piece
-/// rows it cannot name grow by. Empty for a capsule that names no start or
-/// no actor.
+/// it. `stripped` are the content pieces a census carried without their
+/// bytes (FIX 4192 review fix), each counted once. Each row the image holds
+/// that the republish or the settle rewrites comes at its new length. The
+/// capsule's row comes at its new length, and carries beside it every row
+/// the republish inserts and what the piece rows it cannot name grow by.
+/// Empty for a capsule that names no start or no actor.
 ///
 /// # Errors
 ///
-/// A capsule row the image does not hold, and a row that does not decode
-/// or encode.
+/// A capsule row the image does not hold, a row that does not decode or
+/// encode, and an occurrence that does not derive.
 pub(crate) fn republish_step_start_lengths_in_rows(
     rows: &Rows,
     row: &[u8],
     len: u64,
     asks: &[(u32, bool)],
+    stripped: &mut StrippedPieces,
 ) -> Result<Vec<(Vec<u8>, u64)>> {
     let at = place(rows, row)
         .map_err(|_| Error::CorruptedIndex("a carried step start's capsule row"))?;
@@ -74,7 +156,15 @@ pub(crate) fn republish_step_start_lengths_in_rows(
     let growth = ref_change_growth()?;
     let manifest = retired.map(|_| start.body.byte_len.saturating_add(growth));
     let mut lengths = Vec::new();
-    let pieces = pieces_len(scope, &start, len, asks, retired)?;
+    // FIX 4192 review fix: the settle marks inline the instance row of
+    // each content piece the republish rests or lands.
+    let taken = stripped.take(scope)?;
+    for digest in &taken {
+        if let Some(marked) = marked_inline(rows, digest)? {
+            lengths.push(marked);
+        }
+    }
+    let pieces = pieces_len(scope, &start, len, asks, retired, taken.len() as u64)?;
     let inserted = manifest_lengths(rows, scope.run, &start, manifest, &mut lengths)?;
     let beside = pieces.saturating_add(inserted);
     let (body, digest) = match manifest {
@@ -94,40 +184,38 @@ pub(crate) fn republish_step_start_lengths_in_rows(
 }
 
 /// The bytes the pieces the republish puts back take, each counted as rows
-/// it inserts, as none can be named before a body is read. There is one
-/// piece per carried ask: its call's element, holding its ask or in its
-/// erased form, or the start's one piece when it is kept whole. When an
-/// ask retired there is also one node for each call from the first retired
-/// one (`retired`) to the last, as the calls' chain changes there. Their
-/// bytes come to at most the recomposed start's `len`, and the widest node
-/// each. Each piece takes an inline body row, a descriptor and a holder
-/// row. The settle marks inline the instance row of each ask's old piece.
+/// it inserts, as none can be named before a body is read. FIX 4192 review
+/// fix: they are the `stripped` content pieces this start counts, each a
+/// piece a census carried without its bytes, and, when an ask retired, each
+/// retired ask's call element in its erased form and one node for each
+/// call from the first retired one (`retired`) to the last, as the calls'
+/// chain changes there. The content pieces' bytes come to at most the
+/// recomposed start's `len`, and each node to the widest node. Each piece
+/// takes an inline body row, a descriptor and a holder row.
 fn pieces_len(
     scope: PieceScope,
     start: &ExecutorStepStart,
     len: u64,
     asks: &[(u32, bool)],
     retired: Option<u32>,
+    stripped: u64,
 ) -> Result<u64> {
-    if asks.is_empty() {
-        return Ok(0);
-    }
     let calls = asks
         .iter()
         .map(|(call, _)| u64::from(*call).saturating_add(1))
         .fold(start.bridge_start, u64::max);
     let nodes = retired.map_or(0, |first| calls.saturating_sub(u64::from(first)));
+    let erased = asks.iter().filter(|(_, live)| !live).count() as u64;
     let node = widest_node_len()?;
     let widest = len.max(node);
-    let elements = asks.len() as u64;
     Ok(len
         .saturating_add(nodes.saturating_mul(node))
         .saturating_add(
-            elements
+            stripped
+                .saturating_add(erased)
                 .saturating_add(nodes)
                 .saturating_mul(piece_rows_len(scope, widest)?),
-        )
-        .saturating_add(elements.saturating_mul(inline_mark_len(widest)?)))
+        ))
 }
 
 /// The manifest's rows as the republish and the settle leave them;
@@ -216,14 +304,6 @@ fn output_at(path: String, body: OutputRef) -> CodeRunRawOutput {
 fn inline_row_len(len: u64) -> Result<u64> {
     let header = RAW_OUTPUTS.encode_value(&republished_start_body(&[]))?;
     Ok((header.len() as u64).saturating_add(len))
-}
-
-/// What the instance row of a body of `len` bytes grows by when the settle
-/// marks it inline.
-fn inline_mark_len(len: u64) -> Result<u64> {
-    let file = BODY_KEYS.encode_value(&BodyKeyRow::vault([0; 16], len, false))?;
-    let inline = BODY_KEYS.encode_value(&BodyKeyRow::vault([0; 16], len, true))?;
-    Ok(inline.len().saturating_sub(file.len()) as u64)
 }
 
 /// The instance row of `digest` as the settle leaves it, marked inline, at
