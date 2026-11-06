@@ -27,6 +27,7 @@ pub(crate) fn ensure_person_substrate(
     prepare_person_substrate(store, txn, person, occurred, learned_at)?.apply(store, txn)
 }
 
+#[derive(Debug)]
 pub(crate) struct PreparedPersonSubstrate {
     person: EntityId,
     facet: EntityId,
@@ -43,33 +44,25 @@ pub(crate) fn prepare_person_substrate(
     learned_at: u64,
 ) -> Result<PreparedPersonSubstrate> {
     let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
-    let bytes =
-        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("substrate header"))?;
-            if header.entity_type != ENTITY_TYPE_FACET
-                || !is_substrate(&raw[ENTITY_METADATA_HEADER_LEN..], person)
-            {
-                return Err(Error::CorruptedIndex("substrate identity collision"));
-            }
-            None
-        } else {
-            // A caller can choose the id a PERSON's substrate lands at; an id that
-            // has been an agent stays one (H215).
-            crate::agent_def::refuse_agent_id_retype_in_txn(store, txn, &facet, ENTITY_TYPE_FACET)?;
-            let body = Value::Map(vec![
-                ("kind".into(), "substrate".into()),
-                (
-                    "person_ref".into(),
-                    Value::Binary(person.as_bytes().to_vec()),
-                ),
-                ("sensitivity".into(), "sensitive".into()),
-            ]);
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, &body)
-                .map_err(|_| Error::InvariantViolation("substrate encoding"))?;
-            Some(bytes)
-        };
+    let bytes = if person_substrate_exists(store, txn, person, facet)? {
+        None
+    } else {
+        // A caller can choose the id a PERSON's substrate lands at; an id that
+        // has been an agent stays one (H215).
+        crate::agent_def::refuse_agent_id_retype_in_txn(store, txn, &facet, ENTITY_TYPE_FACET)?;
+        let body = Value::Map(vec![
+            ("kind".into(), "substrate".into()),
+            (
+                "person_ref".into(),
+                Value::Binary(person.as_bytes().to_vec()),
+            ),
+            ("sensitivity".into(), "sensitive".into()),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &body)
+            .map_err(|_| Error::InvariantViolation("substrate encoding"))?;
+        Some(bytes)
+    };
     Ok(PreparedPersonSubstrate {
         person,
         facet,
@@ -80,19 +73,49 @@ pub(crate) fn prepare_person_substrate(
 }
 
 impl PreparedPersonSubstrate {
+    pub(super) fn person(&self) -> EntityId {
+        self.person
+    }
+
     pub(crate) fn facet_put(&self) -> Option<(EntityId, &[u8])> {
         self.bytes.as_deref().map(|bytes| (self.facet, bytes))
     }
 
     pub(crate) fn apply(self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        let Self {
-            person,
-            facet,
-            bytes,
-            occurred,
-            learned_at,
-        } = self;
-        if let Some(bytes) = bytes.as_deref() {
+        self.apply_rows_in_txn(store, txn)
+    }
+
+    pub(super) fn apply_at_person_projection(
+        &self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        if person_substrate_exists(store, txn, self.person, self.facet)? {
+            return self.apply_has_facet(store, txn);
+        }
+        if self.bytes.is_none() {
+            return ensure_person_substrate(
+                store,
+                txn,
+                self.person,
+                self.occurred,
+                self.learned_at,
+            );
+        }
+        crate::agent_def::refuse_agent_id_retype_in_txn(
+            store,
+            txn,
+            &self.facet,
+            ENTITY_TYPE_FACET,
+        )?;
+        self.apply_rows_in_txn(store, txn)
+    }
+
+    fn apply_rows_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        let facet = self.facet;
+        let occurred = self.occurred;
+        let learned_at = self.learned_at;
+        if let Some(bytes) = self.bytes.as_deref() {
             super::put_apply::stage_entity_body_row(
                 store,
                 txn,
@@ -124,19 +147,42 @@ impl PreparedPersonSubstrate {
                 crate::batch::row_put::RowPut::Birth,
             )?;
         }
+        self.apply_has_facet(store, txn)
+    }
+
+    fn apply_has_facet(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         super::edge_apply::apply_edge_with_created_at(
             store,
             txn,
-            person,
+            self.person,
             EdgeKind::HasFacet,
-            facet,
+            self.facet,
             1.0,
-            learned_at,
+            self.learned_at,
             oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         Ok(())
     }
+}
+
+fn person_substrate_exists(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    facet: EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
+    if header.entity_type != ENTITY_TYPE_FACET
+        || !is_substrate(&raw[ENTITY_METADATA_HEADER_LEN..], person)
+    {
+        return Err(Error::CorruptedIndex("substrate identity collision"));
+    }
+    Ok(true)
 }
 
 fn is_substrate(data: &[u8], person: EntityId) -> bool {

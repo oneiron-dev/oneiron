@@ -12,6 +12,7 @@ pub(crate) struct PreparedAgentPerson {
     pub(crate) person_put: Option<Vec<u8>>,
     pub(crate) substrate: Option<PreparedPersonSubstrate>,
     pub(crate) subjects: PreparedAgentSubjects,
+    at: u64,
 }
 
 pub(crate) fn prepare_agent_person_in_txn(
@@ -57,10 +58,31 @@ pub(crate) fn prepare_agent_person_in_txn(
         person_put,
         substrate,
         subjects,
+        at,
     }))
 }
 
 impl PreparedAgentPerson {
+    pub(crate) fn apply(self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        if let Some(body) = self.person_put {
+            let mut batch = vault.batch_in().put(
+                &self.person,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange {
+                    start: self.at,
+                    end: self.at,
+                },
+                self.at,
+                &body,
+            );
+            if let Some(substrate) = self.substrate {
+                batch = batch.with_prepared_person_substrate(substrate);
+            }
+            batch.apply(txn)?;
+        }
+        self.subjects.apply(vault, txn)
+    }
+
     pub(crate) fn entity_puts(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.person_put
             .iter()

@@ -72,6 +72,7 @@ pub(crate) struct ApplyOpsGateMode {
     /// Each bound raw CLAIM put's verified caller envelope
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
+    pub(super) prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
 }
 
 impl ApplyOpsGateMode {
@@ -97,6 +98,7 @@ impl ApplyOpsGateMode {
             replicated_puts: std::collections::BTreeSet::new(),
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
+            prepared_person_substrate: None,
         }
     }
 
@@ -146,6 +148,14 @@ impl ApplyOpsGateMode {
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {
         self.caller_envelopes = envelopes;
+        self
+    }
+
+    pub(super) fn with_prepared_person_substrate(
+        mut self,
+        substrate: Option<super::PreparedPersonSubstrate>,
+    ) -> Self {
+        self.prepared_person_substrate = substrate;
         self
     }
 

@@ -14,7 +14,7 @@ pub(super) fn apply_put_arm(
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     state: &mut BatchApplyState,
-    gate_mode: &ApplyOpsGateMode,
+    gate_mode: &mut ApplyOpsGateMode,
     id: EntityId,
     mut entity_type: u8,
     occurred: TimeRange,
@@ -145,6 +145,16 @@ pub(super) fn apply_put_arm(
     );
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
+    let prepared_person_substrate = if entity_type == crate::registry::ENTITY_TYPE_PERSON
+        && gate_mode
+            .prepared_person_substrate
+            .as_ref()
+            .is_some_and(|substrate| substrate.person() == id)
+    {
+        gate_mode.prepared_person_substrate.take()
+    } else {
+        None
+    };
     let applied = apply_put_beside(
         &crate::secret_custody::CustodyWrite {
             store,
@@ -176,6 +186,7 @@ pub(super) fn apply_put_arm(
                 posture: config.privacy.posture,
                 owner_authored: None,
                 pending_prompt: pending_prompt.as_deref(),
+                prepared_person_substrate: prepared_person_substrate.as_ref(),
             },
         },
         authority_beside,
