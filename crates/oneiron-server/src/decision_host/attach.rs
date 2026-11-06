@@ -88,6 +88,7 @@ impl SyncServer {
                 models.raw_budget_units,
                 posture,
                 tokio::runtime::Handle::current(),
+                &self.vault,
             )
             .with_local_vision(
                 &self.ai,
