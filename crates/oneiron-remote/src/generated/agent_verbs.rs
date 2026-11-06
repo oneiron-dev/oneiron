@@ -2122,6 +2122,12 @@ impl OneironClient {
                 "vault.code.oplog" => remote_agent_verb_output::<
                     oneiron::memory::code_doors::CodeMutationLog,
                 >(client, verb, &input),
+                "vault.code.secrets.get" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeRepoSecretsView,
+                >(client, verb, &input),
+                "vault.code.secrets.propose" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeRepoSecretRemediation,
+                >(client, verb, &input),
                 "execute_code" => remote_agent_verb_output::<
                     oneiron::memory::foreign_code::ForeignCodeRunResult,
                 >(client, verb, &input),
@@ -12285,6 +12291,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.oplog", value)
+    }
+    pub fn vault_code_secrets_get(
+        &self,
+        input: &oneiron::memory::code_doors::CodeRepoRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeRepoSecretsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.secrets.get", value)
+    }
+    pub fn vault_code_secrets_propose(
+        &self,
+        input: &oneiron::memory::code_doors::CodeRepoSecretProposeRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeRepoSecretRemediation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.secrets.propose", value)
     }
     pub fn execute_code(
         &self,

@@ -38,7 +38,8 @@ pub use self::proposal::actor_erase::{
     ACTOR_ERASE_PENDING_REPO_PROPOSAL, PendingRepoProposalErase, ProposalActor,
 };
 pub use self::secret_remediation::{
-    RepoSecretReferenceRenderer, RepoSecretRemediation, RepoSecretRemediationAction,
+    RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretMarks, RepoSecretReferenceRenderer,
+    RepoSecretRemediation, RepoSecretRemediationAction, RepoSecretRemediationLinkEntry,
     RepoSecretRemediationRequest, RepoSecretRemediationStatus, RepoSecretUnresolved,
     RepoSecretUnresolvedReason,
 };

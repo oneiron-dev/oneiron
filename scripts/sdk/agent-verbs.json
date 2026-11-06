@@ -10561,6 +10561,36 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.secrets.get",
+      "description": "Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only.",
+      "input": "crate::memory::code_doors::CodeRepoRequest",
+      "output": "crate::memory::code_doors::CodeRepoSecretsView",
+      "call": "memory.code_repo_secrets_get_as(&memory.embedded_owner(\"vault.code.secrets.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.propose",
+      "description": "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes.",
+      "input": "crate::memory::code_doors::CodeRepoSecretProposeRequest",
+      "output": "crate::memory::code_doors::CodeRepoSecretRemediation",
+      "call": "memory.code_repo_secrets_propose_as(&memory.embedded_owner(\"vault.code.secrets.propose\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "execute_code",
       "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",

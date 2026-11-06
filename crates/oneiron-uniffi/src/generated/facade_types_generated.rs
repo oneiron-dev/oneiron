@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4574 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
+// UniFFI census: 1264 facade rows, 4583 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -39628,6 +39628,164 @@ pub struct CodeMutationLog {
     pub repo: String,
     #[serde(rename = "entries")]
     pub entries: Vec<CodeMutationEntry>,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretSeen`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum CodeRepoSecretSeen {
+    #[serde(rename = "ref_move")]
+    RefMove {
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "new_commit")]
+        new_commit: String,
+    },
+    #[serde(rename = "quarantine")]
+    Quarantine,
+    #[serde(rename = "sync_landing")]
+    SyncLanding,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretMark`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoSecretMark {
+    #[serde(rename = "mark")]
+    pub mark: String,
+    #[serde(rename = "operation")]
+    pub operation: String,
+    #[serde(rename = "blob")]
+    pub blob: String,
+    #[serde(rename = "path", default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "seen")]
+    pub seen: CodeRepoSecretSeen,
+    #[serde(rename = "custody", default, skip_serializing_if = "Option::is_none")]
+    pub custody: Option<String>,
+    #[serde(rename = "handle", default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(rename = "marked_at")]
+    pub marked_at: u64,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretRemediationLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoSecretRemediationLink {
+    #[serde(rename = "state")]
+    pub state: String,
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "commit", default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(rename = "paths")]
+    pub paths: Vec<String>,
+    #[serde(rename = "linked_at")]
+    pub linked_at: u64,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoSecretsView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "marks")]
+    pub marks: Vec<CodeRepoSecretMark>,
+    #[serde(rename = "remediations")]
+    pub remediations: Vec<CodeRepoSecretRemediationLink>,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRepoSecretProposeRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "session")]
+    pub session: String,
+    #[serde(rename = "provenance_claim")]
+    pub provenance_claim: String,
+    #[serde(rename = "op_provenance")]
+    pub op_provenance: CodeOpProvenance,
+    #[serde(rename = "catalog", default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<LensCatalog>,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretRemediationStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeRepoSecretRemediationStatus {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "unresolved")]
+    Unresolved,
+    #[serde(rename = "stale")]
+    Stale,
+    #[serde(rename = "clean")]
+    Clean,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretRemediationAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "action")]
+pub enum CodeRepoSecretRemediationAction {
+    #[serde(rename = "replace_literals")]
+    ReplaceLiterals {
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "env_names")]
+        env_names: Vec<String>,
+    },
+    #[serde(rename = "remove_dotenv")]
+    RemoveDotenv {
+        #[serde(rename = "path")]
+        path: String,
+    },
+    #[serde(rename = "write_example")]
+    WriteExample {
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "names")]
+        names: Vec<String>,
+    },
+    #[serde(rename = "ignore_dotenv")]
+    IgnoreDotenv {
+        #[serde(rename = "entries")]
+        entries: Vec<String>,
+    },
+    #[serde(rename = "declare_env_names")]
+    DeclareEnvNames {
+        #[serde(rename = "env_names")]
+        env_names: Vec<String>,
+    },
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretUnresolved`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoSecretUnresolved {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "custody", default, skip_serializing_if = "Option::is_none")]
+    pub custody: Option<String>,
+}
+
+/// `oneiron::memory::code_doors::secrets::CodeRepoSecretRemediation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoSecretRemediation {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "status")]
+    pub status: CodeRepoSecretRemediationStatus,
+    #[serde(rename = "base_commit")]
+    pub base_commit: String,
+    #[serde(rename = "proposal", default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
+    #[serde(rename = "actions")]
+    pub actions: Vec<CodeRepoSecretRemediationAction>,
+    #[serde(rename = "unresolved")]
+    pub unresolved: Vec<CodeRepoSecretUnresolved>,
 }
 
 /// `oneiron::memory::foreign_code::ForeignCodeRunRequest`.

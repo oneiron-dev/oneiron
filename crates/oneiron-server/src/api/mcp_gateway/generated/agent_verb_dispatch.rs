@@ -830,6 +830,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.proposal_settle" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_settlement" => a.spec.clone().ok_or_else(invalid),
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.secrets.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.secrets.propose" => a.spec.clone().ok_or_else(invalid),
         "execute_code" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
         "vault.code.type_diagnostics" => a.spec.clone().ok_or_else(invalid),
@@ -3624,6 +3626,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.oplog" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.secrets.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.secrets.propose" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "execute_code" => {
@@ -17378,6 +17386,42 @@ async fn execute_agent_verb_row_on(
             let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_oplog(
                 server, auth, input,
             ))
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.secrets.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.secrets.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_doors::CodeRepoRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_secrets_get(server, auth, input),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.secrets.propose" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.secrets.propose", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_doors::CodeRepoSecretProposeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_secrets_propose(server, auth, input),
+            )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

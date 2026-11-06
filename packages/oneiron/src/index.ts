@@ -2290,6 +2290,12 @@ export class Oneiron {
       proposal_settlement: (input: Facade.CodeProposalSettlementRequest): Facade.CodeProposalSettlementView => this.#call(() => this.#client.vaultCodeProposalSettlement(input) as Facade.CodeProposalSettlementView),
       /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
+      secrets: {
+        /** Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only. */
+        get: (input: Facade.CodeRepoRequest): Facade.CodeRepoSecretsView => this.#call(() => this.#client.vaultCodeSecretsGet(input) as Facade.CodeRepoSecretsView),
+        /** Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes. */
+        propose: (input: Facade.CodeRepoSecretProposeRequest): Facade.CodeRepoSecretRemediation => this.#call(() => this.#client.vaultCodeSecretsPropose(input) as Facade.CodeRepoSecretRemediation),
+      },
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
