@@ -16885,10 +16885,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/team_submit_entity.rs",
+     "purpose": "FIX 2783 (OF-540): a `self.team.submit` output that is one exact revision of a CLAIM…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/team_submit_output.rs",
      "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -51234,7 +51244,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 50,
       "re-export": 19
      }
     },
@@ -67769,7 +67779,7 @@
      "purpose": "The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1), and the vault's `local` pack",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -82111,6 +82121,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/document_version.rs",
+     "purpose": "Whether one retained revision is a version of an entity's common document (FIX 2783, OF-540): the proof a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -82128,7 +82148,7 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 2
      }
     },
@@ -89829,7 +89849,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91054,7 +91074,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91154,7 +91174,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6405,
+   "source_files": 6407,
    "test_files": 895
   },
   "oneiron-android": {
