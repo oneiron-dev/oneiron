@@ -55,6 +55,7 @@ pub(crate) use repo_projection::{
     requeue_repo_embedding_in_txn, retire_repo_derived_index_copies_in_txn,
 };
 pub use session_media::SessionMediaRefusals;
+pub(crate) use session_media::{RoomMediaDrops, drop_room_media_copies_in_txn};
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;

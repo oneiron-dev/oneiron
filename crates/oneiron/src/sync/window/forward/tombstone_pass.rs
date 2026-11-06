@@ -177,6 +177,9 @@ impl Pass<'_> {
         let mut done = chunk.len();
         let committed = vault.store.env.write_txn().and_then(|mut parent| {
             let probes = vault.batch_tombstone_scope_probes_in_txn(&parent, hard_ids)?;
+            // FIX 9398: the chunk's erases drop the rooms' media copies once,
+            // before the commit.
+            let room_media_drops = crate::embed::RoomMediaDrops::open(&vault.store, &parent);
             for (index, (key, value)) in chunk.iter().enumerate() {
                 if let Err(error) = self.stage(&mut parent, key, value, &mut staged) {
                     if out_of_room(&error) {
@@ -187,6 +190,7 @@ impl Pass<'_> {
                     break;
                 }
             }
+            drop(room_media_drops);
             drop(probes);
             parent.commit()?;
             Ok(())
