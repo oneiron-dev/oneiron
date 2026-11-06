@@ -80,7 +80,9 @@ pub(crate) fn erase_actor_responses_in_txn(
             release_reply_outputs_in_txn(store, wtxn, record.run_id, &record.outputs)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
-            release_owner_bodies_in_txn(store, wtxn, &record_id)?;
+            // Its bodies are held by its owner row's run (a decoded
+            // record's `run_id`), which need not be the replay key.
+            release_owner_bodies_in_txn(store, wtxn, &run)?;
             REPLAY_RECORDS.put_erased_unreadable(store, wtxn, &record_id)?;
         }
         mark_response_erased_in_txn(store, wtxn, record_id, run)?;
@@ -187,11 +189,13 @@ pub(crate) fn retire_actor_responses_in_txn(
         .map(|(run, body, path)| (run, path, CodeRunRawOutput::of_ref(body).handle))
         .collect();
     let mut unreadable = Vec::new();
-    for (record_id, _) in actor_records_in_txn(store, wtxn, actor, &runs)? {
+    for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(reply_occurrences(record.run_id, &record.outputs));
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
-            unreadable.push(record_id);
+            // Its bodies are held by its owner row's run (a decoded
+            // record's `run_id`), which need not be the replay key.
+            unreadable.push(run);
         }
     }
     let mut digests: BTreeMap<EntityId, Vec<[u8; 32]>> = BTreeMap::new();
