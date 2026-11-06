@@ -117,6 +117,7 @@ impl MediaRuntime {
             receipts: Arc::new(LoggedReceipts),
             host: None,
             jobs: Mutex::default(),
+            replay_runs: Default::default(),
             store: None,
             job_rungs: BTreeMap::new(),
             rests: None,
@@ -215,6 +216,7 @@ impl MediaRuntime {
                 wire: Wire::Media(*operation),
                 stays_on_device: false,
                 configured: seat.rungs.len(),
+                locality_ceiling: None,
             };
             let alone = rungs
                 .iter()
