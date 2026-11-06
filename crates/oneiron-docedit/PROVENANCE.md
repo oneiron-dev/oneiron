@@ -373,3 +373,25 @@ receipts, breaks, empty/opaque segments, gaps, added-paragraph and replacement
 templates, and retained-mapping selection are unchanged. This is source-only
 retention work, not full table-cell fallback, OF-509/OF-510 or Office fidelity
 proof.
+
+
+## Original XML of one retained partial native table run
+
+The same field-free, single-retained-piece partial run now keeps its original
+XML when it has exactly one descendant DrawingML `a:t` and that text element is
+a direct child of the run. The existing native `replace_text` helper rewrites
+only that element's direct character-data spans; the existing splice helper
+applies those edits relative to the original run span. Run and text-element
+attributes, lexical qualified names, properties, unknown child XML and raw gaps
+remain under the same original paragraph and body ancestors, once. Comments
+and processing instructions keep their original bytes and order; replacement
+text goes into the first character-data span and later text spans disappear,
+so their position relative to that replacement text is not claimed unchanged.
+Replaced CDATA and entity text uses the native helper's escaped text spelling.
+The prior static serializer still succeeds first, keeping its property/error
+selection. Missing, multiple or non-direct text elements, or a native helper
+that cannot produce the text splice, keep the previous static attribute path.
+Runs contributing to both retained intervals, fields, breaks, whole-run raw
+copies, empty/opaque segments, gaps, templates, matching and receipts are
+unchanged. This is source retention work, not full table-cell fallback,
+OF-509/OF-510, runtime or Office fidelity proof.
