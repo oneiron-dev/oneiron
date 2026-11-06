@@ -277,6 +277,25 @@ impl VoiceHost {
             )?
         } else {
             match &self.speculative_auth {
+                Some(auth) if auth.host_root().is_some() || auth.is_local_dev_hatch() => {
+                    let action = crate::api::host_action::host_action_of(&self.vault, auth)
+                        .ok_or(HostError::InvalidRequest)??;
+                    let actor = action.actor();
+                    let memory = crate::api::credential_memory(
+                        &self.vault,
+                        Some(auth),
+                        actor.entity_ref(),
+                        actor.actor_class(),
+                    )
+                    .with_host_action_authority(&action)?
+                    .at(auth.locality());
+                    state.core.open_scoped_utterance(
+                        utterance_id,
+                        config,
+                        &memory,
+                        &RecallScope::default(),
+                    )?
+                }
                 Some(auth)
                     if (auth.managed_owner().is_none()
                         && !auth.is_host_holder()
@@ -287,9 +306,9 @@ impl VoiceHost {
                             && auth.invocation_slip().is_none()
                             && auth.actor_class() == Some("human")
                             && auth.managed_owner().is_some_and(|holder| {
-                                auth.principal_ref().and_then(|principal| {
-                                    oneiron::EntityId::from_hex(principal).ok()
-                                }) == Some(holder)
+                                auth.principal_ref()
+                                    .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                                    == Some(holder)
                             })) =>
                 {
                     // The owner door proved this ordinary slip or managed
