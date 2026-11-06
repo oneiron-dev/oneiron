@@ -1399,9 +1399,9 @@ pub(super) fn own_dreaming_slot(
 
 /// The model a resident's slot names, as this server serves it: a model id
 /// as it stands, a role on its live route, else a tier the vault's manifest
-/// binds a chat-wire role to,
-/// on the vault's live route for that slot (the first such role this server
-/// serves). None when the slot names nothing served here.
+/// binds a chat-wire role to, served at the vault's live route for that
+/// slot and only there (the first such role this server serves). None when
+/// the slot names nothing served here.
 pub(super) fn served_slot_model(
     vault: &Vault,
     runtime: &ModelRuntime,
@@ -1436,6 +1436,16 @@ pub(super) fn served_slot_model(
         return Ok(None);
     };
     let route = vault.model_route(slot_kind)?.unwrap_or(widest);
+    // A tier the manifest binds is served at that slot's live route, as a
+    // role's own work is (I2-LOCAL): on device, the model's on-device view,
+    // and nothing whose served place is not that route; a direct model id
+    // above keeps its default ladder.
+    let served_at_route = |model: ModelId| {
+        router
+            .served_at(&model, route)
+            .filter(|(locality, _)| *locality == route)
+            .map(|(locality, ladder)| (model, locality, ladder))
+    };
     Ok(manifest
         .roles
         .values()
@@ -1447,7 +1457,7 @@ pub(super) fn served_slot_model(
                 binding.route_models.get(&route).cloned()
             }
         })
-        .find_map(served))
+        .find_map(served_at_route))
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
