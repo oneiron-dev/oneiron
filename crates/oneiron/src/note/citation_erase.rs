@@ -1,5 +1,7 @@
 //! Hard-erase dependency fences. No source text or substring matching is stored here.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::error::RecordError;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
@@ -82,6 +84,93 @@ pub(crate) fn erase_citations_in_txn(
         super::citation_scrub::scrub_pending(vault, txn, *citing)?;
     }
     Ok(dependents)
+}
+
+/// A restore's citation erase (KS7, FIX 18270). An image cut before a
+/// record's erase holds the citations NOTE documents make of it, quote
+/// included: the citing NOTE's compartment opens, the erased record's does
+/// not, and the reverse pin rows that depended on that record are gone, so
+/// the reverse index no longer finds the citing NOTE. Each of `erased` is
+/// marked citation-erased, as the live erase marks the record it erases.
+/// Every NOTE whose current document or queued citation request still names
+/// one is fenced, its reverse rows left without their pin row dropped, and,
+/// with sync, rebuilt without that citation, history included; retained
+/// heads and proposal documents are scrubbed as the live erase scrubs them.
+/// In the restore's own transaction, before it commits; nothing is notified.
+///
+/// # Errors
+///
+/// Storage errors, or a scrubbed document that does not read or persist.
+pub(crate) fn erase_restored_citations_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    erased: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if erased.is_empty() {
+        return Ok(());
+    }
+    for id in erased {
+        NOTE_ERASE_SOURCE.put(&vault.store, txn, &HexId(*id), &())?;
+    }
+    let citers = restored_citers(vault, txn, erased)?;
+    let citing: BTreeSet<EntityId> = citers.keys().copied().collect();
+    super::pin_index::drop_dangling_citing(&vault.store, txn, &citing)?;
+    for (note, sources) in &citers {
+        for source in sources {
+            let fence = HexPair(HexId(*note), HexId(*source));
+            NOTE_ERASE_PENDING.put(&vault.store, txn, &fence, &())?;
+        }
+    }
+    scrub_stored_proposal_citations(vault, txn)?;
+    scrub_retired_canonical_citations(vault, txn)?;
+    #[cfg(feature = "sync")]
+    for citing in &citing {
+        super::citation_scrub::scrub_pending(vault, txn, *citing)?;
+    }
+    Ok(())
+}
+
+/// Each NOTE whose current document or queued citation request names one of
+/// `erased`, with the ones it names. Every NOTE's document is read whole: the
+/// reverse rows that would name it went with the record the restore did not
+/// open. An erased NOTE cites nothing. A document that does not load is
+/// passed over: its readers load it the same way, so none serves it.
+fn restored_citers(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    erased: &BTreeSet<EntityId>,
+) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
+    let mut citers: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
+    for (citing, source) in super::pin_index::requests_citing(&vault.store, txn, erased)? {
+        citers.entry(citing).or_default().insert(source);
+    }
+    let notes = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        crate::registry::ENTITY_TYPE_NOTE,
+        None,
+    )?
+    .collect::<Result<Vec<EntityId>>>()?;
+    for note in notes {
+        if erased.contains(&note) {
+            continue;
+        }
+        let read = super::storage::load_for_erasure(vault, txn, note)
+            .and_then(|doc| super::document::NoteDocument::from_loro(note, doc))
+            .and_then(|doc| doc.pins());
+        let Ok(pins) = read else {
+            continue;
+        };
+        for pin in pins {
+            for id in [pin.document, pin.claim] {
+                if erased.contains(&id) {
+                    citers.entry(note).or_default().insert(id);
+                }
+            }
+        }
+    }
+    citers.retain(|citing, _| !erased.contains(citing));
+    Ok(citers)
 }
 
 pub(super) fn pin_is_erased(

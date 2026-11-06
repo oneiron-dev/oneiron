@@ -55,6 +55,64 @@ pub(super) fn remove_citing(store: &Store, txn: &mut heed::RwTxn<'_>, id: Entity
     Ok(())
 }
 
+/// Each `(citing, cited)` a queued citation request names for a cited id in
+/// `erased` (FIX 18270): the request rows keyed by the cited ids go when a
+/// restore does not open that record, so the citing row is read.
+pub(super) fn requests_citing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    erased: &BTreeSet<EntityId>,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    let mut out = Vec::new();
+    for (key, refs) in NOTE_PIN_REQUEST_CITING.scan(store, txn)? {
+        for id in [refs.document, refs.claim] {
+            if erased.contains(&id) {
+                out.push(((key.0).0, id));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Drops the reverse rows of `citing` that name a pin row a restore left out
+/// (FIX 18270): a CITING or CLAIM row stands without the SOURCE row it points
+/// at when the cited document or claim did not open. A coherent row stays,
+/// for the document's next persist to replace ([`remove_citing`]).
+pub(super) fn drop_dangling_citing(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citing: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if citing.is_empty() {
+        return Ok(());
+    }
+    for id in citing {
+        let key_prefix = format!("{}:", id.to_hex()).into_bytes();
+        for (citing_key, source_key) in NOTE_PIN_CITING.scan_from(store, txn, &key_prefix)? {
+            if !source_present(store, txn, &source_key)? {
+                NOTE_PIN_CITING.delete(store, txn, &citing_key)?;
+            }
+        }
+    }
+    for (claim_key, source_key) in NOTE_PIN_CLAIM.scan(store, txn)? {
+        if citing.contains(&(claim_key.1).0) && !source_present(store, txn, &source_key)? {
+            NOTE_PIN_CLAIM.delete(store, txn, &claim_key)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the SOURCE row a reverse row points at stands.
+fn source_present(store: &Store, txn: &heed::RoTxn<'_>, source_key: &[u8]) -> Result<bool> {
+    let key = source_key
+        .strip_prefix(NOTE_PIN_SOURCE.decl().prefix)
+        .and_then(HexHexHash::decode_key);
+    match key {
+        Some(key) => NOTE_PIN_SOURCE.contains(store, txn, &key),
+        None => Ok(false),
+    }
+}
+
 pub(super) fn dependents(
     store: &Store,
     txn: &heed::RoTxn<'_>,
