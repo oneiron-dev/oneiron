@@ -116,7 +116,7 @@ impl PreparedShadowStep {
     /// 3608); none when no context is read.
     pub(crate) fn callables(&self) -> &[CapturedCallable] {
         match &self.context {
-            ArmContext::Captured { context, .. } => &context.callables,
+            ArmContext::Captured { context, .. } => context.callables.as_slice(),
             ArmContext::Missing => &[],
         }
     }
