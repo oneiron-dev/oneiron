@@ -29,6 +29,10 @@ pub(crate) struct DeckUnits {
     pub(crate) nodes: Vec<DeckUnit>,
 }
 
+/// A deck export's own ids by model node: each node's native id and
+/// creation id in that version's file (FIX 12346).
+pub(crate) type DeckExportIds = std::collections::BTreeMap<u64, (Option<u32>, Option<String>)>;
+
 /// One slide or shape of a live deck.
 pub(crate) struct DeckUnit {
     /// The node's model identity.
@@ -118,6 +122,20 @@ impl Vault {
         Ok(EXPORTS
             .get(&self.store, txn, &version_key(artifact, version))?
             .map(export_frontier))
+    }
+
+    /// The ids a deck export a Keep did not bind gave its nodes in its file
+    /// (FIX 12346); `None` for a bound export, the imported version, another
+    /// format, or a version with no export record.
+    pub(crate) fn office_body_deck_export_ids_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact: &EntityId,
+        version: u64,
+    ) -> Result<Option<DeckExportIds>> {
+        Ok(EXPORTS
+            .get(&self.store, txn, &version_key(artifact, version))?
+            .and_then(|record| record.deck_ids))
     }
 
     /// The head frontier of the artifact's live body; `None` for no body.

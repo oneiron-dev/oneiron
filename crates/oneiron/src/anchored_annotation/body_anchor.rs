@@ -32,7 +32,7 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::office_body::OfficeBodyUnits;
+use crate::office_body::{DeckExportIds, OfficeBodyUnits};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -46,10 +46,14 @@ type Units = [(String, String)];
 /// A body's units by frontier, read once a pass; `None` where they did not read.
 type UnitsAt = HashMap<Vec<u8>, Option<OfficeBodyUnits>>;
 
-/// A Word version's file, read once a pass.
+/// A version's file as a comment reads it, once a pass: a Word version's
+/// blocks, or the ids a deck export's own record keeps.
 enum Filed {
     /// The version's blocks.
     Blocks(Vec<(String, String)>),
+    /// A deck version's export ids, for an export a Keep did not bind;
+    /// `None` for every other deck version (FIX 12346).
+    Deck(Option<DeckExportIds>),
     /// No blob is filed at the version; it may still arrive by sync.
     Missing,
     /// A blob is filed but does not parse as Word.
@@ -58,7 +62,7 @@ enum Filed {
     Unread,
 }
 
-/// A Word version's file by version, read once a pass.
+/// A version's file by version, read once a pass.
 type FiledAt = HashMap<u64, Filed>;
 
 /// One thread's next head, planned in a read and written in a write.
@@ -283,9 +287,16 @@ impl Vault {
             self.load_units(txn, artifact, &head, &mut units, &mut unread);
             if let Some((version, frontier)) = landing {
                 self.load_units(txn, artifact, frontier, &mut units, &mut unread);
-                // Only a Word span lands through the file's own blocks.
-                if matches!(thread.anchor.locator, Locator::Docx { .. }) {
-                    self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
+                // Only a Word span lands through the file's own blocks; a deck
+                // shape through the ids its export's record keeps.
+                match thread.anchor.locator {
+                    Locator::Docx { .. } => {
+                        self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
+                    }
+                    Locator::Pptx { .. } => {
+                        self.load_deck_ids(txn, artifact, *version, &mut filed, &mut unread);
+                    }
+                    _ => {}
                 }
             }
             match plan_thread(thread, body, stamped, &head, landing, &units, &filed) {
@@ -339,7 +350,7 @@ impl Vault {
                     }
                     // A blob that is there but is not a Word file reads the
                     // same on every pass.
-                    Some(Filed::NotWord) => Stamp::Missed,
+                    Some(Filed::NotWord | Filed::Deck(_)) => Stamp::Missed,
                     // A missing blob may still arrive by sync; a read error
                     // was already warned and counted.
                     Some(Filed::Missing) | Some(Filed::Unread) | None => Stamp::Retry,
@@ -349,8 +360,19 @@ impl Vault {
                 sheets.iter().any(|(_, name)| name == sheet)
             }
             (Some(OfficeBodyUnits::Pptx(deck)), Locator::Pptx { .. }) => {
+                self.load_deck_ids(txn, artifact, anchor.version, filed, unread);
+                // An export record that did not read keeps the comment pinned.
+                let Some(Filed::Deck(exported)) = filed.get(&anchor.version) else {
+                    return Stamp::Retry;
+                };
                 let head = units_at(units, head);
-                return match deck_body_locator(deck, head, anchor.version, &anchor.locator) {
+                return match deck_body_locator(
+                    deck,
+                    head,
+                    anchor.version,
+                    exported.as_ref(),
+                    &anchor.locator,
+                ) {
                     Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
                     // A head deck that did not read may yet bind the version.
                     None if head.is_none() => Stamp::Retry,
@@ -387,6 +409,30 @@ impl Vault {
                 None
             });
         units.insert(frontier.to_vec(), read);
+    }
+
+    /// The ids deck version `version`'s own export record keeps (FIX 12346),
+    /// read into `filed` once a pass; `Unread`, warned and counted, when the
+    /// record does not read.
+    fn load_deck_ids(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        version: u64,
+        filed: &mut FiledAt,
+        unread: &mut u64,
+    ) {
+        if filed.contains_key(&version) {
+            return;
+        }
+        let read = self
+            .office_body_deck_export_ids_in_txn(txn, artifact, version)
+            .map(Filed::Deck)
+            .unwrap_or_else(|error| {
+                warn_unread(artifact, &error, unread);
+                Filed::Unread
+            });
+        filed.insert(version, read);
     }
 
     fn load_filed(
@@ -488,6 +534,10 @@ fn plan_thread(
                 else {
                     return None;
                 };
+                let exported = match filed.get(version) {
+                    Some(Filed::Deck(ids)) => ids.as_ref(),
+                    _ => None,
+                };
                 let filed = match filed.get(version) {
                     Some(Filed::Blocks(blocks)) => Some(blocks.as_slice()),
                     _ => None,
@@ -495,7 +545,7 @@ fn plan_thread(
                 let located = match target {
                     OfficeBodyUnits::Pptx(deck) => {
                         let head = units_at(units, body_head);
-                        deck_file_locator(deck, head, *version, &at_export)
+                        deck_file_locator(deck, head, *version, exported, &at_export)
                     }
                     _ => file_locator(filed, target, &at_export),
                 };
