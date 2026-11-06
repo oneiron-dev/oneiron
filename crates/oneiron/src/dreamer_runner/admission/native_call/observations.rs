@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::super::{DreamerBudgetSettlement, NativeMeterSnapshot, SettleDreamerBudget};
 use super::{CALLS, Error, NativeCallMeter, Result, Vault, invalid_dreamer_runner};
 use crate::attempt_queue::AttemptId;
+use crate::model_step_context::StepReceipt;
 
 /// A consumed reservation and its snapshot, not a payment or exclusion fact.
 /// Equal observations from separate successful settlements remain separate.
@@ -20,6 +21,8 @@ pub(super) struct NativeAggregateObservation {
     snapshot_end_used_units: u64,
     aggregate_units: u64,
     settled_units: u64,
+    /// Marker keys newly written by this successful settlement, not per-step amounts.
+    newly_pinned_steps: Vec<StepReceipt>,
     lease_state: NativeObservedLeaseState,
     lease_meter: NativeCallMeter,
 }
@@ -63,6 +66,7 @@ pub(in crate::dreamer_runner::admission) fn record_native_aggregate_observations
     input: &SettleDreamerBudget,
     actual: &DreamerBudgetSettlement,
     native: &NativeMeterSnapshot,
+    newly_pinned_steps: &[StepReceipt],
 ) {
     let recorded = (|| -> Result<()> {
         let reservation = &actual.reservation;
@@ -97,6 +101,7 @@ pub(in crate::dreamer_runner::admission) fn record_native_aggregate_observations
                 snapshot_end_used_units: interval.end_used_units,
                 aggregate_units: input.actual_units,
                 settled_units: actual.actual_units,
+                newly_pinned_steps: newly_pinned_steps.to_vec(),
                 lease_state: state.into(),
                 lease_meter: range.map_or(NativeCallMeter::Unknown, |range| {
                     NativeCallMeter::Settled {
