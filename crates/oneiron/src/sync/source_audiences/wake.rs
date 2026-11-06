@@ -71,7 +71,8 @@ impl WindowManager {
         let start = last.map_or(0, |last| {
             wakes.partition_point(|(policy, _)| *policy <= last)
         });
-        wakes.rotate_left(start.min(wakes.len()));
+        let shift = start.min(wakes.len());
+        wakes.rotate_left(shift);
         let mut budget = POLICY_WINDOWS_PER_PASS;
         for (policy, wake) in wakes {
             if budget == 0 {
