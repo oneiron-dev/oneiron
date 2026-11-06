@@ -96,6 +96,10 @@ pub struct EvalMeasurementRequest {
     pub seat: EvalSeat,
     pub incumbent: EvalArmPin,
     pub candidate: EvalArmPin,
+    /// The constructed incumbent and candidate offers when this was asked.
+    /// A changed route or rate gets a new request key. Actual serving evidence
+    /// still comes only from each answered leg, never from this snapshot.
+    pub requested_offers: Option<[EvalServingOffer; 2]>,
     pub cohort: EntityId,
     pub membership_digest: String,
     pub rubric_revision: String,

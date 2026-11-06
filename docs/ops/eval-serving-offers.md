@@ -23,3 +23,13 @@ This evidence is not permission to call a model or switch a binding. It does
 not prove local files, download-card acknowledgement, current policy, current
 cohort validity or sufficiency. Automatic application is not implemented by
 this producer. Manual approval, training and the existing cards remain as before.
+
+The stock-offer request also snapshots the incumbent and candidate constructed
+offers in `requested_offers`, in that order. The existing named request encoding
+includes this data in the measurement key. A changed route, payer, credential
+binding, catalog revision or rate therefore requests a fresh measurement even
+when the model/revision and cohort are unchanged. If either exact offer cannot
+be read, this snapshot is unknown. Helper-skill requests and non-generative
+seats leave it unknown.
+This snapshot adds no call refusal and is not evidence of what a later call
+actually served. Only successful per-leg records supply that evidence.
