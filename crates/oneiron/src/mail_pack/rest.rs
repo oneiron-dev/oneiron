@@ -27,6 +27,10 @@ const RAW_READ_BUFFER_BYTES: usize = 16 * 1024;
 /// quartets, so each piece decodes alone and what the read keeps or refuses
 /// depends on the message alone, never on how the network split it.
 const RAW_DECODE_PIECE_CHARS: usize = 4 * 1024;
+/// The most bytes a raw message answer may take before its `raw` value
+/// starts (`{"raw":"` and the JSON whitespace around its tokens): an answer
+/// that pads its front without end is refused, never read for ever.
+const MAX_RAW_PREFIX_BYTES: usize = 4 * 1024;
 /// HTML elements whose text is not the message's.
 const HTML_IGNORED: [&str; 6] = ["head", "script", "style", "template", "noscript", "title"];
 /// HTML elements that start a new line of text.
@@ -144,7 +148,8 @@ fn error_code(body: Option<&Value>) -> Option<String> {
 /// the value's end (a message of headers alone). `=` padding ends the value.
 fn raw_header_block(body: impl Read) -> Result<Vec<u8>> {
     let mut body = BufReader::with_capacity(RAW_READ_BUFFER_BYTES, body);
-    raw_value_start(&mut body)?;
+    let mut prefix_budget = MAX_RAW_PREFIX_BYTES;
+    raw_value_start(&mut body, &mut prefix_budget)?;
     let mut block = HeaderBlock::new();
     let mut pending: Vec<u8> = Vec::with_capacity(RAW_DECODE_PIECE_CHARS + RAW_READ_BUFFER_BYTES);
     loop {
@@ -183,42 +188,46 @@ fn raw_header_block(body: impl Read) -> Result<Vec<u8>> {
 /// Reads `{"raw":"` from `body`, JSON whitespace allowed between its
 /// tokens: the start of the `raw` value, the object's only field. Another
 /// field, an escape in the field's name or a value that is not a string is
-/// another shape.
-fn raw_value_start(body: &mut impl BufRead) -> Result<()> {
+/// another shape. At most `budget` bytes are taken; more is another shape.
+fn raw_value_start(body: &mut impl BufRead, budget: &mut usize) -> Result<()> {
     let unreadable = || refused("mail_wire_raw_message_unreadable");
-    if next_token(body)? != Some(b'{') {
+    if next_token(body, budget)? != Some(b'{') {
         return Err(unreadable());
     }
-    match next_token(body)? {
+    match next_token(body, budget)? {
         Some(b'"') => {}
         Some(b'}') => return Err(refused("mail_wire_raw_message_missing")),
         _ => return Err(unreadable()),
     }
     for &expected in b"raw\"" {
-        if next_byte(body)? != Some(expected) {
+        if next_byte(body, budget)? != Some(expected) {
             return Err(unreadable());
         }
     }
-    if next_token(body)? != Some(b':') || next_token(body)? != Some(b'"') {
+    if next_token(body, budget)? != Some(b':') || next_token(body, budget)? != Some(b'"') {
         return Err(unreadable());
     }
     Ok(())
 }
 
 /// The next byte of `body` that is not JSON whitespace; `None` at its end.
-fn next_token(body: &mut impl BufRead) -> Result<Option<u8>> {
+fn next_token(body: &mut impl BufRead, budget: &mut usize) -> Result<Option<u8>> {
     loop {
-        match next_byte(body)? {
+        match next_byte(body, budget)? {
             Some(b' ' | b'\t' | b'\n' | b'\r') => {}
             other => return Ok(other),
         }
     }
 }
 
-/// The next byte of `body`; `None` at its end.
-fn next_byte(body: &mut impl BufRead) -> Result<Option<u8>> {
+/// The next byte of `body`, taken from `budget`; `None` at its end. A
+/// spent budget refuses the answer as another shape.
+fn next_byte(body: &mut impl BufRead, budget: &mut usize) -> Result<Option<u8>> {
     let byte = body.fill_buf().map_err(|_| cut_short())?.first().copied();
     if byte.is_some() {
+        *budget = budget
+            .checked_sub(1)
+            .ok_or_else(|| refused("mail_wire_raw_message_unreadable"))?;
         body.consume(1);
     }
     Ok(byte)
