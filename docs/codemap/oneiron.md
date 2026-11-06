@@ -976,12 +976,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/ingest/admission/preflight.rs` | src | s | 2 crate-vis | — | Value-only admission checks shared by feed polls and connector imports |
 | `src/calendar/ingest/admission/recurrence.rs` | src | s | 5 crate-vis | — | Detached recurrence admission: UID still resolves the master, never the exception |
 | `src/calendar/ingest/admission/tests.rs` | test | m | — | — | — |
-| `src/calendar/ingest/door.rs` | src | s | 5 struct · 2 fn | CalendarIcsImportReceipt, CalendarIcsImportRequest, CalendarImportClaimReceipt, CalendarImportedEvent, CalendarInstanceMoveRequest | Uploaded ICS import and a single imported-instance amendment |
+| `src/calendar/ingest/door.rs` | src | m | 5 struct · 2 fn | CalendarIcsImportReceipt, CalendarIcsImportRequest, CalendarImportClaimReceipt, CalendarImportedEvent, CalendarInstanceMoveRequest | Uploaded ICS import and a single imported-instance amendment |
 | `src/calendar/ingest/feed_door.rs` | src | s | 5 struct · 1 enum · 7 fn | CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration, CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion, CalendarIcsPollResult | Owner-installed ICS feeds and public observations of completed polls |
 | `src/calendar/ingest/fetch.rs` | src | s | 3 struct · 1 enum · 2 trait · 1 fn · 1 crate-vis | CustodyDoorIcsFeedFetcher, IcsFeedFetcher, IcsFeedSource, IcsFetchResponse, IcsHttpResponse, IcsHttpTransport | Custody-door HTTP egress, raw archive, and registry normalize |
-| `src/calendar/ingest/mod.rs` | src | s | 2 mod · 3 re-export · 8 crate-vis | — | ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784) |
+| `src/calendar/ingest/mod.rs` | src | s | 2 mod · 3 re-export · 9 crate-vis | — | ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784) |
 | `src/calendar/ingest/poll.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 const · 2 crate-vis | IcsFeedCursorSnapshot, IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsPollRunState | ICS feed poll queue, cursor store, and poll runner |
 | `src/calendar/ingest/property_claims.rs` | src | s | 4 crate-vis | — | Shared ICS-poll and connector property admission through their existing gates |
+| `src/calendar/ingest/turn.rs` | src | s | 2 crate-vis | — | The vault's one calendar admission turn (FIX 4797) |
 | `src/calendar/invite/admission.rs` | src | m | 1 struct · 1 enum · 5 fn · 1 const · 5 crate-vis | CalendarInviteAdmission, CalendarInviteStateChange | UID-once/SEQUENCE admission and outbound passport state moves |
 | `src/calendar/invite/hygiene.rs` | src | m | 1 struct · 1 enum · 6 fn · 9 crate-vis | CalendarInviteConsentBasis, CalendarInviteHygieneContext | Vault-hydrated consent evidence and sending-identity reads |
 | `src/calendar/invite/mime.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | CalendarInviteMimePart | iMIP MIME rendering and blob reads |
