@@ -41,7 +41,7 @@ pub use call_scope::VerbCallScope;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
-    VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
 pub(crate) use paced::{
