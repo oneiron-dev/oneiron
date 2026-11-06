@@ -19,6 +19,55 @@ pub struct ArtifactBackendPairing {
     pub link: PairingLink,
 }
 
+#[derive(serde::Deserialize, Serialize)]
+struct BackendPrincipalBody {
+    name: String,
+    artifact_backend: BackendPrincipalBinding,
+}
+
+#[derive(serde::Deserialize, Serialize)]
+struct BackendPrincipalBinding {
+    artifact: String,
+    fork_hash: String,
+    code_artifact_ref: EntityId,
+}
+
+/// Recognizes the fresh app actor's native identity, not an action grant.
+/// The owner grant writer first checks that this is a live PERSON row.
+pub(crate) fn is_backend_principal(principal: EntityId, body: &[u8]) -> bool {
+    let Ok(body) = rmp_serde::from_slice::<BackendPrincipalBody>(body) else {
+        return false;
+    };
+    let binding = body.artifact_backend;
+    if super::validate_artifact_id(&binding.artifact).is_err() {
+        return false;
+    }
+    let Ok(fork_hash) = super::parse_codebase_fork_hash_hex(&binding.fork_hash) else {
+        return false;
+    };
+    let prefix = format!(
+        "artifact-backend:{}:{}:{}:",
+        binding.artifact,
+        super::artifact_hex(&fork_hash),
+        binding.code_artifact_ref.to_hex(),
+    );
+    let Some(nonce) = body.name.strip_prefix(&prefix) else {
+        return false;
+    };
+    if nonce.len() != 64
+        || !nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return false;
+    }
+    EntityId::derive(
+        crate::entity_id::derived_domains::AGENT_PRINCIPAL,
+        &[body.name.as_bytes()],
+    )
+    .is_ok_and(|expected| expected == principal)
+}
+
 impl Vault {
     /// Creates a fresh app actor and an owner-recorded pairing link with no
     /// engine-action verbs. It neither grants the actor a standing ceiling
@@ -42,8 +91,9 @@ impl Vault {
                 let mut nonce = [0_u8; 32];
                 crate::world_keys::os_fill(&mut nonce)?;
                 let name = format!(
-                    "artifact-backend:{artifact}:{}:{}",
+                    "artifact-backend:{artifact}:{}:{}:{}",
                     super::artifact_hex(fork_hash),
+                    snapshot.code_artifact_id.to_hex(),
                     super::artifact_hex(&nonce),
                 );
                 let principal = EntityId::derive(
@@ -56,11 +106,14 @@ impl Vault {
                     break (principal, name);
                 }
             };
-            let mut body = Vec::new();
-            rmpv::encode::write_value(
-                &mut body,
-                &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-            )
+            let body = rmp_serde::to_vec_named(&BackendPrincipalBody {
+                name,
+                artifact_backend: BackendPrincipalBinding {
+                    artifact: artifact.to_owned(),
+                    fork_hash: super::artifact_hex(fork_hash),
+                    code_artifact_ref: snapshot.code_artifact_id,
+                },
+            })
             .map_err(|_| Error::InvariantViolation("artifact backend principal body encode"))?;
             let now = self.store.clock.now_recorded_at();
             self.batch_in()

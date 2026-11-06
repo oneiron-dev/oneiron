@@ -35,6 +35,7 @@ use crate::write_envelope::WriteActor;
 pub(crate) mod checkpoint;
 mod backend_principal;
 pub use backend_principal::ArtifactBackendPairing;
+pub(crate) use backend_principal::is_backend_principal;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
 mod pointer_rows;

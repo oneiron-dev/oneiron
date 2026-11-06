@@ -30,16 +30,38 @@ pairing transcript and holder-proof rules apply. No owner key is handed to the
 app.
 
 Each successful bootstrap creates a fresh actor; it does not adopt or revoke a
-named agent's existing identity or grants. The owner is checked in the actor
-writer and again in the pairing-link writer. If issuing the link fails after
-actor creation, an actor row can remain, but no credential or grant is issued.
+named agent's existing identity or grants. The actor's native body records the
+artifact, fork hash and code-artifact id selected in that same write. Those
+fields and the fresh random name derive its principal id. They identify the
+app; they grant no action or read.
+
+The owner is checked in the actor writer and again in the pairing-link writer.
+If issuing the link fails after actor creation, an actor row can remain, but no
+credential or grant is issued.
 
 The paired slip has an explicitly empty engine-action verb scope. This call
 creates no agent ceiling, policy grant, reader federation grant, or proxy
 connector admission. The owner recorded on the link is not its holder.
 The signed communication ceiling does not add a verb.
 
-This is the identity bootstrap for FIX1116 / OF-356, not backend deployment.
+## Explicit owner grants
+
+The owner can name this `principal_ref` as `agent` in the existing
+`vault.agents.grants.mint` door. The native grant writer recognizes this live
+app PERSON by its complete stored descriptor and derived id, not by an app
+label or an arbitrary PERSON row. It keeps the same owner revalidation, exact
+six-axis `authority_scope`, explicit verb list, expiry, optional repo bounds,
+signed authority act and FEDERATION_GRANT row. The ordinary consent registry
+and `vault.agents.grants.revoke` own that row. There is no second app grant
+store, automatic grant, agent-definition ceiling or new approval step.
+
+The empty-verb bootstrap slip stays empty. A grant row does not widen it: a
+caller also needs an owner-issued credential whose own scope admits the call.
+The normal credential and dispatcher checks still apply. This identity/grant
+join does not pass a holder key, slip or grant into a backend guest, and does
+not provide the guest's native action transport.
+
+This is the identity bootstrap and owner-grant join for FIX1116 / OF-356, not backend deployment.
 It starts no process, changes no publication pointer or audience, and exposes
 no private preview. An app can compute and serve without engine-action grants.
 The pinned-code process/request lifecycle on the artifact origin and the
