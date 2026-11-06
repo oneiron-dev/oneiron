@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1315 code-mode rows (1275 host rows, 40 run rows), 4642 declarations.
-// Replies: 1126 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4656 declarations.
+// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1012,6 +1012,22 @@ declare namespace Sdk {
   type WeaveDigestSettingUndo = { change_ref: string };
   type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
   type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
+  type ProactivityDigestRequest = { id?: string | null };
+  type DigestPrivateSource = { root: string; turn: string };
+  type DigestProposal = { claim_ref: string; revision: number[]; summary: string; private_sources?: DigestPrivateSource[]; unverified?: boolean };
+  type JudgeAskReason = "revision_disagreement" | "uncertainty" | "rubric_recheck" | "rubric_regrade";
+  type JudgeRegrade = { label: number[]; rubric: number[] };
+  type JudgeAsk = { id: number[]; skill: string; responsible: string; campaign: string; evidence: string; reason: JudgeAskReason; option_a: string; option_b: string; delivered_at?: number | null; regrade?: JudgeRegrade | null };
+  type EvalSeat = "companion" | "decision" | "extraction_tagger" | "embedder" | "router" | { named: string };
+  type EvalLabelAsk = { id: EntityId; seat: EvalSeat; case: EntityId; decision: string; responsible: EntityId; option_a: string; option_b: string; minutes: number; asked_at: number; delivered_at?: number | null; chosen?: string | null; answered_at?: number | null };
+  type DigestOffer = { offer: string; digest: string; summary: string };
+  type DigestCleanup = { decisions: string[]; archived: number; skipped: number; proposals: string[]; proposed: number; view: string };
+  type DigestNoteTombstones = { proposals: string[]; view: string };
+  type DigestAppliedItem = { target: string; kind: string; facet: string; applied_at: number; receipt_ref: string };
+  type DigestApplied = { items: DigestAppliedItem[]; view: string };
+  type DigestDrafterItem = { event: string; kind: string; versions: string[]; reason?: string | null; at: number };
+  type DigestDrafter = { items: DigestDrafterItem[]; nights?: Record<string, number>; through: string; view: string };
+  type ProactivityDigestView = { id: number[]; created_at: number; recipient: string | null; urgent: boolean; groups: Record<string, DigestProposal[]>; judge_asks: JudgeAsk[]; eval_label_asks: EvalLabelAsk[]; offers?: DigestOffer[]; cleanup?: DigestCleanup | null; note_tombstones?: DigestNoteTombstones | null; applied?: DigestApplied | null; drafter?: DigestDrafter | null; health_cards?: ConcernCardSummary[]; rendered: string; voice_style: string };
   type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
   type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern" | "digest";
   type InboxLensPile = "conversations" | "waiting_on_you" | "updates";
@@ -1713,7 +1729,6 @@ declare namespace Sdk {
   type CampaignConfig = { campaign_id: string; search_axes: SearchAxis[]; metric_set: MetricSet; splits: CampaignSplits; budget: BudgetLease; decide: DecideRules; knobs?: CampaignKnobs };
   type ResearchTarget = { skill: { skill: EntityId } } | { config: { subject: string } };
   type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
-  type EvalSeat = "companion" | "decision" | "extraction_tagger" | "embedder" | "router" | { named: string };
   type ResearchConfirmationSeat = { seat: EvalSeat; cohort: EntityId };
   type PriorRung = "user" | "persona" | "global";
   type PriorSeed = { rung: PriorRung; alpha: number; beta: number; source_ref: string };
@@ -1812,7 +1827,6 @@ declare namespace Sdk {
   type EvalCohortRef = { cohort: EntityId };
   type EvalExposureLedger = { cohort: EntityId; counts: EvalExposureCounts; servings: EvalExposure[] };
   type EvalBlockedLabelsRequest = { seat?: EvalSeat | null; decision?: string | null };
-  type EvalLabelAsk = { id: EntityId; seat: EvalSeat; case: EntityId; decision: string; responsible: EntityId; option_a: string; option_b: string; minutes: number; asked_at: number; delivered_at?: number | null; chosen?: string | null; answered_at?: number | null };
   type EvalLabelPickRequest = { decision: string; case: EntityId; choose_b: boolean };
   type OfferListRequest = { seat?: EvalSeat | null; pending_only?: boolean };
   type OfferModelPin = { model: string; revision: string; content_hash?: string | null };
@@ -7002,6 +7016,10 @@ declare const vault: Sdk.VaultHost & {
       /** Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer. */
       decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.HostedRelayDecision | StoredResult>;
     };
+  };
+  proactivity: {
+    /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
+    digest(input: Sdk.ProactivityDigestRequest): Promise<Sdk.ProactivityDigestView | null | StoredResult>;
   };
   productivity: {
     /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */

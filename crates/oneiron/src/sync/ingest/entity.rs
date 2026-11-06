@@ -92,8 +92,9 @@ impl<'a> IngestCtx<'a> {
     }
 
     /// The window document the entries come from, whose birth map carries
-    /// each row's Rule A envelope.
-    fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
+    /// each row's Rule A envelope and whose writer map each MESSAGE row's
+    /// writer proof.
+    pub(super) fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
         match self.residence? {
             Residence::Quarantine(doc) | Residence::Forward { doc, .. } => Some(doc),
         }
@@ -162,6 +163,9 @@ pub(in crate::sync) enum RefusalRetry {
 impl RefusalRetry {
     fn of(err: &Error) -> Self {
         if crate::subject_model::subject_model_dependency_pending(err)
+            // An own machine's companion row that waits for its author
+            // (FIX 21271).
+            || crate::gate::companion_author_pending(err)
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
