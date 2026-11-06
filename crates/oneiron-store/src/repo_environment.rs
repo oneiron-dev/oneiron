@@ -115,17 +115,27 @@ pub fn is_unindexed_dotenv_name(name: &str) -> bool {
 /// its name is no dotenv file's: `.env`, `.env.<anything>` or
 /// `<anything>.env`.
 pub fn repo_env_file(path: &str) -> Option<RepoEnvFileKind> {
-    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-    let dotenv = name == ".env"
-        || name.starts_with(".env.")
-        || (name.len() > ".env".len() && name.ends_with(".env"));
+    repo_env_file_bytes(path.as_bytes())
+}
+
+/// The same basename classification for an exact Git path, including non-UTF-8 bytes.
+pub fn repo_env_file_bytes(path: &[u8]) -> Option<RepoEnvFileKind> {
+    let name = path
+        .rsplit(|byte| *byte == b'/')
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    let dotenv = name == b".env"
+        || name.starts_with(b".env.")
+        || (name.len() > b".env".len() && name.ends_with(b".env"));
     if !dotenv {
         return None;
     }
-    if name
-        .split('.')
-        .any(|part| EXAMPLE_NAME_PARTS.contains(&part))
-    {
+    if name.split(|byte| *byte == b'.').any(|part| {
+        EXAMPLE_NAME_PARTS
+            .iter()
+            .any(|example| part == example.as_bytes())
+    }) {
         Some(RepoEnvFileKind::Example)
     } else {
         Some(RepoEnvFileKind::Live)
