@@ -11,6 +11,7 @@ use super::super::support::{expect_map, invalid_code_run_replay, map_get, str_va
 use super::super::types::{
     SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult,
 };
+use super::request_identity::is_erased_request;
 use crate::Result;
 use crate::receipt::{ActionInputs, call_bytes_digest};
 
@@ -71,6 +72,12 @@ impl CodeRunBridgeCall {
             hook_view_served: false,
             rewritten_request: None,
         };
+        // FIX 6534: no live call spells the erased form, so none stands for one.
+        if row.request_erased() {
+            return Err(invalid_code_run_replay(
+                "a live bridge request spells the erased form",
+            ));
+        }
         row.scrub_target_erased_ask()?;
         row.validate_speech_coherence()?;
         row.validate_spawn_coherence()?;
@@ -118,20 +125,7 @@ impl CodeRunBridgeCall {
         let expected_order = if self.effect.is_speech() {
             let order = u32::try_from(self.seq)
                 .map_err(|_| invalid_code_run_replay("speech bridge seq exceeds u32"))?;
-            let entries = expect_map(&self.request, "speech request must be a map")?;
-            let text = str_value(map_get(entries, "text")?)?;
-            let unstamped = match self.effect {
-                SelfEffect::Speak => SelfCall::Speak(SelfSpeechCall::new(text)),
-                SelfEffect::Think => SelfCall::Think(SelfSpeechCall::new(text)),
-                SelfEffect::Express => SelfCall::Express(SelfSpeechCall::new(text)),
-                _ => unreachable!("is_speech exhaustively names the speech family"),
-            };
-            let expected_call = unstamped.with_bridge_stamp(self.seq, self.started_at_ms);
-            if self.request != self_call_request_value(&expected_call)? {
-                return Err(invalid_code_run_replay(
-                    "speech request contradicts its host bridge stamp",
-                ));
-            }
+            self.validate_speech_stamp()?;
             Some(order)
         } else {
             None
@@ -259,6 +253,30 @@ impl CodeRunBridgeCall {
         }
     }
 
+    /// A speech row's request is the call its host stamped: its text under
+    /// the row's own seq and start clock. An erased request keeps no words
+    /// to hold to the stamp (FIX 6534); its outcome still names its order.
+    fn validate_speech_stamp(&self) -> Result<()> {
+        if self.request_erased() {
+            return Ok(());
+        }
+        let entries = expect_map(&self.request, "speech request must be a map")?;
+        let text = str_value(map_get(entries, "text")?)?;
+        let unstamped = match self.effect {
+            SelfEffect::Speak => SelfCall::Speak(SelfSpeechCall::new(text)),
+            SelfEffect::Think => SelfCall::Think(SelfSpeechCall::new(text)),
+            SelfEffect::Express => SelfCall::Express(SelfSpeechCall::new(text)),
+            _ => unreachable!("is_speech exhaustively names the speech family"),
+        };
+        let expected_call = unstamped.with_bridge_stamp(self.seq, self.started_at_ms);
+        if self.request != self_call_request_value(&expected_call)? {
+            return Err(invalid_code_run_replay(
+                "speech request contradicts its host bridge stamp",
+            ));
+        }
+        Ok(())
+    }
+
     /// The rewritten request beside the original is coherent with this row
     /// (FIX 1442): a rewrite changes args, never the call, so the rewritten
     /// map carries its call's own shape; a speech rewrite carries the row's
@@ -268,6 +286,17 @@ impl CodeRunBridgeCall {
         let Some(rewritten) = &self.rewritten_request else {
             return Ok(());
         };
+        // FIX 6534: a rewrite's words go with its call's own, and an erased
+        // pair keeps their two identities alone.
+        match (self.request_erased(), is_erased_request(rewritten)) {
+            (true, true) => return Ok(()),
+            (false, false) => {}
+            _ => {
+                return Err(invalid_code_run_replay(
+                    "a rewritten request is erased apart from its call's own",
+                ));
+            }
+        }
         let original = expect_map(&self.request, "bridge request must be a map")?;
         let fields = expect_map(rewritten, "rewritten request must be a map")?;
         let mut original_keys: Vec<&str> = original
@@ -366,9 +395,8 @@ impl CodeRunBridgeCall {
             return None;
         };
         // The bubble spoke the dispatched call: read the rewritten text when
-        // a hook rewrote it (FIX 1442).
-        let effective = self.rewritten_request.as_ref().unwrap_or(&self.request);
-        let Value::Map(entries) = effective else {
+        // a hook rewrote it (FIX 1442). An erased call keeps none (FIX 6534).
+        let Some(Value::Map(entries)) = self.dispatched_request() else {
             return None;
         };
         entries

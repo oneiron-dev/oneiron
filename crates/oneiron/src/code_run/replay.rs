@@ -16,10 +16,12 @@ mod bridge;
 mod checkpoint;
 mod cursor;
 mod position;
+mod request_identity;
 
 pub use self::bridge::CodeRunBridgeCall;
 pub use self::checkpoint::CodeRunStepCheckpoint;
 pub use self::cursor::CodeRunReplayCursor;
+pub(super) use self::request_identity::ErasedRequest;
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;

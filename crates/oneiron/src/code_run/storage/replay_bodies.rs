@@ -141,16 +141,22 @@ pub(crate) fn replay_owners(
 /// effect, as a checkpoint's image of it does, a verb's answer keeping the
 /// rows it was served from and a fold's answer the folds it named (FIX
 /// 18924), and each output that holds reply content
-/// ([`holds_reply_content`]) previews as erased. What the run did stays
-/// whole: every call's seq, effect, request, times and action
-/// digest, every output's path, handle, digest, counts and completeness, its
-/// checkpoints (so its generation), its names and its live run binding. A
-/// resumed run that reaches an erased call traps on it, as a write whose
-/// receipt holds one is never made again.
+/// ([`holds_reply_content`]) previews as erased. Every call's request words
+/// go with them, a hook's rewrite too (FIX 6534): a request the run built
+/// from an earlier reply holds its words. Each keeps its text-free
+/// identity ([`crate::code_run::CodeRunBridgeCall::erase_request`]). What
+/// the run did stays whole: every call's seq, effect, request identity,
+/// times, action digest and receipt, every output's path, handle, digest,
+/// counts and completeness, its checkpoints (so its generation), its names
+/// and its live run binding. A resumed run that reaches an erased call
+/// traps on it, as a write whose receipt holds one is never made again,
+/// and a call that meets an erased request by its identity takes its
+/// recorded answer.
 ///
 /// # Errors
 ///
-/// An outcome that does not encode.
+/// An outcome that does not encode, or a request the side-row wall cannot
+/// read.
 pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
     let retained_calls: std::collections::BTreeSet<usize> = record
         .bridge_calls
@@ -165,6 +171,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
         .map(|(index, _)| index)
         .collect();
     for (index, call) in record.bridge_calls.iter_mut().enumerate() {
+        call.erase_request()?;
         if retained_calls.contains(&index) {
             continue;
         }

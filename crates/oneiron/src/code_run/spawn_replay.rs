@@ -19,7 +19,7 @@ use super::coordination_codec::SPAWN_INTENT_KEYS;
 use super::payload::{
     decode_self_dispatch_outcome, keep_row_receipt, row_receipt, self_dispatch_outcome_value,
 };
-use super::replay::CodeRunBridgeCall;
+use super::replay::{CodeRunBridgeCall, ErasedRequest};
 use super::support::{
     decode_array, entity_id_value, entity_value, fixed_binary, invalid_code_run_replay, pinned_map,
     request_map, required, str_value,
@@ -59,7 +59,9 @@ impl ReplayRequestMatch {
 
 /// `stored`, the request a row of `effect` recorded, against `offered`, the
 /// request its call makes now under the row's own bridge stamp. Pure: it
-/// reads and writes nothing.
+/// reads and writes nothing. An erased request meets `offered` by its
+/// identity alone (FIX 6534): a hit or drift, never a wildcard and never a
+/// spawn's miss, so no call runs fresh in an erased row's place.
 ///
 /// # Errors
 ///
@@ -69,6 +71,9 @@ pub(super) fn replay_request_match(
     stored: &Value,
     offered: &Value,
 ) -> Result<ReplayRequestMatch> {
+    if let Some(erased) = ErasedRequest::of(stored) {
+        return erased.meets(offered);
+    }
     if stored == offered || admitted_from(stored, offered)? {
         return Ok(ReplayRequestMatch::Hit);
     }
@@ -166,7 +171,7 @@ pub(super) fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
 }
 
 /// A spawn request's fields without its ask.
-fn without_ask(fields: &[(Value, Value)]) -> Value {
+pub(super) fn without_ask(fields: &[(Value, Value)]) -> Value {
     Value::Map(
         fields
             .iter()
@@ -502,7 +507,10 @@ impl CodeRunBridgeCall {
         // the target's erase retires that copy. The original ask keeps its
         // check otherwise.
         let carried = run.is_some_and(Value::is_nil);
-        if !erased && !barrier && !live && !carried && ask.is_some_and(|ask| !ask.is_nil()) {
+        // An erased request keeps only a typed ask (FIX 6534).
+        let kept = !self.request_erased();
+        if kept && !erased && !barrier && !live && !carried && ask.is_some_and(|ask| !ask.is_nil())
+        {
             return Err(invalid_code_run_replay(
                 "spawn ask is not text, nil, or a typed marker",
             ));
