@@ -14,7 +14,10 @@ use super::{
     OfficeDoc, OfficeFormat, RangeRef,
 };
 use crate::Vault;
-use crate::edit_settle::{DecidedSheetAnswers, DecidedSheetRequest, DecidedSheetShape};
+use crate::edit_settle::{
+    DecidedSheetAnswers, DecidedSheetInputs, DecidedSheetProgress, DecidedSheetRequest,
+    DecidedSheetRow, DecidedSheetShape,
+};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
@@ -278,147 +281,171 @@ impl Vault {
                 only_rows: request.only_rows.map(|rows| rows.iter().copied().collect()),
             },
         );
-        if let Some(row) = self.decided_sheet_answers(artifact, &identity, false)? {
-            return self.stage_decided_sheet_answers(artifact, &row, ask.deadline);
-        }
-        // A workbook with a live body is read there at its head, pinned with
-        // it; the answer cell is read on the version the answer lands on
-        // (FIX 11981).
-        let live = self.live_head_cells(artifact, request.sheet)?;
-        let base_live = live.as_ref().map(|(pin, _)| pin.clone());
-        let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
-        let frontier = *blake3::hash(&bytes).as_bytes();
-        let in_rows = |row: u32| (rows.start.row..=rows.end.row).contains(&row);
-        let header_row = request.header_row;
-        let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
-            let read_col = (rows.start.col..=rows.end.col).contains(&cell.col);
-            (read_col && (in_rows(cell.row) || Some(cell.row) == header_row))
-                || (cell.col == answer_col && in_rows(cell.row))
-        })?;
-        let shown = live.as_ref().map_or(&cells, |(_, live)| live);
-        let columns: Vec<u32> = (rows.start.col..=rows.end.col)
-            .filter(|col| *col != answer_col)
-            .collect();
-        let headers: Map<String, Value> = header_row
-            .map(|row| {
-                columns
-                    .iter()
-                    .filter_map(|col| {
-                        let text = shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
-                        Some((super::address::column_to_letters(*col), Value::String(text)))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let sources = [EvidenceVersion {
-            id: *artifact,
-            body_hash: frontier,
-        }];
-        let mut answers = Vec::new();
-        let mut abstained = Vec::new();
-        let mut refused = Vec::new();
-        for row in rows.start.row..=rows.end.row {
-            if request.only_rows.is_some_and(|only| !only.contains(&row)) {
-                continue;
+        let mut row = if let Some(row) = self.decided_sheet_answers(artifact, &identity, false)? {
+            row
+        } else {
+            // Capture the original read basis before any paid call. A retry
+            // reads these inputs, not a new live head under the original pin.
+            let live = self.live_head_cells(artifact, request.sheet)?;
+            let base_live = live.as_ref().map(|(pin, _)| pin.clone());
+            let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
+            let frontier = *blake3::hash(&bytes).as_bytes();
+            let in_rows = |row: u32| (rows.start.row..=rows.end.row).contains(&row);
+            let header_row = request.header_row;
+            let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
+                let read_col = (rows.start.col..=rows.end.col).contains(&cell.col);
+                (read_col && (in_rows(cell.row) || Some(cell.row) == header_row))
+                    || (cell.col == answer_col && in_rows(cell.row))
+            })?;
+            let shown = live.as_ref().map_or(&cells, |(_, live)| live);
+            let columns: Vec<u32> = (rows.start.col..=rows.end.col)
+                .filter(|col| *col != answer_col)
+                .collect();
+            let headers: Map<String, Value> = header_row
+                .map(|row| {
+                    columns
+                        .iter()
+                        .filter_map(|col| {
+                            let text =
+                                shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
+                            Some((super::address::column_to_letters(*col), Value::String(text)))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut inputs = Vec::new();
+            for row in rows.start.row..=rows.end.row {
+                if request.only_rows.is_some_and(|only| !only.contains(&row)) {
+                    continue;
+                }
+                let cell = CellRef {
+                    col: answer_col,
+                    row,
+                };
+                inputs.push(DecidedSheetRow {
+                    cell,
+                    before: cells.get(&cell).cloned().unwrap_or(CellValue::Blank),
+                    read: columns
+                        .iter()
+                        .filter_map(|col| {
+                            let text =
+                                shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
+                            Some((super::address::column_to_letters(*col), Value::String(text)))
+                        })
+                        .collect(),
+                });
             }
-            let target = CellRef {
-                col: answer_col,
-                row,
+            self.retain_decided_sheet_answers(
+                artifact,
+                DecidedSheetAnswers {
+                    request: identity,
+                    generation: EntityId::now(),
+                    bundle: SheetAnswerBundle {
+                        question: ask.question.clone(),
+                        principal: ask.principal,
+                        sheet: request.sheet.to_owned(),
+                        range: RangeRef {
+                            start: CellRef {
+                                col: answer_col,
+                                row: rows.start.row,
+                            },
+                            end: CellRef {
+                                col: answer_col,
+                                row: rows.end.row,
+                            },
+                        },
+                        answers: Vec::new(),
+                        max_count_override: request.max_count_override,
+                        reads: Some(SheetRowReads {
+                            first_col: rows.start.col,
+                            last_col: rows.end.col,
+                            header_row,
+                        }),
+                        base_live,
+                    },
+                    version,
+                    frontier,
+                    read_rows,
+                    abstained: Vec::new(),
+                    refused: Vec::new(),
+                    progress: Some(DecidedSheetProgress {
+                        next: 0,
+                        inputs: DecidedSheetInputs::SheetRows {
+                            headers,
+                            rows: inputs,
+                        },
+                    }),
+                    unmasked: false,
+                },
+            )?
+        };
+        while let Some(progress) = &row.progress {
+            let DecidedSheetInputs::SheetRows { headers, rows } = &progress.inputs else {
+                return Err(invalid("sheet ask has different stored inputs"));
             };
-            let unit = json!({"sheet": request.sheet, "row": row, "cell": target.to_a1()});
-            let before = cells.get(&target).cloned().unwrap_or(CellValue::Blank);
+            let expected = row.clone();
+            let Some(input) = rows.get(progress.next) else {
+                row.progress = None;
+                row = self.advance_decided_sheet_answers(artifact, &expected, row)?;
+                continue;
+            };
+            let target = input.cell;
+            let unit = json!({"sheet": request.sheet, "row": target.row, "cell": target.to_a1()});
+            let before = input.before.clone();
+            let base_live = row.bundle.base_live.clone();
             if matches!(before, CellValue::Formula { .. }) {
-                refused.push(UnitRefusal {
+                row.refused.push(UnitRefusal {
                     unit,
                     reason: "answer_cell_formula".into(),
-                    judged_live: base_live.clone(),
+                    judged_live: base_live,
                 });
-                continue;
-            }
-            let read: Map<String, Value> = columns
-                .iter()
-                .filter_map(|col| {
-                    let text = shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
-                    Some((super::address::column_to_letters(*col), Value::String(text)))
-                })
-                .collect();
-            if read.is_empty() {
-                abstained.push(UnitAbstention {
+            } else if input.read.is_empty() {
+                row.abstained.push(UnitAbstention {
                     unit,
                     decision: None,
-                    judged_live: base_live.clone(),
+                    judged_live: base_live,
                 });
-                continue;
+            } else {
+                let state = json!({
+                    "unit": unit.clone(),
+                    "headers": headers,
+                    "cells": input.read,
+                });
+                let sources = [EvidenceVersion {
+                    id: *artifact,
+                    body_hash: row.frontier,
+                }];
+                if let Some(decision) = ask.decide(&state, &sources, &[])? {
+                    let value = answer_cell(&decision.answer)?;
+                    if value.is_none() {
+                        // A unit asked of its role holder keeps its ask (FIX 11231).
+                        keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
+                        row.abstained.push(UnitAbstention {
+                            unit,
+                            decision: Some(decision.clone()),
+                            judged_live: base_live,
+                        });
+                    }
+                    row.bundle.answers.push(SheetCellAnswer {
+                        cell: target,
+                        before: Some(before),
+                        value,
+                        decision,
+                        source: None,
+                        judged_version: Some(row.version),
+                        judged_live: None,
+                    });
+                } else {
+                    row.refused.push(UnitRefusal {
+                        unit,
+                        reason: "evidence_budget".into(),
+                        judged_live: base_live,
+                    });
+                }
             }
-            let state = json!({
-                "unit": unit.clone(),
-                "headers": headers,
-                "cells": read,
-            });
-            let Some(decision) = ask.decide(&state, &sources, &[])? else {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "evidence_budget".into(),
-                    judged_live: base_live.clone(),
-                });
-                continue;
-            };
-            let value = answer_cell(&decision.answer)?;
-            if value.is_none() {
-                // A unit asked of its role holder keeps its ask (FIX 11231).
-                keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
-                abstained.push(UnitAbstention {
-                    unit,
-                    decision: Some(decision.clone()),
-                    judged_live: base_live.clone(),
-                });
-            }
-            answers.push(SheetCellAnswer {
-                cell: target,
-                before: Some(before),
-                value,
-                decision,
-                source: None,
-                judged_version: Some(version),
-                judged_live: None,
-            });
+            row.progress.as_mut().expect("partial sheet answers").next += 1;
+            row = self.advance_decided_sheet_answers(artifact, &expected, row)?;
         }
-        let bundle = SheetAnswerBundle {
-            question: ask.question.clone(),
-            principal: ask.principal,
-            sheet: request.sheet.to_owned(),
-            range: RangeRef {
-                start: CellRef {
-                    col: answer_col,
-                    row: rows.start.row,
-                },
-                end: CellRef {
-                    col: answer_col,
-                    row: rows.end.row,
-                },
-            },
-            answers,
-            max_count_override: request.max_count_override,
-            reads: Some(SheetRowReads {
-                first_col: rows.start.col,
-                last_col: rows.end.col,
-                header_row,
-            }),
-            base_live,
-        };
-        let row = self.retain_decided_sheet_answers(
-            artifact,
-            DecidedSheetAnswers {
-                request: identity,
-                bundle,
-                version,
-                frontier,
-                read_rows,
-                abstained,
-                refused,
-                unmasked: false,
-            },
-        )?;
         self.stage_decided_sheet_answers(artifact, &row, ask.deadline)
     }
 

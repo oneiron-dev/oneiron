@@ -382,7 +382,7 @@ pub struct ReleasedWait {
     pub released: bool,
 }
 
-/// Whether completed, not-yet-retained sheet answers were released.
+/// Whether partial or completed, not-yet-retained sheet answers were released.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleasedAnswers {
     pub released: bool,
@@ -1167,7 +1167,7 @@ impl Memory<'_> {
         Ok(ReleasedWait { released })
     }
 
-    /// `vault.artifacts.release_answers`: releases completed sheet answers
+    /// `vault.artifacts.release_answers`: releases partial or completed sheet answers
     /// by run ref under the same consent as Discard. No proposal or receipt
     /// is fabricated; a held proposal still uses `vault.artifacts.discard`.
     pub fn artifacts_release_answers(

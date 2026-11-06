@@ -109,7 +109,10 @@ mod settle;
 mod stranded;
 mod undo;
 pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit};
-pub(crate) use decided::{DecidedSheetAnswers, DecidedSheetRequest, DecidedSheetShape};
+pub(crate) use decided::{
+    DecidedSheetAnswers, DecidedSheetInputs, DecidedSheetProgress, DecidedSheetRequest,
+    DecidedSheetRow, DecidedSheetShape,
+};
 pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub(crate) use pending::DeckExportHold;
 pub use pending::{
