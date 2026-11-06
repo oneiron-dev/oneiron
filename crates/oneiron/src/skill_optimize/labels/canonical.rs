@@ -27,6 +27,14 @@ impl CanonicalJudgeLabel {
     pub(crate) fn into_label(self) -> JudgeLabel {
         self.label
     }
+
+    pub(crate) fn source(&self) -> crate::store::attempt_sources::NativeReadSource {
+        crate::store::attempt_sources::NativeReadSource::JudgeLabel {
+            ask_id: self.label.ask.id,
+            key: self.key.clone(),
+            body_hash: *blake3::hash(&self.body).as_bytes(),
+        }
+    }
 }
 
 /// Reads the actual native family/key/body in `txn`; admission remains the
