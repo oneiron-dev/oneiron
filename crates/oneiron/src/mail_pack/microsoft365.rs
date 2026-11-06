@@ -773,7 +773,7 @@ fn folder_labels(message: &Value, name: Option<&'static str>, folder: &str) -> V
 
 /// A Graph `emailAddress` as a header writes it: `Name <address>`, or the
 /// address alone. The name is written as an RFC 5322 display name
-/// ([`display_name`]), so a comma, colon or angle bracket Graph returns in
+/// ([`super::mime::display_name`]), so a comma, colon or angle bracket Graph returns in
 /// it never reads as a list, group or address boundary (fix list row
 /// 17645).
 fn mailbox_text(email: &Value) -> String {
@@ -792,34 +792,8 @@ fn mailbox_text(email: &Value) -> String {
     } else if address.is_empty() {
         name.to_owned()
     } else {
-        format!("{} <{address}>", display_name(name))
+        format!("{} <{address}>", super::mime::display_name(name))
     }
-}
-
-/// `name` as an RFC 5322 display name: as it is when it is plain words
-/// (atom characters and spaces), else a quoted string with each `\` and `"`
-/// escaped and each control character written as a space.
-fn display_name(name: &str) -> String {
-    let plain = name.chars().all(|character| {
-        character.is_alphanumeric() || character == ' ' || "!#$%&'*+-/=?^_`{|}~".contains(character)
-    });
-    if plain {
-        return name.to_owned();
-    }
-    let mut quoted = String::with_capacity(name.len() + 2);
-    quoted.push('"');
-    for character in name.chars() {
-        match character {
-            '\\' | '"' => {
-                quoted.push('\\');
-                quoted.push(character);
-            }
-            control if control.is_control() => quoted.push(' '),
-            other => quoted.push(other),
-        }
-    }
-    quoted.push('"');
-    quoted
 }
 
 fn recipients(message: &Value, key: &str) -> Vec<String> {
