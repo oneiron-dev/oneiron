@@ -474,12 +474,16 @@ pub(super) async fn call_with_key_released(
 
 /// Opens one streaming call with its key read at the door, leaving the reply
 /// stream to the caller. Nothing reads the key before the broker is reached.
+/// The caller's `release`, when given, runs after the key is read,
+/// immediately before the broker sends, as [`call_with_key_released`]'s.
 pub(super) async fn open_with_key(
     client: &BrokerClient,
     keys: &Arc<dyn KeyDoor>,
     secret: &str,
     header: &CallHeader,
     body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
 ) -> LlmResult<oneiron_broker::BrokerStream> {
     let connection = client.connect().await.map_err(broker_error)?;
     let keys = Arc::clone(keys);
@@ -494,6 +498,12 @@ pub(super) async fn open_with_key(
             );
             LlmError::from(FatalLlmError::Auth)
         })?;
+    if let Some(release) = release {
+        release()?;
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
     connection
         .open(header, body, key)
         .await
