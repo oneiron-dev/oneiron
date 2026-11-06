@@ -1243,7 +1243,7 @@
     },
     {
       "name": "vault.budgets.lease.open",
-      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit.",
+      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on.",
       "input": "crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest",
       "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
       "call": "crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease.open\")?, &input).map_err(crate::memory::MemoryError::from)?",
@@ -11726,7 +11726,7 @@
     },
     {
       "name": "vault.agents.grants.mint",
-      "description": "The owner grants one named agent explicit verbs and verb classes in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it.",
+      "description": "The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it.",
       "input": "crate::task_verb::sdk::AgentGrantMintRequest",
       "output": "crate::task_verb::sdk::AgentGrantMinted",
       "call": "crate::task_verb::sdk::mint_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.mint\")?, crate::authority::ActSurface::ThisInstall, input)?",

@@ -12,7 +12,8 @@ pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
 mod agent_verb_class;
 pub(crate) use agent_grant::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, FundingAgentGrant,
+    agent_grants_for_store_in_txn,
 };
 pub(crate) use agent_verb_class::AgentVerbClasses;
 // Who may delete one record the cleanup archived (OF-449 L4).
@@ -226,7 +227,7 @@ use std::io::Cursor;
 pub use oneiron_authority::federation::{
     FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
     RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
-    ScopeId, Sensitivity, SensitivityCeiling,
+    ScopeId, Sensitivity, SensitivityCeiling, WalletRef,
 };
 
 mod org_admin;

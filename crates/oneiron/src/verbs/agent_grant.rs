@@ -28,6 +28,13 @@
 //! resolved each time a door judges a verb. The verbs axis may then be
 //! empty (`{"kind":"bottom"}`); it is never every verb. A grant without
 //! classes behaves exactly as before.
+//!
+//! A mint may also name the host wallet the work the grant funds draws on
+//! (FIX 7766): `wallet_ref: {"issuer": "...", "id": "..."}`, an opaque host
+//! reference, signed in the owner's act. A spend lease the owner opens with
+//! the grant as its `funding_grant_ref` freezes it, and every call that
+//! lease's tree admits draws on that wallet's allocation or is refused. A
+//! grant without one behaves exactly as before.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -37,7 +44,9 @@ use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::federation::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope};
+use crate::federation::{
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope, WalletRef,
+};
 use crate::memory::MemoryResult;
 
 /// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
@@ -70,6 +79,11 @@ pub struct AgentGrantMintRequest {
     /// Omitted: none.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub verb_classes: BTreeSet<String>,
+    /// The host wallet the work this grant funds draws on: the host's
+    /// issuer namespace and the wallet's id there, both nonempty. Omitted:
+    /// none, and the grant funds no launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<WalletRef>,
 }
 
 /// One owner's agent grant.
@@ -94,6 +108,10 @@ pub struct AgentGrantView {
     /// when it names none.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub verb_classes: BTreeSet<String>,
+    /// The host wallet the owner named for the work it funds; absent when
+    /// it names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ref: Option<WalletRef>,
     /// Whether it confers now: unexpired, with `read` among its verbs (or
     /// admitted by a class it names) and no empty world, band, audience or
     /// sensitivity axis.
@@ -191,6 +209,7 @@ pub fn mint_agent_grant_as(
         input.expires_at,
         input.repo_bounds,
         input.verb_classes,
+        input.wallet_ref,
     )?;
     Ok(AgentGrantMinted {
         grant: agent_grant_view(&minted.standing, minted.confers),
@@ -230,6 +249,7 @@ fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantV
         expires_at: standing.grant.expires_at,
         repo_bounds: standing.grant.repo_bounds.clone(),
         verb_classes: standing.grant.verb_classes.clone(),
+        wallet_ref: standing.grant.wallet_ref.clone(),
         confers,
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
     }

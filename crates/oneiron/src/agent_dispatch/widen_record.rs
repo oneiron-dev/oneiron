@@ -205,6 +205,9 @@ impl WidenIntent {
                 direct_spawn: None,
                 // A widened spawn is a child: it keeps its parent's requester.
                 requester: None,
+                // A widened spawn is a child: it inherits its parent's
+                // funding Grant and names none (FIX 7766).
+                funding_grant_ref: None,
             },
         ))
     }

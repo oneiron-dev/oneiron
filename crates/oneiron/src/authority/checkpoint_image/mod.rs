@@ -78,7 +78,8 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// 27: the fold admits carrier-signed membership execution records, an image carries their
 /// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
 /// 28: an owner's agent Grant mint an image carries may name verb classes (FIX 8735).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 28;
+/// 29: an owner's agent Grant mint an image carries may name a host wallet (FIX 7766).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 29;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

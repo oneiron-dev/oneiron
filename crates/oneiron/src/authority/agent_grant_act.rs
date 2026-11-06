@@ -21,7 +21,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::{TimeRange, Vault};
-use oneiron_authority::federation::{FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope};
+use oneiron_authority::federation::{
+    FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope, WalletRef,
+};
 
 use super::machine_standing::{InstallCounted, Standing};
 use super::*;
@@ -50,7 +52,9 @@ pub(crate) enum AgentGrantAct {
     /// `grant_kind` grants raw git push to the `git_push_bounds` repos alone
     /// (G1-PUSH); the same act, signer and fold carry it. `verb_classes`
     /// names the verb classes he gave beside the scope's exact verbs (FIX
-    /// 8735); empty when he named none.
+    /// 8735); empty when he named none. `wallet_ref` names the host wallet
+    /// the work the Grant funds draws on (FIX 7766); `None` when he named
+    /// none.
     Mint {
         grant: EntityId,
         member: EntityId,
@@ -60,6 +64,7 @@ pub(crate) enum AgentGrantAct {
         grant_kind: FederationGrantKind,
         git_push_bounds: Option<GitPushBounds>,
         verb_classes: BTreeSet<String>,
+        wallet_ref: Option<WalletRef>,
     },
     /// The owner revokes the Grant `grant`, acknowledging exactly the
     /// topology decision tokens the writer collected (FIX 5114).
@@ -82,6 +87,7 @@ impl AgentGrantAct {
                 grant_kind,
                 git_push_bounds,
                 verb_classes,
+                wallet_ref,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -92,6 +98,7 @@ impl AgentGrantAct {
                     grant_kind,
                     git_push_bounds,
                     verb_classes,
+                    wallet_ref,
                 },
             ),
             Self::Revoke {

@@ -32,6 +32,14 @@ pub struct OpenSpendLeaseRequest {
     /// The engine's named lease unit; a monetary line names its money unit.
     pub unit: String,
     pub shown_at_ms: u64,
+    /// The owner's own agent grant (32 hex) whose wallet funds this lease's
+    /// whole tree (FIX 7766): a live grant he gave that names a wallet,
+    /// unexpired and unrevoked, with its signed mint. Frozen on the lease;
+    /// every host-paid call under it draws on that wallet's allocation or
+    /// is refused. Omitted: the lease draws on the host's live allocation,
+    /// as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding_grant_ref: Option<EntityId>,
 }
 
 /// A replacement maximum, not an increment: replay cannot add funds twice.
@@ -245,16 +253,29 @@ pub fn open_spend_lease_as_owner(
     let maximum = maximum(input.cap_units, &input.unit)?;
     let dispatcher = AgentDispatcher::new(vault);
     let mut txn = vault.store.env.write_txn()?;
-    owner.revalidate_in_txn(vault, &txn)?;
-    dispatcher.open_root_spend_scope_in_txn(
-        &mut txn,
-        scope.clone(),
-        maximum,
-        Some(MaximumShown {
-            at_ms: input.shown_at_ms,
-        }),
-        crate::unix_seconds_now(),
-    )?;
+    let principal = owner.revalidate_in_txn(vault, &txn)?;
+    let shown = Some(MaximumShown {
+        at_ms: input.shown_at_ms,
+    });
+    match input.funding_grant_ref {
+        Some(grant) => dispatcher.open_root_spend_scope_funded_in_txn(
+            &mut txn,
+            scope.clone(),
+            maximum,
+            shown,
+            None,
+            grant,
+            principal,
+            crate::unix_seconds_now(),
+        )?,
+        None => dispatcher.open_root_spend_scope_in_txn(
+            &mut txn,
+            scope.clone(),
+            maximum,
+            shown,
+            crate::unix_seconds_now(),
+        )?,
+    };
     txn.commit()?;
     lease_view(&dispatcher, &scope)
 }
