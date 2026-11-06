@@ -133,8 +133,8 @@ impl Vault {
                     id,
                     self.store.clock.now_recorded_at(),
                 )?;
-                // A privacy erase retires the owner's checkpoint payload
-                // leaves; every other delete keeps them (KS7-4).
+                // Privacy and explicit owner erases retire checkpoint payload
+                // leaves; ordinary deletes keep them (KS7-4).
                 crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
                     &self.store,
                     wtxn,
