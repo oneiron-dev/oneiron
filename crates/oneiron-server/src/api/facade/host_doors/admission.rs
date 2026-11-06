@@ -676,6 +676,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMembersDecline
         | Row::VaultMembersWithdrawInvitation
         | Row::VaultMembersInvitationSlip
+        | Row::VaultMembersInvitationCode
         | Row::VaultSharedObject
         | Row::VaultSharedWithdrawObjection
         | Row::VaultSharedStarted
