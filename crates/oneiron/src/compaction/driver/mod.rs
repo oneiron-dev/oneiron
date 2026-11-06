@@ -14,8 +14,10 @@ use crate::{agent_def::MemoryProfile, store::agent_record::CompactionOwnership};
 mod integration;
 mod live_fork;
 mod log;
+mod vault_reads;
 
 use super::gate::{CompactionCheck, CompactionRefusal};
+use vault_reads::{snapshot_watermark, stored_or_deleted_in};
 
 use super::epoch::{
     mint_epoch_summary_guarded, mint_epoch_summary_in_overlay, mint_epoch_summary_with,
@@ -936,35 +938,4 @@ impl CompactionDriver {
     pub fn abandon(&mut self) {
         self.state = CompactionState::Idle;
     }
-}
-
-/// Reads the trigger-time durable watermark through the Dreamer's existing
-/// public surface (S-11, ONE-1793 v2).
-///
-/// The compound position is read whole: `last_learned_at` alone cannot
-/// separate two turns sharing one second. `DreamerConsolidationScope::Micro`
-/// names the Dreamer lane's OWN finest consolidation cursor — it is that
-/// lane's enum variant, not a summary-tier name. Epoch summaries mint at the
-/// unbounded integer `level` 0 and this module coins no tier vocabulary of
-/// its own.
-fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
-    let watermark = crate::dreamer_consolidation::read_watermark(
-        vault,
-        crate::store::consolidation_scope::DreamerConsolidationScope::Micro,
-    )?;
-    Ok(CompactionWatermark {
-        learned_at: watermark.last_learned_at,
-        turn_id: watermark.last_turn_id,
-        turn: None,
-    })
-}
-
-/// Whether the vault stores `id`, or stored it until a deletion whose
-/// tombstone stands.
-fn stored_or_deleted_in(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(
-        crate::ports::EntityStoreRead::port_entity_record(&vault.store, rtxn, id)?.is_some()
-            || crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, rtxn, id)?
-                .deleted,
-    )
 }
