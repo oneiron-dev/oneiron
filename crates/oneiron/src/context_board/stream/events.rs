@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::frames::{DeltaRow, StreamConnectionId};
-use super::provenance::{ChildEvent, VerifiedDiaryReviewEvent, VerifiedOwnTaskEvent};
+use super::provenance::{
+    ChildEvent, VerifiedDiaryReviewEvent, VerifiedOwnTaskEvent, VerifiedRoomWakeEvent,
+};
 
 #[derive(
     Debug,
@@ -31,10 +33,13 @@ pub enum SubscriptionScope {
     Counts,
     /// A read of my diary waits on my review (FIX 2879).
     DiaryReviews,
+    /// A room turn addresses me, or its thread's open TASK is mine (FIX
+    /// 15647).
+    RoomTurns,
 }
 
 impl SubscriptionScope {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::MyTasks,
         Self::MyChildren,
         Self::ConsultsToMe,
@@ -43,6 +48,7 @@ impl SubscriptionScope {
         Self::Presence,
         Self::Counts,
         Self::DiaryReviews,
+        Self::RoomTurns,
     ];
 }
 
@@ -81,6 +87,13 @@ pub enum BoardEvent {
         event: VerifiedDiaryReviewEvent,
         line: String,
     },
+    /// A room turn addresses the agent, or its thread's open TASK is the
+    /// agent's (FIX 15647). The event names the room and the turn and
+    /// carries none of the turn.
+    RoomTurnAddressed {
+        event: VerifiedRoomWakeEvent,
+        line: String,
+    },
     OwnTaskDone {
         event: VerifiedOwnTaskEvent,
         delta: DeltaRow,
@@ -108,7 +121,8 @@ impl BoardEvent {
         match self {
             Self::ConsultArrived { .. }
             | Self::OwnTaskFailed { .. }
-            | Self::DiaryReviewPending { .. } => DeliveryClass::Wake,
+            | Self::DiaryReviewPending { .. }
+            | Self::RoomTurnAddressed { .. } => DeliveryClass::Wake,
             Self::OwnTaskDone { .. } | Self::ChildDone { .. } => DeliveryClass::Carrier,
             _ => DeliveryClass::OnDemand,
         }
@@ -119,6 +133,7 @@ impl BoardEvent {
             Self::OwnTaskFailed { .. } | Self::OwnTaskDone { .. } => SubscriptionScope::MyTasks,
             Self::ChildDone { .. } => SubscriptionScope::MyChildren,
             Self::DiaryReviewPending { .. } => SubscriptionScope::DiaryReviews,
+            Self::RoomTurnAddressed { .. } => SubscriptionScope::RoomTurns,
             Self::MemoriesChanged { .. } => SubscriptionScope::Memories,
             Self::PresenceChanged { .. } => SubscriptionScope::Presence,
             Self::WorldsChanged { .. } => SubscriptionScope::Worlds,
