@@ -722,7 +722,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.94): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.95): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
@@ -837,6 +837,17 @@ Earlier caller prefixes may remain. The copier allocates before its character
 checks; nontext and nested-array clones, old-value materialization, allocation,
 hashing and the core remain opaque. Full coverage remains PART.
 
+The operation-list value copy also reuses the existing GROUPBY nested-literal
+copier with that same borrowed token. Its body is unchanged; only crate visibility
+and a lookup-module re-export are added. Token-bearing copies check at the value,
+nested row, nested cell and text-character boundaries. Ordinary calls retain the
+original value clone at the same operation argument position. Stored errors,
+including Cancelled, remain cloned cell data; only checkpoint failures use the
+native operation-error path. Sheet copies, old-value reads, mutation, injected
+fault rollback, ownership and logging keep their prior paths. Error clones,
+allocation, old-value materialization and the core still contain opaque spans;
+full heap-floor, native work-budget and hard-time coverage remain PART.
+
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
 rev `f01d8eff`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
@@ -879,7 +890,7 @@ The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` 
 linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
 natively and match Excel on every scored cell.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.94`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.95`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
