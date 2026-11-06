@@ -58,6 +58,14 @@ impl Drop for ArmEntry {
     }
 }
 
+/// Removes every runner directory under the host's temporary directory
+/// that no live runner holds: the arms a stopped host left (FIX 6353). The
+/// server's housekeeping runs it, so a host that opens no runner sweeps
+/// them too. Best effort, as [`ArmRegistry::open`]'s own sweep is.
+pub(crate) fn sweep_stopped_runners() {
+    sweep(&std::env::temp_dir().join(ARMS_SCRATCH));
+}
+
 /// One runner's arms; a contribution pass's forks' scratch stores too (FIX
 /// 3607).
 pub(crate) struct ArmRegistry {
