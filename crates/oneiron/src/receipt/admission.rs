@@ -136,9 +136,21 @@ impl AdmissionTracker {
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
             verify_actor_binding_in_txn(&vault, txn, actor, class)?;
             if let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? {
-                let reopens = resumed
-                    && !stored.active
-                    && matches!(stored.receipt.state, AdmissionStatus::Held { .. });
+                let running = || MemoryError {
+                    reason_codes: vec![ADMISSION_INTENT_ACTIVE.to_owned()],
+                    ..MemoryError::new(
+                        oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
+                        "admission intent is already running; read its status",
+                        &[],
+                    )
+                };
+                // The drain's re-entry meets a running retry before its own
+                // args' fingerprint: it waits for that retry, never ends.
+                if resumed && stored.active {
+                    return Err(running());
+                }
+                let reopens =
+                    resumed && matches!(stored.receipt.state, AdmissionStatus::Held { .. });
                 if stored.fingerprint != fingerprint && !reopens {
                     return Err(MemoryError::new(
                         oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
@@ -147,14 +159,7 @@ impl AdmissionTracker {
                     ));
                 }
                 if stored.active {
-                    return Err(MemoryError {
-                        reason_codes: vec![ADMISSION_INTENT_ACTIVE.to_owned()],
-                        ..MemoryError::new(
-                            oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE,
-                            "admission intent is already running; read its status",
-                            &[],
-                        )
-                    });
+                    return Err(running());
                 }
                 if stored.receipt.state.terminal() {
                     return Err(MemoryError::new(
@@ -239,10 +244,12 @@ impl AdmissionTracker {
     }
 }
 
-/// Settles `actor`'s held intent of `invocation` as refused with `code` and
+/// Settles `actor`'s intent of `invocation` as refused with `code` and
 /// `reason`, when its held call ended with no door running it again (FIX
 /// 8753): a paced call past its deadline, or one the host refused before
-/// its door. An intent a request runs now, or one already settled, stays.
+/// its door. A retry running now (a status read of the held call) cannot
+/// hold it back: once settled, that retry's own finish leaves it settled.
+/// An intent already settled stays as it is.
 ///
 /// # Errors
 ///
@@ -260,9 +267,10 @@ pub(crate) fn refuse_held_intent_in_txn(
     let Some(mut stored) = ADMISSIONS.get(&vault.store, txn, &key)? else {
         return Ok(());
     };
-    if stored.active || !matches!(stored.receipt.state, AdmissionStatus::Held { .. }) {
+    if stored.receipt.state.terminal() {
         return Ok(());
     }
+    stored.active = false;
     stored.receipt.state = AdmissionStatus::Refused {
         code: code.to_owned(),
         reason: reason.to_owned(),
