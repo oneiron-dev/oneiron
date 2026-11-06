@@ -794,11 +794,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultRetrievalHydeReceipt => {
             crate::api::facade::hyde_doors::hyde_caller(server, auth).map(drop)
         }
-        Row::Fetch | Row::Crawl | Row::VaultEvalsRepairPrepare => {
-            crate::api::facade::facade_actor(server, auth)
-                .map(drop)
-                .map_err(crate::api::facade::FacadeApiError::into_memory_error)
-        }
+        Row::Fetch | Row::Crawl => crate::api::facade::facade_actor(server, auth)
+            .map(drop)
+            .map_err(crate::api::facade::FacadeApiError::into_memory_error),
         Row::AiVerdict => asking(auth, server).map(drop),
         // The pack setup doors (OF-378) and the pack put: the owner's proof,
         // or an agent acting for the owner (an agent puts `local` alone).

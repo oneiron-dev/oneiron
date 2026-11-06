@@ -13471,20 +13471,10 @@ async fn execute_agent_verb_row_on(
             mcp_agent_verb_output(output, source)
         }
         "vault.evals.repair.prepare" => {
-            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-            oneiron::task_verb::sdk::validate_input("vault.evals.repair.prepare", &input)
-                .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::EvalRepairTaskSource =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = Box::pin(
-                crate::api::facade::host_doors::vault_evals_repair_prepare(server, auth, input),
-            )
-            .await;
-            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
-                listed,
-            ));
-            let output = output.map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_evals_repair_prepare(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

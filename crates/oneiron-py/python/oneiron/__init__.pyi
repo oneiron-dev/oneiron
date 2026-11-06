@@ -2108,7 +2108,7 @@ class Oneiron:
         @property
         def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs": ...
     class _VaultEvalsRepairVerbs:
-        def prepare(self, spec: Facade.EvalRepairTaskSource) -> Facade.EvalRepairCasePreparation:
+        def prepare(self, input: Facade.EvalRepairTaskSource) -> Facade.EvalRepairCasePreparation:
             """Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case."""
         def record(self, spec: Facade.EvalRepairCaseRequest) -> Facade.EvalRepairCaseReference:
             """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""

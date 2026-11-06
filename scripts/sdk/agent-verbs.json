@@ -7096,12 +7096,16 @@
       "input": "crate::skill_optimize::EvalRepairTaskSource",
       "output": "crate::skill_optimize::EvalRepairCasePreparation",
       "call": "memory.read_eval_repair_task(&input).map(crate::skill_optimize::EvalRepairCasePreparation::from)?",
-      "host_door": true,
-      "host_door_precheck": true,
-      "host_door_lists": true,
       "scope": "Read",
       "section": false,
-      "openapi": true
+      "openapi": true,
+      "refs": [
+        "/claim_ref"
+      ],
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.evals.repair.record",
