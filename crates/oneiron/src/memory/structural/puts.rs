@@ -193,7 +193,7 @@ impl Memory<'_> {
             end: occurred_at,
         };
         let outcome = self.with_actor_content_write_txn(|content| {
-            Ok(content.update_artifact(artifact_id, |txn| {
+            Ok(content.update_artifact(artifact_id, |txn, lane| {
                 self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
@@ -202,6 +202,7 @@ impl Memory<'_> {
                     self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
+                    lane,
                 )
             })?)
         })?;

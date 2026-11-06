@@ -352,7 +352,11 @@ impl Vault {
         // Current source edge metadata, including its claim_of weight and
         // stamp, replaces the native default for that same edge.
         ops.extend(edges);
-        crate::batch::BatchBuilder::promotion_replay(self, ops, grant).apply_actor(txn, &saver)
+        crate::batch::BatchBuilder::promotion_replay(self, ops, grant).apply_actor(
+            txn,
+            &saver,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
