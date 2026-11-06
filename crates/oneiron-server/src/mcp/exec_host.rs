@@ -17,7 +17,7 @@ use oneiron::engine_executor::{
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
-use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
+use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelId, ModelLocality, Vault, WriteActor,
@@ -224,6 +224,11 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
+    /// The ordinary unscoped backend with this run's frozen model list.
+    /// None keeps the existing backend when the provider has no such binding.
+    fn backend_with_model_list(&self, _listed: Vec<AgentModel>) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The admission lease every generated step is charged to.
     fn lease(&self) -> &BudgetLease;
     /// A FRESH sandbox/REPL runtime for one run.
@@ -384,6 +389,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _planned: &PlannedModel,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -396,6 +402,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _payer: Option<PayerPerson>,
         _planned: &PlannedModel,
         _lease: Option<LiveLeaseState>,
+        _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
@@ -449,6 +456,7 @@ pub type PlannedMeter = Arc<
             Option<PayerPerson>,
             &PlannedModel,
             Option<LiveLeaseState>,
+            Vec<AgentModel>,
         ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,
@@ -460,6 +468,10 @@ pub type PlannedMeter = Arc<
 /// connection) and the spend scope its calls spend under, if any.
 pub type RunCompactionSeat =
     Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
+
+/// Copies the ordinary backend with one run's actual frozen model list.
+pub(crate) type ModelListBackend =
+    Arc<dyn Fn(Vec<AgentModel>) -> Arc<dyn LlmBackend> + Send + Sync>;
 
 /// Binds one authenticated MCP run's model-call evidence to its actual caller.
 pub(crate) type ModelCallBackend =
@@ -532,6 +544,9 @@ pub struct McpEngineNativeCodeHost {
     /// Where each run's seat to spawn reader children comes from; none
     /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
     reader_seats: Option<Arc<crate::server::ReaderSeats>>,
+    /// The operator's own Git door base each run's checkouts point at (FIX
+    /// 7181); `None` keeps a run's own base.
+    git_door_base: Option<String>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -555,6 +570,7 @@ impl McpEngineNativeCodeHost {
             seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
             reader_seats: None,
+            git_door_base: None,
         }
     }
 
@@ -563,6 +579,13 @@ impl McpEngineNativeCodeHost {
     #[must_use]
     pub(crate) fn with_reader_seats(mut self, seats: Arc<crate::server::ReaderSeats>) -> Self {
         self.reader_seats = Some(seats);
+        self
+    }
+
+    /// The operator's own Git door base for each run's checkouts (FIX 7181).
+    #[must_use]
+    pub(crate) fn with_git_door_base(mut self, base: Option<String>) -> Self {
+        self.git_door_base = base;
         self
     }
 
@@ -610,6 +633,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
         let reader_seats = self.reader_seats.clone();
+        let git_door_base = self.git_door_base.clone();
         let runs = &self.runs;
         Box::pin(async move {
             let changed =
@@ -701,6 +725,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         birth_position,
                         reader_seat,
                         seat.as_mut(),
+                        git_door_base,
                     );
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
                         let ended = outcome.as_ref().is_ok_and(|outcome| {
@@ -791,11 +816,14 @@ fn run_engine_native_code_mode(
     birth_position: oneiron::federation::record_scope::BirthPosition,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
+    git_door_base: Option<String>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
-        .with_birth_position(birth_position);
+        .with_birth_position(birth_position)
+        .with_bound_run(config.run_id)
+        .with_git_door_base(git_door_base);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
     }
@@ -841,6 +869,8 @@ fn run_engine_native_code_mode(
             seat.as_ref(),
             // An `execute_code` run is no planned child.
             None,
+            // Keep this caller's existing unconstrained routing.
+            Vec::new(),
         ),
     }
     .map_err(|error| match error.provider_outage() {
@@ -962,6 +992,7 @@ pub(crate) fn enter_engine_native_run(
     spend: Option<ScopeMeter<'_>>,
     seat: Option<&ModelSeat>,
     planned: Option<&PlannedModel>,
+    listed: Vec<AgentModel>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -971,7 +1002,16 @@ pub(crate) fn enter_engine_native_run(
     }) = spend
     else {
         let own = planned
-            .and_then(|planned| provider.planned_backend(provider.host_meter()?, None, planned));
+            .and_then(|planned| {
+                provider.planned_backend(provider.host_meter()?, None, planned, listed.clone())
+            })
+            .or_else(|| {
+                if listed.is_empty() {
+                    None
+                } else {
+                    provider.backend_with_model_list(listed)
+                }
+            });
         let backend: &dyn LlmBackend = match &own {
             Some(backend) => backend.as_ref(),
             None => provider.backend(),
@@ -990,6 +1030,7 @@ pub(crate) fn enter_engine_native_run(
                 payer.clone(),
                 planned,
                 Some(scoped.clone()),
+                listed.clone(),
             )
         })
         .or_else(|| {
@@ -997,7 +1038,7 @@ pub(crate) fn enter_engine_native_run(
                 guard.clone(),
                 payer.clone(),
                 Some(scoped.clone()),
-                Vec::new(),
+                listed.clone(),
             )
         });
     let per_rung = scoped_backend.is_some();
@@ -1006,8 +1047,10 @@ pub(crate) fn enter_engine_native_run(
     let backend = match scoped_backend {
         Some(backend) => Some(backend),
         None => planned
-            .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
-            .or_else(|| provider.reader_backend(guard.clone(), payer, Vec::new())),
+            .and_then(|planned| {
+                provider.planned_backend(guard.clone(), payer.clone(), planned, listed.clone())
+            })
+            .or_else(|| provider.reader_backend(guard.clone(), payer, listed)),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
@@ -1115,10 +1158,15 @@ pub(crate) fn task_run_seat(
     run_id: EntityId,
     type_ref: &TaskTypeRef,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, worlds, task)
+    seat_for(vault, provider, run_id, pin, None, worlds, |facet| {
+        let mut task = task(facet);
+        task.learning = learning;
+        task
+    })
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -1215,11 +1263,18 @@ pub(crate) fn task_engine_run_seat(
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
     worlds: Vec<EntityId>,
+    learning: Option<SeatLearningContext>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
-        engine_seat_task(config, facet, warm_scope, model, listed)
-    })
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        worlds,
+        learning,
+        |facet| engine_seat_task(config, facet, warm_scope, model, listed),
+    )
 }
 
 /// The task an engine-native run's seat is born for, from `config` as it
@@ -1249,6 +1304,7 @@ fn engine_seat_task(
         worlds: Vec::new(),
         // Stamped by `seat_for` from the host's served set (FIX 2745).
         served: None,
+        learning: None,
     }
 }
 

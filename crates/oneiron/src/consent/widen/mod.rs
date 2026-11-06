@@ -18,6 +18,7 @@ use std::io::Cursor;
 
 mod contact_verdict_index;
 mod offers;
+mod streamed;
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
@@ -587,6 +588,18 @@ impl Vault {
         reference: &str,
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
+        self.accept_widen_matching(owner, credential, reference, |delta| {
+            delta == expected_delta
+        })
+    }
+
+    fn accept_widen_matching(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+        matches_delta: impl FnOnce(&[u8]) -> bool,
+    ) -> Result<ConsentReceipt> {
         validate_reference_shape(reference)?;
         let key = reference.to_owned();
         self.with_write_txn_grouped(|txn| {
@@ -594,7 +607,7 @@ impl Vault {
             let proposal = &row.proposal;
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
-                || proposal.canonical_delta != expected_delta
+                || !matches_delta(&proposal.canonical_delta)
             {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "widen proposal is stale, changed, or resolved",

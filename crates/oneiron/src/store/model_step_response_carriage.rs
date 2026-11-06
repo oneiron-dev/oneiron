@@ -1,15 +1,13 @@
-//! How a checkpoint carries a terminal `dreamer.step` claim whose response
-//! rests inline in its `entities` row: the claim's body, and a stub with the
-//! step value taken. The model step layer (`llm::step`) writes these claims
-//! and retires their responses; the store's response body scan carries them.
-use oneiron_store::model_step_record::DREAMER_STEP_PREDICATE;
-use rmpv::Value;
+//! Core half of `store::model_step_response_carriage`: its store-layer items live in `oneiron_store::model_step_response_carriage` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::model_step_response_carriage::*;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::store::{ResponseCarriage, ResponseScan};
 use crate::write_envelope::claim_body::{decode_claim_body, encode_claim_body};
-
-pub(crate) const KEY_RESPONSE: &str = "response";
+use oneiron_store::model_step_record::DREAMER_STEP_PREDICATE;
+use rmpv::Value;
 
 /// What a checkpoint carries of the `entities` row `value` when it is a
 /// terminal `dreamer.step` claim whose response rests in it: the claim's
@@ -47,10 +45,4 @@ pub(crate) fn step_claim_carriage(value: &[u8]) -> ResponseScan {
         stub,
         retired: ENTITY_METADATA_HEADER_LEN,
     })
-}
-
-/// Whether a `dreamer.step` claim value holds its response inline.
-fn holds_response(value: &Value) -> bool {
-    matches!(value, Value::Map(entries)
-        if entries.iter().any(|(key, _)| key.as_str() == Some(KEY_RESPONSE)))
 }

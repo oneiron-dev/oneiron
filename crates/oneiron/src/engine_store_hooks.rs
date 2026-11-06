@@ -22,6 +22,8 @@ use crate::store::{
     GateDecisionId, GateDecisionRetentionPolicy, Store, StoreActorScrubs, StoreDeleteGuards,
     StoreGateHooks, StoreHooks, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
 };
+#[cfg(unix)]
+use crate::store::{ResponseOwners, ResponseScan, StoreVoiceBankResponse};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -41,6 +43,8 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
     attempt_operations: &EngineAttemptOperations,
+    #[cfg(unix)]
+    voice_bank_response: &EngineVoiceBankResponse,
     core_write_operations: &EngineCoreWriteOperations,
 };
 
@@ -121,8 +125,12 @@ impl StoreDeleteGuards for EngineDeleteGuards {
         store: &Store,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<(bool, bool, Vec<EntityId>)> {
-        crate::workspace_roster::deindex_project_room(store, txn, id)
+        crate::workspace_roster::deindex_project_room(store, txn, id, deindex)
     }
 }
 
@@ -595,20 +603,20 @@ pub(crate) struct EngineAttemptOperations;
 impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
     fn erase_attempt_payload_actor_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, actor)
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(write, txn, actor)
     }
 
     fn erase_attempt_payload_actors_in_txn(
         &self,
-        store: &Store,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         actors: &BTreeSet<EntityId>,
     ) -> Result<()> {
-        crate::attempt_queue::erase_attempt_payload_actors_in_txn(store, txn, actors)
+        crate::attempt_queue::erase_attempt_payload_actors_in_txn(write, txn, actors)
     }
 
     fn erase_model_step_failure_reasons_in_txn(
@@ -667,6 +675,27 @@ impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
         record: &mut crate::store::attempt_record::AttemptRecord,
     ) {
         crate::attempt_queue::scrub_hard_erased_payload_in_txn(store, txn, record);
+    }
+}
+
+/// The engine's voice bank response operations.
+#[cfg(unix)]
+struct EngineVoiceBankResponse;
+
+#[cfg(unix)]
+impl StoreVoiceBankResponse for EngineVoiceBankResponse {
+    fn voice_bank_scan(&self, key: &[u8], value: &[u8]) -> ResponseScan {
+        crate::voice_identity::ref_bank::voice_bank_scan(key, value)
+    }
+
+    fn voice_bank_owners(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<ResponseOwners> {
+        crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value)
     }
 }
 
@@ -834,9 +863,16 @@ impl StoreGateHooks for EngineGateHooks {
         store: &Store,
         txn: &RoTxn<'_>,
         machine: EntityId,
+        authored_by: Option<EntityId>,
         body: &[u8],
     ) -> Result<()> {
-        crate::gate::validate_own_device_witness_message_body(store, txn, machine, body)
+        crate::gate::validate_own_device_witness_message_body(
+            store,
+            txn,
+            machine,
+            authored_by,
+            body,
+        )
     }
 
     fn claim_consolidation_eligible_in_txn(
@@ -902,6 +938,16 @@ impl StoreGateHooks for EngineGateHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn campaign_compliance_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+        now_utc: u64,
+    ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>> {
+        crate::campaign::compliance::campaign_compliance_gate(store, txn, effect, now_utc)
     }
 }
 

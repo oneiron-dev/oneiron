@@ -15,9 +15,10 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, parse_actor_key};
 use oneiron::{EdgeActorClass, EntityId, Error, VAULT_WRITER_LEASE_HELD, Vault, VaultConfig};
 
-use crate::OpenOptions;
 use crate::caps::check_dimensions;
 use crate::error::{bad_request, sdk_error, transport_error, vault_locked};
+use crate::native_limit_questions::NativeLimitQuestions;
+use crate::{NativeLimitQuestion, OpenOptions};
 
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
@@ -33,11 +34,18 @@ pub use self::read_credential::verify_read_credential;
 pub(crate) struct SharedVault {
     vault: Arc<Vault>,
     options: OpenOptions,
+    limit_questions: Option<Arc<NativeLimitQuestions>>,
 }
 
 impl SharedVault {
     pub(crate) fn vault(&self) -> &Vault {
         &self.vault
+    }
+
+    fn measure_open_limits(&self) {
+        if let Some(questions) = &self.limit_questions {
+            questions.measure_open(self.vault());
+        }
     }
 
     fn lease(&self) -> &oneiron::VaultWriterLease {
@@ -147,6 +155,7 @@ pub(crate) fn open_shared(
     options: &OpenOptions,
 ) -> Result<Arc<SharedVault>, MemoryError> {
     REGISTRY.check_pid()?;
+    let options = &resolved_open_options(options);
     if let Some(dimensions) = options.dimensions {
         check_dimensions(dimensions)?;
     }
@@ -212,6 +221,18 @@ pub(crate) fn open_shared(
     Ok(shared)
 }
 
+/// I9 compares the effective device class and every other declared option.
+fn resolved_open_options(options: &OpenOptions) -> OpenOptions {
+    OpenOptions {
+        device_class: Some(
+            options
+                .device_class
+                .unwrap_or(oneiron::authority::MachineDeviceClass::Computer),
+        ),
+        ..options.clone()
+    }
+}
+
 /// Takes the lease and opens the store, in that order.
 fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVault, MemoryError> {
     let mut config = VaultConfig::default();
@@ -224,10 +245,13 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
     let vault = Vault::open_owned(canonical, config).map_err(map_lease_error)?;
     // Signing doors (delete receipts) need this install's keys from the keystore.
     vault.install_default_keystore(canonical);
+    let limit_questions = Arc::new(NativeLimitQuestions::default());
+    vault.set_limit_ask(limit_questions.clone());
     STORE_OPEN_COUNT.fetch_add(1, Ordering::Relaxed);
     Ok(SharedVault {
         vault: Arc::new(vault),
         options: options.clone(),
+        limit_questions: Some(limit_questions),
     })
 }
 
@@ -247,6 +271,7 @@ pub(crate) fn attach_shared(
     options: &OpenOptions,
 ) -> Result<Arc<SharedVault>, MemoryError> {
     REGISTRY.check_pid()?;
+    let options = &resolved_open_options(options);
     if let Some(dimensions) = options.dimensions {
         check_dimensions(dimensions)?;
     }
@@ -299,6 +324,7 @@ pub(crate) fn attach_shared(
     let shared = Arc::new(SharedVault {
         vault,
         options: options.clone(),
+        limit_questions: None,
     });
     registry.insert(canonical, Arc::downgrade(&shared));
     Ok(shared)
@@ -373,6 +399,8 @@ pub(crate) struct EmbeddedClient {
     /// every read runs under ([`Self::with_read_credential`], FIX 647);
     /// `None` reads as the bound actor's own verbs do.
     read_proof: Option<oneiron::authority::VerifiedSlip>,
+    /// Only the native host's original open handle can retrieve these snapshots.
+    limit_questions: Option<Arc<NativeLimitQuestions>>,
 }
 
 impl EmbeddedClient {
@@ -386,6 +414,8 @@ impl EmbeddedClient {
     pub(crate) fn open(path: Option<&Path>, options: &OpenOptions) -> Result<Self, MemoryError> {
         let shared = open_shared(path, options)?;
         let actor = shared.vault().ensure_embedded_owner_actor()?;
+        shared.measure_open_limits();
+        let limit_questions = shared.limit_questions.clone();
         Ok(Self {
             shared,
             actor,
@@ -394,6 +424,7 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open: None,
             read_proof: None,
+            limit_questions,
         })
     }
 
@@ -419,6 +450,7 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open,
             read_proof: None,
+            limit_questions: None,
         })
     }
 
@@ -444,8 +476,19 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open: self.host_open.clone(),
-            read_proof: None,
+            read_proof: self.read_proof.clone(),
+            limit_questions: None,
         })
+    }
+
+    pub(crate) fn native_limit_questions(
+        &self,
+    ) -> Result<Option<Vec<NativeLimitQuestion>>, MemoryError> {
+        let Some(questions) = &self.limit_questions else {
+            return Ok(None);
+        };
+        self.ensure_dispatch_pid()?;
+        Ok(Some(questions.snapshot()))
     }
 
     /// The per-verb single-writer gate (I8).
@@ -495,6 +538,7 @@ impl EmbeddedClient {
         self.ensure_dispatch_pid()?;
         Ok(Self {
             off_record_session: Some(session_ref.to_owned()),
+            limit_questions: None,
             ..self.clone()
         })
     }
@@ -502,12 +546,14 @@ impl EmbeddedClient {
     /// The same handle with every read run under the paired credential `key`
     /// its delegated reader presented (FIX 647), verified against this vault
     /// ([`verify_read_credential`]): the slip the server's door binds to a
-    /// served request's handle. A rebind to another actor drops it.
+    /// served request's handle. Actor rebindings keep the proof, so the read
+    /// lane still checks that the rebound actor is its holder.
     pub(crate) fn with_read_credential(&self, key: &str) -> Result<Self, MemoryError> {
         self.ensure_dispatch_pid()?;
         let proof = verify_read_credential(self.shared.vault(), key)?;
         Ok(Self {
             read_proof: Some(proof),
+            limit_questions: None,
             ..self.clone()
         })
     }
@@ -521,6 +567,7 @@ impl EmbeddedClient {
         self.memory().for_room_turn(room)?;
         Ok(Self {
             room_turn: Some(room),
+            limit_questions: None,
             ..self.clone()
         })
     }

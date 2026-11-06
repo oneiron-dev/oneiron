@@ -4,9 +4,13 @@
 //! (a media worker on its bearer `/stats`, a llama worker on its `/metrics`),
 //! asked there to drain and shut
 //! down before it is stopped, and stopped by signals to that group alone.
-//! An abort kills that group at once and waits for its reaper, asking the
-//! worker nothing.
+//! An abort asks the worker nothing. On Mac it first waits for any private
+//! guardian join to be killed and reaped; then it kills the worker group and
+//! waits for the actual worker's reaper.
+use std::future::{Future, poll_fn};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use oneiron_driver::{LauncherFuture, RunningWorker, WorkerActivity, WorkerExit};
@@ -15,14 +19,66 @@ use tokio::sync::watch;
 
 use super::media_worker::StatsRoute;
 
+#[cfg(target_os = "macos")]
+pub(super) mod guarded;
+
 /// How long one liveness check may take before it counts as not live yet.
 /// It only paces the next check; no worker is stopped for it.
 const LIVENESS_REQUEST: Duration = Duration::from_secs(5);
 
+/// The owned leader and every signal share the reaper's short poll lock.
+struct Custody {
+    group: i32,
+    child: tokio::process::Child,
+    #[cfg(target_os = "macos")]
+    pins: usize,
+    #[cfg(target_os = "macos")]
+    reaper_waker: Option<std::task::Waker>,
+    #[cfg(target_os = "macos")]
+    stopping: bool,
+    #[cfg(target_os = "macos")]
+    pin_released: Arc<tokio::sync::Notify>,
+    #[cfg(target_os = "macos")]
+    stop: Option<std::os::unix::net::UnixStream>,
+}
+
+/// A native peer checked against this launch's actual child custody.
+/// A weak reference cannot keep an ended launch alive for a later connection.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone)]
+pub(in crate::models) struct ProcessPeer {
+    state: std::sync::Weak<Mutex<Custody>>,
+    exit: watch::Receiver<Option<WorkerExit>>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl std::fmt::Debug for ProcessPeer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProcessPeer")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ProcessPeer {
+    pub(in crate::models) fn matches(&self, peer: Option<u32>) -> bool {
+        let Some(state) = self.state.upgrade() else {
+            return false;
+        };
+        let custody = state.lock().unwrap_or_else(|poison| poison.into_inner());
+        // Reaping and terminal publication share this lock. Until reaped,
+        // the owned child's PID cannot be reused by another process.
+        self.exit.borrow().is_none()
+            && self.exit.has_changed().is_ok()
+            && peer.is_some()
+            && custody.child.id() == peer
+    }
+}
+
 /// A worker process the supervisor started.
 pub(super) struct ProcessWorker {
-    /// The process group: the worker's own pid.
-    group: i32,
+    state: Arc<Mutex<Custody>>,
     exit: watch::Receiver<Option<WorkerExit>>,
     health: String,
     client: reqwest::Client,
@@ -35,49 +91,51 @@ pub(super) struct ProcessWorker {
 }
 
 impl ProcessWorker {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn native_peer(&self) -> ProcessPeer {
+        ProcessPeer {
+            state: Arc::downgrade(&self.state),
+            exit: self.exit.clone(),
+        }
+    }
+
     /// Starts `command` as the leader of a new process group and takes
-    /// custody of it: one task waits on and reaps it. On Linux the worker
-    /// gets the terminate signal if this process dies first, so no orphan
-    /// keeps its port and its device.
+    /// custody of it: one task waits on and reaps it. On Linux it arms the
+    /// existing parent-death terminate signal before exec and checks that
+    /// the spawning process has not already disappeared.
     pub(super) fn spawn(
         mut command: tokio::process::Command,
         health: String,
         native: Option<PathBuf>,
         stats: Option<StatsRoute>,
     ) -> std::io::Result<Self> {
+        let client = client()?;
         command.process_group(0).kill_on_drop(false);
         #[cfg(target_os = "linux")]
-        // SAFETY: the closure runs in the child between fork and exec and
-        // makes one prctl call, which is async-signal-safe; it takes no lock
-        // and allocates nothing.
+        let parent = rustix::process::getpid();
+        #[cfg(target_os = "linux")]
+        // SAFETY: between fork and exec this closure only makes raw process
+        // syscalls and constructs OS-code errors, without locks or allocation.
         unsafe {
-            command.pre_exec(|| {
+            command.pre_exec(move || {
                 rustix::process::set_parent_process_death_signal(Some(Signal::TERM))
-                    .map_err(std::io::Error::from)
+                    .map_err(std::io::Error::from)?;
+                if rustix::process::getppid() != Some(parent) {
+                    let _ = rustix::process::kill_process(rustix::process::getpid(), Signal::TERM);
+                    // Forbid exec even if the terminate signal is masked or ignored.
+                    return Err(std::io::Error::from(rustix::io::Errno::SRCH));
+                }
+                Ok(())
             });
         }
-        let mut child = command.spawn()?;
-        let group = child
-            .id()
-            .and_then(|pid| i32::try_from(pid).ok())
-            .ok_or_else(|| std::io::Error::other("the worker exited before it was named"))?;
-        let (sender, exit) = watch::channel(None);
-        tokio::spawn(async move {
-            let description = match child.wait().await {
-                Ok(status) => status.to_string(),
-                Err(error) => format!("its wait failed: {error}"),
-            };
-            sender.send_replace(Some(WorkerExit { description }));
-        });
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(LIVENESS_REQUEST)
-            .timeout(LIVENESS_REQUEST)
-            .build()
-            .map_err(std::io::Error::other)?;
+        let child = command.spawn()?;
+        let (state, exit) = take_child(
+            child,
+            #[cfg(target_os = "macos")]
+            None,
+        )?;
         Ok(Self {
-            group,
+            state,
             exit,
             health,
             client,
@@ -97,14 +155,198 @@ impl ProcessWorker {
         self
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn signal(&self, signal: Signal) {
-        if let Some(group) = Pid::from_raw(self.group) {
+        let custody = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self.exit.borrow().is_some() {
+            return;
+        }
+        if let Some(group) = Pid::from_raw(custody.group) {
             let _ = kill_process_group(group, signal);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn request_stop(&self) -> Option<Arc<tokio::sync::Notify>> {
+        let mut custody = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self.exit.borrow().is_some() {
+            return None;
+        }
+        custody.stopping = true;
+        if let Some(stop) = &custody.stop {
+            let _ = stop.shutdown(std::net::Shutdown::Write);
+        }
+        Some(Arc::clone(&custody.pin_released))
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn signal(&self, signal: Signal) {
+        let Some(released) = self.request_stop() else {
+            return;
+        };
+        loop {
+            let notified = released.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            {
+                let custody = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if self.exit.borrow().is_some() {
+                    return;
+                }
+                if custody.pins == 0 {
+                    if let Some(group) = Pid::from_raw(custody.group) {
+                        let _ = kill_process_group(group, signal);
+                    }
+                    return;
+                }
+            }
+            // A native G controller kills/reaps its outstanding join before
+            // unpinning. This never waits on W's pin-blocked terminal watch.
+            notified.await;
         }
     }
 
     fn already_exited(&self) -> Option<WorkerExit> {
         self.exit.borrow().clone()
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct Notifications {
+    stop: std::os::unix::net::UnixStream,
+    terminal: std::os::unix::net::UnixStream,
+}
+
+fn take_child(
+    child: tokio::process::Child,
+    #[cfg(target_os = "macos")] notifications: Option<Notifications>,
+) -> std::io::Result<(Arc<Mutex<Custody>>, watch::Receiver<Option<WorkerExit>>)> {
+    let group = child
+        .id()
+        .and_then(|pid| i32::try_from(pid).ok())
+        .ok_or_else(|| std::io::Error::other("the worker exited before it was named"))?;
+    let (sender, exit) = watch::channel(None);
+    #[cfg(target_os = "macos")]
+    let (stop, terminal) = match notifications {
+        Some(notifications) => (Some(notifications.stop), Some(notifications.terminal)),
+        None => (None, None),
+    };
+    let state = Arc::new(Mutex::new(Custody {
+        group,
+        child,
+        #[cfg(target_os = "macos")]
+        pins: 0,
+        #[cfg(target_os = "macos")]
+        reaper_waker: None,
+        #[cfg(target_os = "macos")]
+        stopping: false,
+        #[cfg(target_os = "macos")]
+        pin_released: Arc::new(tokio::sync::Notify::new()),
+        #[cfg(target_os = "macos")]
+        stop,
+    }));
+    let reaper = Arc::clone(&state);
+    tokio::spawn(async move {
+        poll_fn(|cx| {
+            let mut custody = reaper.lock().unwrap_or_else(|poison| poison.into_inner());
+            #[cfg(target_os = "macos")]
+            if custody.pins != 0 {
+                custody.reaper_waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+            let status = {
+                let mut wait = std::pin::pin!(custody.child.wait());
+                match wait.as_mut().poll(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(status) => status,
+                }
+            };
+            let description = match status {
+                Ok(status) => status.to_string(),
+                Err(error) => format!("its wait failed: {error}"),
+            };
+            sender.send_replace(Some(WorkerExit { description }));
+            Poll::Ready(())
+        })
+        .await;
+        // The actual watch publication precedes EOF. Cancellation instead
+        // closes this writer with watchNone, which the native thread keeps UNKNOWN.
+        #[cfg(target_os = "macos")]
+        drop(terminal);
+    });
+    Ok((state, exit))
+}
+
+fn client() -> std::io::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(LIVENESS_REQUEST)
+        .timeout(LIVENESS_REQUEST)
+        .build()
+        .map_err(std::io::Error::other)
+}
+
+#[cfg(target_os = "macos")]
+struct GroupPin {
+    state: Arc<Mutex<Custody>>,
+    group: i32,
+}
+
+#[cfg(target_os = "macos")]
+impl GroupPin {
+    fn group(&self) -> i32 {
+        self.group
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pin_group(
+    state: &Arc<Mutex<Custody>>,
+    exit: &watch::Receiver<Option<WorkerExit>>,
+) -> Option<GroupPin> {
+    let mut custody = state.lock().unwrap_or_else(|poison| poison.into_inner());
+    if exit.borrow().is_some()
+        || exit.has_changed().is_err()
+        || custody.stopping
+        || custody.pins != 0
+    {
+        return None;
+    }
+    custody.pins += 1;
+    Some(GroupPin {
+        state: Arc::clone(state),
+        group: custody.group,
+    })
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for GroupPin {
+    fn drop(&mut self) {
+        let (wake, released) = {
+            let mut custody = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            custody.pins -= 1;
+            (
+                custody.reaper_waker.take(),
+                Arc::clone(&custody.pin_released),
+            )
+        };
+        if let Some(wake) = wake {
+            wake.wake();
+        }
+        released.notify_waiters();
     }
 }
 
@@ -168,23 +410,34 @@ impl RunningWorker for ProcessWorker {
                     return exit;
                 }
             }
+            #[cfg(not(target_os = "macos"))]
             self.signal(Signal::TERM);
+            #[cfg(target_os = "macos")]
+            self.signal(Signal::TERM).await;
             if let Ok(exit) = tokio::time::timeout(grace, self.exited()).await {
                 return exit;
             }
+            #[cfg(not(target_os = "macos"))]
             self.signal(Signal::KILL);
+            #[cfg(target_os = "macos")]
+            self.signal(Signal::KILL).await;
             self.exited().await
         })
     }
 
     fn abort(&self) -> LauncherFuture<'_, WorkerExit> {
         // An abort asks the worker nothing: no native drain, no terminate
-        // signal and no grace. The group is killed and the reaper awaited.
+        // signal and no grace. On Mac a pending private guardian join is
+        // independently killed/reaped first; no W terminal wait holds its pin.
+        // The group is then killed and its actual reaper awaited.
         Box::pin(async move {
             if let Some(exit) = self.already_exited() {
                 return exit;
             }
+            #[cfg(not(target_os = "macos"))]
             self.signal(Signal::KILL);
+            #[cfg(target_os = "macos")]
+            self.signal(Signal::KILL).await;
             self.exited().await
         })
     }

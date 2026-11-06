@@ -387,6 +387,7 @@ pub(crate) fn setup_models(
 /// empty slot pair is filled and its existing-admission workers start.
 pub(crate) fn setup_models_on_open_vault(
     server: &std::sync::Arc<crate::server::SyncServer>,
+    owner: &oneiron::consent::AuthenticatedOwner,
     answers: ModelSetupAnswers,
 ) -> Result<ModelSetupOutcome, crate::owner::OwnerError> {
     let startup = server.model_setup_config().ok_or_else(|| {
@@ -405,6 +406,7 @@ pub(crate) fn setup_models_on_open_vault(
         )
     })?;
     let _setup = runtime.setup();
+    server.vault().recheck_owner(owner)?;
     if !server.model_slots_unconfigured() {
         return Err(crate::owner::OwnerError::Refused(
             "model slots are already configured; live replacement is not first-run setup"

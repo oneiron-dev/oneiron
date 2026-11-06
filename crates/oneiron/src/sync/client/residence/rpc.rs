@@ -1,8 +1,8 @@
 //! The residence RPC lane's socket: one short-lived authenticated socket to
 //! the home a call reads from. Its endpoint is read once, with the carrier
 //! chosen for it, and both are checked before any credential leaves (FIX
-//! 8862). The ordinary lane binds the host's actor session over it; a home
-//! handoff with none opens it as this machine alone (FIX 6458).
+//! 8862). The ordinary lane binds the host's actor session over it; home
+//! handoffs and exact pad repairs can open it as this machine alone.
 
 use std::time::Duration;
 
@@ -131,10 +131,10 @@ impl ResidenceRpc {
         Err(refused())
     }
 
-    /// FIX 6458: the lane a home handoff opens with no actor session. The
-    /// upgrade proves this machine's transport slip, and the home's answer
-    /// names the machine it is; no actor binds, so only the home's handoff
-    /// calls answer on it. `None` is only a transport outage.
+    /// The lane a home handoff or exact pad repair opens with no actor session.
+    /// The upgrade proves this machine's transport slip, and the home's answer
+    /// names the machine it is; machine-only residence calls judge their own
+    /// read authority without an actor bind. `None` is only a transport outage.
     pub(super) async fn connect_machine(
         vault: &crate::Vault,
         config: &SyncClientConfig,
@@ -258,6 +258,11 @@ impl ResidenceRpc {
         let mut assembled = Vec::new();
         for seq in 0..512u64 {
             let frame = loop {
+                // A ready stream of opening frames must not outrun the same
+                // deadline by completing each individual next() immediately.
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(refused());
+                }
                 let msg = tokio::time::timeout_at(deadline, self.socket.next())
                     .await
                     .map_err(|_| refused())?

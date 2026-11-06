@@ -1,30 +1,11 @@
-//! Pending gate-consent record and index-state types, ABI-pinned versions, msgpack codecs, and validation.
+//! Core half of `store::pending_gate_consent::records`: its store-layer items live in `oneiron_store::pending_gate_consent::records` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde::{Deserialize, Serialize};
-
-use crate::error::{Error, Result};
+pub(crate) use oneiron_store::pending_gate_consent::records::*;
 
 use super::{GATE_DIFF_HANDLE_MAX_LEN, GateDecisionId};
-
-/// Body version of one pending gate-consent tray row.
-///
-/// Pinned to the same numeric value the decision ledger happens to carry
-/// today, because that is the value already on disk — this names it rather
-/// than changing it. The two families are stored, indexed and swept
-/// separately, so borrowing [`GATE_DECISION_LEDGER_VERSION`] here would make
-/// the NEXT decision-ledger bump decode every stored pending row as corrupt.
-///
-/// Receipt-family ABI-pin rule: changing this requires a
-/// [`STORAGE_ABI_VERSION`] bump.
-pub(crate) const PENDING_GATE_CONSENT_VERSION: u8 = 0;
-
-/// Receipt-family ABI-pin rule: changing this requires a
-/// [`STORAGE_ABI_VERSION`] bump.
-pub(in crate::store) const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
-
-const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
-
-pub(super) const OWNER_ANSWER_OBLIGATION_VERSION: u8 = 0;
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingGateConsentRecord {
@@ -146,8 +127,7 @@ pub(super) fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord)
         return Err(Error::CorruptedIndex("pending gate consent"));
     }
     if let Some(dreamer_run_id) = record.dreamer_run_id.as_deref()
-        && (dreamer_run_id.trim().is_empty()
-            || dreamer_run_id.len() > PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN)
+        && dreamer_run_id.trim().is_empty()
     {
         return Err(Error::CorruptedIndex("pending gate consent"));
     }

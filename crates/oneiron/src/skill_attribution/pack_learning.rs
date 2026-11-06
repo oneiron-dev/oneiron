@@ -1,7 +1,7 @@
 //! The manifest-to-learning bridge. Routing and anchoring are both required;
 //! terminal success, loading, agreement and self-report alone teach nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::EvidenceSource;
@@ -16,6 +16,7 @@ use super::credit_join::{
     joined_fields_in_txn, record_credit_in_txn, seal_decay_in_txn,
 };
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, credit_decay_in_txn, receipt_id};
+use super::outcome_source::{OutcomeWitness, WitnessedPackOutcome, require_witness_in_txn};
 use super::{
     AttemptOutcome, AttributionVerdict, FollowedState, attribution_judgments,
     judgment_displaced_in_txn,
@@ -42,14 +43,23 @@ pub struct AnchoredPackOutcome {
 /// read resolved for the run (FIX 10107), so replay never re-learns a newer
 /// decay. All learning heads and this receipt commit together and are
 /// idempotent; a check or late landing after it is reconciled beside it
-/// ([`super::credit_join`]).
+/// ([`super::credit_join`]). The outcome was read from a stored source
+/// with its witness (FIX 3611): this writer reads that source again beside
+/// its other rechecks, and a source erased or changed since mints nothing.
 pub fn project_anchored_pack_outcome(
     vault: &Vault,
     attempt_receipt: &str,
-    outcome: &AnchoredPackOutcome,
+    outcome: &WitnessedPackOutcome,
     now: u64,
 ) -> Result<LateCreditReceipt> {
-    project(vault, None, attempt_receipt, outcome, now)
+    project(
+        vault,
+        None,
+        Some(&outcome.witness),
+        attempt_receipt,
+        &outcome.outcome,
+        now,
+    )
 }
 
 /// An owner's external verdict, revalidated in the projection transaction.
@@ -67,12 +77,13 @@ pub fn project_anchored_pack_outcome_as_owner(
             "the owner door requires an owner verdict",
         ));
     }
-    project(vault, Some(owner), attempt_receipt, outcome, now)
+    project(vault, Some(owner), None, attempt_receipt, outcome, now)
 }
 
 fn project(
     vault: &Vault,
     owner: Option<&crate::consent::AuthenticatedOwner>,
+    witness: Option<&OutcomeWitness>,
     attempt_receipt: &str,
     outcome: &AnchoredPackOutcome,
     now: u64,
@@ -110,10 +121,18 @@ fn project(
         .into_iter()
         .filter(|(_, row)| row.receipt_ref == attempt_receipt)
         .collect();
-    let judgments: BTreeMap<_, _> = attribution_judgments(vault)?
-        .into_iter()
-        .map(|row| (row.sequence, row))
-        .collect();
+    // FIX 12716: scope to this attempt's evidence sequences, so a judgment
+    // added or rejudged for an unrelated attempt does not refuse this
+    // unchanged outcome. A change to a referenced judgment (including an
+    // erase-driven edit) still refuses, preserving FIX 10641.
+    let judgments: BTreeMap<_, _> = {
+        let sequences: BTreeSet<u64> = evidence.iter().map(|(sequence, _)| *sequence).collect();
+        attribution_judgments(vault)?
+            .into_iter()
+            .filter(|row| sequences.contains(&row.sequence))
+            .map(|row| (row.sequence, row))
+            .collect()
+    };
     let key = receipt_id(attempt_receipt, &outcome.receipt, &outcome.axis);
     vault.with_write_txn_grouped(|txn| {
         if let Some(owner) = owner {
@@ -139,19 +158,39 @@ fn project(
                     "the attribution evidence changed before its credit was written",
                 ));
             }
-            let fresh_judgments: BTreeMap<_, _> = super::attribution_judgments_in_txn(vault, txn)?
-                .into_iter()
-                .map(|row| (row.sequence, row))
-                .collect();
+            // Same scope as above, over the fresh evidence (FIX 12716).
+            let fresh_judgments: BTreeMap<_, _> = {
+                let sequences: BTreeSet<u64> = fresh_evidence
+                    .iter()
+                    .map(|(sequence, _)| *sequence)
+                    .collect();
+                super::attribution_judgments_in_txn(vault, txn)?
+                    .into_iter()
+                    .filter(|row| sequences.contains(&row.sequence))
+                    .map(|row| (row.sequence, row))
+                    .collect()
+            };
             if fresh_judgments != judgments {
                 return Err(Error::InvalidClaimBody(
                     "the attribution judgments changed before their credit was written",
                 ));
             }
+            // The outcome's stored source reads as it did (FIX 3611).
+            require_witness_in_txn(vault, txn, attempt_receipt, outcome, witness)?;
         }
         // A matched-fork check recorded for this outcome counts as the
         // skill's contribution or the edge's hop check, and a use that landed
         // late joins the used chain, though both came after the run froze.
+        let fields = super::judge_binding::with_workflow_judge_in_txn(
+            vault,
+            txn,
+            attempt_receipt,
+            fields.clone(),
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "a workflow's Done judge was not joined; its credit keeps the frozen judge");
+            fields.clone()
+        });
         let fields = joined_fields_in_txn(
             vault,
             txn,
@@ -159,7 +198,7 @@ fn project(
             &outcome.receipt,
             &outcome.axis,
             outcome.goal_revision.as_deref(),
-            fields.clone(),
+            fields,
         )?;
         if let Some(previous) = CREDIT_RECEIPT.get(&vault.store, txn, &key)? {
             if previous.anchor != anchor
@@ -289,7 +328,6 @@ fn project(
                 vault,
                 txn,
                 subject,
-                Some(fields.executor.as_str()),
                 attempt_receipt,
             )? {
                 person_share = Some(person_share.map_or(share, |held| held.max(share)));
@@ -297,9 +335,8 @@ fn project(
         }
         for (subject, (success, weight)) in observations {
             let cell = credit_cell(&fields, &outcome.axis, subject);
-            let (success, weight) = effective_observation_in_txn(
-                vault, txn, &credit, &fields, &subject, success, weight,
-            )?;
+            let (success, weight) =
+                effective_observation_in_txn(vault, txn, &credit, &subject, success, weight)?;
             let learning = credit_evidence(&credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &learning, now)?;
         }
