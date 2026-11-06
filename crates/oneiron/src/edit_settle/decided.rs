@@ -1,5 +1,7 @@
 //! Typed sheet decisions and their original inputs kept between paid units.
 
+mod encoding;
+
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
@@ -164,9 +166,22 @@ impl Vault {
         &self,
         artifact: &EntityId,
         row: DecidedSheetAnswers,
+        deadline: Instant,
     ) -> Result<DecidedSheetAnswers> {
         validate_pending_ref(&row.request.run_ref)?;
         let key = settlement_key_parts(artifact, &row.request.run_ref);
+        {
+            let txn = self.store.env.read_txn()?;
+            check_available(&self.store, &txn, artifact, &row.request.run_ref)?;
+            if super::artifact_retention_deleted_in_txn(&self.store, &txn, artifact)? {
+                return Err(Error::EntityNotFound);
+            }
+            if let Some(existing) = DECIDED.get(&self.store, &txn, &key)? {
+                existing.matches(&row.request, row.unmasked)?;
+                return Ok(existing);
+            }
+        }
+        let encoded = encoding::EncodedAnswers::new(&key, &row, deadline)?;
         self.with_write_txn_grouped(|txn| {
             check_available(&self.store, txn, artifact, &row.request.run_ref)?;
             if super::artifact_retention_deleted_in_txn(&self.store, txn, artifact)? {
@@ -176,7 +191,7 @@ impl Vault {
                 existing.matches(&row.request, row.unmasked)?;
                 return Ok(existing);
             }
-            DECIDED.put(&self.store, txn, &key, &row)?;
+            encoded.put(&self.store, txn)?;
             Ok(row)
         })
     }
@@ -188,8 +203,27 @@ impl Vault {
         artifact: &EntityId,
         expected: &DecidedSheetAnswers,
         row: DecidedSheetAnswers,
+        deadline: Instant,
     ) -> Result<DecidedSheetAnswers> {
         let key = settlement_key_parts(artifact, &row.request.run_ref);
+        {
+            let txn = self.store.env.read_txn()?;
+            check_available(&self.store, &txn, artifact, &row.request.run_ref)?;
+            if super::artifact_retention_deleted_in_txn(&self.store, &txn, artifact)? {
+                return Err(Error::EntityNotFound);
+            }
+            let existing = DECIDED
+                .get(&self.store, &txn, &key)?
+                .ok_or(Error::EntityNotFound)?;
+            existing.matches(&row.request, row.unmasked)?;
+            if existing.generation != expected.generation {
+                return Err(Error::EntityNotFound);
+            }
+            if &existing != expected {
+                return Ok(existing);
+            }
+        }
+        let encoded = encoding::EncodedAnswers::new(&key, &row, deadline)?;
         self.with_write_txn_grouped(|txn| {
             check_available(&self.store, txn, artifact, &row.request.run_ref)?;
             if super::artifact_retention_deleted_in_txn(&self.store, txn, artifact)? {
@@ -205,7 +239,7 @@ impl Vault {
             if &existing != expected {
                 return Ok(existing);
             }
-            DECIDED.put(&self.store, txn, &key, &row)?;
+            encoded.put(&self.store, txn)?;
             Ok(row)
         })
     }

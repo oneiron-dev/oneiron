@@ -372,6 +372,7 @@ impl Vault {
                     }),
                     unmasked: false,
                 },
+                ask.deadline,
             )?
         };
         while let Some(progress) = &row.progress {
@@ -382,7 +383,7 @@ impl Vault {
             let expected = row.clone();
             let Some(input) = rows.get(progress.next) else {
                 row.progress = None;
-                row = self.advance_decided_sheet_answers(artifact, &expected, row)?;
+                row = self.advance_decided_sheet_answers(artifact, &expected, row, ask.deadline)?;
                 continue;
             };
             let target = input.cell;
@@ -435,7 +436,7 @@ impl Vault {
             if progress.decision.is_none() {
                 progress.next += 1;
             }
-            row = self.advance_decided_sheet_answers(artifact, &expected, row)?;
+            row = self.advance_decided_sheet_answers(artifact, &expected, row, ask.deadline)?;
         }
         self.stage_decided_sheet_answers(artifact, &row, ask.deadline)
     }
