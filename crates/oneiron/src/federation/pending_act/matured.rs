@@ -38,9 +38,12 @@ impl Vault {
     /// after an act matured is told on the next pass.
     ///
     /// A read pass goes first: a vault with no waiting act whose deadline has
-    /// come on the store clock opens no writer. The same pass drops each
-    /// export-first removal archive past its retention (OF-150).
+    /// come on the store clock opens no writer. The same pass lands each
+    /// rewrite an erase owes a kept removal archive, which wakes it (FIX
+    /// 3679), and drops each export-first removal archive past its
+    /// retention (OF-150).
     pub fn notify_matured_shared_acts(&self) -> Result<usize> {
+        self.finish_removal_archive_rewrites();
         self.drop_expired_removal_exports()?;
         {
             let txn = self.store.env.read_txn()?;
