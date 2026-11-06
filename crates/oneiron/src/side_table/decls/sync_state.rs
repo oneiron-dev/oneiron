@@ -312,6 +312,11 @@ side_tables! {
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
+    /// Marks a replica's NOTE fork its authority sent (FIX 12789): the
+    /// authority's fork set settles it, and a fork made here carries no mark.
+    /// Key: hex32(note) ":" hex32(fork); value: BLAKE3 of the fork document
+    /// as sent.
+    NOTE_FORK_AUTHORITY: SyncState b"note_fork_authority:v1:" Raw;
     /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
     /// module's erasure sweep. Key: yyyy-mm (window key).
     SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;
