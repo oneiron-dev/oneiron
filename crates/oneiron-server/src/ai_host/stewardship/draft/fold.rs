@@ -7,7 +7,7 @@ use oneiron::{Error, Vault};
 
 use super::{DraftFailure, DraftPass, DraftStage, GeneratedDraft, at, generate_draft, now};
 use crate::ai_host::stewardship::Drafter;
-use crate::ai_host::stewardship::sources::contains_sources;
+use crate::ai_host::stewardship::sources::{EvidenceSpan, contains_sources, covers};
 use crate::models::ModelRuntime;
 
 pub(super) async fn draft_fold(
@@ -15,22 +15,49 @@ pub(super) async fn draft_fold(
     runtime: &ModelRuntime,
     drafter: Drafter,
     draft: &StewardshipDraftRequest,
+    first_failure: DraftFailure,
 ) -> oneiron::Result<DraftPass> {
     let mut pending = Vec::new();
-    split(draft.clone(), &mut pending);
+    if draft.request.evidence.len() > 1 {
+        split(draft.clone(), &mut pending);
+    } else if let Some(span) = first_failure.overflow_span().and_then(|span| span.split()) {
+        push_spans(draft.clone(), span, &mut pending);
+    } else {
+        return failed(vault, draft, first_failure);
+    }
     let mut answers = Vec::new();
     while let Some(part) = pending.pop() {
         if let Some(outcome) = moved(vault, draft)? {
             return Ok(outcome);
         }
-        match generate_draft(vault, runtime, drafter, &part, &[]).await {
+        match generate_draft(
+            vault,
+            runtime,
+            drafter,
+            &part.draft,
+            &[],
+            part.span.as_ref(),
+        )
+        .await
+        {
             Ok(answer) => answers.push(answer),
             Err(failure)
-                if failure.stage == DraftStage::Call && part.request.evidence.len() > 1 =>
+                if failure.stage == DraftStage::Call && part.draft.request.evidence.len() > 1 =>
             {
-                split(part, &mut pending);
+                split(part.draft, &mut pending);
             }
-            Err(failure) => return failed(vault, draft, failure),
+            Err(failure) => {
+                let span = if failure.context_overflow() {
+                    part.span.or_else(|| failure.overflow_span())
+                } else {
+                    None
+                };
+                if let Some(spans) = span.and_then(|span| span.split()) {
+                    push_spans(part.draft, spans, &mut pending);
+                } else {
+                    return failed(vault, draft, failure);
+                }
+            }
         }
     }
     while answers.len() > 1 {
@@ -41,7 +68,7 @@ pub(super) async fn draft_fold(
         let left = answers.pop().expect("two draft parts");
         let parts = [left, right];
         let joined = joined_request(draft, &parts);
-        match generate_draft(vault, runtime, drafter, &joined, &parts).await {
+        match generate_draft(vault, runtime, drafter, &joined, &parts, None).await {
             Ok(answer) if !answer.text.trim().is_empty() => answers.push(answer),
             Ok(_)
             | Err(DraftFailure {
@@ -70,15 +97,18 @@ fn schedule_parts(
     let served = joined_request(draft, &answers);
     let mut expected = Vec::with_capacity(answers.len());
     let mut text = String::new();
+    let mut coverage = Vec::new();
     for answer in answers {
         if !text.is_empty() {
             text.push_str("\n\n");
         }
         text.push_str(&answer.text);
         expected.push(answer.snapshot.context);
+        coverage.extend(answer.coverage);
     }
     let mut planner = FoldedDraft {
         expected,
+        coverage,
         inner: PrematerializedDraft { text },
     };
     match vault.schedule_stewardship_draft(&served, &mut planner, now()) {
@@ -109,14 +139,37 @@ fn joined_request(
     joined
 }
 
-fn split(mut draft: StewardshipDraftRequest, pending: &mut Vec<StewardshipDraftRequest>) {
+struct DraftPart {
+    draft: StewardshipDraftRequest,
+    span: Option<EvidenceSpan>,
+}
+
+fn push_spans(
+    draft: StewardshipDraftRequest,
+    (left, right): (EvidenceSpan, EvidenceSpan),
+    pending: &mut Vec<DraftPart>,
+) {
+    pending.push(DraftPart {
+        draft: draft.clone(),
+        span: Some(right),
+    });
+    pending.push(DraftPart {
+        draft,
+        span: Some(left),
+    });
+}
+
+fn split(mut draft: StewardshipDraftRequest, pending: &mut Vec<DraftPart>) {
     let mut older = draft.clone();
     older.request.evidence = draft
         .request
         .evidence
         .split_off(draft.request.evidence.len() / 2);
-    pending.push(older);
-    pending.push(draft);
+    pending.push(DraftPart {
+        draft: older,
+        span: None,
+    });
+    pending.push(DraftPart { draft, span: None });
 }
 
 fn moved(vault: &Vault, draft: &StewardshipDraftRequest) -> oneiron::Result<Option<DraftPass>> {
@@ -138,16 +191,19 @@ fn failed(
 /// Planning must cite the exact inputs of every completed part or synthesis.
 struct FoldedDraft {
     expected: Vec<RepresentationContext>,
+    coverage: Vec<EvidenceSpan>,
     inner: PrematerializedDraft,
 }
 
 impl RepresentationPlanner for FoldedDraft {
     fn plan(&mut self, context: &RepresentationContext) -> oneiron::Result<RepresentationDraft> {
-        if !self
-            .expected
-            .iter()
-            .all(|expected| contains_sources(context, expected))
-        {
+        if !self.expected.iter().all(|expected| {
+            contains_sources(context, expected)
+                && expected
+                    .evidence
+                    .iter()
+                    .all(|source| covers(source, &self.coverage))
+        }) {
             return Err(Error::InvalidClaimBody("stewardship fold sources changed"));
         }
         self.inner.plan(context)
