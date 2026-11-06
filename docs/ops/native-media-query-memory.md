@@ -274,6 +274,24 @@ not the telemetry's ID vector. No input copy or borrowed-slice charge is added.
 Unbound terminals add no capacity work. These original allocations remain
 distinct from the detached input copy and later decoded-record copies.
 
+The serialized terminals also lend that same optional caller lease to the
+private telemetry serializer. After the original prepare call, it records the
+actual capacities of the prepared results and neighbors group vectors and
+each group's entity vector, using their native tuple and entity slot sizes.
+The prepared groups are consumed inside serialization and drop before the
+caller's earlier-declared lease. Their initial observed extent is retained
+conservatively until that lease drops; no earlier shrink or extra lease is
+added. The returned ID vector is distinct and gets its existing post-return
+observation on the same caller lease.
+
+This covers only the initial prepared group-vector storage. Deep entity IDs,
+field vectors and values, sanitized pack copies, internal preparation and
+rebudget scratch, later growth, L2, stats, output bytes and construction peaks
+remain outside this observation. No capacity walk runs when unbound. Public
+serialization entry points and the original preparation, dispatch and output
+operations are unchanged; the private serializer and its two callers only
+pass the existing optional lease.
+
 After the existing finalizer decodes a retrieval row, the same optional lease
 also records four stable parts of that decoded record: the actual slot
 capacities of its signal, degradation and policy-decision vectors, using their

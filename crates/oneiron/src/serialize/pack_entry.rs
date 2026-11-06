@@ -112,6 +112,7 @@ pub(crate) fn serialize_pack_with_telemetry(
     pack: &ContextPack,
     config: &SerializeConfig,
     tokenizer: PackTokenizer,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> (Vec<u8>, SerializedPackTelemetry) {
     let sanitized;
     let pack = if matches!(
@@ -124,6 +125,21 @@ pub(crate) fn serialize_pack_with_telemetry(
         pack
     };
     let prepared = prepare_pack(pack, config, config.format == PackFormat::Json, tokenizer);
+    if let Some(memory) = memory {
+        let mut bytes = 0_u64;
+        for groups in [&prepared.results, &prepared.neighbors] {
+            bytes = bytes.saturating_add((groups.capacity() as u64).saturating_mul(
+                std::mem::size_of::<(GroupKey, Vec<PreparedEntity>)>() as u64,
+            ));
+            for (_, entities) in groups {
+                bytes = bytes.saturating_add(
+                    (entities.capacity() as u64)
+                        .saturating_mul(std::mem::size_of::<PreparedEntity>() as u64),
+                );
+            }
+        }
+        memory.materialized(0, bytes);
+    }
     let telemetry = serialize_prepared_pack_telemetry(&prepared);
     let bytes = serialize_prepared_pack(pack, config, prepared, tokenizer);
     (bytes, telemetry)
