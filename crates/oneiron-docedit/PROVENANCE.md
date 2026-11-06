@@ -614,3 +614,22 @@ retries and added-line style stay on their existing paths. No identities are
 minted and no original paragraph is mapped twice. This is source-only work in the
 existing 17480/18510 pack, not full native fallback, OF-509/OF-510, compiler,
 runtime, Office or global identity proof.
+
+
+## Styled run copies preserve an absent source default namespace
+
+Styled native table-cell output now passes its actual paragraph's effective
+nonempty-default context to both static run writers. A selected global run can
+come from another paragraph: when that source has no default namespace, its
+unprefixed property descendants must not acquire the destination paragraph's
+default namespace. The existing run writer emits `xmlns=""` on each generated
+run or break only in that case. Explicit empty and nonempty source defaults
+already travel with source bindings; a missing selected run still follows the
+actual paragraph's DrawingML names without a copied run property.
+
+This uses the actual source and destination scopes, not an unconditional clear.
+Same-paragraph retained runs, native raw and partial-run retention, wrapper
+selection, text, style, property identity reservations, field conversion and
+removal receipts, errors and gaps keep their existing paths. No original source
+span or authority is added. This is source-only namespace preservation within
+the existing 17480/18510 pack, not a compiler, runtime or Office certificate.

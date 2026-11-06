@@ -228,6 +228,8 @@ fn rebuilt_pass(
                       copied_sources: &mut Vec<std::ops::Range<usize>>|
      -> Option<String> {
         let (para, para_node) = paragraph;
+        let clear_unbound_default = crate::edit::xml::default_namespace(tree, para)
+            .is_some_and(|namespace| !namespace.is_empty());
         let p_pr_node = tree.child(para, DML, "pPr").ok()?;
         let end_node = tree.child(para, DML, "endParaRPr").ok()?;
         let p_pr = piece(p_pr_node);
@@ -354,9 +356,14 @@ fn rebuilt_pass(
                     } else if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
                         let copied_before = pending_sources.len();
-                        let mut run =
-                            run_xml(Some((*at, *node)), para_node, &part, false, pending_sources)
-                                .ok()?;
+                        let mut run = run_xml(
+                            Some((*at, *node)),
+                            para_node,
+                            &part,
+                            clear_unbound_default,
+                            pending_sources,
+                        )
+                        .ok()?;
                         // The source-start piece owns a split run's wrapper; the tail stays static.
                         if field_free
                             && node.is(DML, "r")
@@ -488,7 +495,14 @@ fn rebuilt_pass(
             String::new()
         } else {
             let text: String = new[prefix..new.len() - suffix].iter().collect();
-            run_xml(selected, para_node, &text, false, &mut pending_sources).ok()?
+            run_xml(
+                selected,
+                para_node,
+                &text,
+                clear_unbound_default,
+                &mut pending_sources,
+            )
+            .ok()?
         };
         let tail = retained_runs(old.len() - suffix, old.len(), &mut pending_sources)?;
         *copied_sources = pending_sources;
