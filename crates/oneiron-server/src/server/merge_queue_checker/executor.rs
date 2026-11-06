@@ -474,18 +474,20 @@ fn drive(
         }
     };
     let (frames, received) = mpsc::channel();
-    std::thread::spawn(move || {
-        loop {
-            match read_frame(reader.as_mut()) {
-                Ok(Some(frame)) => {
-                    if frames.send(frame).is_err() {
-                        return;
+    crate::engine_thread("merge-check-reader".into())
+        .spawn(move || {
+            loop {
+                match read_frame(reader.as_mut()) {
+                    Ok(Some(frame)) => {
+                        if frames.send(frame).is_err() {
+                            return;
+                        }
                     }
+                    Ok(None) | Err(_) => return,
                 }
-                Ok(None) | Err(_) => return,
             }
-        }
-    });
+        })
+        .expect("failed to spawn thread");
     let mut collected = Collected::default();
     let mut ended = false;
     loop {
