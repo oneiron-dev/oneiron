@@ -8,15 +8,17 @@
 use serde_json::{Map, Value, json};
 
 use super::ladder::{
-    OpenPack, PairedAnswer, ProviderDecision, Read, asked, joined, price_answers, take,
-    validate_pin,
+    OpenPack, PairedAnswer, ProviderDecision, Read, asked, generation_cut, joined, price_answers,
+    take, validate_pin,
 };
 use super::types::invalid;
 use super::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionPack,
     DecisionQuestion, DecisionRung, ProviderPin, Reversibility, StopCause, TypedDecision,
 };
-use crate::llm::run_admission::RunAdmission;
+use crate::llm::decision::DecisionCallContext;
+use crate::llm::run_admission::{RunAdmission, RunReceipt};
+use crate::llm::step::{GenerationOutcome, call_as_step_with_generation};
 use crate::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, ContentPart, DeterministicFallback,
     DurableStepContext, DurableStepResult, LlmBackend, LlmError, LlmMessage, LlmMessageRole,
@@ -121,6 +123,7 @@ enum Reply {
     Answers(Result<Vec<ProviderDecision>>),
     Trapped,
     Unread(GeneratedMiss),
+    AllowanceCut { started: bool },
 }
 
 impl DecisionLadder<'_> {
@@ -226,6 +229,90 @@ impl DecisionLadder<'_> {
         labels: Option<&dyn DecisionWireLabels>,
         run: Option<&RunAdmission>,
     ) -> DurableStepResult<GeneratedDecisions> {
+        let mut receipts = Vec::new();
+        self.run_pack_generated_common(
+            rung,
+            questions,
+            principal,
+            evidence,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            spent,
+            labels,
+            run,
+            None,
+            &mut receipts,
+        )
+        .await
+    }
+
+    /// The same generated read with per-generation admission and native
+    /// stronger-provider settlements kept in the caller's inventory.
+    /// The generated backend's usage still returns through `spent`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the generated pack retains its context and caller-owned settlements"
+    )]
+    pub async fn run_pack_generated_spent_captured(
+        &self,
+        rung: &GeneratedRung<'_>,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        labels: Option<&dyn DecisionWireLabels>,
+        run: Option<&RunAdmission>,
+        context: &DecisionCallContext<'_>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> DurableStepResult<GeneratedDecisions> {
+        self.run_pack_generated_common(
+            rung,
+            questions,
+            principal,
+            evidence,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            spent,
+            labels,
+            run,
+            Some(context),
+            receipts,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the original generated pack shares one optional native capture path"
+    )]
+    async fn run_pack_generated_common(
+        &self,
+        rung: &GeneratedRung<'_>,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        labels: Option<&dyn DecisionWireLabels>,
+        run: Option<&RunAdmission>,
+        context: Option<&DecisionCallContext<'_>>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> DurableStepResult<GeneratedDecisions> {
         validate_pin(&rung.pin, dial.first)?;
         if !matches!(
             dial.first,
@@ -279,10 +366,18 @@ impl DecisionLadder<'_> {
                 );
                 continue;
             }
-            let answers = match read(rung, &pack, &call, spent, labels).await? {
+            let answers = match read(rung, &pack, &call, spent, labels, context).await? {
                 Reply::Answers(answers) => answers,
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
+                Reply::AllowanceCut { started } => {
+                    first.extend(
+                        generation_cut(started.then_some(&rung.pin), readings)
+                            .into_iter()
+                            .map(Some),
+                    );
+                    continue;
+                }
             };
             let reads = take(&rung.pin, &call, answers, readings)?;
             // Each answer's receipt carries its model's registered price (FIX 11305).
@@ -294,9 +389,14 @@ impl DecisionLadder<'_> {
         // Dreamer's) cannot enter it, so the close runs on its own thread.
         let decisions = std::thread::scope(|scope| {
             scope
-                .spawn(move || match run {
-                    Some(run) => self.close_with_run(&pack, first, readings, run),
-                    None => self.close(&pack, first, readings),
+                .spawn(move || match context {
+                    Some(context) => {
+                        self.close_captured(&pack, first, readings, run, context, receipts)
+                    }
+                    None => match run {
+                        Some(run) => self.close_with_run(&pack, first, readings, run),
+                        None => self.close(&pack, first, readings),
+                    },
                 })
                 .join()
         })
@@ -315,6 +415,7 @@ async fn read(
     call: &DecisionPack<'_>,
     steps: &mut Vec<([u8; 32], LlmUsage, bool)>,
     labels: Option<&dyn DecisionWireLabels>,
+    context: Option<&DecisionCallContext<'_>>,
 ) -> DurableStepResult<Reply> {
     let asked = asked(call, pack.person);
     let paired = pack.paired.map(|paired| (paired, call.questions));
@@ -328,25 +429,76 @@ async fn read(
     let hash = request.canonical_hash()?;
     let (response, memoized) = match rung.step {
         GeneratedStep::Durable { step, guard } => {
-            match call_as_step(step, rung.backend, guard, request).await? {
+            let outcome = match context {
+                Some(context) => {
+                    match call_as_step_with_generation(
+                        step,
+                        rung.backend,
+                        guard,
+                        request,
+                        context.generation,
+                    )
+                    .await?
+                    {
+                        GenerationOutcome::Completed(outcome) => outcome,
+                        GenerationOutcome::Cut { usage } => {
+                            let started = usage.is_some();
+                            if let Some(usage) = usage {
+                                steps.push((hash, usage, false));
+                            }
+                            return Ok(Reply::AllowanceCut { started });
+                        }
+                    }
+                }
+                None => call_as_step(step, rung.backend, guard, request).await?,
+            };
+            match outcome {
                 StepOutcome::Finished {
                     response, memoized, ..
                 } => (response, memoized),
                 StepOutcome::Trapped { .. } => return Ok(Reply::Trapped),
             }
         }
-        GeneratedStep::Raw { lease } => {
-            match within_work_time(call.deadline, rung.backend.generate(request, lease)).await {
-                Some(Ok(response)) => (response, false),
-                Some(Err(error)) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
-                None => return Ok(Reply::Answers(Err(cut()))),
+        GeneratedStep::Raw { lease } => match context {
+            None => {
+                match within_work_time(call.deadline, rung.backend.generate(request, lease)).await {
+                    Some(Ok(response)) => (response, false),
+                    Some(Err(error)) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
+                    None => return Ok(Reply::Answers(Err(cut()))),
+                }
             }
-        }
+            Some(context) => {
+                let generation = async {
+                    if !context.admit_generation() {
+                        return GenerationOutcome::Cut { usage: None };
+                    }
+                    GenerationOutcome::Completed(rung.backend.generate(request, lease).await)
+                };
+                match within_work_time(call.deadline, generation).await {
+                    Some(GenerationOutcome::Completed(Ok(response))) => (response, false),
+                    Some(GenerationOutcome::Completed(Err(error))) => {
+                        return Ok(Reply::Unread(GeneratedMiss::Backend(error)));
+                    }
+                    Some(GenerationOutcome::Cut { .. }) => {
+                        return Ok(Reply::AllowanceCut { started: false });
+                    }
+                    None => return Ok(Reply::Answers(Err(cut()))),
+                }
+            }
+        },
         GeneratedStep::Admitted { guard } => {
-            match within_work_time(call.deadline, admitted(rung.backend, guard, request)).await {
+            match within_work_time(
+                call.deadline,
+                admitted(rung.backend, guard, request, context),
+            )
+            .await
+            {
                 Some(answered) => match answered? {
-                    Ok(response) => (response, false),
-                    Err(miss) => return Ok(Reply::Unread(miss)),
+                    GenerationOutcome::Completed(Ok(response)) => (response, false),
+                    GenerationOutcome::Completed(Err(miss)) => return Ok(Reply::Unread(miss)),
+                    GenerationOutcome::Cut { .. } => {
+                        return Ok(Reply::AllowanceCut { started: false });
+                    }
                 },
                 None => return Ok(Reply::Answers(Err(cut()))),
             }
@@ -387,13 +539,25 @@ async fn admitted(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
     request: LlmRequest,
-) -> Result<std::result::Result<LlmResponse, GeneratedMiss>> {
-    let lease = match guard.admit_for_request(&request) {
-        Ok(admission) => Reserved {
-            guard,
-            lease: admission.lease,
-        },
-        Err(denied) => return Ok(Err(GeneratedMiss::Budget(denied))),
+    context: Option<&DecisionCallContext<'_>>,
+) -> Result<GenerationOutcome<std::result::Result<LlmResponse, GeneratedMiss>>> {
+    let admission = match guard.admit_for_request(&request) {
+        Ok(admission) => admission,
+        Err(denied) => {
+            return Ok(GenerationOutcome::Completed(Err(GeneratedMiss::Budget(
+                denied,
+            ))));
+        }
+    };
+    if context.is_some_and(|context| !context.admit_generation()) {
+        guard
+            .abort(&admission.lease)
+            .map_err(|_| Error::InvariantViolation(GENERATED_SETTLEMENT_INVARIANT))?;
+        return Ok(GenerationOutcome::Cut { usage: None });
+    }
+    let lease = Reserved {
+        guard,
+        lease: admission.lease,
     };
     let response = backend.generate(request, &lease.lease).await;
     match &response {
@@ -401,7 +565,9 @@ async fn admitted(
         Err(_) => guard.settle_reserved(&lease.lease),
     }
     .map_err(|_| Error::InvariantViolation(GENERATED_SETTLEMENT_INVARIANT))?;
-    Ok(response.map_err(GeneratedMiss::Backend))
+    Ok(GenerationOutcome::Completed(
+        response.map_err(GeneratedMiss::Backend),
+    ))
 }
 
 /// A started request's reservation: a request dropped before it returns spends its

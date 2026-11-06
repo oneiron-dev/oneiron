@@ -540,6 +540,20 @@ impl DecisionLadder<'_> {
         self.close_common(pack, first, readings, None, Some(run), None)
     }
 
+    /// Close a generated pack through the same native captured-provider path.
+    pub(in crate::llm::decision) fn close_captured(
+        &self,
+        pack: &OpenPack<'_>,
+        first: Vec<Option<Read>>,
+        readings: Vec<Readings>,
+        run: Option<&RunAdmission>,
+        context: &DecisionCallContext<'_>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> Result<Vec<TypedDecision>> {
+        let mut capture = Capture { context, receipts };
+        self.close_common(pack, first, readings, None, run, Some(&mut capture))
+    }
+
     fn close_common(
         &self,
         pack: &OpenPack<'_>,
