@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod budget;
 mod html;
+mod html_arena;
 mod layout;
 #[cfg(test)]
 #[path = "template_tests.rs"]

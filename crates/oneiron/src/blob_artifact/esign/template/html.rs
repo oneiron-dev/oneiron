@@ -3,7 +3,7 @@ use super::budget::{Budget, ScratchIter, ScratchText, ScratchVec};
 use super::layout::{Flow, Style};
 use super::*;
 use dom_query::{Document, NodeRef};
-use html5ever::tendril::TendrilSink;
+use super::html_arena::HtmlDocument;
 
 /// Parses and merges a template of any size, with merge values of any number
 /// and length (Rule 5). DOM validation and rendering use explicit worklists.
@@ -11,20 +11,9 @@ pub(super) fn parse(
     html: &str,
     values: &BTreeMap<String, String>,
     budget: &Budget,
-) -> Result<Document> {
+) -> Result<HtmlDocument> {
     budget.checkpoint()?;
-    let document = html5ever::parse_document_with_checkpoint(
-        Document::default(),
-        html5ever::ParseOpts {
-            tree_builder: html5ever::tree_builder::TreeBuilderOpts {
-                scripting_enabled: false,
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        || budget.checkpoint(),
-    )
-    .one(html)?;
+    let document = super::html_arena::parse_document(html, budget)?;
     budget.checkpoint()?;
     let mut stack = ScratchVec::new(budget);
     stack.push(document.root())?;
