@@ -119,3 +119,19 @@ view, including errors, and frees its bytes before returning their admission.
 Merge-field syntax, validation and expansion order are unchanged. The native
 DOM's resulting text/tendril allocation is separate and remains unadmitted;
 this guard covers only the caller-owned expansion buffer, not stored DOM text.
+
+Native HTML tokenization also polls that same caller deadline between state
+steps and before token, parse-error and EOF delivery to the original tree
+builder. The checked driver retains the first typed checkpoint error, stops
+further delivery, skips successful-EOF assertions on a stopped parse, and drops
+its partial parser and DOM before returning that error. Character, comment and
+doctype delivery use this path too; it does not reuse script or encoding
+indicators as failures. Ordinary native parser APIs keep their original sink
+output and default to no checkpoint. HTML parsing keeps the exact tokenizer
+options and disabled scripting used by `dom_query::Document::from`.
+
+This is cooperative parser deadline coverage, not native DOM arena admission.
+Input conversion, one tokenizer step, character-reference processing, one
+native tree-builder call and its internal loops remain non-preemptible. DOM
+arena, attribute, atom/tendril, parser-stack and parse-error allocations remain
+outside the memory guard. Full FIX 9615 remains open.

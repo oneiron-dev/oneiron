@@ -2,7 +2,7 @@
 
 Two third-party crates carry changes of ours as git forks. Neither is vendored: each is a git
 dependency on a fork under `github.com/oneiron-dev`, pinned by a full commit `rev`, never by a
-branch or a tag. lopdf carries changes of ours as a vendored snapshot instead; see
+branch or a tag. lopdf and html5ever carry changes of ours as vendored snapshots instead; see
 [Vendored, modified snapshots](#vendored-modified-snapshots).
 The fork branch holds upstream's release commit plus our commits, one per change, each message
 saying what it changes and why. Upstream licence files and copyright notices stay untouched on
@@ -120,6 +120,13 @@ and every local source change.
   hook, so a decode can ask for memory before it grows a buffer (FIX 7654). Provenance and the
   patch list are in `crates/oneiron-seal/vendor/README.md`. The `pkix-chain` 0.4.1 snapshot
   beside it is unmodified.
+
+- `html5ever` 0.39.0, `crates/oneiron/vendor/html5ever-0.39.0` (MIT OR Apache-2.0):
+  an additive caller checkpoint in the existing tokenizer, plus a checked document driver
+  that returns the first typed caller failure after dropping the partial DOM (FIX 9615).
+  `dom_query` 0.28.0 and the engine use that same 0.39.0 snapshot; html5ever 0.38.0 remains
+  at its original registry pin. Provenance, omitted non-production files and local changes
+  are in `crates/oneiron/vendor/README.md`. No native DOM arena admission is claimed.
 
 ## Licences and attribution
 
