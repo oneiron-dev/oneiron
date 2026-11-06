@@ -46,6 +46,7 @@ impl HostRule {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         }
     }
 }
@@ -232,6 +233,7 @@ impl DecisionProvider for HostRuleProvider {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             },
         })
     }

@@ -109,6 +109,7 @@ pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::{HostedCloner, VendorVoice};
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
 pub(crate) use ladder::ModelCallBinding;
+pub(crate) use ladder::physical_for_paid;
 pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};

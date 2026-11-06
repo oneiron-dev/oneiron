@@ -161,6 +161,7 @@ impl BigModel {
                 .map_err(|_| failed("model trial usage lock"))?
                 .push(response.usage.clone());
         }
+        let cost = self.completion_cost(&binding.rung.model, &response.usage);
         let served = served.map(|model| ProviderPin {
             rung: self.pin.rung,
             model: model.to_string(),
@@ -183,6 +184,7 @@ impl BigModel {
                 .unwrap_or_else(abstained);
             return Ok(DecisionReadOutcome::Answered(ProviderDecision {
                 served,
+                cost_per_thousand: Some(cost),
                 ..decision
             }));
         }
@@ -200,6 +202,7 @@ impl BigModel {
                     paired: None,
                     person: None,
                     served,
+                    cost_per_thousand: Some(cost),
                 },
                 None => ProviderDecision {
                     served,
