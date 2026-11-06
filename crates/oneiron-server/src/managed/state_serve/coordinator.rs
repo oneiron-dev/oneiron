@@ -382,7 +382,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // (FIX 11851): captured before `verified` spends the restore. `None`
     // without a restore, and the watch's first look is then unplanned as
     // today.
-    #[cfg(target_os = "linux")]
     let restore_fresh = restore
         .as_ref()
         .map(|restore| restore.fresh_recipients().to_vec());
@@ -440,6 +439,19 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     } else if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
         // A process host's argv escrow recipient files as they stand later: a
         // file replaced after the start seals at the next look (FIX 11852).
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A non-Linux process host gets the same late seal as Linux: the VM
+        // companion and carrier stay Linux-only, the argv watch does not.
         super::carrier_watch::spawn_argv_watch(
             Arc::clone(&state),
             Arc::clone(&vault),
