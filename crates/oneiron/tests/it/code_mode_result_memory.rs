@@ -288,6 +288,7 @@ fn a_result_past_the_session_share_and_thousands_of_small_ones_keep_memory_flat(
             soft_steps: 1,
             hard_steps: 50,
         },
+        wake: None,
     };
 
     // Step 0 stores the big body; the steps after it each store fifty small

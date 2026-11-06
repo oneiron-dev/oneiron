@@ -113,6 +113,10 @@ pub struct LimitsConfig {
     /// How long work may wait for its turn, in milliseconds: a request
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
+    /// How long a verb call a budget window paced waits in its caller's
+    /// line for its turn, in seconds, counted from its hold; past it the
+    /// call ends unrun (FIX 8753, ARCH-0044 C5). A week by default.
+    pub paced_verb_wait_secs: u64,
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
@@ -205,6 +209,7 @@ impl Default for LimitsConfig {
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
+            paced_verb_wait_secs: oneiron::runtime_hooks::verb::PACED_VERB_WAIT_DEFAULT_SECS,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
             live_sessions: 4_096,
             live_subscriptions: 65_536,
@@ -280,6 +285,7 @@ impl LimitsConfig {
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
+            paced_verb_wait_secs,
             disk_reserve_bytes,
             live_sessions,
             live_subscriptions,
@@ -433,6 +439,9 @@ impl LimitsConfig {
             shared_merge_evidence_rows,
             memory_reason_evidence_rows,
             memory_reason_tokens,
+            context_edge_hops,
+            context_neighbors,
+            context_selected_edges,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -460,6 +469,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
+        set(&mut self.paced_verb_wait_secs, paced_verb_wait_secs);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
         set(&mut self.live_sessions, live_sessions);
         set(&mut self.live_subscriptions, live_subscriptions);
@@ -704,6 +714,9 @@ impl LimitsConfig {
                 memory_reason_evidence_rows,
             ),
             (EngineLimit::MemoryReasonTokens, memory_reason_tokens),
+            (EngineLimit::ContextEdgeHops, context_edge_hops),
+            (EngineLimit::ContextNeighbors, context_neighbors),
+            (EngineLimit::ContextSelectedEdges, context_selected_edges),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -739,6 +752,7 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("paced_verb_wait_secs", self.paced_verb_wait_secs),
             ("live_sessions", self.live_sessions as u64),
             ("live_subscriptions", self.live_subscriptions as u64),
             ("message_streams", self.message_streams as u64),
