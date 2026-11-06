@@ -37,6 +37,16 @@ pub enum AuthorityOp {
     SlipGrantRevoke {
         grant_ref: EntityId,
     },
+    /// The removal-archive door's spend of the one-shot transferred slip
+    /// `slip_id`, served from the archives an export-first removal kept for
+    /// `member`, the person the slip's logged mint names as its holder (FIX
+    /// 11862). It burns that logged slip whatever its standing since: the
+    /// door takes a revoked or expired origin, so this is not a
+    /// `SlipConsume`, which needs live ancestry.
+    RemovalArchiveConsume {
+        slip_id: [u8; 32],
+        member: EntityId,
+    },
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
     /// derived as BLAKE3(canonical signed genesis).
     Genesis {
@@ -394,6 +404,12 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         }
         AuthorityOp::SlipGrantRevoke { grant_ref } => {
             if *grant_ref.as_bytes() == [0; 16] {
+                return Err(invalid_authority());
+            }
+            Ok(())
+        }
+        AuthorityOp::RemovalArchiveConsume { slip_id, member } => {
+            if *slip_id == [0; 32] || *member.as_bytes() == [0; 16] {
                 return Err(invalid_authority());
             }
             Ok(())
