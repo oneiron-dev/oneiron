@@ -14,7 +14,7 @@
 //! the world on another machine (`sync::ingest::entity`). No tombstone,
 //! marker that travels or Loro operation is written.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use heed::{RoTxn, RwTxn};
 
@@ -134,6 +134,15 @@ fn discard_window_rows(
                 for id in &step.removed {
                     mark_discarded_in_txn(&vault.store, txn, *id, world)?;
                 }
+                // The window's persisted copy still holds them: its
+                // projection is owed (part E).
+                if !step.removed.is_empty() {
+                    crate::sync::window::mark_projection_owed_in_txn(
+                        &vault.store,
+                        txn,
+                        window.as_str(),
+                    )?;
+                }
                 Ok(Some(step))
             })
         });
@@ -237,6 +246,15 @@ pub(crate) fn discarded_world_in(
         .get(store, txn, &HexId(id))?
         .and_then(|raw| <[u8; 16]>::try_from(raw.as_slice()).ok())
         .and_then(|bytes| EntityId::from_bytes(bytes).ok()))
+}
+
+/// Every BASE row the owner's discard took and still marks.
+pub(super) fn discarded_rows_in(store: &Store, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
+    Ok(DISCARDED_WORLD_ROW
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(HexId(id), _)| id)
+        .collect())
 }
 
 /// Forgets the discard's mark of `id`: its row may come back.

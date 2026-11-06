@@ -340,7 +340,11 @@ impl SyncClient {
         window_key: &str,
         home: VersionVector,
     ) -> std::result::Result<(), TransportError> {
-        if WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some()) {
+        // And a BASE window's an owner's discard took rows from, which its
+        // projection waits to see cover the window (FIX 14534 part E).
+        if WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+            || self.discard_touched(window_key)?
+        {
             crate::sync::residence::put_home_window_vv(&self.vault, window_key, &home)
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
         }
@@ -771,6 +775,15 @@ impl SyncClient {
         payload: &[u8],
         server_vv: &VersionVector,
     ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+        // A window an owner's discard projected holds rewritten deletes at
+        // the operations it rewrote: none goes to a home that does not hold
+        // those operations already (FIX 14534 part E, E2 = A).
+        if self
+            .projection_floor(window.key.as_str())?
+            .is_some_and(|floor| !server_vv.includes_vv(&floor))
+        {
+            return Ok(None);
+        }
         let export = crate::sync::window::export_window_since_for(
             &self.vault,
             &window.key,
@@ -785,6 +798,26 @@ impl SyncClient {
             WindowExport::Replacement(snapshot) if server_vv.is_empty() => Some(snapshot),
             WindowExport::Replacement(_) => None,
         })
+    }
+
+    /// Whether an owner's discard took rows from BASE window `window_key`.
+    fn discard_touched(&self, window_key: &str) -> std::result::Result<bool, TransportError> {
+        let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
+        let txn = self.vault.store.env.read_txn().map_err(|error| storage(error.into()))?;
+        crate::sync::window::discard_touched_in(&self.vault.store, &txn, window_key)
+            .map_err(storage)
+    }
+
+    /// The floor an owner's discard projection filed for BASE window
+    /// `window_key`, if one did.
+    fn projection_floor(
+        &self,
+        window_key: &str,
+    ) -> std::result::Result<Option<VersionVector>, TransportError> {
+        let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
+        let txn = self.vault.store.env.read_txn().map_err(|error| storage(error.into()))?;
+        crate::sync::window::projection_floor_in(&self.vault.store, &txn, window_key)
+            .map_err(storage)
     }
 
     /// `REPLACEMENT_REQUEST` frames asking the server for each of `windows` whole.

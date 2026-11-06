@@ -24,6 +24,7 @@ use loro::{LoroDoc, Subscription};
 
 mod admission;
 mod device_only;
+mod discard_projection;
 mod egress;
 mod forward;
 mod history_free;
@@ -56,6 +57,11 @@ pub use self::device_only::{
     raw_update_verdict_for, selector_update_verdict_for_peer,
 };
 pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for};
+pub(crate) use self::discard_projection::mark_projection_owed_in_txn;
+pub(in crate::sync) use self::discard_projection::{
+    DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
+    projection_floor_in, settle_projection_in_txn,
+};
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
 pub(in crate::sync) use self::egress::{

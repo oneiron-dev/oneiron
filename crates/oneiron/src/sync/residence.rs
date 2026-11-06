@@ -7,6 +7,7 @@ mod tests;
 mod admission;
 mod authority_parts;
 mod authority_tail;
+mod base_projection;
 mod bundle;
 mod bundle_access;
 mod bundle_payload;
@@ -138,7 +139,7 @@ pub use window_index::{
 pub(crate) use world_base_rows::{discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
 pub(crate) use world_eviction::{
-    put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
+    home_window_vv_in_txn, put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
 };
 
 #[cfg(test)]
