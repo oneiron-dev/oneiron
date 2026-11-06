@@ -49,10 +49,9 @@ const PEER_JUDGED_KINDS: [u8; 5] = [
     ENTITY_TYPE_ASSET_TEXT,
 ];
 
-/// The blake3 digest of the bytes a peer's import brought for one row of a
-/// window. Key: hex32 (entity id) ":" window key.
-// Every record starts with its exact wire digest. ASSET adds a logical
-// digest so native inline/file/reference echoes retain the same origin.
+/// A peer's exact wire digest, followed for ASSET by its logical digest.
+/// Native inline/file/reference echoes retain the same logical origin.
+/// Key: hex32 (entity id) ":" window key.
 const PEER_ORIGIN: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_PEER_ORIGIN);
 
 fn origin_key(window_key: &str, id: &EntityId) -> String {
