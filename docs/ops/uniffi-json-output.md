@@ -487,3 +487,16 @@ read receipts, refusal facts, slot state, revisions, evidence, accept effects
 and finite numeric conversions are unchanged. Native snapshot reads, authority,
 inputs, clients, hooks and public records are unchanged. This selected output
 conversion does not prove end-to-end depth, memory or runtime bounds.
+
+## Model catalog revision output metadata
+
+`vault.models.catalog.refresh` and `vault.models.catalog.get` consume every
+model metadata value in both the revision's catalog seed and its returned
+registry rows before the first conversion error. The original whole-result
+codec converts the finite remainder, then restores the metadata in row order.
+Empty native metadata maps still read as absent; null map values remain present.
+
+Revision identity, prior revision, scores, source rows, prices, model fields,
+clocks and finite conversion diagnostics are unchanged. This changes no native
+catalog validation or persistence, authority, inputs, clients, hooks or public
+records. It does not prove end-to-end depth, memory or runtime bounds.
