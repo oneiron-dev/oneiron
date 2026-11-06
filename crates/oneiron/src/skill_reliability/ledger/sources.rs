@@ -24,7 +24,7 @@ pub(crate) fn attributed_outcome_results_sourced(
     ))
 }
 
-pub(super) fn attributed_outcomes_weighted_sourced(
+pub(crate) fn attributed_outcomes_weighted_sourced(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,

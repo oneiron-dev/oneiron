@@ -3,6 +3,7 @@
 //! The labels parent owns the anchor rows and rubric pin definitions.
 
 use super::*;
+use crate::edge::EdgeKind;
 
 /// The judge head: from the bootstrap `judge` skill, through admitted
 /// succession (`Supersedes`, new to old) to its newest revision, when that
