@@ -70,8 +70,9 @@ impl Vault {
     /// answered is forgotten, and so is each kept export secret copy whose
     /// secret ended (FIX 12064), and each revoke and import mark this install
     /// owes the owner's other machines is carried once it can sign (FIX 4851,
-    /// 12291). A wait a root request's pickup committed is cleared once the
-    /// fold holds that request cancelled or superseded, byte-free (FIX
+    /// 12291), as is each membership change's record no host issuer signed
+    /// (FIX 12335). A wait a root request's pickup committed is cleared once
+    /// the fold holds that request cancelled or superseded, byte-free (FIX
     /// 5582). The machine
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
@@ -116,6 +117,9 @@ impl Vault {
         // A revoke this install could not carry when the owner made it is
         // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
         self.carry_owed_revokes();
+        // So is the record of a membership change no host issuer signed
+        // (FIX 12335).
+        self.carry_owed_membership_executions();
         // An import mark this install could not sign when the owner
         // imported is signed once it can (FIX 12291), whether or not any
         // work names this install now.

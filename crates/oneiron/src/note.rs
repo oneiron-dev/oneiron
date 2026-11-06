@@ -231,6 +231,7 @@ mod side_keys;
 mod sync_rows;
 pub(crate) use citation_erase::{
     any_citation_erase_pending, ensure_citations_ready, erase_citations_in_txn,
+    erase_restored_citations_in_txn,
 };
 pub(crate) use pin_index::citation_delete_scope_exists;
 #[cfg(feature = "sync")]
