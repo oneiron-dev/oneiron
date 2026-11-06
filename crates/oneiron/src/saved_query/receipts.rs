@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::llm::LlmUsage;
-use crate::llm::decision::ProviderPin;
+use crate::model_decision::ProviderPin;
 use crate::{Error, Result};
 
 use super::evaluator::{EvaluationRequest, SavedQueryEvaluator, WakeVisit};

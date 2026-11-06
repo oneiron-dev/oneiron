@@ -31,7 +31,7 @@ mod slips;
 pub(crate) use binding_admission::{
     AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
 };
-pub(crate) use client_address::ClientAddress;
+pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality, proved_peer};
 pub(crate) use machine_proof::{
@@ -223,6 +223,7 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
             return Ok(false);
         }
         vault.sync_state_put_in_write_txn(txn, &key, &[])?;
+        vault.note_non_authority_revoke_in_txn(txn)?;
         Ok(true)
     })?)
 }

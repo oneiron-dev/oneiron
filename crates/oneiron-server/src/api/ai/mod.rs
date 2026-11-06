@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
+use oneiron::llm::VaultRef;
 use oneiron::llm::manifest::ModelRole;
 
 use crate::auth::{CoreAuth, CoreScope};
@@ -103,6 +104,9 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
         return error.into_response();
     }
     let mut models = server.ai.models_live_status();
+    models.session_allocations = crate::models::session_allocations_for_vault(&VaultRef(
+        server.vault().vault_key_vault_id(),
+    ));
     models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
     Json(serde_json::json!({

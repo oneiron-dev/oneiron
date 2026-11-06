@@ -937,6 +937,18 @@ reuses its reply's kept prefix sends today's opener in place of the captured
 one; a Continue keeps the opener its saved reply followed. `POST
 /v1/core/context-board` and `ai.reply` still render the one frame.
 
+### What the status route says about the vault's sessions
+
+`GET /v1/ai/status` lists, under `models.session_allocations` (FIX10370),
+one row per device worker that holds this vault's sessions: the device, the
+worker, how many sessions stand, how many the worker has reported, and the
+summed reported bytes. A row's bytes stay null until every session on it is
+both reported and measured; an unreported session is counted, never zeroed
+in. The rows name no handle, binding, epoch or conversation, cover only the
+vault the server has mounted, and are non-additive facts: they neither
+alter the worker's own row nor any quota or admission, and a row's bytes
+mix device pages with host snapshots.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -959,12 +971,18 @@ off.
 
 ## 6. Code mode (MCP `execute_code`)
 
-`execute_code` runs a task as generated JavaScript: each step's program comes
-from the `generative_reasoner` seat and runs in the checked-in QuickJS
-component, calling the vault through each verb at its SDK path
-(`vault.recall(...)`, `self.focus.refresh(...)`) under the
-connector's own grants. It is listed on `tools/list` only when the seat has a
-rung and a prompt package for the executor is named:
+`execute_code` runs a task as generated TypeScript or JavaScript: each step's
+program comes from the `generative_reasoner` seat and runs in the checked-in
+QuickJS component, calling the vault through each verb at its SDK path
+(`vault.recall(...)`, `self.focus.refresh(...)`) under the connector's own grants.
+JavaScript that parses in the guest's async body runs byte for byte. TypeScript
+is lowered by Oxc; declarations that need script-level grammar can be prepared
+before the guest envelope, with their original source positions retained.
+This adds no module loader. An unsuccessful preparation still leaves the
+original program for QuickJS to report, with its preparation note.
+
+It is listed on `tools/list` only when the seat has a rung and a prompt package
+for the executor is named:
 
 ```toml
 [models.code_mode]
@@ -2874,9 +2892,15 @@ and nothing waits on the answer. Without the row, no topic is asked and every
 import stays private.
 
 The System One seat takes noul and choice questions. Each is one call,
-admitted and settled on its meter. It never runs on a relay vault. The
-escalation read is metered on `models.raw_budget_units`. A model rung blocks
-on the server's runtime, so a caller runs a ladder call on a blocking thread.
+admitted and settled through its paid connector. A call with a caller's run
+uses that run. Otherwise the seat opens a run with the server's model account
+and receipt sink, on its own meter outside a verdict or the caller's line
+and bound room payer inside one. The connector still uses the configured
+customer key and its existing token units; the run's receipts retain the
+payer and evidence. Failed or cancelled calls keep their reservation as
+spend. It never runs on a relay vault. The escalation read is metered on
+`models.raw_budget_units`. A model rung blocks on the server's runtime, so a
+caller runs a ladder call on a blocking thread.
 
 An omitted `models.decisions.system_one.budget_units` takes `models.raw_budget_units`. An omitted `models.decisions.big.budget_units` takes `models.raw_budget_units` too. Each is uncapped when the raw meter is. The Local-vision seat spends on `models.raw_budget_units` too, so it is uncapped when the raw meter is.
 

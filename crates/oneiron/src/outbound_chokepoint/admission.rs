@@ -647,6 +647,23 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
+    let ordinary_press = match pinned_approval {
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate =>
+        {
+            Some(approval)
+        }
+        Some(approval)
+            if approval.family
+                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
+        {
+            Some(approval)
+        }
+        _ => None,
+    };
+    crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, ordinary_press)?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
@@ -670,7 +687,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
-    super::types::keep_spent_presses(vault, pending.id, pinned_approval, co_spent)?;
+    super::types::keep_spent_presses(
+        vault,
+        pending.id,
+        pinned_approval.filter(|_| ordinary_press.is_none()),
+        co_spent,
+    )?;
 
     let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));

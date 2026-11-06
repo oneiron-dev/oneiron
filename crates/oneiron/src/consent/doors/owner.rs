@@ -185,6 +185,40 @@ impl Vault {
         Ok(())
     }
 
+    /// The protected queue-exhaust reader's key. The request's real Owner
+    /// proof supplies current ownership; the actual read credential or host
+    /// action still supplies its existing bounds and liveness checks.
+    pub fn queue_check_owner_read_key(
+        &self,
+        owner: &AuthenticatedOwner,
+        proof: Option<&crate::authority::VerifiedSlip>,
+        action: Option<&crate::authority::HostActionAuthority>,
+    ) -> Result<crate::claim::ScopedReadActorKey> {
+        let txn = self.store.env.read_txn()?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        let refused = || {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "queue-check read credential does not belong to this Owner",
+            ))
+        };
+        let key = if let Some(action) = action {
+            if action.actor().entity_ref() != actor
+                || action.actor().actor_class() != crate::edge::EdgeActorClass::Human
+            {
+                return Err(refused());
+            }
+            action.guard().holds_in(self, &txn)?;
+            action.read_key()
+        } else if let Some(proof) = proof {
+            let holder_is_authenticated_owner = proof.claims().holder_ref == actor.to_hex();
+            self.credential_read_key_in_txn(&txn, proof, actor, holder_is_authenticated_owner)?
+                .ok_or_else(refused)?
+        } else {
+            crate::claim::ScopedReadActorKey::vault_owner(actor)
+        };
+        Ok(key.guarded_by_owner_proof(owner.clone()))
+    }
+
     /// The vault owner's read key for the person `owner` proves, held to
     /// that proof (WILL-PLAN L13 row 01): a request that authenticated its
     /// owner with no slip of its own (a managed vault's attested owner) reads
