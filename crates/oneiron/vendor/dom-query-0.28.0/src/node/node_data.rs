@@ -311,25 +311,16 @@ impl Element {
         &mut self,
         attrs: html5ever::tokenizer::TagAttributes,
     ) {
-        let attrs = match attrs.into_unreserved() {
-            Ok(attrs) => return self.add_attrs_if_missing(attrs),
-            Err(attrs) => attrs,
-        };
-        let existing_names = self
-            .attrs
-            .iter()
-            .map(|attr| attr.name.clone())
-            .collect::<Vec<_>>();
-        let missing = attrs
-            .into_iter()
-            .map(wrap_attr)
-            .filter(|attr| !existing_names.contains(&attr.name));
-        if self.attrs_reservation.is_some() {
-            for attr in missing {
-                self.attrs.push(attr);
+        let original_len = self.attrs.len();
+        for attr in attrs {
+            let attr = wrap_attr(attr);
+            if self.attrs[..original_len]
+                .iter()
+                .any(|existing| existing.name == attr.name)
+            {
+                continue;
             }
-        } else {
-            self.attrs.extend(missing);
+            self.attrs.push(attr);
         }
     }
 
