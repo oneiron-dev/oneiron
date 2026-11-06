@@ -327,6 +327,26 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::identity_topology::redact_author_attribution_in_txn(vault, wtxn, target, now)
     }
 
+    fn drive_enrollment_outbound_leg(
+        &self,
+        vault: &crate::Vault,
+        local_node_id: u64,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        sender: &mut (dyn crate::outbound_consent::OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<
+        crate::campaign::enrollment::EnrollmentLegDrive,
+        crate::outbound_intent_ledger::IntentLedgerError,
+    > {
+        crate::campaign::enrollment::drive_enrollment_outbound_leg(
+            vault,
+            local_node_id,
+            attempt,
+            sender,
+            now_ms,
+        )
+    }
+
     fn record_comm_send_receipt(
         &self,
         vault: &crate::Vault,
@@ -373,6 +393,53 @@ impl StoreRecordHooks for EngineRecordHooks {
 
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()> {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)
+    }
+
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_thread_event_in_txn(
+            vault,
+            txn,
+            thread_ref,
+            party,
+            joined,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()> {
+        crate::comm::record_comm_inbound_reply_in_txn(
+            vault,
+            wtxn,
+            party,
+            channel_class,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()> {
+        crate::comm::record_comm_inbound_stop_in_txn(vault, wtxn, party, channel_class, occurred_at)
     }
 
     fn forget_claim_reassignments_in_txn(

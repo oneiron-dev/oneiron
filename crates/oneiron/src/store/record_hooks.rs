@@ -209,6 +209,19 @@ pub trait StoreRecordHooks: Send + Sync {
         now: u64,
     ) -> Result<Vec<EntityId>>;
 
+    /// The engine's `campaign::enrollment::drive_enrollment_outbound_leg`.
+    fn drive_enrollment_outbound_leg(
+        &self,
+        vault: &crate::Vault,
+        local_node_id: u64,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        sender: &mut (dyn crate::outbound_consent::OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<
+        crate::campaign::enrollment::EnrollmentLegDrive,
+        crate::outbound_intent_ledger::IntentLedgerError,
+    >;
+
     /// The engine's `comm::record_comm_send_receipt`.
     fn record_comm_send_receipt(
         &self,
@@ -244,6 +257,37 @@ pub trait StoreRecordHooks: Send + Sync {
 
     /// The engine's `identity_topology::validate_identity_topology_event_body_bytes`.
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()>;
+
+    /// The engine's `comm::record_comm_thread_event_in_txn`.
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()>;
+
+    /// The engine's `comm::record_comm_inbound_reply_in_txn`.
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
+
+    /// The engine's `comm::record_comm_inbound_stop_in_txn`.
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()>;
 
     /// The engine's `identity_topology::forget_claim_reassignments_in_txn`.
     fn forget_claim_reassignments_in_txn(
