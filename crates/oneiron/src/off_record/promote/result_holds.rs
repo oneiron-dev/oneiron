@@ -115,12 +115,17 @@ impl FloorWrites<'_> {
             return Ok(Vec::new());
         }
         let room = self.store.session_view(self.room()?)?;
-        results
-            .iter()
-            .map(|(_, attachment)| {
-                vault.promote_off_record_message_result_body(session_ref, &room, attachment)
-            })
-            .collect()
+        let mut imported = Vec::with_capacity(results.len());
+        for (_, attachment) in &results {
+            match vault.promote_off_record_message_result_body(session_ref, &room, attachment) {
+                Ok(pin) => imported.push(pin),
+                Err(error) => {
+                    vault.discard_unnamed_promoted_bodies(imported);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(imported)
     }
 
     /// Each result MESSAGE of `results` keeps its hold on the body in base,
