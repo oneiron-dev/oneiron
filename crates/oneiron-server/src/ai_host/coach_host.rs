@@ -32,6 +32,9 @@
 //! nightly drafter retrain trains the vault's own drafter on its own thread
 //! while its night stays parked ([`super::drafter`], FIX 14974).
 use std::collections::BTreeMap;
+mod wake;
+pub(super) use wake::WakeExecutor;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -125,6 +128,10 @@ pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    let _ = server
+        .ai
+        .coach_host_wake
+        .set(tokio::runtime::Handle::current());
     // The Coach's model drafts the digest settings steps once a round of
     // this worker served, so the digest timer then only queues their job
     // (FIX 5609); until then, after a round that errs, once the worker ends
@@ -249,7 +256,7 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
     Ok(())
 }
 
-fn run_one(
+pub(super) fn run_one(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,

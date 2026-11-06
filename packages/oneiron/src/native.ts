@@ -56,6 +56,12 @@ selfFocusWakes(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
+selfBoardLayout(input: unknown): unknown
+selfBoardFold(input: unknown): unknown
+selfBoardUnfold(input: unknown): unknown
+selfBoardSize(input: unknown): unknown
+selfBoardFilter(input: unknown): unknown
+selfBoardReplace(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -1074,6 +1080,8 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultProductivityCreate(input: unknown): unknown
 vaultProductivityTree(input: unknown): unknown
+vaultIngestAgUiImport(input: unknown): unknown
+vaultIngestAgUiRead(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown

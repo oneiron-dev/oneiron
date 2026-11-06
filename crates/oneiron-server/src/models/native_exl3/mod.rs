@@ -65,7 +65,7 @@ use oneiron_llm_openai::{
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::openai::{OpenAiHttp, carry_reply_evidence, send_format};
-use super::worker_host::{self, NativeRoute};
+use super::worker_host::{self, NativeLaunch, NativeRoute};
 use transport::{Call, Channel, Cut, Event, Start};
 
 /// What a worker's `resident_mib` must say it measures to be its resident
@@ -250,9 +250,10 @@ async fn begin(
         .and_then(|observed| observed.identity.backend_epoch.as_ref())
         .map(|epoch| epoch.as_str().to_owned())
         .ok_or(OpenAiCompatTransportError::Connection)?;
-    let (socket, manifest_sha256) = route
-        .launch()
+    let launch = route
+        .native_launch()
         .ok_or(OpenAiCompatTransportError::Connection)?;
+    let manifest_sha256 = launch.manifest_sha256().to_owned();
     if lease.revoked() {
         return Err(OpenAiCompatTransportError::Connection);
     }
@@ -272,7 +273,7 @@ async fn begin(
         Some(manifest) => {
             worker_host::open_turn(
                 route,
-                &socket,
+                &launch,
                 &epoch,
                 lease.observed(),
                 manifest,
@@ -287,7 +288,7 @@ async fn begin(
     // A plain retry after a refused session is the same call: it reuses the
     // ticket, grant, class, priority and deadline.
     let mut started = Call::start(
-        &socket,
+        &launch,
         &epoch,
         &conversation,
         params,
@@ -309,7 +310,7 @@ async fn begin(
             .await
             .map_err(|_| OpenAiCompatTransportError::Connection)?;
         started = Call::start(
-            &socket,
+            &launch,
             &epoch,
             &conversation,
             params,
@@ -680,14 +681,10 @@ pub(super) async fn drain_and_shutdown(socket: &Path) {
 /// sent once, buffered, with the epoch the hello named. Returns the hello
 /// and the reply in the HTTP reply's shape.
 pub(super) async fn qualify(
-    socket: &Path,
+    launch: &NativeLaunch,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    let mut channel = Channel::connect(socket)
-        .await
-        .map_err(|_| WorkerFailure::Unreachable)?;
-    let hello = channel
-        .ask("hello", json!({}))
+    let (channel, hello) = Channel::connect_launch(launch, None)
         .await
         .map_err(|_| WorkerFailure::Unreachable)?;
     drop(channel);
@@ -698,7 +695,7 @@ pub(super) async fn qualify(
         .to_owned();
     let (conversation, params) = wire::split_request(request);
     let mut call = Call::start(
-        socket,
+        launch,
         &epoch,
         &conversation,
         params,

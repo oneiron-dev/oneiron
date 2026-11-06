@@ -130,7 +130,9 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+pub(crate) use worker_host::{
+    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+};
 // FIX 14976: each served vault's drafter bindings, served on this process's
 // own managed EXL3 worker.
 pub use drafter_serving::VaultLoadSet;
@@ -378,11 +380,22 @@ fn build_provider(
         }
         ProviderKind::AnthropicCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::ApiKeyHeader)?;
+            let engine_models = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             Arc::new(AnthropicMessagesBackend::new(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
                     cap: output_cap(provider),
+                    engine_models,
                 },
             ))
         }
