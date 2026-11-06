@@ -54,6 +54,7 @@ pub(crate) use dependency_registration::{
 mod lmdb_aux;
 pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
+pub(crate) use lmdb_claim::claim_body_in_read;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
