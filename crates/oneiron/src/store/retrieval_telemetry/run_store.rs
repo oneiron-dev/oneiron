@@ -786,12 +786,33 @@ pub(super) fn stage_retrieval_run_delete(
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
 ) -> Result<()> {
+    stage_retrieval_run_delete_with_memory(target, wtxn, run_id, None)
+}
+
+pub(super) fn stage_retrieval_run_delete_with_memory(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    run_id: RetrievalRunId,
+    mut memory: Option<&mut crate::host_memory::MemoryLease>,
+) -> Result<()> {
     super::turn_index::delete_for_run(target, wtxn, run_id)?;
     delete_retrieval_trace_fork_indexes_for_run(target, wtxn, run_id)?;
     RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
     super::retention::delete_retrieval_age(target, wtxn, run_id)?;
-    RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
-    RETRIEVAL_RUN.delete(target, wtxn, &run_id)?;
+    if let Some(memory) = memory.as_deref_mut() {
+        RETRIEVAL_RUN_PROVISIONAL.delete_with_key_capacity(target, wtxn, &run_id, |bytes| {
+            memory.materialized(0, bytes);
+        })?;
+    } else {
+        RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+    }
+    if let Some(memory) = memory {
+        RETRIEVAL_RUN.delete_with_key_capacity(target, wtxn, &run_id, |bytes| {
+            memory.materialized(0, bytes);
+        })?;
+    } else {
+        RETRIEVAL_RUN.delete(target, wtxn, &run_id)?;
+    }
     Ok(())
 }
 
