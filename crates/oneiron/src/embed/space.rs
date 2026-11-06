@@ -49,7 +49,7 @@ pub(super) mod repo_projection;
 #[cfg(feature = "sync")]
 pub use replica::MediaVectorReplica;
 #[cfg(feature = "sync")]
-pub(crate) use replica::reuse_home_text_media_vectors;
+pub(crate) use replica::reuse_home_media_vectors;
 
 pub use crate::store::embedding::{
     EMBEDDING_SETUP_LEARNED_AT, EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS,

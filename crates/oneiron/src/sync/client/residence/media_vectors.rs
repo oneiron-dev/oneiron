@@ -1,4 +1,4 @@
-//! Own-peer text media-vector reuse, separate from canonical window bytes.
+//! Own-peer media-vector reuse, separate from canonical window bytes.
 
 use base64::Engine;
 use serde_json::json;
@@ -37,9 +37,7 @@ pub(crate) async fn request_media_vectors(
     for id in ids {
         let rows = {
             let txn = vault.store.env.read_txn().map_err(|_| refused())?;
-            crate::embed::text_vector_sources_in_txn(vault, &txn, id)
-                .map_err(|_| refused())?
-                .map(|(_, rows)| rows)
+            crate::embed::media_vector_source_rows_in_txn(vault, &txn, id).map_err(|_| refused())?
         };
         let Some(rows) = rows else {
             continue;
