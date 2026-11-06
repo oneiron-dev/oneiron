@@ -4,6 +4,7 @@ use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
     LlmResponse,
 };
+use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step,
     step_claim_matches_request, step_index_lookup_in_txn,
@@ -184,6 +185,7 @@ pub(super) enum StepRecovery {
         binding: StepEffectBinding,
         payload: Vec<u8>,
         owners: StepStateOwners,
+        source: StepSource,
     },
 }
 
@@ -216,19 +218,26 @@ pub(super) fn recovery_in_txn(
             return Ok(Some(StepRecovery::Memo { binding, response }));
         }
     }
-    Ok(state.and_then(|row| {
-        if matches!(
-            row.progression,
-            StepProgression::ResponseReceived | StepProgression::Logged
-        ) {
-            row.response_payload.map(|payload| StepRecovery::Payload {
-                binding,
-                payload,
-                owners: row.owners,
-            })
-        } else {
-            None
-        }
+    let Some(row) = state else {
+        return Ok(None);
+    };
+    if !matches!(
+        row.progression,
+        StepProgression::ResponseReceived | StepProgression::Logged
+    ) {
+        return Ok(None);
+    }
+    let payload = row.response_payload.ok_or(Error::InvalidClaimBody(
+        "dreamer step saved response is missing",
+    ))?;
+    let source = row.source.ok_or(Error::InvalidClaimBody(
+        "dreamer step saved source is missing",
+    ))?;
+    Ok(Some(StepRecovery::Payload {
+        binding,
+        payload,
+        owners: row.owners,
+        source,
     }))
 }
 
@@ -250,6 +259,7 @@ pub(super) fn recover_step(
             binding,
             payload,
             owners,
+            source,
         } => {
             let response: LlmResponse = serde_json::from_slice(&payload)?;
             // Resolve the same policy before any terminal write, as on
@@ -259,6 +269,7 @@ pub(super) fn recover_step(
                 ctx,
                 binding,
                 owners,
+                &source,
                 request,
                 &response,
                 &payload,
@@ -309,6 +320,8 @@ async fn durable_step(
         return Err(DurableStepError::FinalizeRefused);
     }
 
+    let source = StepSource::of(ctx);
+
     // An owner already gone keeps the row's erased skeleton (FIX 6226):
     // the step is over before it is admitted, asked or paid for.
     if step_state_write_owned(
@@ -317,6 +330,7 @@ async fn durable_step(
         &step_hash,
         StepProgression::Started,
         StepStateOwners::of(ctx),
+        None,
         None,
         ctx.now_ms,
     )? == StepStateDisposition::Erased
@@ -540,6 +554,7 @@ async fn durable_step(
         StepProgression::ResponseReceived,
         StepStateOwners::of(ctx),
         Some(&payload),
+        Some(&source),
         ctx.now_ms,
     )? == StepStateDisposition::Erased
     {
@@ -556,6 +571,7 @@ async fn durable_step(
             step_hash,
         },
         StepStateOwners::of(ctx),
+        &source,
         &request,
         &response,
         &payload,
