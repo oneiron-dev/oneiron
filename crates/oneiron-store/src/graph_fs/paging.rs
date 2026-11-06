@@ -115,12 +115,19 @@ impl CursorScope {
 
     /// The position a token sealed, if this scope sealed it.
     pub fn open<P: SealedPosition>(&self, token: Option<&str>) -> Result<Option<P>> {
+        self.open_with(token, |bytes| Ok(P::from_bytes(bytes)))
+    }
+
+    /// Authenticates the token before running a fallible position decoder.
+    pub fn open_with<P>(
+        &self,
+        token: Option<&str>,
+        decode: impl FnOnce(&[u8]) -> Result<Option<P>>,
+    ) -> Result<Option<P>> {
         token
             .map(|token| {
-                self.open_bytes(token)
-                    .as_deref()
-                    .and_then(P::from_bytes)
-                    .ok_or_else(invalid_cursor)
+                let bytes = self.open_bytes(token).ok_or_else(invalid_cursor)?;
+                decode(&bytes)?.ok_or_else(invalid_cursor)
             })
             .transpose()
     }
