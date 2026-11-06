@@ -148,7 +148,7 @@ impl Vault {
         let filter = payload::ImageFilter::of_snapshot(&self.store, &txn)?;
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
-        let mut credential_keys_unavailable = Vec::new();
+        let mut credential_source_keys = Vec::new();
         // Window snapshots kept as they rest, warned by count (FIX 7107).
         let mut kept_windows = 0;
         // Pad rows the image carries with their pad, counted in its receipt
@@ -160,14 +160,14 @@ impl Vault {
                     return Ok(None);
                 }
                 if entry.name == "entities"
-                    && let Some(observed) = super::credential_custody::source_key_unavailable_in_txn(
+                    && let Some(observed) = super::credential_custody::source_key_observation_in_txn(
                         &self.store,
                         &txn,
                         key,
                         value,
                     )
                 {
-                    credential_keys_unavailable.push(observed);
+                    credential_source_keys.push(observed);
                 }
                 // Every body a row names goes with it, sealed under its
                 // instance: a result body's file, a file-plane ASSET's (FIX
@@ -281,12 +281,16 @@ impl Vault {
         };
         // Do not expose an owner-compartment row's identity or key state
         // beside it under the image's wider seal.
-        credential_keys_unavailable.retain(|observed| {
+        credential_source_keys.retain(|observed| {
             databases
                 .get("entities")
                 .is_some_and(|rows| observed.matches_rows(rows))
         });
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
+        // Each window the payload split rides as its carrier (FIX 10277).
+        let window_carriers = payload
+            .as_ref()
+            .map_or_else(Vec::new, |payload| payload.window_carriers.clone());
         // The artifact's snapshot id, minted before anything is sealed to
         // it: the host-order member binds it, never the image's digest.
         let mut snapshot = [0u8; 32];
@@ -297,13 +301,14 @@ impl Vault {
             version: super::image::IMAGE_VERSION,
             created_at,
             databases,
-            credential_keys_unavailable,
+            credential_source_keys,
             bodies,
             sealed_bodies,
             inline_bodies,
             checkpoint_sequence: None,
             host_holds,
             snapshot: None,
+            window_carriers,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         tracing::info!(

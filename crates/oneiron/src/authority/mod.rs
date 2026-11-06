@@ -67,6 +67,7 @@ mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
 mod current_scope;
+mod device_succession;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
@@ -117,6 +118,7 @@ mod managed_owner_check;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
@@ -124,6 +126,7 @@ mod owner_key_enrollment_door;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
+mod owner_work_diagnostics;
 mod past_grant_standing;
 mod pinned_root;
 mod policy_setting_choice;
@@ -194,11 +197,11 @@ pub use oneiron_authority::authority::{
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
-    WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
-    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    TrustedContactSlipBinding, WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord,
+    WorldPrivacy, WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
+    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
+    effective_slip_comm, encode_authority_log_entry_body, federation_pact_transcript,
+    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
     sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
@@ -327,6 +330,8 @@ pub use mesh_machine::{
     MeshMachineBinding,
 };
 pub use observation_policy::*;
+// The origin cut a repo manifest is written and judged by (FIX 15740).
+pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
@@ -415,6 +420,7 @@ pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
@@ -431,7 +437,7 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
-use readonly_fold::authority_view_readonly_for_store_in_txn;
+pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
 pub(crate) use readonly_fold::{

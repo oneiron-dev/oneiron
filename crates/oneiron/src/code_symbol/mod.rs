@@ -18,7 +18,7 @@ pub use document_view::{
 };
 pub use semantic_diff::{
     CodeContentVersion, CodeSemanticChange, code_text_diff, render_code_semantic_diff,
-    semantic_code_diff,
+    semantic_code_diff, whole_file_code_diff,
 };
 mod text_diff;
 mod types;

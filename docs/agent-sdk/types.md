@@ -1365,6 +1365,8 @@ class Oneiron:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
         @property
         def custody(self) -> "Oneiron._VaultCustodyVerbs": ...
+        @property
+        def mail(self) -> "Oneiron._VaultMailVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -2558,20 +2560,25 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs": ...
         @property
+        def artifacts(self) -> "Oneiron._VaultOffRecordArtifactsVerbs": ...
+        @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs": ...
         @property
         def rooms(self) -> "Oneiron._VaultOffRecordRoomsVerbs": ...
     class _VaultOffRecordNotesVerbs:
         def create(self, spec: Facade.OffRecordNoteRequest) -> Facade.EntityRefReceipt:
-            """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+            """A solo session's creator or the vault's owner, or a room stretch's current member, writes one NOTE into the off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+    class _VaultOffRecordArtifactsVerbs:
+        def save(self, spec: Facade.OffRecordArtifactSaveRequest) -> Facade.OffRecordArtifactSaved:
+            """A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver."""
     class _VaultOffRecordClaimsVerbs:
         def upsert(self, spec: Facade.OffRecordClaimRequest) -> Facade.CommitReceipt:
-            """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+            """A solo session's creator or the vault's owner, or a room stretch's current member, admits one claim into the off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
     class _VaultOffRecordRoomsVerbs:
         def status(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
         def start(self, spec: Facade.OffRecordRoomStartRequest) -> Facade.OffRecordRoomView:
-            """A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential."""
+            """A person, or an agent holding this vault's write grant, starts an off-record stretch in a room they belong to, on their own credential."""
         def witness(self, spec: Facade.OffRecordRoomWitnessRequest) -> Facade.WitnessReceipt:
             """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
         def save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
@@ -2579,7 +2586,7 @@ class Oneiron:
         def save_from_here(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
         def export(self, spec: Facade.OffRecordRoomExportRequest) -> Facade.OffRecordRoomExport:
-            """A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
+            """A person exports their visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
         def suggest_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
         def confirm_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
@@ -4167,6 +4174,55 @@ class Oneiron:
             """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
         def folder(self, spec: Facade.CustodyMemberRef) -> Facade.CustodySetRevision:
             """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
+    class _VaultMailVerbs:
+        @property
+        def pack(self) -> "Oneiron._VaultMailPackVerbs": ...
+        @property
+        def sources(self) -> "Oneiron._VaultMailSourcesVerbs": ...
+        @property
+        def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
+        @property
+        def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
+        def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
+            """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+    class _VaultMailPackVerbs:
+        def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
+            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+    class _VaultMailSourcesVerbs:
+        def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailSourceView]:
+            """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
+        @property
+        def settings(self) -> "Oneiron._VaultMailSourcesSettingsVerbs": ...
+        @property
+        def members(self) -> "Oneiron._VaultMailSourcesMembersVerbs": ...
+        def audience_events(self, spec: Facade.MailSourceRef) -> list[Facade.SourceAudienceEventView]:
+            """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
+        def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
+            """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+    class _VaultMailSourcesSettingsVerbs:
+        def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
+            """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
+    class _VaultMailSourcesMembersVerbs:
+        def set(self, spec: Facade.MailSourceMembersRequest) -> Facade.MailSourceView:
+            """Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on."""
+    class _VaultMailThreadsVerbs:
+        def share(self, spec: Facade.MailThreadShareRequest) -> Facade.MailThreadShareReceipt:
+            """Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox."""
+        def unshare(self, spec: Facade.MailThreadShareRequest) -> Facade.MailThreadShareReceipt:
+            """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
+        def read(self, spec: Facade.MailThreadRequest) -> Facade.MailThreadView:
+            """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+    class _VaultMailComplianceVerbs:
+        def setting(self, spec: Facade.EmptyRequest | None = None) -> Facade.MailComplianceSettingView:
+            """Whether org compliance search across mailboxes is on; off by default."""
+        def set(self, spec: Facade.MailComplianceSetRequest) -> Facade.MailComplianceSettingView:
+            """Turns org compliance search on or off, by the vault's Owner or an Admin, with a stated purpose kept in the compliance log."""
+        def log(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailComplianceEventView]:
+            """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
+        def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
+            """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
@@ -4220,7 +4276,7 @@ class Oneiron:
         @property
         def browser(self) -> "Oneiron._SelfBrowserVerbs": ...
         def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
-            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles."""
         def compact(self, spec: Facade.FoldCompactRequest) -> Facade.FoldReply[Facade.FoldCompactAsked]:
             """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
         def unfold(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldUnfolded]:
