@@ -82,6 +82,9 @@ pub(crate) fn erase_call_request_in_txn(
         vault, wtxn, attempt_id, call_seq,
     )?;
     forget_remote_task_in_txn(vault, wtxn, &id)?;
+    // The form question its remote task parked for the owner goes with the
+    // request: its row, its sealed carrier and its Ask (FIX 16029).
+    vault.forget_remote_task_input_in_txn(wtxn, &id)?;
     if let Some(erased) = get_ledger_record(vault, &*wtxn, &id)? {
         settle_reservation_in_txn(vault, wtxn, &erased)?;
     }
