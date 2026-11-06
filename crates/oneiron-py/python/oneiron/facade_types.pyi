@@ -1157,6 +1157,7 @@ class ShapeApplyItem(TypedDict):
     approval: NotRequired[ShapeApprovalDependencies | None]
     slips_kept: NotRequired[bool]
     receipt_refs: NotRequired[list[str] | None]
+    setup_decision: NotRequired[str | None]
 class ShapeApplyRun(TypedDict):
     run_id: str
     root: str

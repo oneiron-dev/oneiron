@@ -99,6 +99,81 @@ pub(crate) fn bind_agent_birth_in_txn(
     id: &EntityId,
     created: &AgentDefinition,
 ) -> Result<Option<(EntityId, Vec<u8>)>> {
+    let Some(snapshot) = agent_birth_snapshot_in_txn(store, txn, id, created)? else {
+        return Ok(None);
+    };
+    put_binding(store, txn, id, &snapshot.source, snapshot.hash)?;
+    snapshot.encode(id, created).map(Some)
+}
+
+struct AgentBirthSnapshot {
+    source: EntityId,
+    definition: AgentDefinition,
+    tree: crate::batch::export::ExportFileTree,
+    hash: SkillContentHash,
+}
+
+impl AgentBirthSnapshot {
+    fn encode(self, id: &EntityId, created: &AgentDefinition) -> Result<(EntityId, Vec<u8>)> {
+        super::portable_source::encode_birth_source(
+            id,
+            created,
+            &self.source,
+            &self.definition,
+            self.tree,
+        )
+    }
+}
+
+pub(crate) struct PreparedAgentBirth {
+    source: EntityId,
+    hash: SkillContentHash,
+    asset: (EntityId, Vec<u8>),
+}
+
+impl PreparedAgentBirth {
+    pub(crate) fn entity(&self) -> EntityId {
+        self.asset.0
+    }
+
+    pub(crate) fn apply_binding(
+        self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(EntityId, Vec<u8>)> {
+        put_binding(store, txn, id, &self.source, self.hash)?;
+        Ok(self.asset)
+    }
+}
+
+/// Composes the same native birth bytes without writing their binding. Setup
+/// commits this exact plan only after its Gate allows the candidate.
+pub(crate) fn prepare_agent_birth_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    created: &AgentDefinition,
+) -> Result<Option<PreparedAgentBirth>> {
+    let Some(snapshot) = agent_birth_snapshot_in_txn(store, txn, id, created)? else {
+        return Ok(None);
+    };
+    let source = snapshot.source;
+    let hash = snapshot.hash;
+    let asset = snapshot.encode(id, created)?;
+    Ok(Some(PreparedAgentBirth {
+        source,
+        hash,
+        asset,
+    }))
+}
+
+fn agent_birth_snapshot_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    created: &AgentDefinition,
+) -> Result<Option<AgentBirthSnapshot>> {
     if created.source == crate::claim::ClaimSource::Imported {
         return Ok(None);
     }
@@ -110,7 +185,7 @@ pub(crate) fn bind_agent_birth_in_txn(
         }
         return Ok(None);
     }
-    let (source_id, def) = if let Some(parent) = created.forked_from {
+    let (source_id, definition) = if let Some(parent) = created.forked_from {
         if store.off_record_sessions.contains_entity(&parent)?
             || !crate::vault::live_entity_row_in_txn(store, txn, &parent)?.is_live()
             || !crate::secret_rotation::exhaust_taint_refs_in_txn(store, txn, &parent)?.is_empty()
@@ -131,32 +206,28 @@ pub(crate) fn bind_agent_birth_in_txn(
     } else {
         (*id, created.clone())
     };
-    let skills = read_portable_skills(store, txn, &def)?;
+    let skills = read_portable_skills(store, txn, &definition)?;
     let claims = read_portable_knowledge(store, txn, &source_id)?;
-    let Some(refs) = resolve_agent_skill_refs(&def, &skills) else {
+    let Some(refs) = resolve_agent_skill_refs(&definition, &skills) else {
         return Ok(None);
     };
     let files = agent_pack_files(
         &source_id,
-        &def,
+        &definition,
         &refs,
         &select_agent_knowledge(&source_id, &claims),
     )?;
     let tree = crate::serialize::export_source_tree(&files)?;
-    if let Some(hash) = &tree.content_hash {
-        put_binding(
-            store,
-            txn,
-            id,
-            &source_id,
-            SkillContentHash::parse_hex(hash)?,
-        )?;
-    }
-    if tree.content_hash.is_some() {
-        return super::portable_source::encode_birth_source(id, created, &source_id, &def, tree)
-            .map(Some);
-    }
-    Ok(None)
+    let Some(hash) = tree.content_hash.as_deref() else {
+        return Ok(None);
+    };
+    let hash = SkillContentHash::parse_hex(hash)?;
+    Ok(Some(AgentBirthSnapshot {
+        source: source_id,
+        definition,
+        tree,
+        hash,
+    }))
 }
 
 fn read_portable_skills(
