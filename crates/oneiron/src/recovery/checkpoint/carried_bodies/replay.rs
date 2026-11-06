@@ -95,14 +95,20 @@ impl StartIndex {
     /// Every kept start `txn` holds whose prefix holds an ask a checkpoint
     /// carries apart, with its content pieces (FIX 4192 review fix). A
     /// content piece a kept start that travels whole names stays out: it
-    /// travels with that start, as its whole body did.
+    /// travels with that start, as its whole body did. So does one another
+    /// holder keeps, a descriptor outside the starts' piece paths or a
+    /// result row holding its own body: it travels under its own shared
+    /// body instance, and that holder keeps it whatever the start's rest
+    /// does.
     fn of(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
         let mut index = Self {
             starts: BTreeMap::new(),
             digests: BTreeSet::new(),
         };
         let mut whole_content = BTreeSet::new();
+        let mut scopes = BTreeSet::new();
         for kept in crate::code_run::kept_step_starts_in_txn(store, txn)? {
+            scopes.insert((kept.run, kept.actor));
             let content = crate::code_run::step_start_content_pieces(&kept.bytes)?;
             match crate::code_run::step_start_parts(&kept.bytes) {
                 Some(parts) => {
@@ -112,9 +118,15 @@ impl StartIndex {
                 None => whole_content.extend(content),
             }
         }
-        index
-            .digests
-            .retain(|digest| !whole_content.contains(digest));
+        let mut stripped = BTreeSet::new();
+        for digest in index.digests {
+            if !whole_content.contains(&digest)
+                && !crate::code_run::start_piece_held_apart_in_txn(store, txn, &digest, &scopes)?
+            {
+                stripped.insert(digest);
+            }
+        }
+        index.digests = stripped;
         Ok(index)
     }
 }
