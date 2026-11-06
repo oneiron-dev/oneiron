@@ -24,8 +24,9 @@
 //!
 //! Once a backup lands, what it covered is recorded beside it
 //! (`.<label>.backup-watermark.json`), so a host can tell whether the vault
-//! changed since ([`oneiron::recovery::checkpoint::last_backed_up`]). A
-//! backup asked for is always taken, changed or not.
+//! changed since ([`oneiron::recovery::checkpoint::last_backed_up`]). Its
+//! watermark also distinguishes automatic selection from a whole-vault request.
+//! An explicit backup asked for is always taken, changed or not.
 //!
 //! A restored vault is created sealed (OF-570 maximum tier) by one rule,
 //! [`restore_target_seal`]: over a vault or beside it, at that vault's tier;
@@ -200,6 +201,24 @@ pub(crate) fn take_as(
 ) -> anyhow::Result<BackupOutcome> {
     let produced =
         finalize::produce(vault, plan, owner).map_err(finalize::Unproduced::into_error)?;
+    finish_take(vault, plan, produced)
+}
+
+/// Takes the scheduled automatic selection, never an explicit whole-vault request.
+pub(crate) fn take_automatic(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> anyhow::Result<BackupOutcome> {
+    let produced =
+        finalize::produce_automatic(vault, plan).map_err(finalize::Unproduced::into_error)?;
+    finish_take(vault, plan, produced)
+}
+
+fn finish_take(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    produced: finalize::Produced,
+) -> anyhow::Result<BackupOutcome> {
     // What it covered, beside it now that it landed. A marker that fails
     // leaves the one before, which only reads as changed.
     if let Err(error) = produced.accept(plan) {
