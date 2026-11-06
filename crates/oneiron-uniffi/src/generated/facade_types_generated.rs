@@ -27607,6 +27607,8 @@ pub struct EvalAuthoringReport {
     pub labels_added: u64,
     #[serde(rename = "cohorts_cut")]
     pub cohorts_cut: Vec<String>,
+    #[serde(rename = "source_receipts")]
+    pub source_receipts: Vec<ScopedReadReceipt>,
     #[serde(rename = "cuts_with_coverage_gaps")]
     pub cuts_with_coverage_gaps: u64,
     #[serde(rename = "cohorts_retired")]

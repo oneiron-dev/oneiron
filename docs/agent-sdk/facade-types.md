@@ -3516,7 +3516,7 @@ export type EvalCohortSetup = { inventory_at: number; inventory_digest: string; 
 /** `oneiron::skill_optimize::eval_set::authoring::apply::EvalAuthoringSkip` */
 export type EvalAuthoringSkip = { item: string; reason: string }
 /** `oneiron::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport` */
-export type EvalAuthoringReport = { families_assigned: number; families_extended: number; cases_recorded: number; cases_reused: number; labels_added: number; cohorts_cut: EntityId[]; cuts_with_coverage_gaps: number; cohorts_retired: EntityId[]; cohorts_kept: number; skipped: EvalAuthoringSkip[] }
+export type EvalAuthoringReport = { families_assigned: number; families_extended: number; cases_recorded: number; cases_reused: number; labels_added: number; cohorts_cut: EntityId[]; source_receipts: ScopedReadReceipt[]; cuts_with_coverage_gaps: number; cohorts_retired: EntityId[]; cohorts_kept: number; skipped: EvalAuthoringSkip[] }
 /** `oneiron::skill_optimize::eval_set::doors::EvalAuthorNowRequest` */
 export type EvalAuthorNowRequest = Record<string, never>
 /** `oneiron::skill_optimize::eval_set::doors::EvalAuthoringRef` */
