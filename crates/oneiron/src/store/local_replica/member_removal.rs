@@ -28,13 +28,14 @@ use crate::temporal::TimeRange;
 /// call 4 = A): each one's entity document and typed body, a NOTE's text,
 /// pending slots, review workflow (proposal snapshots, waiting forks) and
 /// kept deck outline, the born-with prose a copy carried and its own derived
-/// index copy, a BLOB_ARTIFACT's deck creation record, retained edit
-/// proposals, version chain and byte holds, an ASSET's hold on the blob it
-/// names, a CLAIM's Gate decisions (left as their retention skeletons) and
-/// pending Gate tray row, the bodies each one owns (a last holder's file goes
-/// to the local collector) and its fetched read caches. Local only: no
-/// receipt, marker, fence or operation. Custody and other lifecycle sidecars
-/// stay for now.
+/// index copy, the recognition prints enrolled for it, a BLOB_ARTIFACT's
+/// deck creation record, retained edit proposals, version chain, byte holds
+/// and its exports' shown author and adaptation lines, an ASSET's hold on
+/// the blob it names, a CLAIM's Gate decisions (left as their retention
+/// skeletons) and pending Gate tray row, the bodies each one owns (a last
+/// holder's file goes to the local collector) and its fetched read caches.
+/// Local only: no receipt, marker, fence or operation. Custody and other
+/// lifecycle sidecars stay for now.
 pub(super) fn discard_owned_payload(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -71,6 +72,7 @@ pub(super) fn discard_owned_payload(
         // index copy (the copies derived from it stay with their owners).
         crate::sync::selector::erase_carried_born_with_in_txn(store, txn, id)?;
         crate::embed::discard_repo_derived_index_copy_in_txn(store, txn, id)?;
+        crate::voice_identity::discard_print_payload_in_txn(store, txn, id)?;
     }
     for id in notes.iter().chain(&artifacts) {
         crate::edit_roundtrip::deck_create::discard_payload_in_txn(store, txn, id)?;
@@ -78,6 +80,7 @@ pub(super) fn discard_owned_payload(
     for artifact in &artifacts {
         crate::edit_settle::purge_artifact_retention_in_txn(store, txn, artifact)?;
         crate::blob_artifact::discard_local_copy_in_txn(store, txn, artifact)?;
+        crate::office_body::discard_export_payload_in_txn(store, txn, artifact)?;
     }
     // An ASSET's body is read for the blob it names while its descriptor
     // still stands; the descriptors go after.
