@@ -501,3 +501,65 @@ pub(crate) fn stamp_blob_project(
     )?;
     Ok(())
 }
+
+/// Settles only the fresh artifact named by an actual queue-check completion.
+/// Its input placement and taint were captured before the command ran. The
+/// structural birth anchor stays the artifact's own; its effective placement
+/// stays the input's, with the output kind and no capability verbs.
+pub(crate) fn stamp_queue_check_exhaust_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    token: &crate::merge_queue::QueueCheckFieldToken<'_>,
+) -> Result<()> {
+    let id = token.artifact_id();
+    let kind = crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+    let facet = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, facet);
+    let prior = SCOPE_RECORD.get(store, txn, &id)?;
+    let scope = token.input_scope().map(|source| {
+        let mut scope = source.clone();
+        scope.bands = singleton(kind);
+        scope.verbs = ScopeAxis::Bottom;
+        if let SensitivityCeiling::AtMost(band) = scope.sensitivity
+            && band < Sensitivity::Sensitive
+        {
+            scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Sensitive);
+        }
+        scope
+    });
+    let Some(prior) = prior else {
+        return if scope.is_none() {
+            Ok(())
+        } else {
+            Err(Error::InvalidClaimBody("unstamped queue-check exhaust"))
+        };
+    };
+    if prior.version != 2
+        || prior.kind != kind
+        || prior.birth_facet != *facet.as_bytes()
+        || (prior.scope != birth && scope.as_ref() != Some(&prior.scope))
+    {
+        return Err(Error::InvalidClaimBody(
+            "queue-check exhaust restamp refused",
+        ));
+    }
+    let Some(scope) = scope else {
+        SCOPE_RECORD.delete(store, txn, &id)?;
+        return bump_scope_revision(store, txn);
+    };
+    if prior.scope == scope {
+        return Ok(());
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )
+}

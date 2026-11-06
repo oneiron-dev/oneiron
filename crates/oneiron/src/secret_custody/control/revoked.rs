@@ -269,6 +269,20 @@ pub(crate) fn drop_revoked_copies_in_txn(
     Ok(drop_inputs_for_in_txn(vault, txn, id)? > 0 || carrier)
 }
 
+pub(crate) fn drop_revoked_copies_for_store_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let carrier = super::super::transition::drop_sealed_carrier_for_store_in_txn(store, txn, id)?;
+    let fold = crate::authority::authority_view_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    Ok(super::input::drop_inputs_with_fold_in_txn(store, txn, id, &fold)? > 0 || carrier)
+}
+
 /// Whether an admitted custody revoke names record `id` in `txn`'s fold:
 /// terminal for it here (CALLS CUSTODY_CONCURRENT_ACTIVE), settled here yet
 /// or not.

@@ -46,7 +46,9 @@ pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
-pub(crate) use self::deferral::{SELECTION_DEFERRED_REASON, selection_deferred};
+pub(crate) use self::deferral::{
+    BACKLOG_DEFERRED_REASON, SELECTION_DEFERRED_REASON, selection_deferred,
+};
 pub use self::free_time::*;
 pub(crate) use self::home::reelect_home_in_txn;
 pub(crate) use self::lease_fence::DreamerTryLease;

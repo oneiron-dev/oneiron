@@ -9,6 +9,9 @@
 //! What a finished stage of the parse gives back stays in the lease for the
 //! next one, so the lease holds the parse's peak. It is held until the
 //! inspection returns.
+#[cfg(unix)]
+mod isolated;
+
 use super::ingress::{MEMORY_WAIT, memory_refused};
 use crate::machine::{MachineMemory, MemoryLease, MemoryRefusal};
 use axum::response::Response;
@@ -66,6 +69,47 @@ pub(super) fn inspected_from_vault(
     let reserved = lease.bytes();
     lease.materialized(reserved, u64::try_from(pdf.len()).unwrap_or(u64::MAX));
     inspected(lease, deadline, &pdf, stream_decode_bytes)
+}
+
+/// Geometry uses an installed inspection worker when available.
+/// Hosts without that worker keep their existing native path; installation
+/// is not a new prerequisite for an already working geometry request.
+pub(super) fn inspected_with_worker(
+    server: &crate::server::SyncServer,
+    lease: MemoryLease,
+    deadline: Instant,
+    pdf: &[u8],
+    stream_decode_bytes: u64,
+) -> Result<Vec<PageGeometry>, Response> {
+    #[cfg(unix)]
+    if server
+        .organs
+        .spec(oneiron_organ_host::seal::SEAL_ORGAN)
+        .is_some_and(|spec| {
+            spec.verbs
+                .iter()
+                .any(|verb| verb == oneiron_organ_host::seal::VERB_INSPECT)
+        })
+    {
+        return isolated::inspected(server, lease, deadline, pdf, stream_decode_bytes);
+    }
+    let _ = server;
+    inspected(lease, deadline, pdf, stream_decode_bytes)
+}
+
+/// The unknown-length body's existing post-read lease and deadline, shared
+/// with the isolated dispatch once that lease names the actual input bytes.
+pub(super) fn inspected_anonymous_in_memory(
+    server: &crate::server::SyncServer,
+    memory: &MachineMemory,
+    pdf: &[u8],
+    stream_decode_bytes: u64,
+) -> Result<Vec<PageGeometry>, Response> {
+    let deadline = Instant::now() + MEMORY_WAIT;
+    let bytes = u64::try_from(pdf.len()).unwrap_or(u64::MAX);
+    let mut lease = memory.lease(bytes, deadline).map_err(memory_refused)?;
+    lease.materialized(bytes, bytes);
+    inspected_with_worker(server, lease, deadline, pdf, stream_decode_bytes)
 }
 
 /// One inspection's lease, and why it stopped growing, if it did.

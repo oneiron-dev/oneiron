@@ -25,7 +25,7 @@ mod body;
 pub(super) mod carrier;
 mod changed_scan;
 // An escaped key's span (FIX 1369).
-mod escaped_span;
+use oneiron_store::batch::secret_scan::mask::escaped_span;
 mod file_plane;
 pub(super) mod known_marks;
 mod known_note;
@@ -36,7 +36,7 @@ pub(super) mod side_row;
 pub(super) mod spool;
 pub(super) mod stream_known;
 mod text;
-mod text_log;
+use oneiron_store::batch::secret_scan::mask::text_log;
 mod text_spans;
 mod wipe;
 
