@@ -304,7 +304,12 @@ impl RecoveryWork {
             .doc
             .take()
             .ok_or_else(|| invalid("recovery preflight"))?;
-        crate::sync::bridge::preflight_canonical_recovery(vault, materializer, &self.source, &doc)?;
+        crate::sync::bridge::preflight_validated_canonical_recovery(
+            vault,
+            materializer,
+            &self.source,
+            &doc,
+        )?;
         let prepared = prepare_rebuilt(&self.path, &self.source, self.budget, doc)?;
         // A task whose fact the source refused reads as a refusal here before
         // the replay can read its authority.
