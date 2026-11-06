@@ -52,7 +52,7 @@ pub use person_billing::{
     BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
 };
 pub use receipt::{
-    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunOverageSource, RunReceipt,
+    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunNativeQuantity, RunOverageSource, RunReceipt,
     RunReceiptSink, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
 };
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};

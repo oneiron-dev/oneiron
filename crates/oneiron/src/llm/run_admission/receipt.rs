@@ -79,6 +79,9 @@ pub enum RunEvent {
         /// Present only then; ordinary settlements carry none.
         #[serde(skip_serializing_if = "Option::is_none")]
         overage: Option<RunUsageOverage>,
+        /// The call's pricing quantity and native unit, before line conversion.
+        /// This is not a second charge or a token-usage measurement.
+        native_quantity: RunNativeQuantity,
         units: u64,
         unit: LeaseUnit,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,6 +127,24 @@ pub enum RunEvent {
 pub struct RunStreamUsage {
     pub admitted_ms: u64,
     pub bound_ms: u64,
+}
+
+/// The quantity priced in the call's own unit, before host rate conversion.
+/// A dispatched call with no usage carries its native reservation, not a
+/// measured token count. The run's charged line units remain separate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunNativeQuantity {
+    /// A decimal string on the wire so the wide native quantity is lossless.
+    #[serde(serialize_with = "serialize_native_units")]
+    pub units: u128,
+    pub unit: LeaseUnit,
+}
+
+fn serialize_native_units<S: serde::Serializer>(
+    units: &u128,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(units)
 }
 
 /// Token facts reported by one physical model call: its billing counters.
