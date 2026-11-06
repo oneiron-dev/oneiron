@@ -16,6 +16,7 @@ use std::ops::Range;
 
 use heed::{RoTxn, RwTxn};
 
+use super::super::container::{ContainerReader, ReadProgress, withheld};
 use super::super::shapes::HANDLE_OPEN;
 use super::super::write_payload_hit;
 use super::{Masker, put_file_marks_in_txn};
@@ -349,6 +350,26 @@ impl LiftedKeys {
     /// handle. `None` when it holds none.
     pub(crate) fn masked(&self, text: &str) -> Option<String> {
         swapped(text, self.0.iter().map(|(value, tag)| (value, tag)))
+    }
+
+    /// [`Self::masked`] with the caller's reader checked before each key.
+    pub(crate) fn masked_with_reader(
+        &self,
+        text: &str,
+        reader: &ContainerReader,
+    ) -> Result<Option<String>> {
+        let mut out: Option<String> = None;
+        for (value, tag) in &self.0 {
+            reader
+                .pacing
+                .checkpoint(ReadProgress::Member)
+                .map_err(withheld)?;
+            let current = out.as_deref().unwrap_or(text);
+            if current.contains(value.as_str()) {
+                out = Some(current.replace(value.as_str(), tag));
+            }
+        }
+        Ok(out)
     }
 
     /// `text`, a writer's new text for the carrier, with each handle back as
