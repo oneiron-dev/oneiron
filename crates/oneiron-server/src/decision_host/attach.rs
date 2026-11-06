@@ -88,6 +88,7 @@ impl SyncServer {
                 models.raw_budget_units,
                 posture,
                 tokio::runtime::Handle::current(),
+                &self.vault,
             )
             .with_local_vision(
                 &self.ai,
@@ -108,6 +109,24 @@ impl SyncServer {
             .with_connector_slate(models.decisions.connector_slate.as_ref())
             .with_import_audience(models.decisions.import_audience.as_ref())
             .with_wire_health(models.decisions.wire_health.as_deref());
+        if self.policy_doors.owner.owner_decisions.is_none()
+            && let Some(settings) = models.decisions.owner_policy.as_ref()
+            && let Some(principal) = principal
+        {
+            match self.decisions.policy_decisions(
+                principal,
+                settings.revision.clone(),
+                settings.wording.clone(),
+                settings.budget,
+            ) {
+                Ok(decisions) => {
+                    self.policy_doors.owner.owner_decisions = Some(std::sync::Arc::new(decisions));
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "configured owner-policy decisions stay unbound");
+                }
+            }
+        }
         self
     }
 

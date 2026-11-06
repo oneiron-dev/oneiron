@@ -25039,6 +25039,8 @@ pub enum ContentPart {
     Text {
         #[serde(rename = "text")]
         text: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "reasoning")]
     Reasoning {
@@ -30377,6 +30379,10 @@ pub enum StopCause {
     Done,
     #[serde(rename = "deadline")]
     Deadline,
+    #[serde(rename = "generation_allowance")]
+    GenerationAllowance,
+    #[serde(rename = "capture_unsupported")]
+    CaptureUnsupported,
     #[serde(rename = "provider_failure")]
     ProviderFailure,
 }
@@ -33176,6 +33182,10 @@ pub enum HumanAskReason {
     NeedsPerson,
     #[serde(rename = "deadline")]
     Deadline,
+    #[serde(rename = "generation_allowance")]
+    GenerationAllowance,
+    #[serde(rename = "capture_unsupported")]
+    CaptureUnsupported,
     #[serde(rename = "exploration_budget")]
     ExplorationBudget,
 }
@@ -53604,6 +53614,8 @@ pub enum LlmStreamEvent {
     TextEnd {
         #[serde(rename = "part_id")]
         part_id: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "reasoning_start")]
     ReasoningStart {

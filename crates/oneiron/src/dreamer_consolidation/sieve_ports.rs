@@ -363,6 +363,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
             role: LlmMessageRole::System,
             content: vec![ContentPart::Text {
                 text: rung.instruction.to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),

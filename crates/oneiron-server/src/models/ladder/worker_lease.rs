@@ -37,11 +37,13 @@ impl OfferLadder {
                 }
             }
             Err(unavailable) => {
-                tracing::warn!(
-                    rung = self.rungs[index].position,
-                    %unavailable,
-                    "the rung's managed worker is parked; the call goes on as for a provider that is down"
-                );
+                if !self.rests.is_unrecorded() {
+                    tracing::warn!(
+                        rung = self.rungs[index].position,
+                        %unavailable,
+                        "the rung's managed worker is parked; the call goes on as for a provider that is down"
+                    );
+                }
                 Err(RetryableLlmError::StreamCut.into())
             }
         }

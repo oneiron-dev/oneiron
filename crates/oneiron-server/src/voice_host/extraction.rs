@@ -97,12 +97,14 @@ impl TinyExtractor {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: self.prompt.clone(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: json!({"text": text}).to_string(),
+                        signature: None,
                     }],
                 },
             ],
@@ -190,7 +192,7 @@ fn validate_response(response: LlmResponse) -> Result<PartialEnrichment, HostErr
     let mut blocks = 0u32;
     for part in &response.message.content {
         match part {
-            ContentPart::Text { text } => {
+            ContentPart::Text { text, .. } => {
                 answer.push_str(text);
                 blocks += 1;
             }

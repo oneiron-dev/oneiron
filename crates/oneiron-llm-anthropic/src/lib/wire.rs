@@ -173,22 +173,24 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                 {
                     content.push(ContentPart::Text {
                         text: text.to_owned(),
+                        signature: None,
                     });
                 }
             }
             Some("thinking") => {
-                if let Some(text) = block
+                let text = block
                     .get("thinking")
                     .or_else(|| block.get("text"))
                     .and_then(JsonValue::as_str)
-                    && !text.is_empty()
-                {
+                    .unwrap_or_default();
+                let signature = block
+                    .get("signature")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned);
+                if !text.is_empty() || signature.is_some() {
                     content.push(ContentPart::Reasoning {
                         text: text.to_owned(),
-                        signature: block
-                            .get("signature")
-                            .and_then(JsonValue::as_str)
-                            .map(str::to_owned),
+                        signature,
                         reasoning_kind: oneiron::ReasoningPartKind::Full,
                         data: None,
                     });
@@ -255,7 +257,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
 /// never joins the system string.
 fn text_content(part: &ContentPart) -> Option<String> {
     match part {
-        ContentPart::Text { text } => Some(text.clone()),
+        ContentPart::Text { text, .. } => Some(text.clone()),
         ContentPart::Reasoning {
             text,
             reasoning_kind,
@@ -292,7 +294,7 @@ fn anthropic_role(role: LlmMessageRole) -> &'static str {
 
 fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
     match part {
-        ContentPart::Text { text } => Some(json!({ "type": "text", "text": text })),
+        ContentPart::Text { text, .. } => Some(json!({ "type": "text", "text": text })),
         ContentPart::Reasoning {
             text,
             signature,

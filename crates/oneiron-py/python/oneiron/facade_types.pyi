@@ -2856,6 +2856,7 @@ ImageContent = ImageContentBase64 | ImageContentUrl
 class ContentPartText(TypedDict):
     kind: Literal["text"]
     text: str
+    signature: NotRequired[str | None]
 class ContentPartReasoning(TypedDict):
     kind: Literal["reasoning"]
     text: str
@@ -9770,7 +9771,7 @@ class PairedReading(TypedDict):
     question: str
     question_version: int
     probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
+StopCause = Literal["done", "deadline", "generation_allowance", "capture_unsupported", "provider_failure"]
 ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
 class ReasoningNotNeeded(TypedDict):
     state: Literal["not_needed"]
@@ -10640,7 +10641,7 @@ class DecisionAnswerPoint(TypedDict):
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
 DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "generation_allowance", "capture_unsupported", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -17019,6 +17020,7 @@ class LlmStreamEventTextDelta(TypedDict):
 class LlmStreamEventTextEnd(TypedDict):
     event: Literal["text_end"]
     part_id: str
+    signature: NotRequired[str | None]
 class LlmStreamEventReasoningStart(TypedDict):
     event: Literal["reasoning_start"]
     part_id: str

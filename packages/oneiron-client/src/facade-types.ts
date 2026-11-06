@@ -1077,7 +1077,7 @@ export type ReasoningPartKind = "full" | "summary" | "encrypted" | "count"
 /** `oneiron_model::llm::protocol::ImageContent` */
 export type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string }
 /** `oneiron_model::llm::protocol::ContentPart` */
-export type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string }
+export type ContentPart = { kind: "text"; text: string; signature?: string | null } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string }
 /** `oneiron::memory::witness::types::WitnessMessage` */
 export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; parts?: ContentPart[] | null; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null }
 /** `oneiron::memory::witness::types::WitnessTurn` */
@@ -3829,7 +3829,7 @@ export type EvidenceVersion = { id: string; body_hash: string }
 /** `oneiron_store::model_decision::types::PairedReading` */
 export type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number }
 /** `oneiron_store::model_decision::types::StopCause` */
-export type StopCause = "done" | "deadline" | "provider_failure"
+export type StopCause = "done" | "deadline" | "generation_allowance" | "capture_unsupported" | "provider_failure"
 /** `oneiron_store::model_decision::types::ReasoningCause` */
 export type ReasoningCause = "paired_high" | "small_margin" | "second_measurement"
 /** `oneiron_store::model_decision::types::Reasoning` */
@@ -4189,7 +4189,7 @@ export type ImagePoint = { x: number; y: number }
 /** `oneiron_store::model_decision::types::DecisionAnswer` */
 export type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" }
 /** `oneiron_store::model_decision::types::HumanAskReason` */
-export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget"
+export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "generation_allowance" | "capture_unsupported" | "exploration_budget"
 /** `oneiron::llm::decision::types::TypedDecision` */
 export type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null }
 /** `oneiron::policy_model::verdict::PolicyReadError` */
@@ -6703,7 +6703,7 @@ export type ModelStreamSubscribed = { stream_ref: string; stream_key: string; ha
 /** `oneiron::llm::model_stream::ModelStreamEventsRequest` */
 export type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null }
 /** `oneiron_model::llm::protocol::LlmStreamEvent` */
-export type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string; signature?: string | null } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions }
+export type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string; signature?: string | null } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string; signature?: string | null } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions }
 /** `oneiron::llm::model_stream::ModelStreamEvents` */
 export type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus }
 /** `oneiron::llm::model_stream::ModelStreamDetach` */

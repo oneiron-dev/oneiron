@@ -157,6 +157,35 @@ pub trait SingleRouteBackend: LlmBackend {
         self.stream(request, lease)
     }
 
+    /// Rechecks a call-owned release at dispatch entry. A transport that
+    /// waits before sending overrides this and carries `release` to each
+    /// physical request; this default checks only entry to the bound call.
+    fn generate_bound_released<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &str,
+        release: DispatchRelease<'a>,
+    ) -> LlmGenerateFuture<'a> {
+        match release() {
+            Ok(()) => self.generate_bound(request, lease, digest),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
+
+    /// Streaming counterpart of `generate_bound_released`, with the same
+    /// entry-only default and transport override responsibility.
+    fn stream_bound_released<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+        digest: &str,
+        release: DispatchRelease<'a>,
+    ) -> LlmStreamResult<'a> {
+        release()?;
+        self.stream_bound(request, lease, digest)
+    }
+
     /// An alternate wire for the same offer after a proved pre-body failure.
     /// It is never sent under the failed lease: the caller must settle that
     /// attempt and admit the returned backend's exact bytes on a fresh permit.

@@ -8,7 +8,7 @@
 //! Entry: `BigModel::resolve_decision_route`.
 use std::sync::Arc;
 
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{LlmRequest, ModelId, ModelLocality};
 
 use super::{Answerer, BigModel, failed};
@@ -112,11 +112,19 @@ impl BigModel {
         &self,
         request: LlmRequest,
     ) -> oneiron::Result<(Arc<OfferLadder>, LlmRequest)> {
+        self.admit_decision_route_with_egress(request, None)
+    }
+
+    pub(super) fn admit_decision_route_with_egress(
+        &self,
+        request: LlmRequest,
+        extraction_egress: Option<&dyn ExtractionEgressPredicate>,
+    ) -> oneiron::Result<(Arc<OfferLadder>, LlmRequest)> {
         let (ladder, request) = match &self.answerer {
             Answerer::Seat(role) => {
                 let admitted = self
                     .models
-                    .admit_role(&self.vault, *role, request)
+                    .admit_role_with_egress(&self.vault, *role, request, extraction_egress)
                     .map_err(|refusal| failed(format!("refused: {refusal}")))?;
                 (admitted.ladder, admitted.request)
             }
@@ -136,7 +144,7 @@ impl BigModel {
                                 locality,
                                 keyless: false,
                             },
-                            extraction_egress: None,
+                            extraction_egress,
                         },
                     )
                     .map_err(|error| failed(format!("refused: {error}")))?;
