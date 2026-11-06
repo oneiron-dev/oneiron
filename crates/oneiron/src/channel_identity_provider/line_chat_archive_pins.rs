@@ -2,10 +2,12 @@
 //! Only a native archive receipt can register ownership of a join version.
 
 mod lifetime;
+mod prune;
 pub(crate) use lifetime::{
     line_chat_archive_releases_owed_in_txn, release_line_chat_archive_pin_in_txn,
     settle_line_chat_archive_releases_in_txn,
 };
+pub(crate) use prune::prune_line_chat_archive_pins_in_txn;
 
 use serde::{Deserialize, Serialize};
 

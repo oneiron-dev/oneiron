@@ -43,7 +43,8 @@ pub use self::line_chat_binding::{
 };
 pub(crate) use self::line_chat_erase::erase_line_chat_observations_for_delete_in_txn;
 pub(crate) use self::line_chat_archive_pins::{
-    line_chat_archive_releases_owed_in_txn, release_line_chat_archive_pin_in_txn,
+    line_chat_archive_releases_owed_in_txn, prune_line_chat_archive_pins_in_txn,
+    release_line_chat_archive_pin_in_txn,
     settle_line_chat_archive_releases_in_txn,
 };
 pub use self::shared_validate::{

@@ -76,16 +76,18 @@ fn settle_line_chat_archive_releases_except_in_txn(
         // Missing version metadata does not erase a native owner's
         // custody obligation: retained copies can still owe retirement.
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&pin.content_hash)?;
+        let stands = exact_version_stands(store, txn, pin)?;
         if version_held(store, txn, pin, &asset)?
-            || captured_elsewhere(store, txn, &claim, detaching, pin)?
-            || crate::llm::step_response_version_pinned_in_txn(
-                store,
-                txn,
-                &claim,
-                &pin.artifact_id,
-                pin.version,
-                &pin.content_hash,
-            )?
+            || (stands
+                && (captured_elsewhere(store, txn, &claim, detaching, pin)?
+                    || crate::llm::step_response_version_pinned_in_txn(
+                        store,
+                        txn,
+                        &claim,
+                        &pin.artifact_id,
+                        pin.version,
+                        &pin.content_hash,
+                    )?))
         {
             continue;
         }
@@ -234,6 +236,15 @@ fn captured_elsewhere(
         }
     }
     Ok(false)
+}
+
+/// A LIVE release outranks an older CONTENT capture of the same owner.
+pub(super) fn release_pending_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<bool> {
+    RELEASES.contains(store, txn, claim)
 }
 
 /// A truthful pending completion for the native observation's erase.
