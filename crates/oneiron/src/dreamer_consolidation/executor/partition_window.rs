@@ -155,7 +155,7 @@ impl ConsolidationExecutor<'_> {
                 )),
                 WindowSlotRun::Rung(_) => rungs.push((
                     index,
-                    contained_rung(self.run_sieve_rungs(attempt, ctx), attempt),
+                    contained_rung(self.run_rung_job(attempt, ctx), attempt),
                 )),
                 WindowSlotRun::Settled(..) | WindowSlotRun::Serial => {}
             }

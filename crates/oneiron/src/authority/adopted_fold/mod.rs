@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::checkpoint_image::{ReplayEvidence, parents_first_of};
+use super::checkpoint_image::{ReplayEvidence, ReplayPoint, parents_first_of};
 use super::fold_resume::{ConfirmKeys, ImageFold, RowMeta};
 use super::*;
 use crate::error::Result;
@@ -439,6 +439,22 @@ fn successor_replay(
         if let Some(state) = states.get(hash) {
             settled.insert(*hash, state.clone());
         }
+    }
+    if kept.len() < image.covered.len() - image.per_parent.len() {
+        // No dropped base may change a retained point's encoding. The common
+        // image compactor selects the full-state suffix after normalization,
+        // using all covered row parents, including the older missing cut.
+        return ReplayEvidence::Rows(
+            parents
+                .keys()
+                .map(|hash| {
+                    let point = settled.remove(hash).map_or(ReplayPoint::Rejected, |state| {
+                        ReplayPoint::Full(Box::new(state))
+                    });
+                    (*hash, point)
+                })
+                .collect(),
+        );
     }
     ReplayEvidence::points_of(
         &parents_first_of(&parents),
