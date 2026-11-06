@@ -185,12 +185,15 @@ before opening a new source lane. Their grader result is `None`: they retain
 their existing label/scorer path and gain no new grant requirement. The native
 `Vault::released_eval_task` API retains that original behavior.
 
-This adds a native source-aware release and grading API. It does not yet wire
-the server's measuring job to a caller-authorized Memory handle or select its
-dedicated scorer. That job's current `&Vault` and Coach identity alone do not
-provide the caller's source permission. The native source-aware owner setup
-below supplies scoped cut-audit reads; inventory nomination and the server
-consumers remain separate work. Nothing here runs an eval case.
+The server measuring job uses the question-owned reader described below, not
+Coach identity as a source permission. It retains the released task and its
+private literal grader through all three legs. Ungraded tasks keep the existing
+early NoLabel check and native or replay-judge scoring. A graded response gets
+an exact-byte 0 or 1 with no model-judge call and `judge: None`; it creates no
+judge-retest calibration record. The incumbent retest leg itself still runs.
+The native source-aware owner setup below supplies scoped cut-audit reads;
+inventory nomination remains separate work. Nothing here proves a completed
+eval case.
 
 ## Source-aware owner cohort setup
 
@@ -230,11 +233,11 @@ The capture path is a partial delivery of OF-582 / FIX3720; explicit response-ta
 compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
-Repair nomination, executable worlds beyond the explicit response-only task,
-server measurement integration and the server's source-aware setup threading
+Repair nomination and executable worlds beyond the explicit response-only task
 remain open. The explicit owner case door records source recipes, family
-assignment and exact-task reuse; native release/grading and source-aware
-owner setup do not activate those remaining consumers. The file
+assignment and exact-task reuse. The server measurement consumer uses the
+question-owned source reader and dedicated response grading described below;
+this does not activate automatic nomination or prove a measured result. The file
 path adds no table, family ledger, migration, old-format reader, default cap
 or timer.
 
@@ -270,8 +273,43 @@ or peer read key. Locality and every proved recipient machine/key are retained,
 including proved peers on a currently on-device destination. Each normal source
 read still checks current standing, grants, source fingerprints and body custody.
 
-The core request and leased-reader interfaces do not by themselves connect the
-server measuring job to Repair. That job still uses its older `Vault` hydration;
-its source-reader adoption, source-read receipt persistence and dedicated scorer
-selection remain separate work. A source context is not proof of a completed
-measurement, a passed case or a sealed-family exposure.
+The server measuring job now opens that leased reader once for the question and
+uses it for every unstarted case. Before inspecting task availability or sending
+a paid leg, it retains the actual read receipt on the existing measurement row.
+A missing or withheld task therefore keeps its receipt even without a started
+case record. A source read error keeps its original stable MemoryError code and
+any supplied receipt, and settles the claimed measurement Partial with
+`source_read_failed`; it is not relabelled as an owner-proof failure. An explicit
+retry may reread a source whose standing or availability has since changed.
+Kept-attempt
+reads record no invented scoped receipt and retain their existing hydration.
+
+### Exact response bytes and native decision domains
+
+Every explicit Repair task contract now includes `response_contract`: explicit
+null when it supplies no typed decision domain, or an existing `AnswerContract`
+from the task side. The normal contract validator checks it. This field is
+included in the full task-and-grader digest and in candidate input; the observed
+expected response remains private. There is no old-format reader or default
+that infers options from an observed answer.
+
+The dedicated grader compares the bytes actually kept as the leg output:
+whole generated text, the task embedding vector's JSON, or the full tagger
+output's JSON. It strips no confidence, coordinate or metadata field and adds
+no tolerance. Embeddings with no labels make no anchor calls. Legacy tasks
+keep their original native similarity, tag-recall or exact-label scores.
+
+Router and Decision use their existing exact-model decision ladder. A graded
+task may supply a source-declared Choice, Noul, Score, Box or Point contract.
+Choice uses the existing positional-ID mapping and returns the exact option
+text, so case-colliding options retain their own bytes. Other successful typed
+answers use the native `DecisionAnswer` JSON encoding. The observed response
+string must match those output bytes exactly. Abstention, a person ask or an
+unsupported model contract remains unavailable, never a fabricated response or
+a failed-grade substitute. No image transport is added for Box or Point.
+A task with no decision domain keeps the existing label-based decision path;
+without labels that path still reports NoLabel before a model call.
+
+The job's early NoLabel check still runs before any paid generation for tasks
+with no literal response grader. A source context or read receipt is not proof
+of a completed measurement, a passed case or a sealed-family exposure.

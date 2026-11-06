@@ -7,6 +7,7 @@ use serde_json::Value;
 use super::EvalSeat;
 use crate::claim::ScopedReadReceipt;
 use crate::ingest::{AgUiFileReadInput, AgUiRepairLinkStatus, AgUiSource};
+use crate::llm::decision::AnswerContract;
 use crate::memory::{Memory, MemoryResult};
 use crate::{EntityId, Error, Result};
 
@@ -66,9 +67,21 @@ pub struct EvalRepairTaskSpec {
     pub preconditions: Vec<EvalRepairPrecondition>,
     pub intent: String,
     pub input: Value,
+    /// Native Router/Decision output domain, supplied by the task source,
+    /// never inferred from its observed answer. Explicit null supplies no
+    /// typed decision domain.
+    #[serde(deserialize_with = "required_response_contract")]
+    #[schemars(required)]
+    pub response_contract: Option<AnswerContract>,
     pub tools: Vec<String>,
     pub allowed_actions: Vec<EvalRepairAction>,
     pub grader: EvalRepairGrader,
+}
+
+fn required_response_contract<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<AnswerContract>, D::Error> {
+    Option::deserialize(deserializer)
 }
 
 /// A compiled response task. The answer and source evidence stay out of the
@@ -81,6 +94,7 @@ pub struct EvalRepairTask {
     pub source_rows: Vec<EntityId>,
     pub task_hash: [u8; 32],
     input: Value,
+    response_contract: Option<AnswerContract>,
     expected_response: String,
 }
 
@@ -90,6 +104,12 @@ impl EvalRepairTask {
     #[must_use]
     pub fn response_input(&self) -> &Value {
         &self.input
+    }
+
+    /// The source-declared native decision domain, not an expected answer.
+    #[must_use]
+    pub fn response_contract(&self) -> Option<&AnswerContract> {
+        self.response_contract.as_ref()
     }
 
     /// Exact response equality, without trimming, case folding or a model call.
@@ -196,6 +216,9 @@ pub(super) fn compile_repair_task(
             "a text-response Repair task needs an intent, no tools and only respond",
         ));
     }
+    if let Some(contract) = &spec.response_contract {
+        contract.validate()?;
+    }
     for check in &spec.preconditions {
         if at_pointer(&spec.initial_state, &check.pointer)? != &check.equals {
             return Err(Error::InvalidClaimBody(
@@ -227,6 +250,7 @@ pub(super) fn compile_repair_task(
         "preconditions": spec.preconditions,
         "intent": spec.intent,
         "input": spec.input,
+        "response_contract": &spec.response_contract,
         "tools": spec.tools,
         "allowed_actions": spec.allowed_actions,
     });
@@ -237,6 +261,7 @@ pub(super) fn compile_repair_task(
         source_rows: vec![EntityId::from_hex(&view.claim_ref)?],
         task_hash: *blake3::hash(&bytes).as_bytes(),
         input,
+        response_contract: spec.response_contract,
         expected_response,
     })
 }

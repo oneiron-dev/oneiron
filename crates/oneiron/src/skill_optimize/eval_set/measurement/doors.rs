@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    EvalCaseMeasurement, EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy,
-    MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
+    EvalCaseMeasurement, EvalMeasurement, EvalMeasurementRequest, EvalMeasurementSourceRead,
+    FloorSlicePolicy, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
 };
 use crate::Vault;
 use crate::dreamer_runner::maintenance::coach::enqueue_coach_eval_measurement_in_txn;
@@ -207,6 +207,7 @@ fn pending(digest: &[u8; 32], request: &EvalMeasurementRequest, now: u64) -> Eva
         members: Vec::new(),
         exposures: Vec::new(),
         cases: Vec::new(),
+        source_reads: Vec::new(),
         families: Vec::new(),
         mean_delta: None,
         gap: None,
@@ -288,6 +289,7 @@ impl Vault {
                         | MeasurementUnavailable::BudgetExhausted
                         | MeasurementUnavailable::ClockExhausted
                         | MeasurementUnavailable::UncertainLeg
+                        | MeasurementUnavailable::SourceReadFailed
                 )
             });
             if !transient {
@@ -370,6 +372,26 @@ impl Vault {
             }
             put_in_txn(self, txn, digest, &row)?;
             Ok(row)
+        })
+    }
+
+    /// Retain one actual source read on its claimed question before checking
+    /// task availability or sending any leg. Failed and withheld reads remain
+    /// visible even when no case record can be started.
+    pub fn record_eval_measurement_source_read(
+        &self,
+        digest: &[u8; 32],
+        read: EvalMeasurementSourceRead,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let mut row = measurement_in_txn(self, &*txn, digest)?.ok_or(Error::EntityNotFound)?;
+            if row.state != MeasurementState::Claimed || !row.members.contains(&read.case) {
+                return Err(invalid(
+                    "a source read is recorded on a claimed measurement of its cohort",
+                ));
+            }
+            row.source_reads.push(read);
+            put_in_txn(self, txn, digest, &row)
         })
     }
 

@@ -91,7 +91,7 @@ impl Vault {
     pub fn coach_eval_measurement_source(
         &self,
         attempt: &DreamerAdmittedAttempt,
-    ) -> MemoryResult<EvalMeasurementSource<'_>> {
+    ) -> crate::Result<EvalMeasurementSource<'_>> {
         let digest = self.coach_eval_measurement_target(attempt)?;
         let source = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;

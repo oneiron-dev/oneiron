@@ -188,9 +188,9 @@ pub use self::eval_set::{
 pub use self::eval_set::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
     EvalMeasurement, EvalMeasurementRef, EvalMeasurementRequest, EvalMeasurementSource,
-    EvalReleasedTask, EvalTaskInput, EvalTaskRead, FloorSlicePolicy, JUDGE_SCORE_AXIS,
-    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
-    ScoreDirection, eval_seat_canary,
+    EvalMeasurementSourceRead, EvalReleasedTask, EvalTaskInput, EvalTaskRead, FloorSlicePolicy,
+    JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
+    MeasurementUnavailable, ScoreDirection, eval_seat_canary,
 };
 pub use self::eval_set::{
     EvalRepairAction, EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseRequest,

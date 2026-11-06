@@ -160,6 +160,9 @@ pub enum MeasurementUnavailable {
     ClockExhausted,
     /// A case of the set has no settled record.
     IncompleteCase,
+    /// The original source reader failed; its stable error code and any
+    /// scoped receipt are retained on the measurement's source read.
+    SourceReadFailed,
 }
 
 /// Where a measurement is.
@@ -239,6 +242,18 @@ impl EvalCaseMeasurement {
     }
 }
 
+/// One actual source read, including a missing or withheld task. A kept-attempt
+/// task has no new scoped receipt; no replacement receipt is invented for it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalMeasurementSourceRead {
+    pub case: EntityId,
+    pub receipt: Option<crate::claim::ScopedReadReceipt>,
+    /// The original MemoryError code, not a guessed owner or grant failure.
+    pub error_code: Option<String>,
+    pub at: u64,
+}
+
 /// One measurement's row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -256,6 +271,8 @@ pub struct EvalMeasurement {
     /// candidate, retest.
     pub exposures: Vec<EntityId>,
     pub cases: Vec<EvalCaseMeasurement>,
+    /// Actual reads precede task availability checks and any paid leg.
+    pub source_reads: Vec<EvalMeasurementSourceRead>,
     pub families: Vec<EvalFamilySummary>,
     /// The equal-weight mean of family deltas, candidate minus incumbent.
     pub mean_delta: Option<f64>,
