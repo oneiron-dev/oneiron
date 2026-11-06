@@ -247,6 +247,12 @@ pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;
 pub(crate) use citation_scrub::scrub_pending_citations;
 #[cfg(feature = "sync")]
 pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn};
+#[cfg(feature = "sync")]
+mod fork_upload;
+#[cfg(feature = "sync")]
+pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
+#[cfg(feature = "sync")]
+pub(crate) use fork_upload::{fork_upload_frame_in_txn, uploadable_fork_in_txn};
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;

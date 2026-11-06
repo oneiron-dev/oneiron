@@ -100,6 +100,15 @@ impl SyncClient {
                         .map_err(storage)?;
                     return Ok(Vec::new());
                 }
+                document_sub_tags::NOTE_FORK_RECEIPT => {
+                    let receipt = serde_json::from_slice(frame.payload)
+                        .map_err(|_| TransportError::InvalidPayload("invalid NOTE fork receipt"))?;
+                    self.manager
+                        .documents()
+                        .accept_note_fork_receipt(frame.entity, &receipt)
+                        .map_err(storage)?;
+                    return Ok(Vec::new());
+                }
                 document_sub_tags::ACK => return Ok(Vec::new()),
                 _ => {
                     return Err(TransportError::InvalidPayload(

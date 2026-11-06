@@ -371,8 +371,36 @@ fn owner_document(
             let _ = direct.send(frame);
             Ok(())
         }
+        // An own device's replica-local fork (FIX 12789): admitted under the
+        // same owner session as a NOTE command; its receipt answers this
+        // connection alone.
+        document_sub_tags::NOTE_FORK_UPLOAD => {
+            let auth = owner_auth(server, state, true)?;
+            let actor = EntityId::from_hex(
+                auth.require_registered_principal()
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)?,
+            )
+            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            let receipt = server
+                .vault
+                .memory(actor, oneiron::EdgeActorClass::Human)
+                .admit_owner_note_fork(
+                    entity,
+                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                    payload,
+                )
+                .map_err(|error| ProtocolError::Persistence(error.to_string()))?;
+            let payload = serde_json::to_vec(&receipt)
+                .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt encode"))?;
+            let frame =
+                transport::encode_document(entity, document_sub_tags::NOTE_FORK_RECEIPT, &payload)
+                    .into_result()
+                    .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt too large"))?;
+            let _ = direct.send(frame);
+            Ok(())
+        }
         _ => Err(ProtocolError::InvalidPayload(
-            "owner lane carries requests, acks and NOTE operations",
+            "owner lane carries requests, acks, NOTE operations and NOTE forks",
         )),
     }
 }
@@ -488,6 +516,14 @@ pub(super) fn document_delivery_retrying(
             && transport::decode_document_waited_out(doc.payload).is_ok()
         {
             out.extend(notice(doc));
+            return false;
+        }
+        // A fork upload's receipt changes no text, so no state goes before
+        // it; it reaches the owner lane its upload came on (FIX 12789).
+        if doc.kind == document_sub_tags::NOTE_FORK_RECEIPT {
+            if owner_auth(server, state, false).is_ok() {
+                out.extend(notice(doc));
+            }
             return false;
         }
         if doc.kind != document_sub_tags::ARTIFACT_RECEIPT {
