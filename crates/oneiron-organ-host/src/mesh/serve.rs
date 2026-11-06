@@ -127,17 +127,17 @@ impl CallReply {
             _copies,
             _frame,
         } = self;
-        let asks = match result {
-            PeerResult::Done(outcome) => outcome.receipt.asks,
-            PeerResult::Failed(failure) => failure.asks,
-        };
-        Self {
-            result: PeerResult::Failed(PeerFailure {
+        let result = match result {
+            PeerResult::Done(outcome) => PeerResult::Failed(PeerFailure {
                 kind: FailureKind::Failed,
                 detail,
                 organ: None,
-                asks,
+                asks: outcome.receipt.asks,
             }),
+            failed @ PeerResult::Failed(_) => failed,
+        };
+        Self {
+            result,
             _outputs,
             _copies,
             _frame,
