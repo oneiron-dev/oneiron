@@ -24,7 +24,9 @@
 
 use super::removal_archive::{FrozenPosition, KeptRemovalCopy, StoredRemovalExport};
 use super::removal_file::StagedArchive;
-use super::{REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy, removal_export_key};
+use super::{
+    ArchiveRow, REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy, removal_export_key,
+};
 use std::collections::BTreeMap;
 
 use crate::batch::export::{
@@ -369,7 +371,14 @@ impl Vault {
         let staged = staged.ok_or(Error::ConcurrentWrite(
             "a kept removal archive went while its delivery was taken in",
         ))?;
-        let file = self.bind_removal_archive_in_txn(txn, receipt, staged)?;
+        let file = self.bind_removal_archive_in_txn(
+            txn,
+            ArchiveRow {
+                member: person,
+                receipt,
+            },
+            staged,
+        )?;
         let kept = KeptRemovalCopy {
             receipt_id: receipt.to_hex(),
             vault_id: copy.vault_id,

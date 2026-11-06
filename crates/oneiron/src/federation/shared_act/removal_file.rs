@@ -1,7 +1,8 @@
 //! A kept removal archive's bytes as a file (FIX 3679, 3857): one complete
 //! body in the vault's `bodies/`, sealed under its own instance where the
-//! vault seals its bodies, owned by its removal receipt's archive owner
-//! ([`removal_archive_owner`]) under an occurrence of its own. The
+//! vault seals its bodies, owned by its archive row's owner
+//! ([`removal_archive_owner`]: the removed member and the receipt) under an
+//! occurrence of its own. The
 //! archive's row keeps the occurrence and the body it names; no LMDB value
 //! holds the archive.
 //!
@@ -17,12 +18,13 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
+use super::ArchiveRow;
 use crate::error::{Error, Result};
 use crate::provenance::body::BodyRef;
 use crate::{EntityId, Vault};
 
-/// Where a kept removal archive's bytes are: the body `body`, its receipt's
-/// occurrence `occurrence`.
+/// Where a kept removal archive's bytes are: the body `body`, its archive
+/// owner's occurrence `occurrence`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ArchiveFile {
@@ -58,18 +60,19 @@ impl StagedArchive {
     }
 }
 
-/// The owner the removal receipt `receipt`'s archive files are held under:
-/// derived from the receipt in a namespace of its own, never a row's id, so
-/// a release of the receipt's archives reaches no other row's bodies,
-/// whatever receipt id an imported copy names.
+/// The owner the archive files of the row `row` are held under: derived
+/// from its receipt and its removed member in a namespace of its own, never
+/// a record's id, so a release of one row's archives reaches no other row's
+/// bodies, another member's archive of the same receipt included, whatever
+/// ids an imported copy names.
 ///
 /// # Errors
 ///
 /// A derivation that lands on a reserved id.
-pub(crate) fn removal_archive_owner(receipt: EntityId) -> Result<EntityId> {
+pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
     EntityId::derive(
         crate::entity_id::derived_domains::REMOVAL_ARCHIVE_OWNER,
-        &[receipt.as_bytes()],
+        &[row.receipt.as_bytes(), row.member.as_bytes()],
     )
 }
 
@@ -124,10 +127,9 @@ impl Vault {
         })
     }
 
-    /// Names `staged` as an archive of the removal receipt `receipt` in
-    /// `wtxn`, the writer that keeps the archive's row: its instance row
-    /// and a complete descriptor under a fresh occurrence of the receipt's
-    /// archive owner.
+    /// Names `staged` as the archive of the row `row` in `wtxn`, the writer
+    /// that keeps that row: its instance row and a complete descriptor under
+    /// a fresh occurrence of the row's archive owner.
     ///
     /// # Errors
     ///
@@ -135,7 +137,7 @@ impl Vault {
     pub(super) fn bind_removal_archive_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         staged: &StagedArchive,
     ) -> Result<ArchiveFile> {
         use crate::provenance::body::{BodyState, OwnedBody, publish_body_in_txn};
@@ -147,7 +149,7 @@ impl Vault {
             &self.store,
             wtxn,
             &OwnedBody {
-                owner: removal_archive_owner(receipt)?,
+                owner: removal_archive_owner(row)?,
                 occurrence,
                 state: BodyState::Complete {
                     body: staged.body.clone(),
@@ -161,7 +163,7 @@ impl Vault {
         })
     }
 
-    /// The bytes of the receipt `receipt`'s archive `file`, as `txn` names
+    /// The bytes of the row `row`'s archive `file`, as `txn` names
     /// it: its descriptor must be complete with this body, and the file is
     /// read through the instance row `txn` holds and checked against its
     /// digest. A writer's snapshot keeps the file: no release of it commits
@@ -174,13 +176,13 @@ impl Vault {
     pub(super) fn read_removal_archive_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         file: &ArchiveFile,
     ) -> Result<Vec<u8>> {
         let named = crate::provenance::body::owned_body_in_txn(
             &self.store,
             txn,
-            &removal_archive_owner(receipt)?,
+            &removal_archive_owner(row)?,
             &file.occurrence,
         )?
         .is_some_and(|held| {
@@ -206,7 +208,7 @@ impl Vault {
         Ok(bytes)
     }
 
-    /// Releases the archive file `file` of `receipt` in `wtxn`: its
+    /// Releases the archive file `file` of the row `row` in `wtxn`: its
     /// descriptor goes, and its digest, when nothing else holds it, is
     /// queued for the collector. An erase that owes its instance a
     /// retirement stages it now.
@@ -217,24 +219,24 @@ impl Vault {
     pub(super) fn release_removal_archive_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         file: &ArchiveFile,
     ) -> Result<()> {
         crate::provenance::body::release_body_in_txn(
             &self.store,
             wtxn,
-            &removal_archive_owner(receipt)?,
+            &removal_archive_owner(row)?,
             &file.occurrence,
         )?;
         Ok(())
     }
 
-    /// Releases every archive file of the removal receipt `receipt` in
-    /// `wtxn`, read from its archive owner's descriptors alone, so an
-    /// archive row that does not decode strands no file, and no other row's
-    /// body is reached. With `erase`, that record's erase retires each
-    /// file's instances, or owes it while another holder keeps the bytes,
-    /// and its receipt names them.
+    /// Releases every archive file of the row `row` in `wtxn`, read from its
+    /// archive owner's descriptors alone, so an archive row that does not
+    /// decode strands no file, and no other row's body is reached, another
+    /// member's archive of the same receipt included. With `erase`, that
+    /// record's erase retires each file's instances, or owes it while
+    /// another holder keeps the bytes, and its receipt names them.
     ///
     /// # Errors
     ///
@@ -242,11 +244,11 @@ impl Vault {
     pub(super) fn release_removal_archives_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         erase: Option<EntityId>,
     ) -> Result<()> {
         use crate::provenance::body::{owned_bodies_in_txn, release_owner_bodies_in_txn};
-        let owner = removal_archive_owner(receipt)?;
+        let owner = removal_archive_owner(row)?;
         let held: Vec<[u8; 32]> = owned_bodies_in_txn(&self.store, wtxn, &owner)?
             .iter()
             .filter_map(|body| body.state.held().map(|held| held.blake3))
@@ -265,7 +267,7 @@ impl Vault {
         Ok(())
     }
 
-    /// The erase of the record `cause` owes the instance of `receipt`'s
+    /// The erase of the record `cause` owes the instance of the row `row`'s
     /// archive `file` a retirement, in that erase's writer: the file still
     /// holds the erased record until its rewrite lands, and the rewrite's
     /// release of it stages the retirement. The erase's receipt names it.
@@ -276,7 +278,7 @@ impl Vault {
     pub(super) fn owe_removal_archive_erase_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         file: &ArchiveFile,
         cause: EntityId,
     ) -> Result<()> {
@@ -284,7 +286,7 @@ impl Vault {
             &self.store,
             wtxn,
             &cause,
-            &removal_archive_owner(receipt)?,
+            &removal_archive_owner(row)?,
             &[file.body.blake3],
             false,
         )
@@ -293,7 +295,7 @@ impl Vault {
 
 /// Adds to `keys` the `vault_meta` keys a left environment keeps for the
 /// archive files of every removal archive row `store` holds (FIX 3679): each
-/// receipt's archive descriptors, and the digest, instance, key and erase
+/// row's archive descriptors, and the digest, instance, key and erase
 /// debt rows they stand on. An archive owner is no kept entity, so its
 /// descriptors are spelled here, and the leave's body collector finds every
 /// kept archive's file named.
@@ -309,10 +311,10 @@ pub(crate) fn removal_archive_body_keys_in_txn(
 ) -> Result<()> {
     use crate::provenance::body::owned_bodies_in_txn;
     for row_key in super::REMOVAL_EXPORT.scan_keys(store, txn, b"")? {
-        let Some(receipt) = super::removal_export_receipt(&row_key) else {
+        let Some(row) = ArchiveRow::from_key(&row_key) else {
             continue;
         };
-        let owner = removal_archive_owner(receipt)?;
+        let owner = removal_archive_owner(row)?;
         for body in owned_bodies_in_txn(store, txn, &owner)? {
             keys.insert(crate::store::owned_body::BODY.key_bytes(&(body.owner, body.occurrence)));
         }
@@ -395,7 +397,7 @@ impl Vault {
     pub(super) fn bind_removal_archive_in_txn(
         &self,
         _wtxn: &mut heed::RwTxn<'_>,
-        _receipt: EntityId,
+        _row: ArchiveRow,
         _staged: &StagedArchive,
     ) -> Result<ArchiveFile> {
         Err(no_body_store())
@@ -404,7 +406,7 @@ impl Vault {
     pub(super) fn read_removal_archive_in_txn(
         &self,
         _txn: &heed::RoTxn<'_>,
-        _receipt: EntityId,
+        _row: ArchiveRow,
         _file: &ArchiveFile,
     ) -> Result<Vec<u8>> {
         Err(no_body_store())
@@ -413,13 +415,13 @@ impl Vault {
     pub(super) fn release_removal_archive_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         file: &ArchiveFile,
     ) -> Result<()> {
         crate::provenance::body::release_body_in_txn(
             &self.store,
             wtxn,
-            &removal_archive_owner(receipt)?,
+            &removal_archive_owner(row)?,
             &file.occurrence,
         )?;
         Ok(())
@@ -428,13 +430,13 @@ impl Vault {
     pub(super) fn release_removal_archives_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        receipt: EntityId,
+        row: ArchiveRow,
         _erase: Option<EntityId>,
     ) -> Result<()> {
         crate::provenance::body::release_owner_bodies_in_txn(
             &self.store,
             wtxn,
-            &removal_archive_owner(receipt)?,
+            &removal_archive_owner(row)?,
         )?;
         Ok(())
     }
@@ -442,7 +444,7 @@ impl Vault {
     pub(super) fn owe_removal_archive_erase_in_txn(
         &self,
         _wtxn: &mut heed::RwTxn<'_>,
-        _receipt: EntityId,
+        _row: ArchiveRow,
         _file: &ArchiveFile,
         _cause: EntityId,
     ) -> Result<()> {

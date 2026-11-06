@@ -272,10 +272,11 @@ pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
 /// bytes) and its length (u64 big-endian).
 pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
 
-/// The owner a removal receipt's kept archive files are held under
+/// The owner one kept removal archive row's files are held under
 /// (`federation::shared_act::removal_file`, FIX 3679): a namespace of its own,
-/// so a release by receipt reaches no other row's bodies, whatever id an
-/// imported copy names. Parts: the receipt.
+/// so a release of one row reaches no other row's bodies, another member's
+/// archive of the same receipt included, whatever ids an imported copy names.
+/// Parts: the receipt, then the removed member.
 pub const REMOVAL_ARCHIVE_OWNER: &[u8] = b"oneiron/removal-archive-owner/v1";
 
 /// One mark of a key a retained repository blob holds (`origin::secret_marks`,

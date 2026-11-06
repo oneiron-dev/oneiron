@@ -334,10 +334,14 @@ impl Vault {
         let delivery = match (&receipt.export, archive) {
             (Some(summary), Some((staged, positions))) => {
                 // The archive's file, written before this writer opened, is
-                // named in its commit, owned by the receipt (FIX 3679).
+                // named in its commit, owned by its row: the removed member
+                // and the receipt (FIX 3679).
                 let file = self.bind_removal_archive_in_txn(
                     &mut txn,
-                    EntityId::from_hex(&receipt.id)?,
+                    ArchiveRow {
+                        member: EntityId::from_hex(&summary.member)?,
+                        receipt: EntityId::from_hex(&receipt.id)?,
+                    },
                     &staged,
                 )?;
                 let copy = removal_archive::KeptRemovalCopy {
