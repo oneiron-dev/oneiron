@@ -1,6 +1,6 @@
 //! Reading and verifying a pinned history: its rows, its handoff chain and its projection.
 
-use std::borrow::Cow;
+use crate::overlay_db::EntityRowSource;
 
 use super::*;
 
@@ -22,7 +22,7 @@ pub(crate) trait ControlRows {
         store: &Store,
         txn: &'a heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> Result<Option<Cow<'a, [u8]>>>;
+    ) -> Result<Option<EntityRowSource<'a>>>;
 
     /// Whether `packet`'s signature verifies.
     fn handoff_signed(&self, packet: &ClaimHistoryHandoff) -> bool {
@@ -48,8 +48,8 @@ impl ControlRows for StoreRows {
         store: &Store,
         txn: &'a heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> Result<Option<Cow<'a, [u8]>>> {
-        store.entities.get(txn, id.as_bytes())
+    ) -> Result<Option<EntityRowSource<'a>>> {
+        store.entities.get_entity_source(txn, id)
     }
 }
 
@@ -112,12 +112,13 @@ pub(crate) fn machine_history_rows_at(
         let raw = rows
             .row(store, txn, &id)?
             .ok_or(Error::CorruptedIndex("machine history index row missing"))?;
-        let header = EntityMetadataHeader::parse(&raw)
+        let header = EntityMetadataHeader::parse(raw.as_bytes())
             .ok_or(Error::CorruptedIndex("machine history header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             return Err(bad());
         }
-        let row = super::super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let row =
+            super::super::decode_claim_body(&raw.as_bytes()[ENTITY_METADATA_HEADER_LEN..], true)?;
         let Value::Binary(bytes) = &row.value else {
             return Err(bad());
         };
@@ -177,7 +178,8 @@ pub(crate) fn machine_history_rows_at(
         let raw = rows.row(store, txn, &id)?.ok_or(Error::CorruptedIndex(
             "machine transition index row missing",
         ))?;
-        let row = super::super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let row =
+            super::super::decode_claim_body(&raw.as_bytes()[ENTITY_METADATA_HEADER_LEN..], true)?;
         if event.birth_digest != birth.digest
             || event.vault_id != birth.vault_id
             || !machine_history_shape_matches(
@@ -250,12 +252,13 @@ pub(crate) fn read_handoff_chain_from(
         let id =
             EntityId::from_bytes(parent[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())?;
         let raw = rows.row(store, txn, &id)?.ok_or_else(missing)?;
-        let h = EntityMetadataHeader::parse(&raw)
+        let h = EntityMetadataHeader::parse(raw.as_bytes())
             .ok_or(Error::CorruptedIndex("machine handoff header"))?;
         if h.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("handoff-chain wrong type"));
         }
-        let row = super::super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let row =
+            super::super::decode_claim_body(&raw.as_bytes()[ENTITY_METADATA_HEADER_LEN..], true)?;
         if row.predicate != super::super::history_store::MACHINE_HANDOFF_PREDICATE {
             return Err(Error::InvalidClaimBody("handoff-chain wrong predicate"));
         }
