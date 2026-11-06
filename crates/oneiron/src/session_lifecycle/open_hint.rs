@@ -92,11 +92,11 @@ impl Vault {
         &self,
         hint: &SessionOpenHint,
         ask: EntityId,
-    ) -> Result<(crate::runtime_hooks::VerbHookWaitStatus, Option<u64>)> {
+    ) -> Result<(crate::runtime_hooks::verb::VerbHookWaitStatus, Option<u64>)> {
         let call = session_hook_call(HOST_SESSION_OPEN, hint.id, hint.key.actor, 0);
         let status =
             self.verb_hook_wait_status(call.invocation, &call.verb, call.actor, call.class, ask)?;
-        let deadline = if status == crate::runtime_hooks::VerbHookWaitStatus::Waiting {
+        let deadline = if status == crate::runtime_hooks::verb::VerbHookWaitStatus::Waiting {
             self.verb_hook_wait_deadline(call.invocation, &call.verb, call.actor, call.class, ask)?
                 .map(|until| until.saturating_mul(1_000))
         } else {
