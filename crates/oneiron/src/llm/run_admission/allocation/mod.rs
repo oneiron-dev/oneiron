@@ -78,12 +78,14 @@ pub struct DurableAllocationHold {
     pub terminal: Option<AllocationTerminal>,
 }
 
-/// Original terminal identity and charge. The receipt digest covers the actual
-/// receipt; its clock and payload must not be reconstructed during redelivery.
+/// Original terminal identity and charge. The receipt digest covers the retained
+/// JSON bytes; neither those bytes nor their clock are rebuilt during redelivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AllocationTerminal {
     pub occurred_at: u64,
     pub receipt_digest: [u8; 32],
+    /// Exact original content-free `RunReceipt`, serialized before settlement.
+    pub receipt_json: Vec<u8>,
     pub dispatched: bool,
     pub units: u64,
 }
