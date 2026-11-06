@@ -102,6 +102,8 @@ pub(crate) fn fence_replay_in_txn<'r>(
     // A spawn whose target an erase took keeps no ask, whether or not its
     // run's replies are erased (FIX 9180).
     record = fence_spawn_targets_in_txn(&vault.store, wtxn, record)?;
+    // A fold answer whose words a withdrawal took keeps none (FIX 18924).
+    record = super::fold_answers::fence_fold_answers_in_txn(&vault.store, wtxn, record)?;
     record = fence_sourced_outputs_in_txn(&vault.store, wtxn, record)?;
     let owner = response_owner_in_txn(&vault.store, wtxn, &record.run_id)?;
     let stamped = owner.and_then(ResponseOwner::actor);

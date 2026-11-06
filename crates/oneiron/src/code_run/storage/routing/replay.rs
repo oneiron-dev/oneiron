@@ -4,7 +4,8 @@
 //! commit with it. On a stretch on record the record lands in base, so the
 //! same writer runs the full replay fence first (FIX 9180, FIX 11392): a
 //! copy read before an erase writes back its erased form, exactly as on the
-//! owned path. An overlay row stays the room's own.
+//! owned path. An overlay row stays the room's own: it takes the fold-answer
+//! fence through the room's composed view before its put (FIX 18924).
 
 use std::borrow::Cow;
 
@@ -53,6 +54,10 @@ impl SessionBinding<'_> {
                     also(txn, write)
                 });
         }
+        // A fold answer whose words a withdrawal took keeps none in the
+        // room's row either (FIX 18924).
+        let fenced = self.composed_fold_answers(Cow::Borrowed(record))?;
+        let record: &CodeRunReplayRecord = &fenced;
         match healed_model {
             Some(model) => self
                 .session

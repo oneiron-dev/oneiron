@@ -37,19 +37,23 @@ impl ExecutorStorage<'_> {
 
     /// Publishes the reply body `spool` took as run `owner`'s complete output
     /// at `path` (FIX 5718 part 3, Engine rulings 3 and 4). On the vault it
-    /// is admitted in the writer that publishes it; `Err` holds the typed
-    /// unavailable content that stands in for an answer with a secret the
-    /// side-row wall cannot place, of which nothing is stored. A session's
-    /// body is published as before.
+    /// is admitted in the writer that publishes it, as a dependent of each
+    /// of `sources`, the records whose words it copies (FIX 18924); `Err`
+    /// holds the typed unavailable content that stands in for an answer
+    /// with a secret the side-row wall cannot place, of which nothing is
+    /// stored. A session's body is published as before; its run's replay
+    /// reads withhold a withdrawn fold's answer.
     pub(crate) fn publish_code_run_reply(
         &self,
         path: String,
         spool: BodySink,
         owner: EntityId,
+        sources: &[EntityId],
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         match self {
             Self::Canonical(vault) => {
-                let published = vault.publish_admitted_code_run_output(path, spool, true, owner)?;
+                let published =
+                    vault.publish_admitted_code_run_output(path, spool, true, owner, sources)?;
                 Ok(match published {
                     ReplyBody::Published(output) => Ok(output),
                     ReplyBody::Unplaceable {

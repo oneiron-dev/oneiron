@@ -141,7 +141,7 @@ impl SessionBinding<'_> {
     }
 
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
-        self.answered(|| self.session.side_table_get(&REPLAY_RECORDS, run_id))
+        self.composed_replay_record(run_id)
     }
 
     /// Compare-and-set against the SAME composed view it will update, in the
