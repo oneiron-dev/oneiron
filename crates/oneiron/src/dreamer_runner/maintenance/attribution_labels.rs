@@ -299,10 +299,24 @@ fn outcome_identity(row: &UnclearAttribution) -> String {
         .unwrap_or_else(|| unclear_key(row.lane, &row.reference))
 }
 
-/// What a note was judged at: its reason, leaning, words, judge revision and
-/// outcome. A change to any of them asks again.
+/// What a note was judged at: its scope, actor and skill, its reason,
+/// leaning, words, judge revision and outcome. A change to any of them asks
+/// again, and takes the note out of the pattern it joined: a note re-recorded
+/// in another scope never counts in its old one.
 fn fingerprint(row: &UnclearAttribution, note: &UnclearNote) -> [u8; 32] {
     let mut hash = blake3::Hasher::new_derive_key("oneiron coach attribution-label note v1");
+    hash.update(&group_key(row));
+    for id in [row.context.actor, row.context.skill] {
+        match id {
+            Some(id) => {
+                hash.update(&[1]);
+                hash.update(id.as_bytes());
+            }
+            None => {
+                hash.update(&[0]);
+            }
+        }
+    }
     field(&mut hash, note.reason.as_str().as_bytes());
     field(
         &mut hash,
