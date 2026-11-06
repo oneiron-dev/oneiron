@@ -3,6 +3,7 @@
 //! Membership is explicit, never guessed from actor or time. Review binds the
 //! exact members and policy frontier; settlement keeps their inverse handles.
 
+mod receipts;
 mod revert;
 mod settle;
 mod snapshot;
@@ -12,6 +13,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, WriteActor};
+pub(crate) use receipts::run_settlement_receipts;
 use serde::{Deserialize, Serialize};
 
 /// An existing change joining this explicit review. No raw entity, approval,
