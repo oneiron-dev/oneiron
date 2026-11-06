@@ -37,6 +37,12 @@ pub struct TaskCreateSpec {
     /// edge its landing transaction writes. The nesting matrix decides, so
     /// a Task nests under a Milestone; absent is a root.
     pub parent_ref: Option<EntityId>,
+    /// When the TASK falls due, Unix seconds, the unit `ttl` uses (FIX 4749;
+    /// ARCH-0080 review fix S4). A due TASK is a watcher: it ticks once on
+    /// `schedule.tick` after this time, and a hook on that tick returns
+    /// Nothing or Enqueue. A time already past ticks on the next runner
+    /// pass. Absent is no tick.
+    pub due_at: Option<u64>,
 }
 
 impl TaskCreateSpec {
@@ -61,6 +67,7 @@ impl TaskCreateSpec {
             brief: None,
             intent_key: None,
             parent_ref: None,
+            due_at: None,
         }
     }
 
@@ -97,6 +104,14 @@ impl TaskCreateSpec {
     #[must_use]
     pub const fn with_ttl(mut self, ttl: TaskTtl) -> Self {
         self.ttl = Some(ttl);
+        self
+    }
+
+    /// Makes the TASK a watcher that ticks once after `due_at`, Unix
+    /// seconds (FIX 4749).
+    #[must_use]
+    pub const fn with_due_at(mut self, due_at: u64) -> Self {
+        self.due_at = Some(due_at);
         self
     }
 

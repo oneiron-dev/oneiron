@@ -197,6 +197,9 @@ pub(super) struct TaskVerbBody {
     /// for an external taker. It rides the synced TASK, so a peer's accept
     /// freezes it into its try; `None` is no team run.
     pub(super) team: Option<crate::agent_dispatch::TeamRunStamp>,
+    /// FIX 4749: when the TASK falls due, Unix seconds; it ticks once on
+    /// `schedule.tick` after then. `None` is no tick.
+    pub(super) due_at: Option<u64>,
 }
 
 impl TaskVerbBody {

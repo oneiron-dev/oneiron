@@ -1,5 +1,6 @@
 //! The filters a fact passes in Rust before any sandbox starts (ARCH-0080 §4
-//! Filters). They read the claim only as the hook's grant shows it.
+//! Filters). They read the claim only as the hook's grant shows it; a tick or
+//! an inbound surface event, which carries no claim, by its own key.
 
 use crate::claim::ClaimBody;
 use crate::edge::EdgeActorClass;
@@ -8,27 +9,29 @@ use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::skill_hub::pack_catalog::{HookActorClass, HookSelector};
 use crate::{EntityId, Result, Vault};
 
-use super::source::FactKind;
+use super::source::{FactEntry, FactKind};
 
-/// Whether `selector` takes the fact on `entity`, as seen under the hook's
-/// grant. A scope is read last, and only when the selector names one.
+/// Whether `selector` takes `entry`, its entity as seen under the hook's
+/// grant. A claim fact's glob reads the claim's predicate; a tick's or an
+/// inbound event's reads its own key ([`FactEntry::selector_key`]). A scope
+/// is read last, and only when the selector names one.
 pub(super) fn fact_matches(
     vault: &Vault,
     selector: &HookSelector,
-    kind: FactKind,
-    entity: EntityId,
+    entry: &FactEntry,
     claim: Option<&ClaimBody>,
     actor: HookActorClass,
 ) -> Result<bool> {
-    if !verbs_match(
-        &selector.verbs,
-        kind,
-        claim.map(|body| body.predicate.as_str()),
-    ) || !(selector.actors.is_empty() || selector.actors.contains(&actor))
+    let own_key = entry.selector_key();
+    let key = claim
+        .map(|body| body.predicate.as_str())
+        .or(own_key.as_deref());
+    if !verbs_match(&selector.verbs, entry.kind, key)
+        || !(selector.actors.is_empty() || selector.actors.contains(&actor))
     {
         return Ok(false);
     }
-    scope_matches(vault, selector.scope.as_deref(), entity, claim)
+    scope_matches(vault, selector.scope.as_deref(), entry.entity, claim)
 }
 
 /// Whether any selector entry could take a fact of `kind`, before anything
@@ -39,19 +42,26 @@ pub(super) fn verbs_admit_kind(verbs: &[String], kind: FactKind) -> bool {
         .any(|verb| kind_admits(entry_parts(verb).0, kind))
 }
 
-/// A selector entry is `<fact kind>:<predicate glob>`, or a bare predicate
-/// glob that takes landed and superseded claims.
-fn verbs_match(verbs: &[String], kind: FactKind, predicate: Option<&str>) -> bool {
+/// A selector entry is `<fact kind>:<glob>`, or a bare predicate glob that
+/// takes landed and superseded claims. The glob reads `key`: a claim's
+/// predicate, a tick's TASK id as 32 hex (`schedule.tick:<id>` binds one
+/// watcher TASK), or an inbound event's connector key
+/// (`surface.inbound:slack`).
+fn verbs_match(verbs: &[String], kind: FactKind, key: Option<&str>) -> bool {
     verbs.iter().any(|verb| {
         let (kind_part, glob) = entry_parts(verb);
-        kind_admits(kind_part, kind)
-            && predicate.map_or(glob == "*", |predicate| glob_match(glob, predicate))
+        kind_admits(kind_part, kind) && key.map_or(glob == "*", |key| glob_match(glob, key))
     })
 }
 
+/// A watcher source named bare, `schedule.tick` or `surface.inbound`, takes
+/// all of its facts (FIX 4749).
 fn entry_parts(verb: &str) -> (Option<&str>, &str) {
     match verb.split_once(':') {
         Some((kind, glob)) => (Some(kind), glob),
+        None if FactKind::from_token(verb).is_some_and(FactKind::is_watcher_source) => {
+            (Some(verb), "*")
+        }
         None => (None, verb),
     }
 }

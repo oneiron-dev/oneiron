@@ -340,6 +340,15 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         team: task_body_optional(entries, "team")?
             .map(decode_team_stamp)
             .transpose()?,
+        due_at: task_body_optional(entries, "due_at")?
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.body.due_at",
+                    )))
+            })
+            .transpose()?,
     })
 }
 
