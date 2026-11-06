@@ -2,10 +2,12 @@
 //! revision state, retained frontiers, frontier identities, vector refill
 //! marker, staged index inputs and staged phonetic codes, under its own
 //! entity tree, each row exact. An identity-topology author carrier's
-//! state and reverse rows hash the carrier's raw row, its actor included:
-//! each is that actor's actor-keyed row under the carrier's tree, as the
-//! carrier row is (FIX 17143), so an erase of the actor leaves no hash in
-//! an image that could confirm a guess of it.
+//! state, retained frontiers and reverse rows hash the carrier's raw row,
+//! its actor included, and its revision document (one a pin made) holds that
+//! row: each is that actor's actor-keyed row under the carrier's tree, as the
+//! carrier row is (FIX 17143), so an erase of the actor leaves neither the
+//! row nor a hash of it in an image. Its document's bindings are not checked
+//! on restore: no split of it is restored, only the whole document.
 //!
 //! The retained revision document holds the whole raw entity row of every
 //! revision. It splits through its own codec ([`document`], FIX 6072) when
@@ -57,10 +59,24 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         }
     }
     for row in docs {
-        document::capture(dbs, txn, &mut out, &bindings, row)?;
+        match carriers.get(&row.key) {
+            Some(actor) => {
+                let owner = OwnerRef::entity(&row.key);
+                let table = DOC.decl().prefix;
+                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+            }
+            None => document::capture(dbs, txn, &mut out, &bindings, row)?,
+        }
     }
     for row in frontiers {
-        out.exact(OwnerRef::entity(&row.key.0), row.at, row.bytes);
+        let owner = OwnerRef::entity(&row.key.0);
+        match carriers.get(&row.key.0) {
+            Some(actor) => {
+                let table = FRONTIER.decl().prefix;
+                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+            }
+            None => out.exact(owner, row.at, row.bytes),
+        }
     }
     // A reverse row belongs to the entity its value names, never to its
     // key's revision hash.
@@ -89,7 +105,9 @@ fn carrier_actor(
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
     let row = dbs.entities().get(txn, id.as_bytes())?;
-    Ok(row.and_then(crate::identity_topology::author_carrier_actor))
+    Ok(row
+        .as_deref()
+        .and_then(crate::identity_topology::author_carrier_actor))
 }
 
 fn owns(at: &RowLocator) -> bool {
@@ -115,7 +133,7 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(STATE.decl()) {
         rows::check_row(STATE, at, value)
     } else if at.in_table(DOC.decl()) {
-        document::check(at, value)
+        document::check(at, value).or_else(|_| document::check_carrier(at, value))
     } else if at.in_table(FRONTIER.decl()) {
         rows::check_row(FRONTIER, at, value)
     } else if at.in_table(IDENTITY.decl()) {

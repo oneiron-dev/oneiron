@@ -66,9 +66,10 @@ pub(crate) enum EntityRowPlacement {
     Unclassified(Unresolved),
 }
 
-/// Where an entity row's bytes go, by its kind and, for a CLAIM or a NOTE,
-/// by what its own bytes hold: the one rule for the row and for every sync
-/// copy of it (FIX 10279).
+/// Where an entity row's bytes go, by its kind and, for a CLAIM, a NOTE or
+/// an identity-topology event, by what its own bytes hold: the one rule for
+/// the row and, for a CLAIM or a NOTE, for every sync copy of it (FIX
+/// 10279). An author carrier's sync copies are placed apart.
 pub(crate) fn entity_row_placement(value: &[u8]) -> EntityRowPlacement {
     let Some(header) = EntityMetadataHeader::parse(value) else {
         return EntityRowPlacement::Unclassified(Unresolved::Undecodable);
