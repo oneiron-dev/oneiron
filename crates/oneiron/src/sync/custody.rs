@@ -619,9 +619,7 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
         if due.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            stage_custody_inputs_in_txn(vault, wtxn, machine, &due)
-        })
+        vault.with_write_txn_grouped(|wtxn| stage_custody_inputs_in_txn(vault, wtxn, machine, &due))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {

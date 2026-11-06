@@ -69,8 +69,11 @@ pub(super) const WINDOW_ROOTS: [&str; 21] = [
 
 /// Whether a key holding a digest of what it carries (a pin's, a part's, a
 /// protected input's) may stand plaintext in a skeleton. A digest commits to
-/// its value and would outlive the value's erase, so it does not, and its
-/// window stays under the vault-wide seal. Call, behind this one constant.
+/// its value and would outlive the value's erase, so it does not: the key is
+/// withheld in an atom of its own under its rightful holders
+/// ([`withheld_key`], [`withheld_part_key`], [`withheld_client_key`]; FIX
+/// 10278), and only a window whose digest key no holder claims stays under
+/// the vault-wide seal. Call, behind this one constant.
 const DIGEST_KEYS_ARE_PLAIN: bool = false;
 
 /// An `authored_by` edge, whose key names its actor.
