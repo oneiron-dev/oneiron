@@ -96,6 +96,17 @@ pub(super) fn walk_retained_repo_members(
     ContainerReader::default().walk_retained_repo_members(bytes, visit)
 }
 
+/// [`walk_retained_repo_members`], and the bytes no reader shows beside each
+/// container's members (FIX 2470), each handed as a member too: a ZIP's
+/// local entries outside its central directory and a PDF's superseded
+/// revisions. What a masked repo read checks known values over (FIX 8966).
+pub(super) fn walk_retained_repo_members_with_hidden(
+    bytes: &[u8],
+    visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+) -> Walked<()> {
+    ContainerReader::default().walk_retained_repo_members_with_hidden(bytes, visit)
+}
+
 /// The write door over each member under `bytes`, each read as the door
 /// reads a body (FIX 2312, 2477). A container the walk reads no further is
 /// read as far as it reads: the door stores it as it is (owner ruling C2).
@@ -254,6 +265,17 @@ impl ContainerReader {
     ) -> Walked<()> {
         let mut budget =
             Budget::of(ContainerReadMode::RetainedRepo).with_pacing(self.pacing.clone());
+        retained_iterative::walk(bytes, &mut budget, visit)
+    }
+
+    pub(crate) fn walk_retained_repo_members_with_hidden(
+        &self,
+        bytes: &[u8],
+        visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+    ) -> Walked<()> {
+        let mut budget = Budget::of(ContainerReadMode::RetainedRepo)
+            .reading_hidden()
+            .with_pacing(self.pacing.clone());
         retained_iterative::walk(bytes, &mut budget, visit)
     }
 
