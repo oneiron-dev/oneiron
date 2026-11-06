@@ -40,6 +40,9 @@ const TRAINER_ORIGIN: &str = "host";
 pub(crate) struct TrainingFile {
     #[serde(default)]
     connectors: BTreeMap<String, ConnectorFile>,
+    /// `[models.training.drafters]` (FIX 14974): the vault drafter trainers.
+    #[serde(default)]
+    drafters: BTreeMap<String, super::drafter_trainers::DrafterTrainerFile>,
 }
 
 /// `[models.training.connectors.<name>]` as written.
@@ -59,6 +62,8 @@ struct ConnectorFile {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrainingSettings {
     pub connectors: BTreeMap<String, TrainingConnectorSettings>,
+    /// The vault drafter trainers, by connector name (FIX 14974).
+    pub drafters: BTreeMap<String, super::drafter_trainers::DrafterTrainerSettings>,
 }
 
 /// One trainer connector: the process it runs and the paid connector its
@@ -82,16 +87,47 @@ impl TrainingSettings {
     pub fn connector(&self, name: &str) -> Option<&TrainingConnectorSettings> {
         self.connectors.get(name)
     }
+
+    /// The first drafter trainer connector, by name, whose worker trains the
+    /// recipe family `recipe` (FIX 14974).
+    #[must_use]
+    pub fn drafter_trainer(
+        &self,
+        recipe: &str,
+    ) -> Option<(&str, &super::drafter_trainers::DrafterTrainerSettings)> {
+        self.drafters
+            .iter()
+            .find(|(_, trainer)| trainer.recipes.contains(recipe))
+            .map(|(name, trainer)| (name.as_str(), trainer))
+    }
+
+    /// The drafter trainer connector named `name`.
+    #[must_use]
+    pub fn drafter_trainer_named(
+        &self,
+        name: &str,
+    ) -> Option<&super::drafter_trainers::DrafterTrainerSettings> {
+        self.drafters.get(name)
+    }
 }
 
 impl TrainingFile {
     pub(super) fn resolve(self) -> anyhow::Result<TrainingSettings> {
-        let connectors = self
+        let connectors: BTreeMap<String, TrainingConnectorSettings> = self
             .connectors
             .into_iter()
             .map(|(name, file)| Ok((name.clone(), file.resolve(&name)?)))
             .collect::<anyhow::Result<_>>()?;
-        Ok(TrainingSettings { connectors })
+        let drafters = super::drafter_trainers::resolve(self.drafters)?;
+        if let Some(name) = drafters.keys().find(|name| connectors.contains_key(*name)) {
+            anyhow::bail!(
+                "models.training.drafters.{name}: a drafter trainer and a training connector share one name"
+            );
+        }
+        Ok(TrainingSettings {
+            connectors,
+            drafters,
+        })
     }
 }
 

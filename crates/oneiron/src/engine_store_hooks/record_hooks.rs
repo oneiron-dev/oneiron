@@ -638,6 +638,16 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::federation::note_authority_row()
     }
 
+    fn witness_grant_rulings_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        grant: &EntityId,
+        row: &[u8],
+    ) -> Result<()> {
+        crate::federation::witness_grant_rulings_in_txn(store, wtxn, grant, row)
+    }
+
     fn note_direct_derivation_in_txn(
         &self,
         store: &Store,

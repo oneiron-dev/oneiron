@@ -85,8 +85,9 @@ impl CarrierInventory {
     /// Takes every row the retained history and the shallow root of a
     /// window the checkpoint does not take hold (FIX 10681): each insert and
     /// deletion of its id roots since the shallow cut, and the shallow
-    /// root's own live rows, read from a fork at its frontiers. A pad that
-    /// lived only there would else tear unchecked (FIX 3061).
+    /// root's own live rows, read from an isolated snapshot checked out at
+    /// those frontiers. A pad that lived only there would else tear unchecked
+    /// (FIX 3061).
     fn take_history(&mut self, doc: &LoroDoc) {
         let start = doc.shallow_since_vv().to_vv();
         let history = doc.export_json_updates(&start, &doc.oplog_vv());
@@ -106,7 +107,9 @@ impl CarrierInventory {
             }
         }
         if doc.is_shallow()
-            && let Ok(root) = doc.fork_at(&doc.shallow_since_frontiers())
+            && let Ok(snapshot) = doc.export(loro::ExportMode::Snapshot)
+            && let Ok(root) = LoroDoc::from_snapshot(Zeroizing::new(snapshot).as_slice())
+            && root.checkout(&doc.shallow_since_frontiers()).is_ok()
         {
             for name in ID_ROOTS {
                 root.get_map(name).for_each(|key, value| match value {
