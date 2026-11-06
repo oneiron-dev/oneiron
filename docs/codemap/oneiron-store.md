@@ -133,7 +133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory_values/pull_result.rs` | src | s | 1 struct | CodeMemoryPullResult | Provenance-labelled code-memory pull values |
 | `src/code_promotion_gap.rs` | src | s | 1 enum · 1 fn | QueuePromotionGap | Reasons a tested revision lacks reviewed promotion |
 | `src/code_revision_identity.rs` | src | s | 3 fn | — | Deterministic aggregation-session, tested-revision and provenance identifiers |
-| `src/code_revision_record/commit_metadata.rs` | src | s | 2 fn | — | Authorship, message and file modes are canonical revision data, not export input |
+| `src/code_revision_record/commit_metadata.rs` | src | s | 3 fn | — | Message and file modes are canonical revision data, not export input; authorship is erasable attribution… |
 | `src/code_revision_record/file_frontiers.rs` | src | s | 2 fn | — | Pure tested-file frontier map validation and codecs |
 | `src/code_revision_record/mod.rs` | src | s | 1 struct · 3 mod · 2 re-export | CodePathRetirement | Code revision records, canonical codecs and pure complete-tree vocabulary |
 | `src/code_revision_record/tree_codec.rs` | src | s | 5 fn | — | The strict canonical encoding of a tested queue revision's blob map and queue record, and their fold input… |
