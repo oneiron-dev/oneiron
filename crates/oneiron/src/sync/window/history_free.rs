@@ -626,6 +626,44 @@ pub fn export_promotion_snapshot(
     export_window_replacement_for(vault, key, doc, Some(&newest), withhold)
 }
 
+/// The snapshot a private world's sealed mirror of window `key` ships, and is kept as (FIX
+/// 17210): every export scrub runs over `doc` first, with nothing withheld (only the world's key
+/// opens the section it rides), and then its history passes the check a pinned window's does,
+/// whatever the window's pin says. The mirror is a document of its own, merged from other
+/// machines' mirrors, so its history can hold what the window's never did. A history that passes
+/// ships whole, as before; one that does not ships rooted at the newest operation, or cut at the
+/// mirror's one head when no root passes. Typed `HistoryFreeRootUnavailable` when that cut is not
+/// proved or its state does not pass either: nothing unchecked ships.
+pub(crate) fn export_sealed_mirror_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<Vec<u8>> {
+    scrub_for_export(
+        vault,
+        key,
+        doc,
+        &VersionVector::default(),
+        super::Withhold::Nothing,
+    )?;
+    let check = HistoryCheck::read(vault, key, doc)?;
+    match history_free_snapshot(doc, Some(&check), None) {
+        Err(Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::HistoryFreeRootUnavailable,
+        })) => {
+            // The mirror has no observers: the barrier the cut commits
+            // reaches no window.
+            let cut = super::shallow::strict_window_cut(doc)?;
+            if cut.proved && check.root_ships(doc, &doc.oplog_frontiers()) {
+                Ok(cut.bytes)
+            } else {
+                Err(root_unavailable())
+            }
+        }
+        other => other,
+    }
+}
+
 /// What the export scrubs left.
 struct Scrubbed {
     /// The check a pinned window's history must pass; `None` for a window not pinned.

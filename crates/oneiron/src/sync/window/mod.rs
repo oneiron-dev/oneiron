@@ -68,6 +68,7 @@ pub use self::egress::{
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
+pub(crate) use self::history_free::export_sealed_mirror_snapshot;
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
@@ -80,6 +81,7 @@ pub use self::pad_custody::{
     prepare_window_pads, promotion_window_pads,
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
+pub(crate) use self::replacement::replace_detached_mirror;
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{
     ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,

@@ -31,8 +31,9 @@ use crate::store::loro_document::{
 use crate::sync::WindowManager;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{
-    apply_pending_window_updates, apply_tombstone_to_window_doc, forward_rematerialize_mirror,
-    load_window_from_state, reverse_rematerialize_for_sealing,
+    apply_pending_window_updates, apply_tombstone_to_window_doc, export_sealed_mirror_snapshot,
+    forward_rematerialize_mirror, load_window_from_state, replace_detached_mirror,
+    reverse_rematerialize_for_sealing, strict_window_cut,
 };
 use crate::window_key::WindowKey;
 
@@ -56,15 +57,24 @@ fn mirror_key(world: EntityId, window: &WindowKey) -> String {
 
 /// The window's mirror, or a fresh document (`true`) when it has none.
 fn load_mirror(vault: &Vault, world: EntityId, window: &WindowKey) -> Result<(LoroDoc, bool)> {
+    let (doc, held) = load_mirror_with_bytes(vault, world, window)?;
+    Ok((doc, held.is_none()))
+}
+
+/// The window's mirror, or a fresh document, with the bytes it was read from
+/// (`None` when it has none).
+fn load_mirror_with_bytes(
+    vault: &Vault,
+    world: EntityId,
+    window: &WindowKey,
+) -> Result<(LoroDoc, Option<Vec<u8>>)> {
     let txn = vault.store.env.read_txn()?;
     let doc = LoroDoc::new();
-    match MIRROR.get(&vault.store, &txn, &mirror_key(world, window))? {
-        Some(snapshot) => {
-            import_doc(&doc, &snapshot)?;
-            Ok((doc, false))
-        }
-        None => Ok((doc, true)),
+    let held = MIRROR.get(&vault.store, &txn, &mirror_key(world, window))?;
+    if let Some(snapshot) = &held {
+        import_doc(&doc, snapshot)?;
     }
+    Ok((doc, held))
 }
 
 fn store_mirror(vault: &Vault, world: EntityId, window: &WindowKey, doc: &LoroDoc) -> Result<()> {
@@ -199,7 +209,7 @@ impl WindowManager {
             .sealing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let (mirror, _) = load_mirror(vault, world, window)?;
+        let (mirror, held) = load_mirror_with_bytes(vault, world, window)?;
         // A delete reaches a taker's mirror as one, where a mirror started
         // over would merge with it as a union (FIX 3360).
         let tombstones = mirror.get_map("tombstones");
@@ -215,9 +225,20 @@ impl WindowManager {
         }
         mirror.commit();
         reverse_rematerialize_for_sealing(vault, &mirror, window)?;
-        let snapshot = export_snapshot(&mirror)?;
+        // The export scrubs and the history check, as any export (FIX
+        // 17210): a revision, birth or fact the scrubs took out never rides
+        // the mirror's history, and the mirror kept here is the one shipped.
+        let snapshot = export_sealed_mirror_snapshot(vault, window, &mirror)?;
         vault.with_write_txn_grouped(|wtxn| {
-            MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), &snapshot)
+            let key = mirror_key(world, window);
+            // An actor erase rewrites the mirrors in its own writer, without
+            // this lock (`rewrite_mirrors_in_txn`), and a world's erase purges
+            // them: a mirror changed since this seal read it stays as that
+            // writer left it, and this seal ships nothing.
+            if MIRROR.get(&vault.store, wtxn, &key)? != held {
+                return Err(refused("the sealed mirror changed while it was sealed"));
+            }
+            MIRROR.put(&vault.store, wtxn, &key, &snapshot)
         })?;
         Ok(snapshot)
     }
@@ -255,9 +276,26 @@ impl WindowManager {
             (incoming, true)
         } else if mirror.oplog_vv().includes_vv(&incoming.oplog_vv()) {
             (mirror, false)
-        } else {
-            import_doc(&mirror, snapshot)?;
+        } else if mirror
+            .import(snapshot)
+            .is_ok_and(|status| status.pending.is_none())
+        {
             (mirror, true)
+        } else {
+            // A mirror cut history-free (FIX 17210) does not merge into one
+            // that lacks its root: it takes this mirror's place, with what
+            // this one holds that it does not written back on top. The
+            // mirror the failed import touched is read again first.
+            let (old, _) = load_mirror(vault, world, window)?;
+            let (candidate, lost) = replace_detached_mirror(vault, &old, snapshot)?;
+            if lost > 0 {
+                tracing::warn!(
+                    window = %window.as_str(),
+                    lost,
+                    "a sealed mirror's replacement kept the bundle's value of keys this mirror changed"
+                );
+            }
+            (candidate, true)
         };
         if materialize {
             self.land_mirror(world, window, &mirror, gained)?;
@@ -266,4 +304,45 @@ impl WindowManager {
         }
         Ok(gained)
     }
+}
+
+/// Rewrites, in an actor erase's write transaction `wtxn`, each sealed mirror
+/// this vault keeps (FIX 17210): a mirror is a second document of its window,
+/// which no scan of the stored windows reads. Each is rebuilt from its stored
+/// bytes, and `rewrite` edits it and answers whether it must go history-free
+/// (it edited the mirror, or the mirror's history or shallow root holds what
+/// it would have taken out). Such a mirror is kept cut at its one head, so no
+/// history behind it holds what went; its next take lands it again, as its
+/// version moved. A mirror whose bytes do not rebuild is left for its next
+/// seal, which checks its history before anything of it ships.
+///
+/// # Errors
+///
+/// Storage failures, and `rewrite`'s.
+pub(crate) fn rewrite_mirrors_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut rewrite: impl FnMut(&mut heed::RwTxn<'_>, &LoroDoc) -> Result<bool>,
+) -> Result<()> {
+    for key in MIRROR.scan_keys(&vault.store, wtxn, b"")? {
+        let Some(snapshot) = MIRROR.get(&vault.store, wtxn, &key)? else {
+            continue;
+        };
+        let doc = LoroDoc::new();
+        if let Err(error) = import_doc(&doc, &snapshot) {
+            tracing::warn!(
+                mirror = %key,
+                %error,
+                "an erased actor's carriers: a sealed mirror does not rebuild; its next seal checks it"
+            );
+            continue;
+        }
+        if !rewrite(&mut *wtxn, &doc)? {
+            continue;
+        }
+        // No observer watches the mirror: the barrier reaches no window.
+        let cut = strict_window_cut(&doc)?;
+        MIRROR.put(&vault.store, wtxn, &key, &cut.bytes)?;
+    }
+    Ok(())
 }
