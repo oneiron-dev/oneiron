@@ -36,8 +36,9 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// Field-free paragraph edges carry zero-text child clusters and their gaps beside
 /// positive retained text at the first/last nonempty direct child, bounded by
 /// an original first pPr or last endParaRPr. Skipped children block bridges.
-/// A second render knows the exact original edge, whole-paragraph, whole-run
-/// and native single-piece partial-run identity sources. Fresh rPr template copies
+/// A second render knows the exact original edge, whole-paragraph, whole-run,
+/// native single-piece partial-run, interior-zero and opaque-child identity sources.
+/// Fresh rPr template copies
 /// omit only XML-namespace id attributes that survive in those original sources.
 /// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
@@ -244,7 +245,7 @@ fn rebuilt_pass(
                 position = end;
             }
         }
-        let mut original_runs = Vec::new();
+        let mut original_sources = Vec::new();
         let mut retained_runs = |from: usize, to: usize| -> Option<String> {
             let mut runs = String::new();
             let mut position = 0;
@@ -268,6 +269,9 @@ fn rebuilt_pass(
                     && !within(tree, *at).any(|(_, node)| node.is(DML, "fld"))
                 {
                     runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
+                    if field_free {
+                        original_sources.push(node.span.clone());
+                    }
                 } else if start < end {
                     if field_free
                         && (node.is(DML, "r") || node.is(DML, "br"))
@@ -275,7 +279,7 @@ fn rebuilt_pass(
                         && end == position + text.len()
                     {
                         runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
-                        original_runs.push(node.span.clone());
+                        original_sources.push(node.span.clone());
                     } else if node.is(DML, "r") || node.is(DML, "fld") || node.is(DML, "br") {
                         let part: String = text[start - position..end - position].iter().collect();
                         let mut run = run_xml(Some((*at, *node)), para_node, &part).ok()?;
@@ -288,7 +292,7 @@ fn rebuilt_pass(
                                 partial_run(bytes, tree, *at, start - position..end - position)
                             {
                                 run = original;
-                                original_runs.push(node.span.clone());
+                                original_sources.push(node.span.clone());
                             } else {
                                 let attributes: String = node
                                     .attr_spans
@@ -313,6 +317,9 @@ fn rebuilt_pass(
                         let bindings = crate::edit::xml::inherited_bindings(bytes, tree, *at);
                         owned.insert_str(node.open_end - node.span.start - 1, &bindings);
                         runs.push_str(&owned);
+                        if field_free {
+                            original_sources.push(node.span.clone());
+                        }
                     }
                 }
                 position += text.len();
@@ -409,7 +416,7 @@ fn rebuilt_pass(
         };
         let tail = retained_runs(old.len() - suffix, old.len())?;
         emitted_sources.extend(edges);
-        emitted_sources.extend(original_runs);
+        emitted_sources.extend(original_sources);
         Some(format!(
             "<{p}{p_attributes}>{opening}{p_pr}{leading}{head}{middle}{tail}{trailing}{end}{closing}</{p}>"
         ))
