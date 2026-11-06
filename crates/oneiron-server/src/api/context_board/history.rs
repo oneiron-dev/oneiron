@@ -290,7 +290,10 @@ pub(super) fn record_board_turn_with_layout(
     candidate: Option<BoardLayoutCandidate>,
     check: impl FnOnce(&ContextBoardResponse) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
+    let mut memories_storage =
+        super::super::context_pack::output_memory::RetainedMemoriesOutput::new(&server.memory);
     let memories = response.memories.clone();
+    memories_storage.retain(memories.as_ref());
     let mut refused = None;
     let recorded = server
         .vault

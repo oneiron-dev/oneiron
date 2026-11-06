@@ -230,6 +230,10 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     chat_split: Option<split::ChatSplit>,
+    /// The selected MEMORIES backing drops before its capacity charge.
+    #[serde(skip)]
+    #[schema(ignore)]
+    memories_storage: super::context_pack::output_memory::RetainedMemoriesOutput,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -754,7 +758,11 @@ async fn hydrate_inner(
         chat_context,
         chat_sources,
         chat_split,
+        memories_storage: super::context_pack::output_memory::RetainedMemoriesOutput::new(
+            &server.memory,
+        ),
     };
+    response.memories_storage.retain(response.memories.as_ref());
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
         // check runs inside the recording transaction, with the real record:

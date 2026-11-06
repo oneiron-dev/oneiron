@@ -264,3 +264,31 @@ can temporarily hold old and new backing. The independent dynamic JSON value,
 MEMORIES copies, caller message, message-vector slots, provider/ladder copies,
 configured rung prompt and other request or response allocations are not covered
 by this string lease. They are not charged as if they shared these buffers.
+
+
+## MEMORIES response buffer custody
+
+The final Board response keeps its original MEMORIES section and a separate,
+non-serialized capacity holder. The section drops before that holder. Capture
+happens just after the response is assembled; it does not change the public
+section type, its optional wire field, the response schema or the earlier raw
+assembly tuple.
+
+This holder records the version string, actual row-vector slots, each row's id,
+short id, content hash, asset reference, world, snippet and hook strings, and the
+six optional companion strings. The section's own disclosure clone uses the same
+stamp/disclosure capacity calculation as pack disclosure, but its independent
+buffers have their own charge. All counts use actual vector or string capacities.
+Other metadata's possible internal allocations are not inferred from its type.
+
+Recording a Board turn still clones the section before the callback mutates the
+response's turn receipt. That independent clone has a separate holder, declared
+before the clone and populated from the clone's actual capacities. The callback,
+recording transaction, refusal and rollback behavior are unchanged. It never
+inherits the original response's charge.
+
+Both holders provide post-allocation custody, not admission. Earlier MEMORIES
+assembly, raw-return-tuple lifetimes, chat-context captures, dynamic JSON copies,
+serializer buffers and other metadata backing remain separate work. No clone is
+claimed covered because it came from a charged source. No memory wait, size cap,
+deadline, refusal, policy or format version changes here.

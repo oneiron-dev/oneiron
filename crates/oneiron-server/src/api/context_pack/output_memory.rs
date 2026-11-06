@@ -23,17 +23,7 @@ impl RetainedDisclosureOutput {
     ) {
         let bytes = stamps
             .map_or(0, stamp_storage_bytes)
-            .saturating_add(assembly.map_or(0, |assembly| {
-                (assembly.emit_stamp.capacity() as u64)
-                    .saturating_add(assembly.mode.capacity() as u64)
-                    .saturating_add(
-                        assembly
-                            .notice
-                            .as_ref()
-                            .map_or(0, |notice| notice.capacity() as u64),
-                    )
-                    .saturating_add(stamp_storage_bytes(&assembly.interlocutors))
-            }));
+            .saturating_add(assembly.map_or(0, disclosure_storage_bytes));
         let held = self.0.bytes();
         if bytes > held {
             self.0.materialized(0, bytes - held);
@@ -58,6 +48,92 @@ fn stamp_storage_bytes(stamps: &Vec<oneiron::InterlocutorStamp>) -> u64 {
     stamps.iter().fold(slots, |bytes, stamp| {
         bytes.saturating_add(stamp.speaker.capacity() as u64)
     })
+}
+
+fn disclosure_storage_bytes(assembly: &oneiron::DisclosureAssembly) -> u64 {
+    (assembly.emit_stamp.capacity() as u64)
+        .saturating_add(assembly.mode.capacity() as u64)
+        .saturating_add(
+            assembly
+                .notice
+                .as_ref()
+                .map_or(0, |notice| notice.capacity() as u64),
+        )
+        .saturating_add(stamp_storage_bytes(&assembly.interlocutors))
+}
+
+/// Selected, already-materialized backing of one MEMORIES section. A clone
+/// needs its own holder; this lease never follows different allocations.
+pub(crate) struct RetainedMemoriesOutput(MemoryLease);
+
+impl RetainedMemoriesOutput {
+    pub(crate) fn new(memory: &MachineMemory) -> Self {
+        Self(memory.empty_lease())
+    }
+
+    pub(crate) fn retain(&mut self, section: Option<&oneiron::MemoriesSection>) {
+        let bytes = section.map_or(0, memories_storage_bytes);
+        let held = self.0.bytes();
+        if bytes > held {
+            self.0.materialized(0, bytes - held);
+        } else if bytes < held {
+            self.0.shrink(held - bytes);
+        }
+    }
+}
+
+impl fmt::Debug for RetainedMemoriesOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("RetainedMemoriesOutput")
+            .field(&self.0.bytes())
+            .finish()
+    }
+}
+
+fn memories_storage_bytes(section: &oneiron::MemoriesSection) -> u64 {
+    let slots = (section.rows.capacity() as u64)
+        .saturating_mul(std::mem::size_of::<oneiron::context_board::MemoryRow>() as u64);
+    let rows = section.rows.iter().fold(slots, |bytes, row| {
+        [
+            Some(&row.id),
+            Some(&row.short_id),
+            Some(&row.content_hash),
+            row.asset_ref.as_ref(),
+            row.world.as_ref(),
+            row.snippet.as_ref(),
+            row.hook.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(bytes, |bytes, text| {
+            bytes.saturating_add(text.capacity() as u64)
+        })
+    });
+    let companion = section.companion.as_ref().map_or(0, |companion| {
+        [
+            companion.caller.as_ref(),
+            companion.scope.as_ref(),
+            companion.scope_source.as_ref(),
+            companion.person_ref.as_ref(),
+            companion.counterpart_person_ref.as_ref(),
+            companion.expression.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(0_u64, |bytes, text| {
+            bytes.saturating_add(text.capacity() as u64)
+        })
+    });
+    (section.version.capacity() as u64)
+        .saturating_add(rows)
+        .saturating_add(companion)
+        .saturating_add(
+            section
+                .disclosure
+                .as_ref()
+                .map_or(0, disclosure_storage_bytes),
+        )
 }
 
 /// The encoded buffer drops before its capacity charge. Transport clones share
