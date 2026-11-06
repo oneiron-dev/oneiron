@@ -42,3 +42,24 @@ MIME, character encoding, grant and fence metadata are not inferred from either
 producer field. Those parts of FIX 4429, and effect coverage outside these large
 bridge replies, remain separate work. No new setting or worker configuration is
 required.
+
+## Measured text encoding
+
+A newly measured body's manifest carries `text_encoding: "utf-8"` only when
+`BodyFacts.text` confirms that its whole final byte stream is valid UTF-8. The
+meter checks across frame boundaries; an unfinished final code point is not
+classified as text. Measurement follows custody sweeps and their final tail, so this is a
+fact about the stored bytes, not the producer's original value. A binary body,
+a context-only reference, or a projection with no measured body keeps `None`.
+
+Encoding publishes with the existing manifest and is a required nullable replay
+field. Cards include it only when known. It is not a grant, producer-origin proof,
+MIME type, JSON-syntax claim, or a ranged chunk's `utf8`/`base64` transport choice.
+A fresh byte measurement can establish the encoding when bytes are republished;
+producer step/effect metadata still keeps its original replay values. Raw-put
+byte validation preserves supplied optional metadata before its existing full
+byte comparisons, without certifying the supplied encoding's origin.
+
+MIME type remains unknown here. A JSON encoder's output can pass through a raw
+custody sweep before publication, so the encoder alone does not prove that the
+final body is still JSON. No new parser, read, setting or refusal is added.

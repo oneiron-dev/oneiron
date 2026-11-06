@@ -245,6 +245,9 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
     if let Some(effect) = &output.producing_effect {
         card["producing_effect"] = json!(effect);
     }
+    if let Some(encoding) = &output.text_encoding {
+        card["text_encoding"] = json!(encoding);
+    }
     card
 }
 

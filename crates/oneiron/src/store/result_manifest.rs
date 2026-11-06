@@ -34,6 +34,9 @@ pub struct CodeRunRawOutput {
     /// The native bridge effect that produced this reply, when known. This
     /// coarse label is not an inner verb, action digest or authority.
     pub producing_effect: Option<String>,
+    /// Character encoding when known; native measurement records UTF-8.
+    /// Not a MIME type, transport encoding, or proof of supplied metadata.
+    pub text_encoding: Option<String>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -79,6 +82,7 @@ impl CodeRunRawOutput {
             input_rows: None,
             producing_step_start: None,
             producing_effect: None,
+            text_encoding: facts.text.then(|| "utf-8".to_owned()),
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -109,6 +113,7 @@ impl CodeRunRawOutput {
             input_rows: None,
             producing_step_start: None,
             producing_effect: None,
+            text_encoding: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),
