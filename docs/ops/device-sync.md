@@ -343,3 +343,17 @@ The existing receiver opens copies against the original envelope before native
 import. Missing or malformed copies do not delay or repeat canonical delivery.
 This path reuses eligible native copies; it does not provide immediate vector
 fill when no such copy exists and does not change any timer, limit or setting.
+
+## Completing retained CLAIM copies after import
+
+After a native copy scope's canonical import call returns, the receiver attempts
+vector completion for each distinct CLAIM whose copy was retained in that call.
+It reopens that CLAIM's copy from the existing pending job and uses the same
+retained-copy opener and vector writer as background catch-up. Source, model,
+peer, custody, lease and job-token checks still run. No live home or embedder is
+needed for an eligible retained copy.
+
+A savepoint result is not a durability receipt, and a returned writer error is
+not proof of rollback. Completion checks the persisted job and current source;
+its optional errors never replace the original import result. Existing
+housekeeping can revisit pending work, including active and left shared vaults.
