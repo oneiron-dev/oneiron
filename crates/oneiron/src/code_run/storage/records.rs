@@ -29,7 +29,7 @@ use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 mod admitted;
 mod bodies;
 
-pub(crate) use self::admitted::ReplyBody;
+pub(crate) use self::admitted::{ReplyAdmission, ReplyBody, ReplySpool};
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
     code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
