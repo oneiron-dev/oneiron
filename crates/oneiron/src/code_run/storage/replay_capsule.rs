@@ -80,6 +80,7 @@ pub(crate) use self::start_parts::{
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
+pub(crate) use self::start_pieces::step_start_ask_pieces;
 
 /// Capsules. Key: id16(attempt) + be64(lease generation) + be64(step).
 const CAPSULES: SideTable<(EntityId, u64, u64), StepReplayCapsule, Named> =

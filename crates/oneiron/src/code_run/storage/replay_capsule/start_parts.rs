@@ -4,12 +4,14 @@
 //! own piece writer on an activation.
 //!
 //! A kept start is found by its capsule, never by a path's name: the
-//! capsule's run and the start's path are its occurrence, the start's body
-//! ref and digest its bytes, inline or file-backed alike. A restore
-//! republishes a recomposed start among the image's rows before any row
-//! lands, so no prefix reader ever sees the old one: held inline in its row
-//! whatever its size (CALLS "republished step start stays inline"), under
-//! the same occurrence, its marks moved to its new handle, and its
+//! capsule's run and the start's path are its manifest's occurrence, and
+//! the whole start is put together from the pieces the manifest names, as
+//! the run holds them for the actor (FIX 4192), inline or file-backed
+//! alike. A restore republishes a recomposed start among the image's rows
+//! before any row lands, so no prefix reader ever sees the old one: each
+//! piece whose row does not hold its bytes is held inline whatever its size
+//! (CALLS "republished step start stays inline"), and the manifest goes
+//! under the same occurrence, its marks moved to its new handle, with its
 //! descriptor and its capsule naming the new body. An activation
 //! republishes it in its own writer, and erases nothing: what its source
 //! retired, the source retired.
@@ -28,12 +30,12 @@ use super::CAPSULES;
 use super::pieces::PieceScope;
 use super::spawn_erase::republished_start_body;
 use super::start_pieces::{
-    release_unnamed_start_pieces_in_txn, republish_start_pieces_in_txn, start_bytes_in_txn,
-    start_manifest_pieces_in_txn,
+    StartPieces, manifest_ask_pieces, release_unnamed_start_pieces_in_txn,
+    republish_start_pieces_in_txn, start_bytes_in_txn, start_manifest_pieces_in_txn,
 };
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::{
-    OwnedBody, digest_is_held_in_txn, prune_digest_in_rows, queue_pruned_file_in_txn,
+    BodyState, OwnedBody, digest_is_held_in_txn, prune_digest_in_rows, queue_pruned_file_in_txn,
 };
 use crate::side_table::{self, Named, SideKey, SideTable, SideTableDbs};
 use crate::store::{BODY_KEYS, BodyMeter, Store};
@@ -44,6 +46,11 @@ type CapsuleKey = (EntityId, u64, u64);
 
 /// An image's raw rows of one database, sorted by key.
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// What a restore's republish of a start left among an image's rows (FIX
+/// 4192): the digests that rested without their bytes, and the digests
+/// whose body rows it put back.
+type StartLanding = (BTreeSet<[u8; 32]>, BTreeSet<[u8; 32]>);
 
 /// The body descriptors, as an image's raw rows hold them: a restore's
 /// republish of a step start names its new body there.
@@ -66,9 +73,7 @@ pub(crate) struct KeptStart {
     pub(crate) run: EntityId,
     /// The actor whose step it is.
     pub(crate) actor: EntityId,
-    /// The digest its whole body rests under.
-    pub(crate) digest: [u8; 32],
-    /// Its body.
+    /// Its whole body, put together from its pieces (FIX 4192).
     pub(crate) bytes: Vec<u8>,
 }
 
@@ -155,7 +160,6 @@ fn kept_start_in_txn(
         row,
         run: scope.run,
         actor: scope.actor,
-        digest: start.body.hash,
         bytes: held,
     }))
 }
@@ -195,8 +199,8 @@ pub(crate) fn step_start_owners_in_txn(
 }
 
 /// The raw `vault_meta` key of the body row the capsule row value `capsule`
-/// names as its start's; `None` for one with no start or that does not
-/// decode.
+/// names as its start's, its manifest's (FIX 4192); `None` for one with no
+/// start or that does not decode.
 pub(crate) fn step_start_body_row(capsule: &[u8]) -> Option<Vec<u8>> {
     let start = CAPSULES.decode_value(capsule).ok()?.start?;
     Some(code_run_body_row_key(&start.body.hash))
@@ -346,29 +350,162 @@ fn take_row(rows: &mut Rows, key: &[u8]) -> Option<Vec<u8>> {
     place(rows, key).ok().map(|at| rows.remove(at).1)
 }
 
+/// The inline bytes of `piece` among an image's raw rows: `None` when its
+/// body row is a file, is gone, or holds other bytes (a row a census
+/// carried without its bytes).
+fn inline_in_rows(rows: &Rows, piece: OutputRef) -> Option<Vec<u8>> {
+    let at = place(rows, &code_run_body_row_key(&piece.hash)).ok()?;
+    match RAW_OUTPUTS.decode_value(&rows[at].1).ok()? {
+        StoredBody::Inline { bytes, .. } if *blake3::hash(&bytes).as_bytes() == piece.hash => {
+            Some(bytes)
+        }
+        _ => None,
+    }
+}
+
 /// FIX 9180: a restore's republish of the step start the capsule row `row`
 /// names, as the recomposed `bytes`, among an image's raw `vault_meta`
-/// rows, before any lands: held inline whatever its size, under the same
-/// occurrence, its taint and secret marks moved to its new handle, its
-/// descriptor and holder row naming the new body, and the capsule naming
-/// its new body and digest. Returns the digest the start rested under and
-/// the one it rests under now; `None` for a capsule that names no start.
+/// rows, before any lands. FIX 4192: the start lands as its pieces. Each
+/// piece whose body row does not hold its bytes, as a piece a census
+/// carried without them, is put back inline whatever its size, with the
+/// run's descriptor and holder row at its piece path. The manifest goes
+/// under the same occurrence, held inline, its taint and secret marks moved
+/// to its new handle, and the capsule names it and the digest of the whole
+/// start. `asks` names each call whose ask the census carried apart, by
+/// its place among the start's calls. Returns the digests that rested
+/// without their bytes (those calls' pieces, and the old manifest when the
+/// start names another one), and the digests whose body rows it put back;
+/// `None` for a capsule that names no start or no actor.
 ///
 /// # Errors
 ///
-/// A row that does not decode or encode.
+/// A row that does not decode or encode, and a piece that does not encode.
 pub(crate) fn republish_step_start_in_rows(
     rows: &mut Rows,
     row: &[u8],
     bytes: &[u8],
-) -> Result<Option<([u8; 32], [u8; 32])>> {
+    asks: &[u32],
+) -> Result<Option<StartLanding>> {
     let at = place(rows, row)
         .map_err(|_| Error::CorruptedIndex("a carried step start's capsule row"))?;
     let mut capsule = CAPSULES.decode_value(&rows[at].1)?;
+    let Some(scope) = capsule_scope(&capsule) else {
+        return Ok(None);
+    };
     let Some(start) = capsule.start.take() else {
         return Ok(None);
     };
-    let run = capsule.run;
+    let read = |piece| inline_in_rows(rows, piece);
+    let mut rested: BTreeSet<[u8; 32]> = manifest_ask_pieces(start.body, asks, read)
+        .into_iter()
+        .collect();
+    let pieces = StartPieces::of(bytes)?;
+    let mut landed = BTreeSet::new();
+    for (piece, piece_bytes) in pieces.shared() {
+        let path = scope.start_path(&piece.hash);
+        if land_piece_in_rows(rows, scope.run, &path, piece_bytes, &rested)? {
+            landed.insert(piece.hash);
+        }
+    }
+    let (before, output) = republish_manifest_in_rows(rows, scope.run, &start, pieces.manifest())?;
+    if before != output.raw_blake3 {
+        rested.insert(before);
+    }
+    landed.insert(output.raw_blake3);
+    capsule.start = Some(ExecutorStepStart {
+        body: output.output_ref(),
+        digest: *blake3::hash(bytes).as_bytes(),
+        erased: false,
+        ..start
+    });
+    put_row(rows, row.to_vec(), CAPSULES.encode_value(&capsule)?);
+    Ok(Some((rested, landed)))
+}
+
+/// Puts the start piece `bytes` back among an image's raw rows as the
+/// complete body run `run` holds at `path`, before any lands (FIX 4192):
+/// its body row inline whatever its size, unless the row holds its bytes
+/// already (inline, or a file outside `stripped`, which traveled), and the
+/// run's descriptor and holder row unless its descriptor holds it whole. A
+/// secret the scan finds marks the run's occurrence. Whether it put the
+/// body row.
+fn land_piece_in_rows(
+    rows: &mut Rows,
+    run: EntityId,
+    path: &str,
+    bytes: &[u8],
+    stripped: &BTreeSet<[u8; 32]>,
+) -> Result<bool> {
+    let mut meter = BodyMeter::new();
+    meter.feed(bytes);
+    let facts = meter.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS);
+    let output = CodeRunRawOutput::from_facts(path, &facts, true)?;
+    let occurrence = ResultOccurrence::of(Some(run), &output)?;
+    let key = RAW_OUTPUTS.key_bytes(&output.handle);
+    let stored = place(rows, &key)
+        .ok()
+        .and_then(|at| RAW_OUTPUTS.decode_value(&rows[at].1).ok());
+    let whole = match &stored {
+        Some(StoredBody::Inline { bytes: held, .. }) => held.as_slice() == bytes,
+        Some(StoredBody::File { .. }) => !stripped.contains(&output.raw_blake3),
+        None => false,
+    };
+    let body = match stored {
+        Some(body) if whole => body,
+        stored => {
+            let held = stored.is_some_and(|body| {
+                matches!(
+                    body,
+                    StoredBody::Inline { held: true, .. } | StoredBody::File { held: true, .. }
+                )
+            });
+            let body = republished_start_body(bytes).holding(held);
+            put_row(rows, key, RAW_OUTPUTS.encode_value(&body)?);
+            body
+        }
+    };
+    let descriptor = BODY_ROWS.key_bytes(&(run, occurrence.id()));
+    let holds = place(rows, &descriptor)
+        .ok()
+        .and_then(|at| BODY_ROWS.decode_value(&rows[at].1).ok())
+        .is_some_and(|owned| {
+            matches!(&owned.state, BodyState::Complete { body } if body.blake3 == output.raw_blake3)
+        });
+    if !holds {
+        let owned = owned_body(run, &output, &body)?;
+        put_row(rows, descriptor, BODY_ROWS.encode_value(&owned)?);
+        put_row(
+            rows,
+            BODY_DIGEST_ROWS.key_bytes(&(output.raw_blake3, occurrence.id())),
+            BODY_DIGEST_ROWS.encode_value(&run)?,
+        );
+        take_row(rows, &BODY_RELEASED_ROWS.key_bytes(&output.raw_blake3));
+    }
+    let secret = RAW_OUTPUT_SECRETS.key_bytes(&occurrence.mark_key(&output.handle));
+    if let Some(reason) = facts.secret
+        && place(rows, &secret).is_err()
+    {
+        put_row(
+            rows,
+            secret,
+            RAW_OUTPUT_SECRETS.encode_value(&reason.to_owned())?,
+        );
+    }
+    Ok(!whole)
+}
+
+/// The manifest `bytes` republished among an image's raw rows as the body
+/// run `run` holds at `start`'s path, in place of the body `start` names:
+/// held inline whatever its size, under the same occurrence, its taint and
+/// secret marks moved to its new handle, and its descriptor and holder row
+/// naming the new body. Returns the digest the start rested under and the
+/// new body.
+fn republish_manifest_in_rows(
+    rows: &mut Rows,
+    run: EntityId,
+    start: &ExecutorStepStart,
+    bytes: &[u8],
+) -> Result<([u8; 32], CodeRunRawOutput)> {
     let old = CodeRunRawOutput {
         path: start.path.clone(),
         ..CodeRunRawOutput::of_ref(start.body)
@@ -428,51 +565,53 @@ pub(crate) fn republish_step_start_in_rows(
         BODY_DIGEST_ROWS.encode_value(&run)?,
     );
     take_row(rows, &BODY_RELEASED_ROWS.key_bytes(&output.raw_blake3));
-    let moved = (old.raw_blake3, output.raw_blake3);
-    capsule.start = Some(ExecutorStepStart {
-        body: output.output_ref(),
-        digest: *blake3::hash(bytes).as_bytes(),
-        erased: false,
-        ..start
-    });
-    put_row(rows, row.to_vec(), CAPSULES.encode_value(&capsule)?);
-    Ok(Some(moved))
+    Ok((old.raw_blake3, output))
 }
 
 /// FIX 9180: a restore's disposition of the step start the capsule row
 /// `row` names, whose rest retired, among an image's raw rows, as a
-/// retired body leaves one: every descriptor holding its body goes
-/// explicitly incomplete, with nothing to show. Returns the digest its
-/// body rested under; `None` for a capsule that names no start.
+/// retired body leaves one: every descriptor holding its manifest goes
+/// explicitly incomplete, with nothing to show. Returns the digests that
+/// rest without their bytes: the pieces of its calls at `asks` whose asks a
+/// census carried apart (FIX 4192), and its manifest; none for a capsule
+/// that names no start.
 ///
 /// # Errors
 ///
 /// A row that does not decode.
-pub(crate) fn drop_step_start_in_rows(rows: &mut Rows, row: &[u8]) -> Result<Option<[u8; 32]>> {
+pub(crate) fn drop_step_start_in_rows(
+    rows: &mut Rows,
+    row: &[u8],
+    asks: &[u32],
+) -> Result<Vec<[u8; 32]>> {
     let at = place(rows, row)
         .map_err(|_| Error::CorruptedIndex("a carried step start's capsule row"))?;
     let Some(start) = CAPSULES.decode_value(&rows[at].1)?.start else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
+    let mut rested = manifest_ask_pieces(start.body, asks, |piece| inline_in_rows(rows, piece));
     prune_digest_in_rows(rows, &start.body.hash)?;
-    Ok(Some(start.body.hash))
+    rested.push(start.body.hash);
+    Ok(rested)
 }
 
-/// FIX 9180: settles, among an image's raw rows, the whole bodies carried
-/// starts rested under (`rested`) once each start landed again as the
-/// bodies `landed`: a body row no start lands again goes, as no stream
-/// carried its bytes, and the instance row of each names an inline body, as
-/// every landed start is held inline now.
+/// FIX 9180: settles, among an image's raw rows, the bodies carried starts
+/// rested under without their bytes (`rested`) once each start landed again
+/// as the bodies `landed`: a body no start lands again goes, as no stream
+/// carried its bytes, and every descriptor holding it goes explicitly
+/// incomplete (FIX 4192: a call piece whose ask retired); the instance row
+/// of each names an inline body, as every landed piece is held inline now.
 ///
 /// # Errors
 ///
-/// An instance row that does not decode or encode.
+/// A row that does not decode or encode.
 pub(crate) fn settle_start_bodies_in_rows(
     rows: &mut Rows,
     rested: &BTreeSet<[u8; 32]>,
     landed: &BTreeSet<[u8; 32]>,
 ) -> Result<()> {
     for digest in rested.difference(landed) {
+        prune_digest_in_rows(rows, digest)?;
         take_row(rows, &code_run_body_row_key(digest));
     }
     for digest in rested.union(landed) {
