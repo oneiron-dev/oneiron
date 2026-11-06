@@ -113,6 +113,7 @@ fn executor_config(run_id: EntityId, limits: EngineExecutorLimits) -> EngineExec
         global_tier: ModelTierRef("executor-tier".to_owned()),
         determinism: determinism(),
         limits,
+        wake: None,
     }
 }
 

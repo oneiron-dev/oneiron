@@ -937,6 +937,60 @@ reuses its reply's kept prefix sends today's opener in place of the captured
 one; a Continue keeps the opener its saved reply followed. `POST
 /v1/core/context-board` and `ai.reply` still render the one frame.
 
+A session that an event started ends with the wake variant instead:
+`<turn now="…" wake="…" response="optional"/>`, where `wake` is `inbox`,
+`review`, `task`, `room` or `channel`. The cause comes from the dispatch,
+never from a briefing or a sender's words.
+
+- A resident's inbox, diary-review, room and TASK wakes, and an agent run
+  that realizes a TASK, put it after the executor's turn instruction, on the
+  run's opening request only. A later step, a resumed wait, a continued run
+  and a spawn without a TASK carry none. The task text never holds the time.
+- A Slack or LINE reply puts `wake="channel"` after the event's briefing.
+  An empty answer still sends nothing.
+- A saved-workflow leaf whose attempt realizes a TASK ends its request with
+  `wake="task"`, after its confession ask, and states the protocol beside
+  its instructions. A leaf with no TASK and the planner's calls carry none.
+- A STREAM wake batch carries it as `opener`, beside `wakes` and `frames`.
+  It is rendered when the batch is handed over (`oneiron/wakes`, the helper
+  or boot batch, `wake inbox`, `self.focus.wakes`) and never stored with a
+  notice. A batch that names a TASK is `task`; else one that names a room
+  turn is `room`; one of reviews only is `review`. A tmux pane is still
+  typed ids only.
+
+The executor's system prompt and the MCP setup instructions state the
+protocol once: read the live state first; to answer in a room, take the
+eligible claim first (`rooms.claim`, or the turn an accepted offer binds);
+`HeldBy` or `NotAddressed` means no ordinary room reply; no room output is
+a valid completion. `turn_opener` sets chat turns only; the wake variant
+has no switch.
+
+A room turn wakes the agents it calls on (`wake="room"`). When a turn in a
+project room commits, each agent it addresses and each agent holding an
+open TASK on its thread gets one wake. The speaker never wakes itself, and
+an agent with no live standing in the room, or off a private thread's
+audience, gets none. The witness stages each wake in its own write, as a
+`rooms.wake.v1` queue row that names the room, the turn and the agent; no
+model runs and no agent is dispatched in that write. After the commit, the
+agent's runner takes the wake and reads it live again: the agent still
+stands there, and nobody holds the turn's claim yet.
+
+- A settled resident is dispatched under its wake mode: `all_addressed` on
+  every such turn, `human_messages` only on one a PERSON spoke, `manual`
+  never. Its briefing names the room and the turn by ref and copies none of
+  the turn. The resident reads the room with its own reads, so an agent
+  admitted from now on reads no earlier history.
+- Any other agent gets a STREAM wake on each of its connections that
+  subscribes to `room_turns` (in the default lane, and in a narrowed
+  credential's ceiling). The envelope carries `room_ref` and `turn_ref`,
+  its id is `room-wake:<turn>:<agent>`, and delivery reads it live again.
+  A wake whose agent has no connection waits until one attaches. A tmux
+  pane is typed `room:<room>:<turn>`.
+
+A wake is the frame, never the claim: ROOM shows who holds the turn, and
+the agent claims before it speaks. Turns in an off-record stretch land in
+its overlay and wake no one.
+
 ### What the status route says about the vault's sessions
 
 `GET /v1/ai/status` lists, under `models.session_allocations` (FIX10370),

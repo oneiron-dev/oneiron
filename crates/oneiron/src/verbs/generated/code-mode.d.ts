@@ -77,8 +77,8 @@ declare namespace Sdk {
   type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
   type LiveRunRequest<T> = { live_run: string; spec: T };
   type BoardWakeRequest = Record<string, never>;
-  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null };
-  type BoardWakeReply = { wakes: WakeEnvelope[] };
+  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null; room_ref?: string | null; turn_ref?: string | null };
+  type BoardWakeReply = { wakes: WakeEnvelope[]; opener?: string | null };
   type ScratchpadRecallRequest = { session_id: string; query: string };
   type EntityId = string;
   type ScratchpadRecallMark = "keep" | "scratch";
@@ -4555,7 +4555,7 @@ declare namespace Sdk {
   type FrameKind = { kind: "keyframe"; payload: string } | { kind: "delta"; payload: DeltaRow[] };
   type BoardStreamFrame = { epoch: number; kind: FrameKind };
   type StreamConnectionId = string;
-  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews";
+  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews" | "room_turns";
   type BoardVerbOutputWire = { kind: "expanded"; key: string; lines: string[] } | { kind: "frame"; frame: BoardStreamFrame } | { kind: "subscription"; connection: StreamConnectionId; active: SubscriptionScope[] };
   type BoardVerbOutput = BoardVerbOutputWire;
   type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };

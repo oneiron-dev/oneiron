@@ -1,62 +1,36 @@
 //! PERSON substitution only in the typed text of a model reply's evidence copy.
 
-use std::borrow::Cow;
-
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::value::RawValue;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::code_run::ExecutorStorage;
-use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Result};
+use crate::{ContentPart, EntityId, Error, LlmMessage, Result};
 
-#[derive(Serialize)]
-pub(super) struct ReplyEvidence<'a> {
-    role: &'a LlmMessageRole,
-    content: Vec<Cow<'a, ContentPart>>,
-}
-
-impl Drop for ReplyEvidence<'_> {
-    fn drop(&mut self) {
-        for part in &mut self.content {
-            if let Cow::Owned(ContentPart::Text { text }) = part {
-                text.zeroize();
-            }
-        }
-    }
-}
-
-pub(super) fn for_run<'a>(
+/// Sweeps the original encoding once, with PERSON spans restricted to typed
+/// Text parts. `None` leaves the ordinary custody-sweeping sink in place.
+pub(super) fn for_run_bytes(
     storage: &ExecutorStorage<'_>,
     exec_run: EntityId,
-    reply: &'a LlmMessage,
-) -> Result<ReplyEvidence<'a>> {
-    let source = storage.code_run_known_source(exec_run)?;
-    let mut evidence = ReplyEvidence {
-        role: &reply.role,
-        content: Vec::with_capacity(reply.content.len()),
-    };
-    // Borrowed RawValues locate native typed fields in the exact full encoding;
-    // no field-name search or independent scalar encoding chooses custody hits.
+    reply: &LlmMessage,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    // Borrowed RawValues locate native typed fields in the exact full encoding.
     let mut encoded = Zeroizing::new(Vec::new());
     serde_json::to_writer(&mut *encoded, reply).map_err(encoding_error)?;
     let positions: EncodedReply<'_> = serde_json::from_slice(&encoded).map_err(encoding_error)?;
+    let mut texts = Vec::with_capacity(reply.content.len());
     for (part, encoded_part) in reply.content.iter().zip(positions.content) {
-        let part = match part {
-            ContentPart::Text { text } => {
-                let position: EncodedText<'_> =
-                    serde_json::from_str(encoded_part.get()).map_err(encoding_error)?;
-                let scalar = position.text.get();
-                let start = scalar.as_ptr() as usize - encoded.as_ptr() as usize;
-                match source.replace_person_text(text, &encoded, start..start + scalar.len())? {
-                    Some(text) => Cow::Owned(ContentPart::Text { text }),
-                    None => Cow::Borrowed(part),
-                }
-            }
-            _ => Cow::Borrowed(part),
+        let ContentPart::Text { text, .. } = part else {
+            continue;
         };
-        evidence.content.push(part);
+        let position: EncodedText<'_> =
+            serde_json::from_str(encoded_part.get()).map_err(encoding_error)?;
+        let scalar = position.text.get();
+        let start = scalar.as_ptr() as usize - encoded.as_ptr() as usize;
+        texts.push((text.as_str(), start..start + scalar.len()));
     }
-    Ok(evidence)
+    let source = storage.code_run_known_source(exec_run)?;
+    source.replace_reply_person_texts(&texts, &encoded)
 }
 
 #[derive(Deserialize)]
