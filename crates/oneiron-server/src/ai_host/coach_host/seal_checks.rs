@@ -5,25 +5,28 @@
 //! names) and answers, per requested objective, whether a flaw keeps it from
 //! being met. A recheck shows what the agent confessed, to be examined
 //! directly; a random audit shows only the objectives, so the agent's own
-//! report does not steer it. The Coach pays for the calls.
+//! report does not steer it. The Coach pays for the calls. Each finding
+//! names the checker's protocol and the role its judge ran on, so a
+//! completed random audit freezes its contract (FIX 3611, [`checker`]).
+use oneiron::EntityId;
 use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::seal_checks::{SealCheck, SealChecker};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::self_heal::audit::{SealCheckKind, SealCheckOutcome, SealCheckRequest};
-use oneiron::{EntityId, LlmMessageRole};
+use oneiron::self_heal::audit::{CheckerProtocol, SealCheckOutcome, SealCheckRequest};
 
-use self::checker::{SYSTEM, independent, parse};
+use self::checker::{check_messages, independent, objective_data, parse, protocol_digest};
 use super::super::CHAT_ROLE;
-use super::super::code_fix::{HostModels, message};
+use super::super::code_fix::HostModels;
 use crate::server::SyncServer;
 
-mod checker;
+pub(in crate::ai_host) mod checker;
 
-/// The purpose the checks are metered and routed under.
-const PURPOSE: &str = "coach_seal_check";
+/// The purpose the checks are metered and routed under, a contribution
+/// check's audit of its forks too (FIX 3611).
+pub(in crate::ai_host) const PURPOSE: &str = "coach_seal_check";
 /// What one job's checks may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
 /// Pending checks one job puts to a judge: a pace, as each one asked goes
@@ -109,48 +112,36 @@ impl SealChecker for HostChecker<'_> {
             .server
             .vault()
             .measure_limit(EngineLimit::MaintenanceTextBytes, result.len() as u64);
-        let recheck = request.kind == SealCheckKind::ConfessionRecheck;
-        let objectives: Vec<serde_json::Value> = request
+        let objectives = request
             .objectives
             .iter()
-            .map(|objective| {
-                if recheck {
-                    serde_json::json!({
-                        "objective": objective.objective,
-                        "agent_says_met": objective.met,
-                        "agent_named_flaw": objective.flaw,
-                        "agent_unsure_of": objective.uncertainty,
-                    })
-                } else {
-                    serde_json::json!({ "objective": objective.objective })
-                }
-            })
+            .map(|objective| objective_data(request.kind, objective))
             .collect();
-        let data = serde_json::json!({
-            "check": if recheck { "recheck" } else { "random_audit" },
-            "objectives": objectives,
-            "result": result,
-        });
-        let Some((text, served)) = self.models.generate_served(
-            role,
-            vec![
-                message(LlmMessageRole::System, SYSTEM.to_owned()),
-                message(LlmMessageRole::User, data.to_string()),
-            ],
-        )?
-        else {
+        let messages = check_messages(request.kind, objectives, &result);
+        let Some((text, served)) = self.models.generate_served(role, messages)? else {
             return Ok(SealCheck::Unavailable);
         };
         // A fallback rung may be the executor's own model.
         if !independent(&served, executor) {
             return Ok(SealCheck::Inconclusive);
         }
-        Ok(match parse(&text, request) {
-            Some(findings) => SealCheck::Checked(SealCheckOutcome {
-                judge_revision: served,
-                checked_at: now,
-                findings,
-            }),
+        let asked: Vec<&str> = request
+            .objectives
+            .iter()
+            .map(|objective| objective.objective.as_str())
+            .collect();
+        Ok(match parse(&text, &asked, &request.result_ref) {
+            Some(findings) => SealCheck::Checked {
+                outcome: SealCheckOutcome {
+                    judge_revision: served,
+                    checked_at: now,
+                    findings,
+                },
+                protocol: CheckerProtocol {
+                    digest: protocol_digest(),
+                    role,
+                },
+            },
             None => SealCheck::Inconclusive,
         })
     }

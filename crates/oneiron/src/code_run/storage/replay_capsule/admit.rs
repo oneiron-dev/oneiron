@@ -227,6 +227,7 @@ fn write_capsule_in_txn(
         start,
         content: CapsuleContent::Kept { actor },
         context: None,
+        answer: None,
     };
     CAPSULES.put(vault, wtxn, &key, &capsule)?;
     Ok(Some(capsule))
@@ -274,6 +275,7 @@ fn write_withheld_in_txn(
         start,
         content: CapsuleContent::Kept { actor: draft.actor },
         context: None,
+        answer: None,
     };
     CAPSULES.put(vault, wtxn, &draft.key(), &capsule)?;
     Ok(Some(capsule))
