@@ -13,6 +13,9 @@
 //! handle removes the secret.
 
 mod key_sort;
+mod paced_text;
+
+use paced_text::{push_masked_part, replace_nonempty_with_reader};
 
 use std::ops::Range;
 
@@ -402,7 +405,14 @@ impl LiftedKeys {
                     .ok_or(Error::InvariantViolation(
                         "a lifted text's custody record has no handle",
                     ))?;
-                keys.push((value.to_owned(), format!("{HANDLE_OPEN}{handle}]")));
+                let value = if let Some((reader, scan_bytes)) = reader {
+                    let mut owned = String::with_capacity(value.len());
+                    push_masked_part(&mut owned, value, reader, scan_bytes)?;
+                    owned
+                } else {
+                    value.to_owned()
+                };
+                keys.push((value, format!("{HANDLE_OPEN}{handle}]")));
             }
         }
         if let Some((reader, _)) = reader {
@@ -624,66 +634,6 @@ impl MaskedText {
         }
         Some(pieces)
     }
-}
-
-/// Where [`str::replace`] replaces `value` in `text`, in characters.
-fn replace_nonempty_with_reader(
-    text: &str,
-    value: &str,
-    tag: &str,
-    reader: &ContainerReader,
-    scan_bytes: usize,
-) -> Result<Option<String>> {
-    let mut out = None;
-    let mut position = 0;
-    while let Some(offset) = crate::graph_fs::find_literal(
-        &text.as_bytes()[position..],
-        value,
-        scan_bytes.max(1),
-        || {
-            reader
-                .pacing
-                .checkpoint(ReadProgress::Member)
-                .map_err(withheld)
-        },
-    )? {
-        reader
-            .pacing
-            .checkpoint(ReadProgress::Member)
-            .map_err(withheld)?;
-        let start = position + offset;
-        let output = out.get_or_insert_with(|| String::with_capacity(text.len()));
-        push_masked_part(output, &text[position..start], reader, scan_bytes)?;
-        push_masked_part(output, tag, reader, scan_bytes)?;
-        position = start + value.len();
-    }
-    if let Some(output) = &mut out {
-        push_masked_part(output, &text[position..], reader, scan_bytes)?;
-    }
-    Ok(out)
-}
-
-fn push_masked_part(
-    out: &mut String,
-    text: &str,
-    reader: &ContainerReader,
-    scan_bytes: usize,
-) -> Result<()> {
-    let quantum = scan_bytes.max(char::MAX.len_utf8());
-    let mut start = 0;
-    while start < text.len() {
-        reader
-            .pacing
-            .checkpoint(ReadProgress::Member)
-            .map_err(withheld)?;
-        let mut end = start.saturating_add(quantum).min(text.len());
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        out.push_str(&text[start..end]);
-        start = end;
-    }
-    Ok(())
 }
 
 fn char_matches(text: &str, value: &str) -> Vec<Range<usize>> {
