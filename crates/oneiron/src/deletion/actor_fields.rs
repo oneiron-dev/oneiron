@@ -76,6 +76,22 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
     pub(crate) fn stage_retired_rows(&mut self, rows: &BTreeSet<EntityId>) -> Result<()> {
         super::erase::stage_retired_rows_in_txn(self.vault, &mut *self.wtxn, &self.actor, rows)
     }
+
+    /// Records that `intents`, relayed ask intents of this erase's target a
+    /// legal hold kept from it, are owed their retirement and their results'
+    /// (FIX 20468). The due legal-hold pass that finds neither row held
+    /// retires both, and the erase is not complete until then.
+    pub(crate) fn owe_held_ask_forward_intents(
+        &mut self,
+        intents: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        super::erase::owe_held_ask_forward_intents_in_txn(
+            self.vault,
+            &mut *self.wtxn,
+            &self.actor,
+            intents,
+        )
+    }
 }
 
 /// Identity ops are an entity family, not a side table: their decisions stay
