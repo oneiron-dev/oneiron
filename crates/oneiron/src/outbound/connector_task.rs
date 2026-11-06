@@ -276,6 +276,10 @@ pub(super) enum SendExecutorLeaseTake {
     /// The TASK permits no new send: delivered, possibly delivered, declined
     /// by the owner, or mechanically suppressed.
     Closed,
+    /// This process released its leases as it closes: it takes none, and
+    /// its attempt stays pending for the next process or machine (review
+    /// #6574).
+    Closing,
 }
 
 /// The lease a machine took, with what the TASK held beside it in the same
@@ -767,7 +771,7 @@ pub(super) fn take_send_executor_lease(
         .send_executor_leases_released
         .load(std::sync::atomic::Ordering::SeqCst)
     {
-        return Ok(take);
+        return Ok(SendExecutorLeaseTake::Closing);
     }
     update_connector_send_task_body(vault, task_ref, now, |body| {
         if !connector_send_task_permits_send(body) {
