@@ -53,7 +53,7 @@ pub(crate) fn refresh_staged_request(
                 {
                     return Ok(None);
                 }
-                Some((occurrence, output.handle))
+                Some((occurrence, output.handle, body.hash))
             }
             CapsuleRequest::Withheld { .. } => None,
         };
@@ -103,10 +103,11 @@ pub(crate) fn refresh_staged_request(
             .get("seed")
             .and_then(serde_json::Value::as_u64);
         CAPSULES.put(vault, wtxn, &update.key, &capsule)?;
-        if let Some((occurrence, handle)) = prior {
+        if let Some((occurrence, handle, digest)) = prior {
             let marks = occurrence.mark_key(&handle);
             crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
             release_body_in_txn(&vault.store, wtxn, &capsule.run, &occurrence.id())?;
+            super::super::start_parts::drop_unheld_body_in_txn(&vault.store, wtxn, &digest)?;
         }
         Ok(Some(sent.len() as u64))
     })

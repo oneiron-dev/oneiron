@@ -12,7 +12,10 @@ The refreshed request passes through the existing side-row admission wall
 and spill path. Its admitted body, native exposure spans and capsule row
 commit together. The new request uses a separate immutable body occurrence;
 only the capsule's prior request occurrence and its own marks are released.
-The step's original start, actor, lease and other holders stay in place.
+A superseded inline body is deleted in that same transaction when no other
+descriptor or standalone raw-output hold retains it. An unheld file uses the
+existing collector queue. The step's original start, actor, lease and other
+holders stay in place.
 Unknown browser evidence does not gain a fabricated source-row witness.
 
 An erased, withdrawn, finalized, stale or missing capture is not revived.
