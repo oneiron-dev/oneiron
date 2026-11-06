@@ -18,9 +18,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
     (&t::MAIL_PACK_CALENDAR_RESOURCE, CONTENT),
     (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
-    // A re-check stands with the occurrence and the findings it settled, as
-    // the image holds them (FIX 15414).
+    // A re-check and the ids it names stand with the occurrence and the
+    // findings it settled, as the image holds them (FIX 15414).
     (&t::MAIL_PACK_CLAIM_RECHECK, CONTENT),
+    (&t::MAIL_PACK_CLAIM_RECHECK_NAMED, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
     // An owed forget stands with the rows it still owes, as the image holds them.

@@ -29,6 +29,11 @@ side_tables! {
     /// where it stands. Key: id16(source) + blake3 (32) of the provider id + u64be presence
     /// generation.
     MAIL_PACK_CLAIM_RECHECK: VaultMeta b"mail_pack:claim_recheck:v1:" Named;
+    /// Each id a mail claim re-check names (FIX 15414), so an erase of the TURN, a MESSAGE
+    /// revision or a settled claim reaches every re-check that names it. Key: id16(named) +
+    /// id16(source) + blake3 (32) of the provider id + u64be presence generation. Value: when the
+    /// re-check was owed.
+    MAIL_PACK_CLAIM_RECHECK_NAMED: VaultMeta b"mail_pack:claim_recheck_named:v1:" Named;
     /// The org compliance search log (FIX 12560): each change to the setting and each search made
     /// under it, recorded before the search answers. Key: u64be sequence.
     MAIL_PACK_COMPLIANCE_EVENT: VaultMeta b"mail_pack:compliance_event:v1:" Named Authored

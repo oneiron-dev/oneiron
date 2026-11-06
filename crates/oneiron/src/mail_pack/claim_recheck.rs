@@ -13,6 +13,11 @@
 //! reopens the re-check of the generation the copy stands at
 //! ([`owe_claim_recheck_for_cited_in_txn`]). The source's sync status counts
 //! its re-checks by where they stand, to the source's own readers.
+//!
+//! An erased TURN, MESSAGE revision or claim leaves every re-check that
+//! names it, whatever it stands at ([`erase_claim_recheck_ids_in_txn`]), and
+//! a held rung the owner approves applies only while the re-check that held
+//! it is still current ([`claim_recheck_current_in`]).
 
 use std::collections::BTreeSet;
 
@@ -31,6 +36,12 @@ use crate::{EntityId, Result, Vault};
 const RECHECKS: SideTable<(EntityId, [u8; 32], u64), MailClaimRecheck, Named> =
     SideTable::new(&side_table::MAIL_PACK_CLAIM_RECHECK);
 
+/// Each id a re-check names, so an erase of it reaches every re-check that
+/// names it: by the id, the source with the BLAKE3 of the provider's id,
+/// and the presence generation. The value is when the re-check was owed.
+const NAMED: SideTable<(EntityId, (EntityId, [u8; 32]), u64), u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_CLAIM_RECHECK_NAMED);
+
 /// Where one re-check stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,8 +59,10 @@ enum MailClaimRecheckState {
 /// One re-check a kept provider delete owes: ids only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MailClaimRecheck {
-    turn: EntityId,
-    /// Each revision's MESSAGE, oldest first, as the delete found them.
+    /// The message's TURN; `None` once it is erased.
+    turn: Option<EntityId>,
+    /// Each revision's MESSAGE, oldest first, as the delete found them, less
+    /// each one erased.
     messages: Vec<EntityId>,
     /// Moved on each time a claim born later reopens it; only the job of
     /// the latest round settles it.
@@ -64,6 +77,27 @@ struct MailClaimRecheck {
     review: u64,
     owed_at: u64,
     settled_at: Option<u64>,
+}
+
+impl MailClaimRecheck {
+    /// Every id the row names: its TURN, its MESSAGE revisions and each
+    /// claim it settled.
+    fn named(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.turn
+            .iter()
+            .chain(&self.messages)
+            .chain(&self.settled)
+            .copied()
+    }
+
+    /// The row without `id`, wherever it names it.
+    fn scrub(&mut self, id: &EntityId) {
+        if self.turn == Some(*id) {
+            self.turn = None;
+        }
+        self.messages.retain(|message| message != id);
+        self.settled.retain(|claim| claim != id);
+    }
 }
 
 /// What one claim's check did, as the re-check counts it.
@@ -104,13 +138,13 @@ pub(super) fn owe_in_txn(
     at: u64,
 ) -> Result<()> {
     let row = owed_row(occurrence, at);
-    owe_round_in_txn(vault, txn, key, occurrence.presence_generation, &row, at)
+    owe_round_in_txn(vault, txn, key, occurrence, &row, at)
 }
 
 /// A fresh re-check of `occurrence`'s rows.
 fn owed_row(occurrence: &MailOccurrence, at: u64) -> MailClaimRecheck {
     MailClaimRecheck {
-        turn: occurrence.turn,
+        turn: Some(occurrence.turn),
         messages: occurrence.messages.clone(),
         round: 0,
         state: MailClaimRecheckState::Pending,
@@ -122,16 +156,18 @@ fn owed_row(occurrence: &MailOccurrence, at: u64) -> MailClaimRecheck {
     }
 }
 
-/// Stores `row` for `generation` and queues the job of its round.
+/// Stores `row` for the generation `occurrence` stands at and queues the
+/// job of its round, which names the message's TURN and MESSAGE revisions.
 fn owe_round_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &(EntityId, [u8; 32]),
-    generation: u64,
+    occurrence: &MailOccurrence,
     row: &MailClaimRecheck,
     at: u64,
 ) -> Result<()> {
-    RECHECKS.put(&vault.store, txn, &(key.0, key.1, generation), row)?;
+    let generation = occurrence.presence_generation;
+    put_named_in_txn(&vault.store, txn, &(key.0, key.1, generation), row)?;
     queue_claim_source_recheck_in_txn(
         vault,
         txn,
@@ -140,11 +176,26 @@ fn owe_round_in_txn(
             occurrence: key.1,
             generation,
             round: row.round,
-            turn: row.turn,
-            messages: row.messages.clone(),
+            turn: occurrence.turn,
+            messages: occurrence.messages.clone(),
         },
         at,
     )
+}
+
+/// Stores `row` under `key` with each id it names, so an erase of any of
+/// them reaches it. Only a writer that adds an id needs it.
+fn put_named_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, [u8; 32], u64),
+    row: &MailClaimRecheck,
+) -> Result<()> {
+    RECHECKS.put(store, txn, key, row)?;
+    for id in row.named() {
+        NAMED.put(store, txn, &(id, (key.0, key.1), key.2), &row.owed_at)?;
+    }
+    Ok(())
 }
 
 /// The late-birth seam (FIX 15414): owes, in the caller's write, the
@@ -183,7 +234,7 @@ pub(crate) fn owe_claim_recheck_for_cited_in_txn(
                 }
                 None => owed_row(&occurrence, at),
             };
-            owe_round_in_txn(vault, txn, &key, generation, &row, at)?;
+            owe_round_in_txn(vault, txn, &key, &occurrence, &row, at)?;
         }
     }
     Ok(())
@@ -222,8 +273,9 @@ pub(crate) fn claim_recheck_owed_in(
 }
 
 /// Marks `claims` settled by `declaration`'s generation, in the write that
-/// lands their check, and counts `outcome` once. False, writing nothing,
-/// when the re-check is no longer owed.
+/// lands their check, and counts `outcome` once. A claim erased meanwhile
+/// is never named again. False, writing nothing, when the re-check is no
+/// longer owed.
 pub(crate) fn record_claims_rechecked_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -254,7 +306,12 @@ pub(crate) fn record_claims_rechecked_in_txn(
         .first()
         .is_some_and(|claim| row.settled.contains(claim));
     for claim in claims {
-        if !row.settled.contains(claim) {
+        if !row.settled.contains(claim)
+            && matches!(
+                crate::vault::live_entity_row_in_txn(&vault.store, txn, claim)?,
+                crate::vault::LiveEntityRow::Live { .. }
+            )
+        {
             row.settled.push(*claim);
         }
     }
@@ -265,7 +322,7 @@ pub(crate) fn record_claims_rechecked_in_txn(
             MailClaimRecheckOutcome::ReviewNeeded => row.review += 1,
         }
     }
-    RECHECKS.put(&vault.store, txn, &key, &row)?;
+    put_named_in_txn(&vault.store, txn, &key, &row)?;
     Ok(true)
 }
 
@@ -325,6 +382,76 @@ pub(super) fn obsolete_rechecks_in_txn(
             row.state = MailClaimRecheckState::Obsolete;
             row.settled_at = Some(at);
             RECHECKS.put(store, txn, &row_key, &row)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the re-check a held finding's `recheck` names is still current
+/// in the caller's write, for the door that applies the finding once the
+/// owner approves it: the message still the source-deleted copy at that
+/// generation, its TURN and each MESSAGE revision kept. False once a
+/// restore, a later delete, a forget or an erase overtook it, and for a
+/// `recheck` that does not read; true for a finding no re-check held.
+pub(crate) fn claim_recheck_current_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    recheck: Option<&serde_json::Value>,
+) -> Result<bool> {
+    let Some(recheck) = recheck else {
+        return Ok(true);
+    };
+    let named = || -> Option<(EntityId, [u8; 32], u64)> {
+        let source = EntityId::from_hex(recheck.get("mail_source")?.as_str()?).ok()?;
+        let occurrence = blake3::Hash::from_hex(recheck.get("occurrence")?.as_str()?).ok()?;
+        let generation = recheck.get("generation")?.as_u64()?;
+        Some((source, *occurrence.as_bytes(), generation))
+    };
+    let Some((source, occurrence, generation)) = named() else {
+        return Ok(false);
+    };
+    let Some(current) = OCCURRENCES.get(&vault.store, txn, &(source, occurrence))? else {
+        return Ok(false);
+    };
+    if !matches!(current.presence, MailPresence::SourceDeleted { .. })
+        || current.presence_generation != generation
+    {
+        return Ok(false);
+    }
+    for row in std::iter::once(&current.turn).chain(&current.messages) {
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?,
+            crate::vault::LiveEntityRow::Live { .. }
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The entity eraser (deletion/derived_rows.rs, FIX 15414): an erased TURN,
+/// MESSAGE revision or claim leaves every re-check that names it, whatever
+/// it stands at, and a re-check left naming nothing goes. A re-check still
+/// owed settles changing nothing and never names the erased id again: its
+/// message's erase made it moot, and an erased claim is found by no check.
+/// A no-op for an id no re-check names.
+pub(crate) fn erase_claim_recheck_ids_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    for named in NAMED.scan_keys(store, txn, id.as_bytes())? {
+        NAMED.delete(store, txn, &named)?;
+        let (_, (source, occurrence), generation) = named;
+        let key = (source, occurrence, generation);
+        let Some(mut row) = RECHECKS.get(store, txn, &key)? else {
+            continue;
+        };
+        row.scrub(id);
+        if row.named().next().is_none() {
+            RECHECKS.delete(store, txn, &key)?;
+        } else {
+            RECHECKS.put(store, txn, &key, &row)?;
         }
     }
     Ok(())

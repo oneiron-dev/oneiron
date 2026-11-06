@@ -11,10 +11,11 @@
 //! The re-check finds every live claim the message's TURN or MESSAGE
 //! revisions support, by its logical head: a claim whose own typed evidence
 //! cites them, or the head of a live support assertion that does. Each head
-//! is judged once, with every record it and its live support assertions cite
-//! as they stand now, the provider's hold on each, and the words of each
-//! TURN the Dreamer may read. The judge answers `supported`, `weakened` or
-//! `unsupported`.
+//! is judged once, by its ref, revision and subject, with every record it and
+//! its live support assertions cite as they stand now, the provider's hold on
+//! each, and the words of each TURN the Dreamer may read. The judge answers
+//! `supported`, `weakened` or `unsupported`. A claim not yet approved, or one
+//! the Dreamer's read withholds, stays owed: the job waits and reads again.
 //!
 //! A verdict changes belief only through the curator's own doors: a weaker
 //! support moves the claim one rung down its demotion ladder, none left
@@ -75,6 +76,10 @@ const UNLENT_REASON: &str = "no host lends this pass a claim re-check";
 
 /// Why a re-check parks when its durable step suspended it.
 const TRAPPED_REASON: &str = "durable step trapped for resume";
+
+/// Why a re-check waits with a claim it found still owed: one not yet
+/// approved, or one the Dreamer's read withholds.
+const DEFERRED_REASON: &str = "a claim it found waits for its approval or for the Dreamer's read";
 
 /// What one provider-deleted, kept message owes the claims drawn from it:
 /// ids only, never a word of the message.
@@ -288,11 +293,15 @@ pub async fn run_claim_source_recheck(
             break;
         }
     }
-    // A claim the Dreamer may not read keeps the re-check pending: it is
-    // never judged on words withheld from its judge.
-    if moot || !read.withheld {
-        noted(settle(ctx.vault, &declaration, now), &spend, ctx)?;
+    // A claim not yet approved, or one the Dreamer may not read, keeps the
+    // re-check owed: it is never judged before it is a belief, nor on words
+    // withheld from its judge. The same job waits the runtime's retry pause
+    // with what it spent, and reads again; a claim gone from the live set
+    // meanwhile is owed nothing.
+    if !moot && read.deferred {
+        return Ok(spend.park(DEFERRED_REASON, DreamerParkCause::Retry));
     }
+    noted(settle(ctx.vault, &declaration, now), &spend, ctx)?;
     Ok(spend.completed())
 }
 

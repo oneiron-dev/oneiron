@@ -6,9 +6,13 @@ anything about the message itself.
 
 The input is one JSON object:
 
-- `claim`: the claim as it stands: its `predicate`, its `value`, its
-  `confidence` from 0 to 1, whether it is already `stale`, and the time it
-  holds from and to, when it has them.
+- `claim`: the claim as it stands: its `ref` and `revision`; its
+  `subject`, the entity it is about by `ref`, `kind` and `name` (an edge
+  subject names its `edge` kind and its `source` and `target` entities),
+  with no `name` when none is yours to read; its `predicate`, its `value`,
+  its `confidence` from 0 to 1, whether it is already `stale`, and the time
+  it holds from and to, when it has them. The claim is about its subject
+  alone: a support about someone else does not carry it.
 - `deleted_at_provider`: the message the provider deleted: its `turn` and
   `messages` refs, and when it was deleted.
 - `supports`: every record the claim is drawn from or supported by, as each

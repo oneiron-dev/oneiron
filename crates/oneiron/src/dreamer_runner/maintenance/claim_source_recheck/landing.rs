@@ -4,11 +4,13 @@
 //! owner's approval applies it through the curator's approved door; a plain
 //! finding for a claim the verdict leaves as it stands, or one that waits
 //! for the owner's review. Each lands in one write with the claim's settled
-//! mark, and only while the re-check is still owed.
+//! mark, and only while the re-check is still owed. A rung applies only on a
+//! claim that write still reads as not critical: one made critical since its
+//! read waits for the owner as one read critical does.
 
 use super::super::applied::MaintenanceInverse;
 use super::super::{CURATOR_PROPOSAL_PREDICATE, CuratorRubric, curator, proposals};
-use super::read::Ask;
+use super::read::{self, Ask};
 use super::{
     CLAIM_SOURCE_RECHECK_FACET, CLAIM_SOURCE_RECHECK_PREDICATE, ClaimSourceRecheckDeclaration,
     Verdict,
@@ -106,7 +108,7 @@ pub(super) fn land(
             now,
         );
     }
-    match apply_rung(vault, attempt, declaration, ask.head, &rung, now) {
+    match apply_rung(vault, attempt, declaration, ask, &rung, now) {
         // The head moved since it was read: this verdict was about another
         // revision, so it settles changing nothing.
         Err(Error::ConcurrentWrite(_)) => vault.with_write_txn_grouped(|txn| {
@@ -151,25 +153,32 @@ fn refused(error: &Error) -> bool {
 /// Applies one rung as the Dreamer through the curator's door, with its
 /// finding, receipt and inverse, in one write with the claim's settled
 /// mark: the head, and a weakening's successor, which carries the same
-/// evidence. A rung the Gate parks lands held in the run tray instead.
+/// evidence. A rung on a claim this write reads as critical (its class, or
+/// a critical confirm not settled), and one the Gate parks, lands held in
+/// the run tray instead.
 fn apply_rung(
     vault: &Vault,
     attempt: AttemptId,
     declaration: &ClaimSourceRecheckDeclaration,
-    head: EntityId,
+    ask: &Ask,
     value: &serde_json::Value,
     now: u64,
 ) -> Result<Option<MailClaimRecheckOutcome>> {
+    let head = ask.head;
     let finding = proposals::Finding {
         subject: head,
         predicate: CURATOR_PROPOSAL_PREDICATE,
         value,
         evidence: std::slice::from_ref(&head),
     };
+    let tray = proposals::run_tray_envelope(vault, CLAIM_SOURCE_RECHECK_FACET, attempt)?;
     proposals::land(vault, CLAIM_SOURCE_RECHECK_FACET, attempt, |landing| {
         vault.with_write_txn_grouped(|txn| {
             if !owed_in(vault, txn, declaration)? {
                 return Ok(None);
+            }
+            if read::critical_in(vault, txn, &head, &ask.predicate)? {
+                return hold_in_txn(vault, txn, declaration, &finding, &tray, now).map(Some);
             }
             let mut moved = None;
             landing.land_in_txn(vault, txn, &finding, now, |txn| {
@@ -252,16 +261,29 @@ fn hold(
         if !owed_in(vault, txn, declaration)? {
             return Ok(None);
         }
-        proposals::emit_fresh_in_txn(vault, txn, finding, &envelope, now)?;
-        crate::mail_pack::claim_recheck::record_claims_rechecked_in_txn(
-            vault,
-            txn,
-            declaration,
-            &[finding.subject],
-            MailClaimRecheckOutcome::ReviewNeeded,
-        )?;
-        Ok(Some(MailClaimRecheckOutcome::ReviewNeeded))
+        hold_in_txn(vault, txn, declaration, finding, &envelope, now).map(Some)
     })
+}
+
+/// Lands `finding` Proposed under the run tray's `envelope` in the caller's
+/// write, with its claim's settled mark.
+fn hold_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    declaration: &ClaimSourceRecheckDeclaration,
+    finding: &proposals::Finding<'_>,
+    envelope: &crate::WriteEnvelope,
+    now: u64,
+) -> Result<MailClaimRecheckOutcome> {
+    proposals::emit_fresh_in_txn(vault, txn, finding, envelope, now)?;
+    crate::mail_pack::claim_recheck::record_claims_rechecked_in_txn(
+        vault,
+        txn,
+        declaration,
+        &[finding.subject],
+        MailClaimRecheckOutcome::ReviewNeeded,
+    )?;
+    Ok(MailClaimRecheckOutcome::ReviewNeeded)
 }
 
 /// Whether the re-check is still owed in this write: the message still the
