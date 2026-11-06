@@ -40,7 +40,9 @@ mod ai_answers;
 pub(crate) use ai_answers::{lift_ai_answer, lift_ai_video_job};
 
 mod llm_responses;
-pub(crate) use llm_responses::lift_model_stream_terminal;
+pub(crate) use llm_responses::{
+    lift_model_stream_terminal, lift_settled_program_step, lift_settled_step,
+};
 mod model_usage;
 pub(crate) use model_usage::{lift_ask_image, lift_model_binding_proposal, lift_model_trial};
 mod ai_options;

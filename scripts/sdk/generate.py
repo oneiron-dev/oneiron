@@ -2354,6 +2354,10 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_ask_image({name}, output)'
             elif row['output'] == 'crate::llm::model_stream::ModelStreamTerminal':
                 result = f'crate::codec::lift_model_stream_terminal({name}, output)'
+            elif row['output'] == 'Option<crate::llm::model_step::SettledStepView>':
+                result = f'crate::codec::lift_settled_step({name}, output)'
+            elif row['output'] == 'Option<crate::dreamer_runner::SettledProgramStepView>':
+                result = f'crate::codec::lift_settled_program_step({name}, output)'
             elif row['output'] == 'crate::llm::catalog_doors::ModelTrialView':
                 result = f'crate::codec::lift_model_trial({name}, output)'
             elif row['output'] == 'crate::llm::catalog_doors::ModelBindingProposal':

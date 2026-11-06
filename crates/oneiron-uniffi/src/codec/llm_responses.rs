@@ -1,4 +1,4 @@
-//! Owned response JSON in durable model-stream terminal outputs.
+//! Owned response JSON in model-stream terminal and settled-run outputs.
 
 use oneiron::llm::{ContentPart, LlmResponse, model_stream::ModelStreamTerminal};
 
@@ -16,6 +16,41 @@ pub(crate) fn lift_model_stream_terminal(
     let mut output: crate::ModelStreamTerminal = lift_record(verb, &terminal)?;
     if let Some((output, response)) = output.response.as_mut().zip(response) {
         response.put(output);
+    }
+    Ok(output)
+}
+
+pub(crate) fn lift_settled_step(
+    verb: &str,
+    mut step: Option<oneiron::llm::model_step::SettledStepView>,
+) -> Result<Option<crate::SettledStepView>, OneironError> {
+    let response = step
+        .as_mut()
+        .map(|step| ResponseJson::take(&mut step.response))
+        .transpose()?;
+    let mut output: Option<crate::SettledStepView> = lift_record(verb, &step)?;
+    if let Some((output, response)) = output.as_mut().zip(response) {
+        response.put(&mut output.response);
+    }
+    Ok(output)
+}
+
+pub(crate) fn lift_settled_program_step(
+    verb: &str,
+    mut step: Option<oneiron::dreamer_runner::SettledProgramStepView>,
+) -> Result<Option<crate::SettledProgramStepView>, OneironError> {
+    let response = step
+        .as_mut()
+        .and_then(|step| step.model_step.as_mut())
+        .map(|step| ResponseJson::take(&mut step.response))
+        .transpose()?;
+    let mut output: Option<crate::SettledProgramStepView> = lift_record(verb, &step)?;
+    if let Some((output, response)) = output
+        .as_mut()
+        .and_then(|step| step.model_step.as_mut())
+        .zip(response)
+    {
+        response.put(&mut output.response);
     }
     Ok(output)
 }
