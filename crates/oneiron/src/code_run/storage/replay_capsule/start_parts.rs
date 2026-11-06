@@ -38,7 +38,8 @@ use super::start_pieces::{
 };
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::{
-    BodyState, OwnedBody, digest_is_held_in_txn, prune_digest_in_rows, queue_pruned_file_in_txn,
+    BodyState, OwnedBody, digest_is_held_in_txn, hold_digest_inline_in_rows, prune_digest_in_rows,
+    queue_pruned_file_in_txn,
 };
 use crate::side_table::{self, Named, SideKey, SideTable, SideTableDbs};
 use crate::store::{BODY_KEYS, BodyMeter, Store};
@@ -505,8 +506,9 @@ pub(crate) fn republish_step_start_in_rows(
 /// its body row inline whatever its size, unless the row holds its bytes
 /// already (inline, or a file among `files`, the files the image carries),
 /// and the run's descriptor and holder row unless its descriptor holds it
-/// whole. A secret the scan finds marks the run's occurrence. Whether it
-/// put the body row.
+/// whole. A body it puts back inline turns every descriptor of it that
+/// names a file to name it inline (FIX 4192). A secret the scan finds
+/// marks the run's occurrence. Whether it put the body row.
 fn land_piece_in_rows(
     rows: &mut Rows,
     run: EntityId,
@@ -539,6 +541,9 @@ fn land_piece_in_rows(
             });
             let body = republished_start_body(bytes).holding(held);
             put_row(rows, key, RAW_OUTPUTS.encode_value(&body)?);
+            // The bytes are inline now: no descriptor may still name a file
+            // the image does not carry, or the next census looks for it.
+            hold_digest_inline_in_rows(rows, &output.raw_blake3)?;
             body
         }
     };
