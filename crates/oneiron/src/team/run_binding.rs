@@ -15,6 +15,10 @@
 //! as the writer that assembled them named them (FIX 7103). A writer that
 //! names none leaves them unknown.
 
+mod capture;
+
+pub(crate) use capture::{TeamStartSource, record_team_start_captured};
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -41,6 +45,7 @@ pub type SourcedTeamTask = (String, Option<Vec<EntityId>>);
 struct StoredTeamRunBinding {
     run: TeamRunBinding,
     source_rows: Option<Vec<EntityId>>,
+    projection_source: Option<TeamStartSource>,
 }
 
 /// A team start and the entity rows its writer named, from the same stored row.
@@ -48,6 +53,7 @@ struct StoredTeamRunBinding {
 pub(crate) struct SourcedTeamRunBinding {
     pub(crate) run: TeamRunBinding,
     pub(crate) source_rows: Option<Vec<EntityId>>,
+    pub(crate) projection_source: Option<TeamStartSource>,
 }
 
 /// One team start, as the host observed it. Host-only: never guest input.
@@ -118,12 +124,24 @@ pub fn record_team_start_sourced_in_txn(
     run: &TeamRunBinding,
     source_rows: Option<Vec<EntityId>>,
 ) -> Result<()> {
+    let (key, row, _) = prepare_team_start_in_txn(vault, txn, run, source_rows)?;
+    TEAM_RUN.put(&vault.store, txn, &key, &row)
+}
+
+fn prepare_team_start_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: &TeamRunBinding,
+    source_rows: Option<Vec<EntityId>>,
+) -> Result<(String, StoredTeamRunBinding, bool)> {
     run.stamp.validate()?;
     let leader = AttemptQueue::new(vault)
         .get_in_txn(txn, run.leader)?
         .ok_or(Error::EntityNotFound)?;
     let key = run_key(run.leader, &run.stamp.team_ref);
-    let mut row = match TEAM_RUN.get(&vault.store, txn, &key)? {
+    let existing = TEAM_RUN.get(&vault.store, txn, &key)?;
+    let fresh = existing.is_none();
+    let mut row = match existing {
         Some(existing) if existing.run.stamp != run.stamp => {
             return Err(Error::InvalidClaimBody(
                 "a team start keeps the stamp it opened",
@@ -149,6 +167,7 @@ pub fn record_team_start_sourced_in_txn(
                 proposals: Vec::new(),
             },
             source_rows,
+            projection_source: None,
         },
     };
     row.run.root_task.clone_from(&leader.task_ref);
@@ -162,7 +181,11 @@ pub fn record_team_start_sourced_in_txn(
             row.run.proposals.push(proposal.clone());
         }
     }
-    TEAM_RUN.put(&vault.store, txn, &key, &row)
+    row.projection_source = row
+        .projection_source
+        .take()
+        .filter(|source| source.matches_native(&key, &row.run));
+    Ok((key, row, fresh))
 }
 
 /// The start of `team_ref` that `leader` made, if the host recorded one.
@@ -202,12 +225,17 @@ pub(crate) fn team_run_binding_with_sources_in_txn(
     leader: AttemptId,
     team_ref: &str,
 ) -> Result<Option<SourcedTeamRunBinding>> {
-    Ok(TEAM_RUN
-        .get(&vault.store, txn, &run_key(leader, team_ref))?
-        .map(|row| SourcedTeamRunBinding {
+    let key = run_key(leader, team_ref);
+    Ok(TEAM_RUN.get(&vault.store, txn, &key)?.map(|row| {
+        let projection_source = row
+            .projection_source
+            .filter(|source| source.matches_native(&key, &row.run));
+        SourcedTeamRunBinding {
             run: row.run,
             source_rows: row.source_rows,
-        }))
+            projection_source,
+        }
+    }))
 }
 
 /// The team a spawn or TASK made by `attempt` works in: the one team the

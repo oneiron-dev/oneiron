@@ -117,7 +117,7 @@ impl HostSelfDispatcher<'_> {
                 proposal_ref,
             });
         }
-        self.keep_team_start(&observed)?;
+        self.keep_team_start_captured(&observed, &input)?;
         // Widenings asked and none launched: no team runs yet.
         Ok(Ok(if observed.members.is_empty() {
             TeamRunAnswer::ProposedWiden {
@@ -150,6 +150,33 @@ impl HostSelfDispatcher<'_> {
         vault.with_write_txn_grouped(|wtxn| {
             record_team_start_sourced_in_txn(vault, wtxn, observed, Some(Vec::new()))
         })
+    }
+
+    fn keep_team_start_captured(
+        &self,
+        observed: &TeamRunBinding,
+        input: &TeamStartInput,
+    ) -> Result<()> {
+        let (ExecutorStorage::Canonical(vault), Some(selected)) =
+            (&self.storage, input.capture_scope.as_ref())
+        else {
+            return self.keep_team_start(observed);
+        };
+        if observed.members.is_empty() && observed.proposals.is_empty() {
+            return self.keep_team_start(observed);
+        }
+        let Ok(envelope) = self.write_envelope(SelfEffect::Team, None) else {
+            return self.keep_team_start(observed);
+        };
+        crate::team::run_binding::record_team_start_captured(
+            vault,
+            observed,
+            Some(Vec::new()),
+            selected,
+            &envelope,
+            self.host_turn_read_key(),
+            crate::unix_seconds_now(),
+        )
     }
 
     fn team_record(&self, input: &TeamRecordInput) -> Result<Answered> {

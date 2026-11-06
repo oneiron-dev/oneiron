@@ -32,6 +32,7 @@ mod input_capture;
 
 pub(super) use input_capture::INPUT_PREDICATE;
 pub(crate) use input_capture::record_led_team_captured;
+pub(in crate::team) use input_capture::{CapturePosition, capture_claim_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -75,6 +76,9 @@ pub struct TeamStartInput {
     /// under. Set, the members are its authors, in its market; the pattern
     /// must be `market`.
     pub tournament: Option<String>,
+    /// Optional publication of this start's newly authored membership at an
+    /// explicit native claim position. Capture never changes whether it starts.
+    pub capture_scope: Option<crate::memory::ClaimScope>,
 }
 
 /// One member a start spawns.
@@ -327,7 +331,14 @@ fn record_led_team_with_input_in_txn(
     if !input.team_ref.starts_with(&prefix) || input.team_ref.len() == prefix.len() {
         return Ok(Err("team_record_not_led"));
     }
-    let bound = super::run_binding::team_run_binding_in_txn(vault, txn, root, &input.team_ref)?;
+    let bound = super::run_binding::team_run_binding_with_sources_in_txn(
+        vault,
+        txn,
+        root,
+        &input.team_ref,
+    )?;
+    let team_start_source = bound.as_ref().and_then(|row| row.projection_source.clone());
+    let bound = bound.map(|row| row.run);
     if input.members.is_empty() && bound.is_none() {
         return Ok(Err("team_record_invalid_input"));
     }
@@ -448,6 +459,7 @@ fn record_led_team_with_input_in_txn(
         None,
         None,
         input_source,
+        team_start_source,
     )?;
     Ok(Ok(recorded(&receipt, false)))
 }

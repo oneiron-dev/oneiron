@@ -101,11 +101,38 @@ fn capture_input_in_txn(
     now: u64,
 ) -> Result<(TeamRecordInput, TeamInputSource)> {
     let original = serde_json::to_string(input).map_err(|_| unavailable())?;
+    let (id, body) = capture_claim_in_txn(
+        vault,
+        txn,
+        INPUT_PREDICATE,
+        original,
+        position,
+        envelope,
+        now,
+    )?;
+    let decoded: TeamRecordInput =
+        serde_json::from_str(body.value.as_str().ok_or_else(unavailable)?)
+            .map_err(|_| unavailable())?;
+    if decoded != *input {
+        return Err(unavailable());
+    }
+    Ok((decoded, TeamInputSource::captured(id, &body)?))
+}
+
+pub(in crate::team) fn capture_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    predicate: &str,
+    original: String,
+    position: &CapturePosition,
+    envelope: &WriteEnvelope,
+    now: u64,
+) -> Result<(EntityId, ClaimBody)> {
     let id = EntityId::from_bytes(vault.store.clock.ulid()?)?;
     let subject = ClaimSubject::Entity(envelope.actor().entity_ref());
     // Text takes the ordinary claim secret-scan/custody path, unlike opaque
     // blob bytes. A rewrite must still decode to the exact original input.
-    let mut candidate = ClaimCandidate::new(INPUT_PREDICATE, subject, Value::from(original), 1.0)
+    let mut candidate = ClaimCandidate::new(predicate, subject, Value::from(original), 1.0)
         .with_world(position.world)
         .with_relationships(position.relationships.clone())
         .with_scope(position.scope.clone())
@@ -130,7 +157,7 @@ fn capture_input_in_txn(
     let body = vault
         .get_claim_in_txn(&*txn, &id)?
         .ok_or_else(unavailable)?;
-    if body.predicate != INPUT_PREDICATE
+    if body.predicate != predicate
         || body.subject != subject
         || body.lifecycle != ClaimLifecycleStatus::Active
         || body.stale
@@ -138,16 +165,10 @@ fn capture_input_in_txn(
     {
         return Err(unavailable());
     }
-    let decoded: TeamRecordInput =
-        serde_json::from_str(body.value.as_str().ok_or_else(unavailable)?)
-            .map_err(|_| unavailable())?;
-    if decoded != *input {
-        return Err(unavailable());
-    }
-    Ok((decoded, TeamInputSource::captured(id, &body)?))
+    Ok((id, body))
 }
 
-struct CapturePosition {
+pub(in crate::team) struct CapturePosition {
     world: EntityId,
     facet: EntityId,
     relationships: Option<BTreeSet<EntityId>>,
@@ -156,7 +177,10 @@ struct CapturePosition {
 }
 
 impl CapturePosition {
-    fn resolve(vault: &Vault, position: &crate::memory::ClaimScope) -> Option<Self> {
+    pub(in crate::team) fn resolve(
+        vault: &Vault,
+        position: &crate::memory::ClaimScope,
+    ) -> Option<Self> {
         let relationships = match &position.scope_relationship_id {
             ClaimRelationships::All(_) => None,
             ClaimRelationships::Relationships(ids) => Some(

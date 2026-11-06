@@ -54,6 +54,8 @@ struct StoredTeamReceipt {
     outcome_sources: Option<Vec<EntityId>>,
     /// An optional original-input witness, never a complete fact set or a grant.
     input_source: Option<TeamInputSource>,
+    /// The native start projection read by this receipt's own writer.
+    team_start_source: Option<super::run_binding::TeamStartSource>,
 }
 
 impl StoredTeamReceipt {
@@ -333,6 +335,7 @@ pub fn record_team_receipt_sourced(
         fact_sources,
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
         input_source: None,
+        team_start_source: None,
     };
     vault.with_write_txn_grouped(|wtxn| put_team_receipt_in_txn(vault, wtxn, &stored))
 }
@@ -346,7 +349,15 @@ pub(crate) fn record_team_receipt_sourced_in_txn(
     fact_sources: Option<Vec<EntityId>>,
     outcome_sources: Option<Vec<EntityId>>,
 ) -> Result<()> {
-    record_team_receipt_with_input_in_txn(vault, txn, receipt, fact_sources, outcome_sources, None)
+    record_team_receipt_with_input_in_txn(
+        vault,
+        txn,
+        receipt,
+        fact_sources,
+        outcome_sources,
+        None,
+        None,
+    )
 }
 
 pub(crate) fn record_team_receipt_with_input_in_txn(
@@ -356,6 +367,7 @@ pub(crate) fn record_team_receipt_with_input_in_txn(
     fact_sources: Option<Vec<EntityId>>,
     outcome_sources: Option<Vec<EntityId>>,
     input_source: Option<TeamInputSource>,
+    team_start_source: Option<super::run_binding::TeamStartSource>,
 ) -> Result<()> {
     receipt.validate()?;
     crate::task_type::validate_type_ref_in_txn(vault, txn, receipt.project, &receipt.type_ref)?;
@@ -364,6 +376,7 @@ pub(crate) fn record_team_receipt_with_input_in_txn(
         fact_sources,
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
         input_source,
+        team_start_source,
     };
     put_team_receipt_in_txn(vault, txn, &stored)
 }
