@@ -218,6 +218,12 @@ pub(crate) fn connector_call_listing_as(
     if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
         return crate::web_connector::call_listing(server, memory, input, None);
     }
+    // The built-in Google Sheets connector (FIX 4862) answers before the MCP
+    // driver, over this server's credential broker leg.
+    if input.name == oneiron::channel_identity_provider::sheets::SHEETS_CATALOG_NAME {
+        return oneiron::channel_identity_provider::sheets::call_google_sheets(memory, &input)
+            .map(|reply| (reply, None));
+    }
     let invocation = memory
         .invocation()
         .map(|invocation| sdk::connector_call_invocation(memory.actor(), invocation))
