@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4570 generated types.
+// UniFFI census: 1262 facade rows, 4580 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -18687,6 +18687,8 @@ pub struct SlateHolderNarrow {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SlateRow {
+    #[serde(rename = "settings_act")]
+    pub settings_act: String,
     #[serde(rename = "draft")]
     pub draft: SlateDraftRow,
     #[serde(
@@ -20654,6 +20656,29 @@ pub struct ColdAuthorityAuditRow {
     pub issue_codes: Option<Vec<String>>,
 }
 
+/// `oneiron::receipt::authority_audit::PendingMembershipExecutionRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PendingMembershipExecutionRow {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "act", default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<String>,
+    #[serde(rename = "cause")]
+    pub cause: String,
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "executed_at")]
+    pub executed_at: u64,
+    #[serde(rename = "withdrawn_grants")]
+    pub withdrawn_grants: Vec<String>,
+    #[serde(rename = "handover")]
+    pub handover: bool,
+}
+
 /// `oneiron::receipt::authority_audit::AuthorityAuditPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AuthorityAuditPage {
@@ -20675,6 +20700,12 @@ pub struct AuthorityAuditPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub cold_attested: Option<Vec<ColdAuthorityAuditRow>>,
+    #[serde(
+        rename = "pending_membership_executions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pending_membership_executions: Option<Vec<PendingMembershipExecutionRow>>,
 }
 
 /// `oneiron::verbs::authority_history::SignedAuthorityHistory`.
@@ -21708,6 +21739,12 @@ pub struct SharedActExecutionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub authority_entry: Option<String>,
+    #[serde(
+        rename = "authority_record_pending",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authority_record_pending: Option<bool>,
     #[serde(
         rename = "authorizer",
         default,
@@ -34428,6 +34465,117 @@ pub enum SlideReviewPolicyRow {
     },
 }
 
+/// `oneiron::gate::policy_manifest_doors::scoped_grants::PolicyGrantMapEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyGrantMapEntry {
+    #[serde(rename = "key")]
+    pub key: PolicyGrantValue,
+    #[serde(rename = "value")]
+    pub value: PolicyGrantValue,
+}
+
+/// `oneiron::gate::policy_manifest_doors::scoped_grants::PolicyGrantExtension`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyGrantExtension {
+    #[serde(rename = "tag")]
+    pub tag: i8,
+    #[serde(rename = "data")]
+    pub data: Vec<u8>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::scoped_grants::PolicyGrantValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "value")]
+#[serde(deny_unknown_fields)]
+pub enum PolicyGrantValue {
+    #[serde(rename = "nil")]
+    Nil,
+    #[serde(rename = "boolean")]
+    Boolean(bool),
+    #[serde(rename = "integer")]
+    Integer(String),
+    #[serde(rename = "float32")]
+    Float32(Vec<u8>),
+    #[serde(rename = "float64")]
+    Float64(Vec<u8>),
+    #[serde(rename = "string")]
+    String(String),
+    #[serde(rename = "raw_string")]
+    RawString(Vec<u8>),
+    #[serde(rename = "binary")]
+    Binary(Vec<u8>),
+    #[serde(rename = "array")]
+    Array(Vec<PolicyGrantValue>),
+    #[serde(rename = "map")]
+    Map(Vec<PolicyGrantMapEntry>),
+    #[serde(rename = "extension")]
+    Extension(PolicyGrantExtension),
+}
+
+/// `oneiron::gate::policy_manifest_doors::scoped_grants::PolicyScopedGrantRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyScopedGrantRow {
+    #[serde(
+        rename = "actor_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub actor_class: Option<String>,
+    #[serde(rename = "actor_ref", default, skip_serializing_if = "Option::is_none")]
+    pub actor_ref: Option<String>,
+    #[serde(rename = "effector")]
+    pub effector: String,
+    #[serde(rename = "scope")]
+    pub scope: Scope,
+    #[serde(rename = "selectors", default, skip_serializing_if = "Option::is_none")]
+    pub selectors: Option<PolicyGrantValue>,
+    #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<PolicyGrantValue>,
+    #[serde(rename = "receipt_required")]
+    pub receipt_required: bool,
+}
+
+/// `oneiron::gate::policy_manifest_doors::types::TeacherProbeHolderFloor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherProbeHolderFloor {
+    #[serde(rename = "holder_ref")]
+    pub holder_ref: String,
+    #[serde(rename = "min_f1_millionths")]
+    pub min_f1_millionths: u32,
+}
+
+/// `oneiron::gate::policy_manifest_doors::types::TeacherProbePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherProbePolicy {
+    #[serde(rename = "probe_id")]
+    pub probe_id: String,
+    #[serde(rename = "min_f1_millionths")]
+    pub min_f1_millionths: u32,
+    #[serde(rename = "holders", default, skip_serializing_if = "Option::is_none")]
+    pub holders: Option<Vec<TeacherProbeHolderFloor>>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::types::SheetAnswerLimit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SheetAnswerLimit {
+    #[serde(
+        rename = "artifact_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_ref: Option<String>,
+    #[serde(rename = "sheet", default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
+    #[serde(rename = "max_count")]
+    pub max_count: u64,
+}
+
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34472,6 +34620,24 @@ pub struct PolicyManifest {
         skip_serializing_if = "Option::is_none"
     )]
     pub slide_review_policy: Option<Vec<SlideReviewPolicyRow>>,
+    #[serde(
+        rename = "scoped_grants",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scoped_grants: Option<Vec<PolicyScopedGrantRow>>,
+    #[serde(
+        rename = "teacher_probe",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub teacher_probe: Option<TeacherProbePolicy>,
+    #[serde(
+        rename = "sheet_answer_limits",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sheet_answer_limits: Option<Vec<SheetAnswerLimit>>,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestView`.
@@ -39904,6 +40070,15 @@ pub enum CodeWaitChoice {
     Deny,
 }
 
+/// `oneiron::memory::code_wait_doors::types::CodeWaitRememberScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeWaitRememberScope {
+    #[serde(rename = "connection")]
+    Connection,
+    #[serde(rename = "asking_lineage")]
+    AskingLineage,
+}
+
 /// `oneiron::memory::code_wait_doors::types::CodeWaitResolveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -39912,6 +40087,12 @@ pub struct CodeWaitResolveRequest {
     pub target: CodeWaitTarget,
     #[serde(rename = "answer")]
     pub answer: CodeWaitChoice,
+    #[serde(
+        rename = "remember_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remember_scope: Option<CodeWaitRememberScope>,
     #[serde(rename = "word_ref")]
     pub word_ref: String,
 }
@@ -39955,6 +40136,18 @@ pub struct CodeWaitAnswerView {
     pub answer: CodeWaitChoice,
     #[serde(rename = "word_ref")]
     pub word_ref: String,
+    #[serde(
+        rename = "remember_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remember_scope: Option<CodeWaitRememberScope>,
+    #[serde(
+        rename = "remembered_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remembered_grant_ref: Option<String>,
     #[serde(rename = "decision_ref")]
     pub decision_ref: String,
     #[serde(rename = "answered_at_ms")]
@@ -69267,6 +69460,17 @@ pub struct FoldUnfoldRequest {
 pub enum FoldKind {
     #[serde(rename = "repl_output")]
     ReplOutput,
+    #[serde(rename = "program")]
+    Program,
+}
+
+/// `oneiron::compaction::fold_kinds::FoldedSpeech`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FoldedSpeech {
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "call")]
+    pub call: u64,
 }
 
 /// `oneiron::compaction::fold_kinds::FoldedOutput`.
@@ -69278,6 +69482,8 @@ pub struct FoldedOutput {
     pub handles: Vec<String>,
     #[serde(rename = "ids")]
     pub ids: Vec<String>,
+    #[serde(rename = "said", default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<Vec<FoldedSpeech>>,
 }
 
 /// `oneiron::compaction::folds::FoldDescription`.

@@ -477,6 +477,26 @@ impl Vault {
             .in_host_custody(key))
     }
 
+    /// The federation pacts this install holds inactive for a
+    /// `scope_commitment_mismatch` (FIX 11730): each one's folded scope does
+    /// not match its signed commitment under the live opening key this
+    /// install holds for it, by pact id, ascending. Every other machine's
+    /// fold of the same log is unchanged; a fresh dual-signed re-pact heals
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Storage and fold errors.
+    pub fn federation_scope_commitment_mismatches(&self) -> Result<Vec<[u8; 32]>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .authority_view_readonly_in_txn(&rtxn)?
+            .scope_commitment_mismatches()
+            .iter()
+            .copied()
+            .collect())
+    }
+
     /// This vault's authority id, as the shared verified fold of the current
     /// snapshot names it; `None` until the vault is rooted. It only reads:
     /// unlike [`Self::authority_fold`] it moves no first-seen clock, so a

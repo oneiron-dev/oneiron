@@ -440,6 +440,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         && matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_))
     {
         crate::sync::ingest::copy_peer_origins(source, &out)?;
+        crate::sync::origin_positions::copy_for_own_machines(source, &out)?;
     }
     crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();

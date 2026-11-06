@@ -186,7 +186,9 @@ fn witness_message_gate_input(
 /// The manifest-independent floor: envelope validity, the staged-bytes bind,
 /// and author authority. `None` means the floor is clear. A `system` row
 /// passes on its writer's exact Auto row, or on the Coach's offer-question
-/// permit for exactly these bytes (`coach_offer_reach`).
+/// permit for exactly these bytes (`coach_offer_reach`). A contribution
+/// pair's part passes only on the Coach's permit, whatever its author
+/// (FIX 3609).
 fn witness_message_floor_denial(
     envelope: &WitnessMessageEnvelope<'_>,
     actor: WriteActor,
@@ -198,9 +200,8 @@ fn witness_message_floor_denial(
     if let Some(reason_code) = witness_message_envelope_denial(envelope, body) {
         return Some(reason_code);
     }
-    if envelope.author == WITNESS_AUTHOR_SYSTEM
-        && !system_author_authorized(actor, policy, agent_definition_ceiling)
-        && !permit.is_some_and(|permit| {
+    let permitted = || {
+        permit.is_some_and(|permit| {
             super::coach_offer_reach::offer_question_authorized(
                 permit,
                 actor,
@@ -209,7 +210,14 @@ fn witness_message_floor_denial(
                 agent_definition_ceiling,
             )
         })
+    };
+    if envelope.author == WITNESS_AUTHOR_SYSTEM
+        && !system_author_authorized(actor, policy, agent_definition_ceiling)
+        && !permitted()
     {
+        return Some(GateReasonCode::DenyWitnessMessageAuthorNotAuthorized);
+    }
+    if envelope.message_type == crate::task_verb::CONTRIBUTION_PAIR_QUESTION_TYPE && !permitted() {
         return Some(GateReasonCode::DenyWitnessMessageAuthorNotAuthorized);
     }
     None

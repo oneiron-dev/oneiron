@@ -325,6 +325,7 @@ impl SyncServer {
             reader_runner,
             live_runs,
             secret_destinations: Default::default(),
+            seat_helpers: Default::default(),
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),
@@ -371,6 +372,7 @@ impl SyncServer {
             feedback_triage: crate::config::FeedbackTriageConfig::default(),
             feedback_flood,
             artifact_port: None,
+            api_addr: None,
             artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,
