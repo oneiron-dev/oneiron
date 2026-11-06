@@ -28,6 +28,7 @@ mod response_pins;
 // FIX 9930: transport retries; past the schedule, its last interval paces.
 mod retry;
 mod settled;
+mod source;
 mod step_claim;
 mod step_only;
 mod step_state;
