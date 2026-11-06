@@ -14,3 +14,8 @@ An initialize refusal with an `error` field moves that terminal answer's origina
 field value into the final JSON-RPC envelope. A present null field stays present;
 a missing field or non-object answer still uses the existing full-answer fallback.
 The probe cache retains its own stored refusal and its existing clones.
+
+Wake handoff decoding borrows the parsed JSON `result` while constructing the
+same owned delivery type. The original complete answer stays available for the
+existing malformed-handoff error. Delivery strings and vectors still allocate;
+only the intermediate cloned JSON result tree is removed.
