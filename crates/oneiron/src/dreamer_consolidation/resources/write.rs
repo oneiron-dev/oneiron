@@ -165,6 +165,7 @@ impl BranchResources<'_> {
         // Each output's head: its own id, or the head it attaches to.
         let mut heads: BTreeMap<EntityId, EntityId> = BTreeMap::new();
         let mut answers = Vec::new();
+        let mut unlisted = super::restated::UnlistedHeads::default();
         for verified in candidates {
             verified.evidence.check_pins(self)?;
             answers.extend(verified.answers);
@@ -217,6 +218,16 @@ impl BranchResources<'_> {
                 }
                 _ => None,
             };
+            // A candidate no admitted prior names may still restate the
+            // Dreamer's own unvetted head outside this listing: it is
+            // already said, as a listed one is (FIX 12043).
+            if attachment_head.is_none()
+                && matches.is_empty()
+                && prior.is_none()
+                && self.restates_unlisted_head(&candidate, rules, evidence.meet(), &mut unlisted)?
+            {
+                continue;
+            }
             if let Some(id) = attachment_head {
                 // Nothing attaches to an unvetted head, so a candidate that
                 // restates one is already said; this attempt's own head met
