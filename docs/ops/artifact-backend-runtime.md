@@ -127,7 +127,10 @@ The response body owns the native session lease. The two blocking IO bridges
 own only its pipes. Completion, error, request cancellation or response drop
 aborts the HTTP connection, drops the native lease off the async worker, and
 joins the pipe workers before removing scratch. Native lease drop supplies
-process stop/reap. No new timeout substitutes for that custody.
+process stop/reap. In the native VM the stdout copier is joined and its output
+half is closed after draining. Guest PID 1 keeps the existing fence and control
+heartbeats alive until the host lease stops the VM; a command exit does not kill
+pending response bytes. No new timeout substitutes for that custody.
 
 ## Remaining work and evidence limits
 
