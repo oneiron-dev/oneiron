@@ -18,6 +18,7 @@ mod exec_board_verbs;
 mod facade_refusals;
 mod memory_response;
 mod oauth_call;
+pub(crate) use self::oauth_call::swap_oauth_access_token;
 mod owner_call;
 mod person_call;
 pub(crate) use self::person_call::person_socket_admits;

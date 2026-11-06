@@ -9,9 +9,11 @@
 //!
 //! The owner's allow is an ordinary agent admission: the client's own agent principal (one per
 //! client ID), its ceiling, and an owner agent grant of the tier's verbs, which shows in
-//! `vault.consent.registry` with its one-tap revoke. Every token stands on that grant:
-//! [`crate::Vault::resolve_oauth_access_token`], the seam the `/mcp` ingress calls (slice C),
-//! answers nothing for a token whose grant no longer stands. Clients never hold a slip or a key
+//! `vault.consent.registry` with its one-tap revoke. Every token stands on that grant. Each
+//! access token has a native capability slip of that agent, which the server mints beside it
+//! and holds (`access_slips`, slice C): [`crate::Vault::resolve_oauth_access_token`], the seam
+//! the `/mcp` ingress calls, answers that slip and its holder key for a token that stands, and
+//! nothing for one whose grant no longer stands. Clients never hold a slip or a key
 //! (ARCH-0028:91).
 //!
 //! Codes, tokens and the authorize page's poll secret are 32 random bytes. No row, log or
@@ -22,6 +24,7 @@
 //! Every value canon leaves open is one named constant or one policy fn here, each marked an
 //! engine call (CALLS, FIX 4902).
 
+mod access_slips;
 mod authorization;
 mod clients;
 mod rows;
@@ -40,7 +43,10 @@ pub use tokens::{
     oauth_code_challenge_admitted,
 };
 
-use super::{AgentTier, HostSlipIssuer};
+use ed25519_dalek::SigningKey;
+
+use super::{AgentTier, CommReach, HostSlipIssuer};
+use crate::EntityId;
 use crate::error::Result;
 
 /// How long a pending authorization request waits for the owner's answer, and its page polls
@@ -95,6 +101,13 @@ pub const OAUTH_REFRESH_TOKEN_PREFIX: &str = "v2.oauth-refresh.";
 pub const OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER: &str = "oauth.authorization";
 /// The BLAKE3 context the host issuer's secret derives the secret-row key under.
 const SECRET_HASH_CONTEXT: &str = "oneiron/oauth-server/secret-hash/v1";
+/// The BLAKE3 context an access token's holder key is derived under ([`access_holder_key`]),
+/// apart from every other key the host issuer's secret derives (CALLS, FIX 4902: an engine call).
+const ACCESS_HOLDER_KEY_CONTEXT: &str = "oneiron oauth access holder key v1";
+/// Whom the slip the server holds for an access token may message (CALLS, FIX 4902: an engine
+/// call): `None`, the vault-wide reach, as `oneiron token agent` gives an agent's slip when the
+/// owner names none. No sign-in step asks the owner for a narrower one.
+const OAUTH_ACCESS_SLIP_COMM: Option<CommReach> = None;
 
 /// The OAuth `scope` values this vault knows: each tier's wire name (CALLS, FIX 4902: an engine
 /// call; canon names no scope values).
@@ -153,6 +166,23 @@ fn secret_hash(issuer: &HostSlipIssuer, secret: &str) -> blake3::Hash {
 /// [`secret_hash`] as the row key a table spells it: 64 lower-case hex characters.
 fn secret_row_key(issuer: &HostSlipIssuer, secret: &str) -> String {
     secret_hash(issuer, secret).to_hex().to_string()
+}
+
+/// The ed25519 key that holds the slip the server keeps for one access token (CALLS, FIX 4902:
+/// an engine call): derived under [`ACCESS_HOLDER_KEY_CONTEXT`] from the host issuer's secret,
+/// the token's family and the token's own row key, straight into a guard, and never stored. Its
+/// public half is the slip's binding key, so the slip on the token's row proves nothing without
+/// the secret, and each access token's slip has its own holder.
+fn access_holder_key(issuer: &HostSlipIssuer, family: EntityId, access_key: &str) -> SigningKey {
+    let seed = crate::world_keys::derive_guarded(
+        ACCESS_HOLDER_KEY_CONTEXT,
+        &[
+            issuer.secret(),
+            &family.as_bytes()[..],
+            access_key.as_bytes(),
+        ],
+    );
+    SigningKey::from_bytes(&seed)
 }
 
 /// Whether `presented` is the hash a row stored as `stored`, compared in constant time.

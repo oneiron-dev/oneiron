@@ -6,23 +6,27 @@
 //! again, or a code redeemed twice, revokes the whole family (OAuth 2.1 §4.3.1, RFC 6749
 //! §4.1.2). A revoked family, or one whose owner agent grant no longer stands, holds no token
 //! that resolves, so the owner's one-tap revoke of the grant ends every token of it.
+//!
+//! Each access token is handed out only once the native slip the server holds for it has landed
+//! on its row (`access_slips`, FIX 4902 slice C); a refresh retires the family's previous access
+//! token and its slip, and a family's revocation revokes its slip.
 
 use base64::Engine as _;
+use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 
+use super::access_slips::take_live_access_in_txn;
 use super::rows::{AuthorizedGrant, CODES, FAMILIES, IssuedToken, TOKENS, TokenFamily, TokenKind};
 use super::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_CODE_PREFIX,
-    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, mint_secret, oauth_requested_tier,
-    secret_row_key,
+    OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, access_holder_key, mint_secret,
+    oauth_requested_tier, secret_row_key,
 };
-use crate::authority::{AgentTier, HostSlipIssuer, grant_known_withdrawn_in_txn};
-use crate::edge::EdgeActorClass;
+use crate::authority::{AgentTier, CapabilitySlip, HostSlipIssuer, grant_known_withdrawn_in_txn};
 use crate::error::Result;
 use crate::federation::decode_federation_grant_body;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::HexId;
-use crate::store::agent_record::AgentCeiling;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
@@ -82,33 +86,30 @@ impl OAuthTokenRefusal {
     }
 }
 
-/// What an access token lets its bearer do, for the `/mcp` ingress (FIX 4902 slice C): it acts
-/// as `agent`, of class `actor_class`, with `scopes` under `ceiling`, bound to `world` when one
-/// is named, while `grant_ref` stands and until `expires_at`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What an access token stands for at the `/mcp` ingress (FIX 4902 slice C): the native
+/// capability slip the server holds for it, of the family's client agent with its tier's core
+/// scopes in the grant's world bound, and that slip's holder key, which the host issuer's secret
+/// derives and no row holds. The ingress presents the slip in the token's place with a fresh
+/// [`Self::holder_proof`] per request, so the request is that connector's. Not `Debug` or
+/// `Clone`: the key signs as the slip's holder.
 pub struct OAuthAccess {
-    /// The client's agent principal.
-    pub agent: EntityId,
-    /// Always [`EdgeActorClass::Agent`].
-    pub actor_class: EdgeActorClass,
-    /// The tier the owner gave.
-    pub tier: AgentTier,
-    /// The credential scopes the bearer carries ([`AgentTier::core_scopes`]).
-    pub scopes: &'static [&'static str],
-    /// The agent's ceiling at its tier ([`AgentTier::ceiling`]).
-    pub ceiling: AgentCeiling,
-    /// The one world the grant is bound to; `None`: every world the owner reads.
-    pub world: Option<EntityId>,
-    /// The owner agent grant the token stands on.
-    pub grant_ref: EntityId,
     /// The token family the access token is of: every token one code's redemption and its
-    /// refreshes minted. The `/mcp` caller's instrument names it, and a long call judges that
-    /// caller again by it ([`crate::Vault::oauth_access_is_live`]).
+    /// refreshes minted.
     pub family: EntityId,
-    /// The client the token was issued to.
-    pub client_id: String,
-    /// When the access token lapses (Unix seconds).
-    pub expires_at: u64,
+    /// The slip the ingress presents in the token's place.
+    pub slip: CapabilitySlip,
+    holder_key: SigningKey,
+}
+
+impl OAuthAccess {
+    /// A fresh holder proof of [`Self::slip`] signed at `timestamp`, as the binding header
+    /// carries it (`crate::authority::holder_proof`): one per request, never reused.
+    ///
+    /// # Errors
+    /// The slip's binding transcript could not be built.
+    pub fn holder_proof(&self, timestamp: u64) -> Result<serde_json::Value> {
+        crate::authority::holder_proof(&self.slip, &self.holder_key, timestamp)
+    }
 }
 
 /// Whether `challenge` has an S256 PKCE challenge's shape (CALLS, FIX 4902: an engine call): the
@@ -132,6 +133,39 @@ fn pkce_s256_matches(verifier: &str, challenge: &str) -> bool {
         && base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(Sha256::digest(verifier.as_bytes()))
             == challenge
+}
+
+/// What a token-endpoint writer decided: a pair to hand out once its access token's slip lands,
+/// or a refusal; and the slip of a family it revoked or rotated, as the family and the slip's
+/// id, revoked once the writer commits, since the authority log takes its own writer.
+struct Decided {
+    outcome: std::result::Result<Issued, OAuthTokenRefusal>,
+    retired: Option<(EntityId, [u8; 32])>,
+}
+
+/// A pair a writer put, the family it is of and the grant its slip is minted under.
+struct Issued {
+    tokens: OAuthTokens,
+    family: EntityId,
+    grant: AuthorizedGrant,
+}
+
+impl Decided {
+    /// `refusal`, with nothing revoked.
+    fn refused(refusal: OAuthTokenRefusal) -> Self {
+        Self {
+            outcome: Err(refusal),
+            retired: None,
+        }
+    }
+
+    /// `refusal`, beside `family`'s revocation, which retired `slip` when it held one.
+    fn revoked(refusal: OAuthTokenRefusal, family: EntityId, slip: Option<[u8; 32]>) -> Self {
+        Self {
+            outcome: Err(refusal),
+            retired: slip.map(|slip| (family, slip)),
+        }
+    }
 }
 
 /// A fresh access and refresh token, with the keys their rows go under.
@@ -174,6 +208,7 @@ impl MintedPair {
                 family,
                 expires_at: now.saturating_add(OAUTH_ACCESS_TTL_SECS),
                 spent: false,
+                slip: None,
             },
         )?;
         TOKENS.put(
@@ -185,6 +220,7 @@ impl MintedPair {
                 family,
                 expires_at: refresh_expires_at,
                 spent: false,
+                slip: None,
             },
         )?;
         Ok(OAuthTokens {
@@ -196,14 +232,22 @@ impl MintedPair {
     }
 }
 
-/// Revokes `family` in the caller's writer; a family already gone stays gone.
-fn revoke_family_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, family: EntityId) -> Result<()> {
+/// Revokes `family` in the caller's writer, retiring its live access token, and answers the id
+/// of the slip that token held, for the caller to revoke once its writer commits
+/// ([`Vault::retire_access_slip`]); a family already gone stays gone.
+pub(super) fn revoke_family_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    family: EntityId,
+) -> Result<Option<[u8; 32]>> {
     let key = HexId(family);
-    if let Some(mut row) = FAMILIES.get(&vault.store, txn, &key)? {
-        row.revoked = true;
-        FAMILIES.put(&vault.store, txn, &key, &row)?;
-    }
-    Ok(())
+    let Some(mut row) = FAMILIES.get(&vault.store, txn, &key)? else {
+        return Ok(None);
+    };
+    row.revoked = true;
+    let slip = take_live_access_in_txn(vault, txn, &mut row)?;
+    FAMILIES.put(&vault.store, txn, &key, &row)?;
+    Ok(slip)
 }
 
 impl Vault {
@@ -241,11 +285,12 @@ impl Vault {
 
     /// Redeems an authorization code once: its client, its redirect URI and the PKCE S256 of
     /// the verifier must match, a resource the client sends must be the code's, and its grant
-    /// must still stand. Answers a new token family's first pair. A code redeemed before
-    /// revokes the family it minted.
+    /// must still stand. Answers a new token family's first pair once its access token's slip
+    /// has landed. A code redeemed before revokes the family it minted.
     ///
     /// # Errors
-    /// A store failure.
+    /// A store failure, or a failure minting the access token's slip, which revokes the new
+    /// family.
     pub fn exchange_oauth_code(
         &self,
         issuer: &HostSlipIssuer,
@@ -257,33 +302,38 @@ impl Vault {
         }
         let key = secret_row_key(issuer, exchange.code);
         let pair = MintedPair::new(issuer)?;
-        self.with_write_txn_grouped(|txn| {
+        let access_key = pair.access_key.clone();
+        let decided = self.with_write_txn_grouped(|txn| {
             let Some(mut code) = CODES.get(&self.store, txn, &key)? else {
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             };
             if now >= code.expires_at {
                 CODES.delete(&self.store, txn, &key)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
             if let Some(family) = code.redeemed_family {
-                revoke_family_in_txn(self, txn, family)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                let slip = revoke_family_in_txn(self, txn, family)?;
+                return Ok(Decided::revoked(
+                    OAuthTokenRefusal::InvalidGrant,
+                    family,
+                    slip,
+                ));
             }
             if code.client_id != exchange.client_id
                 || code.redirect_uri != exchange.redirect_uri
                 || !pkce_s256_matches(exchange.code_verifier, &code.code_challenge)
             {
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
             if exchange
                 .resource
                 .is_some_and(|resource| resource != code.resource)
             {
-                return Ok(Err(OAuthTokenRefusal::InvalidTarget));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidTarget));
             }
             if !self.oauth_grant_stands_in_txn(txn, &code.grant, now)? {
                 CODES.delete(&self.store, txn, &key)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
             let family = EntityId::now();
             let refresh_expires_at = now.saturating_add(OAUTH_REFRESH_TTL_SECS);
@@ -297,22 +347,33 @@ impl Vault {
                     grant: code.grant,
                     expires_at: refresh_expires_at,
                     revoked: false,
+                    live_access: None,
                 },
             )?;
             code.redeemed_family = Some(family);
             CODES.put(&self.store, txn, &key, &code)?;
-            pair.issue_in_txn(self, txn, family, code.grant.tier, now, refresh_expires_at)
-                .map(Ok)
-        })
+            let tokens =
+                pair.issue_in_txn(self, txn, family, code.grant.tier, now, refresh_expires_at)?;
+            Ok(Decided {
+                outcome: Ok(Issued {
+                    tokens,
+                    family,
+                    grant: code.grant,
+                }),
+                retired: None,
+            })
+        })?;
+        self.settle_token_request(issuer, &access_key, decided)
     }
 
     /// Trades a refresh token for its family's next pair, spending it: its client must be the
     /// family's, a resource the client sends must be the family's, a scope it sends must be no
-    /// wider than the family's tier, and the grant must still stand. A spent refresh token
-    /// presented again revokes its family.
+    /// wider than the family's tier, and the grant must still stand. The family's previous
+    /// access token and its slip retire, and the pair is answered once the new access token's
+    /// slip has landed. A spent refresh token presented again revokes its family.
     ///
     /// # Errors
-    /// A store failure.
+    /// A store failure, or a failure minting the access token's slip, which revokes the family.
     pub fn refresh_oauth_token(
         &self,
         issuer: &HostSlipIssuer,
@@ -334,49 +395,61 @@ impl Vault {
         };
         let key = secret_row_key(issuer, refresh.refresh_token);
         let pair = MintedPair::new(issuer)?;
-        self.with_write_txn_grouped(|txn| {
+        let access_key = pair.access_key.clone();
+        let decided = self.with_write_txn_grouped(|txn| {
             let Some(mut token) = TOKENS
                 .get(&self.store, txn, &key)?
                 .filter(|token| token.kind == TokenKind::Refresh)
             else {
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             };
             if now >= token.expires_at {
                 TOKENS.delete(&self.store, txn, &key)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
             let family_key = HexId(token.family);
-            let Some(family) = FAMILIES.get(&self.store, txn, &family_key)? else {
+            let Some(mut family) = FAMILIES.get(&self.store, txn, &family_key)? else {
                 TOKENS.delete(&self.store, txn, &key)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             };
             if family.revoked || now >= family.expires_at {
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
             if token.spent {
-                revoke_family_in_txn(self, txn, token.family)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                let slip = revoke_family_in_txn(self, txn, token.family)?;
+                return Ok(Decided::revoked(
+                    OAuthTokenRefusal::InvalidGrant,
+                    token.family,
+                    slip,
+                ));
             }
             if family.client_id != refresh.client_id {
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
             if refresh
                 .resource
                 .is_some_and(|resource| resource != family.resource)
             {
-                return Ok(Err(OAuthTokenRefusal::InvalidTarget));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidTarget));
             }
             if asked.is_some_and(|tier| tier > family.grant.tier) {
-                return Ok(Err(OAuthTokenRefusal::InvalidScope));
+                return Ok(Decided::refused(OAuthTokenRefusal::InvalidScope));
             }
             if !self.oauth_grant_stands_in_txn(txn, &family.grant, now)? {
-                revoke_family_in_txn(self, txn, token.family)?;
-                return Ok(Err(OAuthTokenRefusal::InvalidGrant));
+                let slip = revoke_family_in_txn(self, txn, token.family)?;
+                return Ok(Decided::revoked(
+                    OAuthTokenRefusal::InvalidGrant,
+                    token.family,
+                    slip,
+                ));
             }
             token.spent = true;
             TOKENS.put(&self.store, txn, &key, &token)?;
+            // One live access token per family: the one this refresh replaces retires with its
+            // slip (`take_live_access_in_txn`).
+            let retired = take_live_access_in_txn(self, txn, &mut family)?;
             let refresh_expires_at = now.saturating_add(OAUTH_REFRESH_TTL_SECS);
-            let tier = family.grant.tier;
+            let grant = family.grant;
             FAMILIES.put(
                 &self.store,
                 txn,
@@ -386,14 +459,50 @@ impl Vault {
                     ..family
                 },
             )?;
-            pair.issue_in_txn(self, txn, token.family, tier, now, refresh_expires_at)
-                .map(Ok)
-        })
+            let tokens =
+                pair.issue_in_txn(self, txn, token.family, grant.tier, now, refresh_expires_at)?;
+            Ok(Decided {
+                outcome: Ok(Issued {
+                    tokens,
+                    family: token.family,
+                    grant,
+                }),
+                retired: retired.map(|slip| (token.family, slip)),
+            })
+        })?;
+        self.settle_token_request(issuer, &access_key, decided)
+    }
+
+    /// The token endpoint's answer once `decided`'s writer committed: the slip it retired is
+    /// revoked, and a pair it put is answered once its access token's slip, which the row
+    /// `access_key` keeps, has landed ([`Self::hold_access_slip`]); `invalid_grant` when the
+    /// family was revoked while the slip was minted.
+    fn settle_token_request(
+        &self,
+        issuer: &HostSlipIssuer,
+        access_key: &str,
+        decided: Decided,
+    ) -> Result<std::result::Result<OAuthTokens, OAuthTokenRefusal>> {
+        if let Some((family, slip)) = decided.retired {
+            self.retire_access_slip(issuer, family, slip);
+        }
+        let issued = match decided.outcome {
+            Ok(issued) => issued,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        Ok(
+            if self.hold_access_slip(issuer, issued.family, access_key, &issued.grant)? {
+                Ok(issued.tokens)
+            } else {
+                Err(OAuthTokenRefusal::InvalidGrant)
+            },
+        )
     }
 
     /// Revokes the family of the token presented (RFC 7009): an access or a refresh token,
-    /// issued to `client_id` when the client names itself. An unknown, lapsed or other client's
-    /// token changes nothing, and nothing here says which it was.
+    /// issued to `client_id` when the client names itself, and the slip of the family's live
+    /// access token. An unknown, lapsed or other client's token changes nothing, and nothing
+    /// here says which it was.
     ///
     /// # Errors
     /// A store failure.
@@ -410,38 +519,43 @@ impl Vault {
             return Ok(());
         }
         let key = secret_row_key(issuer, token);
-        self.with_write_txn_grouped(|txn| {
+        let retired = self.with_write_txn_grouped(|txn| {
             let Some(row) = TOKENS.get(&self.store, txn, &key)? else {
-                return Ok(());
+                return Ok(None);
             };
             if now >= row.expires_at {
                 TOKENS.delete(&self.store, txn, &key)?;
-                return Ok(());
+                return Ok(None);
             }
-            let family_key = HexId(row.family);
-            let Some(mut family) = FAMILIES.get(&self.store, txn, &family_key)? else {
-                return Ok(());
+            let Some(family) = FAMILIES.get(&self.store, txn, &HexId(row.family))? else {
+                return Ok(None);
             };
             if client_id.is_some_and(|client_id| client_id != family.client_id) {
-                return Ok(());
+                return Ok(None);
             }
-            family.revoked = true;
-            FAMILIES.put(&self.store, txn, &family_key, &family)?;
+            let slip = revoke_family_in_txn(self, txn, row.family)?;
             TOKENS.delete(&self.store, txn, &key)?;
-            Ok(())
-        })
+            Ok(slip.map(|slip| (row.family, slip)))
+        })?;
+        if let Some((family, slip)) = retired {
+            self.retire_access_slip(issuer, family, slip);
+        }
+        Ok(())
     }
 
-    /// FIX 4902 slice C's seam: what the access token `token` lets its bearer do on `resource`
-    /// at `now`. `None` for a token that is unknown, lapsed, revoked (its family), issued for
-    /// another resource, or whose owner agent grant no longer stands (revoked, expired,
-    /// withdrawn, or its pact membership lapsed). A read: it drops nothing.
+    /// FIX 4902 slice C's seam: what the access token `token` stands for on `resource` at `now`,
+    /// the slip the server holds for it and that slip's holder key ([`OAuthAccess`]). `None`
+    /// for a token that is unknown, lapsed, revoked (its family), issued for another resource,
+    /// whose slip has not landed or has lapsed, or whose owner agent grant no longer stands
+    /// (revoked, expired, withdrawn, or its pact membership lapsed): that last revokes the
+    /// family and its slip, so a call that holds the slip stops too.
     ///
-    /// `issuer` is the host issuer whose secret keys the token rows (`SyncServer::host_issuer`);
-    /// `resource` is the `/mcp` URL the request reached (`{origin}/mcp`).
+    /// `issuer` is the host issuer whose secret keys the token rows and derives the holder key
+    /// (`SyncServer::host_issuer`); `resource` is the `/mcp` URL the request reached
+    /// (`{origin}/mcp`).
     ///
     /// # Errors
-    /// A store failure.
+    /// A store failure reading the token's rows.
     pub fn resolve_oauth_access_token(
         &self,
         issuer: &HostSlipIssuer,
@@ -453,91 +567,62 @@ impl Vault {
             return Ok(None);
         }
         let key = secret_row_key(issuer, token);
-        let txn = self.store.env.read_txn()?;
-        let Some(row) = TOKENS
-            .get(&self.store, &txn, &key)?
-            .filter(|row| row.kind == TokenKind::Access && now < row.expires_at)
-        else {
-            return Ok(None);
+        let lapsed_grant = {
+            let txn = self.store.env.read_txn()?;
+            let Some(row) = TOKENS
+                .get(&self.store, &txn, &key)?
+                .filter(|row| row.kind == TokenKind::Access && now < row.expires_at)
+            else {
+                return Ok(None);
+            };
+            let Some(family) = FAMILIES
+                .get(&self.store, &txn, &HexId(row.family))?
+                .filter(|family| !family.revoked && family.resource == resource)
+            else {
+                return Ok(None);
+            };
+            if self.oauth_grant_stands_in_txn(&txn, &family.grant, now)? {
+                return Ok(row
+                    .slip
+                    .as_deref()
+                    .and_then(|slip| held_access(issuer, row.family, &key, slip, now)));
+            }
+            row.family
         };
-        let Some(family) = self.oauth_family_standing_in_txn(&txn, row.family, resource, now)?
-        else {
-            return Ok(None);
-        };
-        let tier = family.grant.tier;
-        Ok(Some(OAuthAccess {
-            agent: family.grant.agent,
-            actor_class: EdgeActorClass::Agent,
-            tier,
-            scopes: tier.core_scopes(),
-            ceiling: tier.ceiling(),
-            world: family.grant.world,
-            grant_ref: family.grant.grant_ref,
-            family: row.family,
-            client_id: family.client_id,
-            expires_at: row.expires_at,
-        }))
-    }
-
-    /// Whether the `/mcp` caller an access token of `family` resolved to still stands at `now`
-    /// (FIX 4902 slice C): exactly while [`Self::resolve_oauth_access_token`] would still resolve
-    /// that token to `family` on `resource`. The token lapses at `expires_at`, and its row goes
-    /// only past that or with its family's revocation, so the lapse and the family's standing
-    /// decide it: not revoked, bound to `resource`, on an owner agent grant that still stands.
-    /// A long call or a waiter judges its caller again by this, without the token.
-    ///
-    /// # Errors
-    /// A store failure.
-    pub fn oauth_access_is_live(
-        &self,
-        family: EntityId,
-        resource: &str,
-        expires_at: u64,
-        now: u64,
-    ) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        self.oauth_access_is_live_in_txn(&txn, family, resource, expires_at, now)
-    }
-
-    /// [`Self::oauth_access_is_live`], read in the caller's transaction: a writer judges its
-    /// caller in the snapshot it commits in.
-    ///
-    /// # Errors
-    /// A store failure.
-    pub fn oauth_access_is_live_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        family: EntityId,
-        resource: &str,
-        expires_at: u64,
-        now: u64,
-    ) -> Result<bool> {
-        if now >= expires_at {
-            return Ok(false);
+        // The family goes with its slip, so a call that holds the slip stops too; the token
+        // resolves nothing whether that lands or not.
+        if let Err(error) = self.revoke_oauth_family(issuer, lapsed_grant) {
+            tracing::warn!(
+                %error,
+                family = %lapsed_grant.to_hex(),
+                "revoking an OAuth token family whose grant no longer stands failed"
+            );
         }
-        Ok(self
-            .oauth_family_standing_in_txn(txn, family, resource, now)?
-            .is_some())
+        Ok(None)
     }
+}
 
-    /// The row of `family` while its tokens still stand on `resource` at `now`: not revoked,
-    /// bound to that resource, and on an owner agent grant that still stands. `None` otherwise.
-    fn oauth_family_standing_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        family: EntityId,
-        resource: &str,
-        now: u64,
-    ) -> Result<Option<TokenFamily>> {
-        let Some(row) = FAMILIES.get(&self.store, txn, &HexId(family))? else {
-            return Ok(None);
-        };
-        if row.revoked
-            || row.resource != resource
-            || !self.oauth_grant_stands_in_txn(txn, &row.grant, now)?
-        {
-            return Ok(None);
-        }
-        Ok(Some(row))
+/// The slip `slip`, an access token's row of `family` under `access_key` holds, with its holder
+/// key, while it stands at `now`: `None` for a slip that does not parse, whose binding key is
+/// not the key the host issuer's secret derives for that token, or that has lapsed (the vault's
+/// credential lifetime ceiling may cut a slip shorter than its token).
+fn held_access(
+    issuer: &HostSlipIssuer,
+    family: EntityId,
+    access_key: &str,
+    slip: &str,
+    now: u64,
+) -> Option<OAuthAccess> {
+    let slip = CapabilitySlip::from_token(slip).ok()?;
+    let holder_key = access_holder_key(issuer, family, access_key);
+    if holder_key.verifying_key().to_bytes() != slip.claims.binding_key
+        || now >= slip.claims.expires_at
+    {
+        return None;
     }
+    Some(OAuthAccess {
+        family,
+        slip,
+        holder_key,
+    })
 }

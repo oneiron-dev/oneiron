@@ -4,36 +4,37 @@
 //!
 //! A stock client cannot send `x-oneiron-binding`, so it never holds a slip. It signs in
 //! (`api::oauth_server`) and presents its access token as its bearer, or as its MCP connector
-//! credential. Such a request is resolved here, before every other cohort, and only here: the
-//! token resolves to the vault grant it stands on (`Vault::resolve_oauth_access_token`), or the
-//! request is refused, never served as another caller. Its caller is the client's own agent
-//! principal (`CoreAuth::for_oauth_access`): an agent with the tier's core scopes, in the one
-//! world the grant is bound to or vault-wide, every tool of the endpoint listed and each verb
-//! gated by those scopes and the agent's ceiling, as every connector's is. No registration,
-//! slip or key is made for it; a long call judges it again by its token family.
+//! credential. For each access token the server holds a native capability slip of the client's
+//! agent, minted beside the token through the paired path (`oneiron::authority::oauth_server`'s
+//! `access_slips`). The binding door swaps the token for that slip first of all
+//! ([`swap_oauth_access_token`]): `Authorization: Bearer <slip>` and a fresh holder proof the
+//! server signs with the slip's holder key, so the door spends that proof once, as every slip's,
+//! and the gateway resolves the request as the slip's registered connector ([`caller`]) and as
+//! no other cohort. Its tools, scopes, ceiling, reads, code runs and hook asks are then every
+//! connector's. A token that does not resolve is refused there, never served as another caller.
 //!
-//! An anonymous request no cohort admits, on a host with an OAuth identity, answers 401 with
-//! `WWW-Authenticate` naming the resource's metadata (RFC 9728 §5.1), and a token that does not
-//! resolve answers 401 `invalid_token` (RFC 6750 §3.1), so a client knows to sign in. With no
-//! OAuth identity, each answers as before.
+//! A token that does not resolve answers 401 `invalid_token` (RFC 6750 §3.1), and an anonymous
+//! request no cohort admits, on a host with an OAuth identity, answers 401 with
+//! `WWW-Authenticate` naming the resource's metadata (RFC 9728 §5.1), so a client knows to
+//! refresh or sign in. With no OAuth identity, an anonymous request answers as before.
 
 use std::sync::Arc;
 
+use axum::Json;
+use axum::extract::Request;
+use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::Response;
-use oneiron::authority::{OAUTH_ACCESS_TOKEN_PREFIX, OAuthAccess};
+use axum::response::{IntoResponse, Response};
+use oneiron::authority::{MACHINE_PROOF_HEADER, OAUTH_ACCESS_TOKEN_PREFIX, OAuthAccess};
 use oneiron::claim::CallerLocality;
-use oneiron::context_board::StreamConnectionId;
+use oneiron_vault_contract::{BINDING_HEADER, MCP_CREDENTIAL_HEADER};
+use serde_json::Value;
 
-use super::actor_dispatch::{mcp_connector_credential, mcp_request_placement};
-use super::{McpCallContext, McpGatewayError};
-use crate::auth::{CoreAuth, OAuthAccessInstrument};
-use crate::mcp::{McpConnectorScope, McpResolvedActor, McpSurfaceMode};
+use super::actor_dispatch::mcp_connector_credential;
+use super::{McpCallContext, McpGatewayError, mcp_error_response, resolve_mcp_gateway_actor};
+use crate::cli::McpSurface;
+use crate::mcp::McpSurfaceMode;
 use crate::server::SyncServer;
-
-/// The `blake3::derive_key` context of an OAuth caller's STREAM connection
-/// ([`oauth_stream_connection`]): apart from the owner's, a booking holder's and a member's.
-const MCP_OAUTH_STREAM_CONTEXT: &str = "oneiron-server 2026-11 mcp oauth-family stream";
 
 /// The kind of the refusal of an OAuth access token that does not resolve, apart from
 /// `mcp_auth_required` so its 401 says `invalid_token` (CALLS, FIX 4902: an engine call). It
@@ -43,11 +44,102 @@ const OAUTH_TOKEN_INVALID: &str = "mcp_oauth_token_invalid";
 /// The kind of the refusal of a request no cohort admits for want of a credential.
 const MCP_AUTH_REQUIRED: &str = "mcp_auth_required";
 
-/// The caller of one `/mcp` request (a handshake or a `tools/call`) whose presented credential
-/// is an OAuth access token: the client's agent, as its token resolves it ([`oauth_context`]),
-/// or the refusal of a token that does not. `None` for a request that presents any other
-/// credential, or none, which keeps the caller it had.
-pub(super) fn caller(
+/// Marks a request whose OAuth access token the binding door swapped for the slip the server
+/// holds for it ([`swap_oauth_access_token`]). Only that swap inserts it: no header names it.
+#[derive(Clone, Copy)]
+struct SwappedOAuthBearer;
+
+/// FIX 4902 slice C's ingress swap, which the binding door runs on each request before it reads
+/// any credential (`auth::admit_http_binding`), so its holder-proof admission, its clock
+/// classification and the gateway all read the swapped credential. A request to either MCP
+/// endpoint whose presented credential (its MCP connector credential, else its bearer, the
+/// precedence both readers keep) is an OAuth access token that resolves on this vault's `/mcp`
+/// resource ([`oneiron::Vault::resolve_oauth_access_token`]: its family live, its owner agent
+/// grant standing, its slip landed) goes on as that token's slip: `Authorization: Bearer <slip>`,
+/// a fresh holder proof signed now with the slip's holder key in `x-oneiron-binding`, the MCP
+/// connector credential and any machine proof removed (no client holds a key over a slip it
+/// never saw), and [`SwappedOAuthBearer`]. Every other request goes on unchanged.
+///
+/// # Errors
+/// The answer for a token that does not resolve: 401 `invalid_token` ([`token_refused`]); a
+/// store fault answers 500 (CALLS, FIX 4902: an engine call), so a client keeps a token a fault
+/// could not judge. It never goes on.
+pub(crate) fn swap_oauth_access_token(
+    server: &SyncServer,
+    request: &mut Request,
+) -> Result<(), Response> {
+    if !mcp_endpoint(request.uri().path()) {
+        return Ok(());
+    }
+    let Some(token) = mcp_connector_credential(request.headers())
+        .ok()
+        .filter(|credential| credential.starts_with(OAUTH_ACCESS_TOKEN_PREFIX))
+    else {
+        return Ok(());
+    };
+    let resolved = match (oauth_resource(server), server.host_issuer()) {
+        (Some(resource), Some(issuer)) => server.vault().resolve_oauth_access_token(
+            issuer,
+            &token,
+            &resource,
+            oneiron_vault_contract::now_ts(),
+        ),
+        _ => Ok(None),
+    };
+    let access = match resolved {
+        Ok(Some(access)) => access,
+        Ok(None) => return Err(token_refused(server)),
+        Err(error) => {
+            tracing::warn!(%error, "an OAuth access token's resolution at /mcp failed");
+            return Err(resolution_failed());
+        }
+    };
+    let Some((bearer, binding)) = slip_headers(&access, server.vault().now_recorded_at()) else {
+        return Err(resolution_failed());
+    };
+    let headers = request.headers_mut();
+    headers.remove(MCP_CREDENTIAL_HEADER);
+    headers.remove(MACHINE_PROOF_HEADER);
+    headers.insert(AUTHORIZATION, bearer);
+    headers.insert(BINDING_HEADER, binding);
+    request.extensions_mut().insert(SwappedOAuthBearer);
+    Ok(())
+}
+
+/// Whether `path` is one of the MCP endpoints, `/mcp` and `/mcp/tool-first`.
+fn mcp_endpoint(path: &str) -> bool {
+    [McpSurface::Primary, McpSurface::ToolFirst]
+        .into_iter()
+        .any(|surface| surface.path() == path)
+}
+
+/// The protected resource a request to either MCP endpoint reaches (CALLS, FIX 4902: an engine
+/// call): `/mcp` and `/mcp/tool-first` are the one resource `{origin}/mcp`, so one sign-in
+/// reaches either and no token reaches anything else. `None` on a host with no OAuth identity,
+/// where no token resolves.
+fn oauth_resource(server: &SyncServer) -> Option<String> {
+    crate::api::oauth_server::mcp_resource(server)
+}
+
+/// The bearer and the binding header `access`'s slip goes on with: the slip's token, and a
+/// fresh holder proof signed at `timestamp`, each marked sensitive. `None` when either cannot
+/// be written.
+fn slip_headers(access: &OAuthAccess, timestamp: u64) -> Option<(HeaderValue, HeaderValue)> {
+    let token = access.slip.to_token().ok()?;
+    let proof = access.holder_proof(timestamp).ok()?;
+    let mut bearer = HeaderValue::from_str(&format!("Bearer {token}")).ok()?;
+    bearer.set_sensitive(true);
+    let mut binding = HeaderValue::from_str(&proof.to_string()).ok()?;
+    binding.set_sensitive(true);
+    Some((bearer, binding))
+}
+
+/// The caller of one `/mcp` request (a handshake or a `tools/call`) whose OAuth access token
+/// the binding door swapped ([`swap_oauth_access_token`]): the registered connector of the slip it
+/// now carries, as every connector's call resolves it (`resolve_mcp_gateway_actor`), holding the
+/// holder proof the door admitted, and nothing else: no booking, member or owner cohort reads
+/// it. `None` for every other request, which keeps the caller it had.
+pub(super) async fn caller(
     mode: McpSurfaceMode,
     request_id: &str,
     headers: &HeaderMap,
@@ -55,141 +147,59 @@ pub(super) fn caller(
     locality: CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Option<Result<McpCallContext, McpGatewayError>> {
-    let token = mcp_connector_credential(headers)
-        .ok()
-        .filter(|credential| credential.starts_with(OAUTH_ACCESS_TOKEN_PREFIX))?;
-    Some(resolved_caller(
-        mode, request_id, headers, connection, locality, server, &token,
-    ))
-}
-
-/// The caller `token` resolves to on this endpoint's resource now, placed where the request's
-/// connection sits. Refused when the host has no OAuth identity or no issuer, and for a token
-/// that is unknown, lapsed, revoked, minted for another resource, or whose owner agent grant
-/// no longer stands.
-fn resolved_caller(
-    mode: McpSurfaceMode,
-    request_id: &str,
-    headers: &HeaderMap,
-    connection: &Extensions,
-    locality: CallerLocality,
-    server: &Arc<SyncServer>,
-    token: &str,
-) -> Result<McpCallContext, McpGatewayError> {
-    let (Some(resource), Some(issuer)) = (oauth_resource(server, mode), server.host_issuer())
-    else {
-        return Err(token_invalid());
-    };
-    let access = server
-        .vault()
-        .resolve_oauth_access_token(issuer, token, &resource, oneiron_vault_contract::now_ts())
-        .map_err(|error| super::mcp_engine_error("OAuth access token resolution failed", error))?
-        .ok_or_else(token_invalid)?;
-    let auth = CoreAuth::for_oauth_access(
-        &access,
-        &resource,
-        locality,
-        crate::auth::proved_peer(headers, connection),
-    );
-    oauth_context(mode, request_id, headers, &access, auth, server)
-}
-
-/// The protected resource a call on `mode` reaches (CALLS, FIX 4902: an engine call): both MCP
-/// endpoints, `/mcp` and `/mcp/tool-first`, are the one resource `{origin}/mcp`, so one sign-in
-/// reaches either and no token reaches anything else. `None` with no OAuth identity.
-fn oauth_resource(server: &SyncServer, mode: McpSurfaceMode) -> Option<String> {
-    match mode {
-        McpSurfaceMode::Primary | McpSurfaceMode::ToolFirst => {
-            crate::api::oauth_server::mcp_resource(server)
-        }
+    if !swapped(connection) {
+        return None;
     }
+    Some(
+        resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
+            .await
+            .map(|context| super::owner_call::with_admitted_proof(context, connection)),
+    )
 }
 
-/// The connector scope an OAuth caller acts in (CALLS, FIX 4902: an engine call): the one world
-/// its owner agent grant is bound to, every facet of it, when the grant names one; vault-wide
-/// when it names none. The owner's allow names no facet.
-fn oauth_scope(access: &OAuthAccess) -> McpConnectorScope {
-    access
-        .world
-        .map_or_else(McpConnectorScope::vault_wide, |world| {
-            McpConnectorScope::scoped(Some(world), None)
-        })
+/// Whether the binding door swapped this request's OAuth access token for its slip.
+pub(super) fn swapped(connection: &Extensions) -> bool {
+    connection.get::<SwappedOAuthBearer>().is_some()
 }
 
-/// A stock client's own call: its agent, as an agent, in [`oauth_scope`], with every tool of
-/// the endpoint (`bound_verbs` `None`: its scopes and its agent's ceiling gate each verb, as
-/// `mcp_call_scope` does every connector's), the STREAM subscriptions that scope admits, and its
-/// own STREAM connection ([`oauth_stream_connection`]). `auth` is its caller
-/// ([`CoreAuth::for_oauth_access`]): never owner grade, so no owner door, owner read key or
-/// owner-wide result is its. The request's own placement and session stand.
-fn oauth_context(
-    mode: McpSurfaceMode,
-    request_id: &str,
-    headers: &HeaderMap,
-    access: &OAuthAccess,
-    auth: CoreAuth,
-    server: &Arc<SyncServer>,
-) -> Result<McpCallContext, McpGatewayError> {
-    let instrument = auth.oauth_access().ok_or_else(token_invalid)?;
-    let stream_connection = oauth_stream_connection(instrument);
-    let (session, room_turn) = mcp_request_placement(headers)?;
-    let session_ref = session.map(|session| session.to_hex());
-    let scope = oauth_scope(access);
-    let actor = McpResolvedActor {
-        auth: Some(auth.in_off_record_session(session_ref.as_deref())),
-        actor_ref: access.agent,
-        actor_class: access.actor_class,
-        gate_actor_class: access.actor_class.gate_actor_class(),
-        gate_actor_ref: access.agent.to_hex(),
-        stream_connection,
-        bound_verbs: None,
-        subscription_ceiling: scope.subscription_ceiling(),
-        scope,
+/// The answer to an OAuth access token that does not resolve: HTTP 401 with
+/// `WWW-Authenticate: Bearer error="invalid_token"`, naming the `/mcp` resource's metadata on a
+/// host with an OAuth identity, and a JSON-RPC error of no request id, since no body was read.
+/// The client refreshes the token or signs in again.
+fn token_refused(server: &SyncServer) -> Response {
+    let challenge = match crate::api::oauth_server::mcp_resource_metadata_url(server) {
+        Some(metadata) => {
+            format!("Bearer error=\"invalid_token\", resource_metadata=\"{metadata}\"")
+        }
+        None => "Bearer error=\"invalid_token\"".to_owned(),
     };
-    let landing = crate::api::write_facet::landing_facet(
-        &server.vault,
-        session,
-        &actor.scope.facets,
-        actor.scope.facet_ref,
-    );
-    Ok(McpCallContext {
-        actor,
-        mode,
-        request_id: request_id.to_owned(),
-        landing,
-        invocation: None,
-        hook_ask: None,
-        off_record_session: session_ref,
-        room_turn,
-        drain: None,
-        forwarded: None,
-        client_surface: None,
-        signing_request_transport: None,
-    })
-}
-
-/// An OAuth caller's STREAM connection: one per instrument, so per sign-in, kept across its
-/// refreshes, derived from the instrument's name alone under its own prefix, so it never names
-/// another caller's stream or a connector registration, and does not spell the family's id.
-fn oauth_stream_connection(instrument: &OAuthAccessInstrument) -> StreamConnectionId {
-    let key = blake3::derive_key(MCP_OAUTH_STREAM_CONTEXT, instrument.name().as_bytes());
-    StreamConnectionId(format!("mcp-oauth:{}", blake3::Hash::from(key).to_hex()))
-}
-
-/// The refusal of an OAuth access token that does not resolve: the client refreshes it or signs
-/// in again.
-fn token_invalid() -> McpGatewayError {
-    McpGatewayError::new(
+    let refusal = McpGatewayError::new(
         -32001,
         OAUTH_TOKEN_INVALID,
         "the OAuth access token is unknown, lapsed or revoked, or was issued for another \
          resource; refresh it or sign in again",
+    );
+    let response = Json(mcp_error_response(Value::Null, refusal)).into_response();
+    challenged(response, HeaderValue::from_str(&challenge).ok())
+}
+
+/// The answer to an OAuth access token a store fault kept the ingress from judging: HTTP 500
+/// and a JSON-RPC engine error of no request id.
+fn resolution_failed() -> Response {
+    let refusal = McpGatewayError::new(
+        -32603,
+        "engine_error",
+        "the OAuth access token could not be judged; retry",
+    );
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(mcp_error_response(Value::Null, refusal)),
     )
+        .into_response()
 }
 
 /// The `WWW-Authenticate` challenge `error`, this request's refusal, answers with on a host
-/// with an OAuth identity: `invalid_token` and the `/mcp` resource's metadata for an OAuth
-/// access token that does not resolve; the metadata alone for an anonymous request
+/// with an OAuth identity: the `/mcp` resource's metadata for an anonymous request
 /// ([`anonymous`]) no cohort admitted. `None` for every other refusal, and on a host with no
 /// OAuth identity: those answer as before.
 pub(super) fn auth_challenge(
@@ -198,15 +208,11 @@ pub(super) fn auth_challenge(
     connection: &Extensions,
     error: &McpGatewayError,
 ) -> Option<HeaderValue> {
-    let metadata = crate::api::oauth_server::mcp_resource_metadata_url(server)?;
-    let challenge = if error.kind == OAUTH_TOKEN_INVALID {
-        format!("Bearer error=\"invalid_token\", resource_metadata=\"{metadata}\"")
-    } else if error.kind == MCP_AUTH_REQUIRED && anonymous(headers, connection, server) {
-        format!("Bearer resource_metadata=\"{metadata}\"")
-    } else {
+    if error.kind != MCP_AUTH_REQUIRED || !anonymous(headers, connection, server) {
         return None;
-    };
-    HeaderValue::from_str(&challenge).ok()
+    }
+    let metadata = crate::api::oauth_server::mcp_resource_metadata_url(server)?;
+    HeaderValue::from_str(&format!("Bearer resource_metadata=\"{metadata}\"")).ok()
 }
 
 /// `response` as HTTP 401 with `challenge` in `WWW-Authenticate`, its body unchanged; with no
