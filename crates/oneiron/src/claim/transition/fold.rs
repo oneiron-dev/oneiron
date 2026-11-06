@@ -1,5 +1,6 @@
 //! Deterministic causal fold. No wall clock, LWW ordering, or mutable birth body.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::claim::{
@@ -52,7 +53,7 @@ pub(crate) struct ClaimTransitionProjection {
 
 impl ClaimTransitionProjection {
     fn initial(
-        body: &ClaimBody,
+        body: Cow<'_, ClaimBody>,
         initial_claim_of_weight: Option<f32>,
     ) -> Result<Self, TransitionFoldError> {
         if initial_claim_of_weight
@@ -74,13 +75,12 @@ impl ClaimTransitionProjection {
         // A weakening successor is born carrying its rung (ARCH-0003: a
         // confidence change supersedes), so its history continues from that
         // rung. A birth can never carry the stale rung: it is born fresh.
-        let demotion_rung = crate::claim::claim_demotion_rung(body)
+        let demotion_rung = crate::claim::claim_demotion_rung(&body)
             .map_err(|_| TransitionFoldError::InvalidBirth)?;
         if demotion_rung == Some(ClaimDemotionRung::Stale) {
             return Err(TransitionFoldError::InvalidBirth);
         }
         Ok(Self {
-            birth: body.clone(),
             approval: body.approval,
             lifecycle: body.lifecycle,
             confidence: body.confidence,
@@ -99,6 +99,7 @@ impl ClaimTransitionProjection {
             },
             ended_grants: BTreeSet::new(),
             rejected: false,
+            birth: body.into_owned(),
         })
     }
 
@@ -335,6 +336,59 @@ impl ClaimTransitionProjection {
 )]
 pub(crate) fn fold_machine_claim_transitions(
     birth: &ClaimBody,
+    vault_id: &[u8; 32],
+    target: EntityId,
+    birth_digest: &[u8; 32],
+    initial_claim_of_weight: Option<f32>,
+    events: &[SignedClaimTransitionEvent],
+    pinned_frontier: &[TransitionEventHash],
+    authorized: impl FnMut(&SignedClaimTransitionEvent) -> bool,
+) -> Result<ClaimTransitionProjection, TransitionFoldError> {
+    fold_machine_claim_transitions_with_birth(
+        Cow::Borrowed(birth),
+        vault_id,
+        target,
+        birth_digest,
+        initial_claim_of_weight,
+        events,
+        pinned_frontier,
+        authorized,
+    )
+}
+
+/// Transfers a verified birth into the projection without copying its content.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pure fold needs birth, pinned identity/closure, and historical authority callback as separate axes"
+)]
+pub(crate) fn fold_machine_claim_transitions_owned(
+    birth: ClaimBody,
+    vault_id: &[u8; 32],
+    target: EntityId,
+    birth_digest: &[u8; 32],
+    initial_claim_of_weight: Option<f32>,
+    events: &[SignedClaimTransitionEvent],
+    pinned_frontier: &[TransitionEventHash],
+    authorized: impl FnMut(&SignedClaimTransitionEvent) -> bool,
+) -> Result<ClaimTransitionProjection, TransitionFoldError> {
+    fold_machine_claim_transitions_with_birth(
+        Cow::Owned(birth),
+        vault_id,
+        target,
+        birth_digest,
+        initial_claim_of_weight,
+        events,
+        pinned_frontier,
+        authorized,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pure fold needs birth, pinned identity/closure, and historical authority callback as separate axes"
+)]
+fn fold_machine_claim_transitions_with_birth(
+    birth: Cow<'_, ClaimBody>,
     vault_id: &[u8; 32],
     target: EntityId,
     birth_digest: &[u8; 32],

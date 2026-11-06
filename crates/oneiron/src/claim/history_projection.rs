@@ -11,7 +11,7 @@ use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::transition::{
     ClaimTransitionProjection, SignedClaimTransitionEvent, TransitionFoldError,
-    decode_machine_claim_transition_event, fold_machine_claim_transitions,
+    decode_machine_claim_transition_event, fold_machine_claim_transitions_owned,
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
 };
 use crate::error::{ClaimError, Error, Result};
@@ -177,8 +177,8 @@ fn machine_history(
     // The signed birth's own ClaimOf weight, the one the materializer gave
     // the edge.
     let initial_weight = super::claim_initial_claim_of_weight(&original).map_err(|_| bad())?;
-    fold_machine_claim_transitions(
-        &original,
+    fold_machine_claim_transitions_owned(
+        original,
         &rows.birth.vault_id,
         target,
         &rows.birth.digest,
