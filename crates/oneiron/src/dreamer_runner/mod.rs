@@ -23,15 +23,19 @@ mod recipe;
 pub mod shadow_values;
 pub mod step_replay;
 mod store;
+#[cfg(test)]
+mod tests;
 mod types;
 mod wake_park;
 
-#[cfg(test)]
-mod tests;
+pub(crate) use self::admission::{
+    AdmittedBudgetLine, AdmittedCallId, NativeCallPayment, NativeMeterSnapshot, NativeNetSnapshot,
+    NativeNetTally, bind_native_call_terminal_in_txn, invoice_native_call_in_txn,
+    record_native_call_meter_in_txn, record_native_house_completions_in_txn,
+    record_native_net_response_in_txn, retain_native_call_in_txn,
+};
 
-// `admission` is impl-only: it re-opens `impl DreamerRunnerStore` and owns no
-// name the rest of the crate reaches for, so it needs no re-export. The globs
-// below keep the pre-split surface byte-identical: `pub` items stay `pub`,
+// The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become
 // visible to the whole dreamer_runner tree, tests.rs included.
 // ONE-1707 registration: the plugin-suggestion payload type rides the

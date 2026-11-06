@@ -147,6 +147,7 @@ impl Vault {
         {
             return Ok(OwnerPlanePass {
                 verdict: decisions.classify(
+                    self,
                     request,
                     &prompt,
                     AnswerPlane::Owner,
@@ -440,6 +441,7 @@ impl Vault {
         if let Some(decisions) = config.owner_decisions.as_deref() {
             return Ok(OwnerPlanePass {
                 verdict: decisions.classify(
+                    self,
                     request,
                     &prompt,
                     AnswerPlane::Owner,

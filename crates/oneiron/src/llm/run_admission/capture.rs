@@ -1,13 +1,14 @@
 //! Settlements kept for one scope on the calling thread (FIX 10075 seam):
 //! a host that must name the calls a piece of work settled (a hook's
-//! `ai.verdict`) runs that work in [`capture_settlements`], and each run
-//! admission built meanwhile on its thread through [`captured_sink`] keeps a
-//! copy of every settlement it records. The host's own sink still receives
-//! every receipt unchanged: this adds no settlement and changes none.
+//! `ai.verdict`) runs that work in [`capture_settlements`] and binds its run
+//! handle through [`RunAdmission::capturing_settlements`]. Only permits
+//! admitted through that handle keep settlements for the scope. The host's
+//! own sink still receives every receipt unchanged.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use super::admission::RunAdmission;
 use super::super::{BudgetDenied, BudgetGuard};
 use super::receipt::{RunEvent, RunReceipt, RunReceiptSink};
 
@@ -15,60 +16,139 @@ use super::receipt::{RunEvent, RunReceipt, RunReceiptSink};
 type Kept = Arc<Mutex<Vec<RunReceipt>>>;
 
 thread_local! {
-    /// The capture this thread's newly built run admissions keep to.
-    static CAPTURE: RefCell<Option<Kept>> = const { RefCell::new(None) };
+    /// The captures a run handle can bind on this thread.
+    static CAPTURE: RefCell<Vec<Kept>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Runs `work`, and returns beside what it returned each settlement receipt
-/// recorded meanwhile by a run admission built on this thread through
-/// [`captured_sink`], in the order they were recorded. An enclosing capture
+/// recorded meanwhile by permits whose run handle bound this scope through
+/// [`RunAdmission::capturing_settlements`], in record order. An enclosing capture
 /// is put back after, panic or not, and sees none of these.
 pub fn capture_settlements<T>(work: impl FnOnce() -> T) -> (T, Vec<RunReceipt>) {
-    struct Restore(Option<Kept>);
+    capture(work, false)
+}
+
+/// Like [`capture_settlements`], while currently visible captures also keep
+/// each settlement at record time. An exclusive capture still hides its
+/// parents; the host sink receives each receipt once.
+pub fn capture_settlements_shared<T>(work: impl FnOnce() -> T) -> (T, Vec<RunReceipt>) {
+    capture(work, true)
+}
+
+fn capture<T>(work: impl FnOnce() -> T, shared: bool) -> (T, Vec<RunReceipt>) {
+    struct Restore(Vec<Kept>);
     impl Drop for Restore {
         fn drop(&mut self) {
-            let previous = self.0.take();
+            let previous = std::mem::take(&mut self.0);
             CAPTURE.with(|slot| *slot.borrow_mut() = previous);
         }
     }
     let kept: Kept = Arc::default();
-    let restore = Restore(CAPTURE.with(|slot| slot.replace(Some(Arc::clone(&kept)))));
+    let mut captures = CAPTURE.with(|slot| {
+        if shared {
+            slot.borrow().clone()
+        } else {
+            Vec::new()
+        }
+    });
+    captures.push(Arc::clone(&kept));
+    let restore = Restore(CAPTURE.with(|slot| slot.replace(captures)));
     let done = work();
     drop(restore);
     let settled = std::mem::take(&mut *kept.lock().unwrap_or_else(PoisonError::into_inner));
     (done, settled)
 }
 
-/// `sink` for a run admission built now: inside [`capture_settlements`] on
-/// this thread, a sink that records every receipt to `sink` unchanged and
-/// keeps a copy of each settlement for the capture; anywhere else, `sink`
-/// itself.
+/// A receipt sink bound to the captures visible now. A caller that buffers
+/// receipts until its terminal privacy check can publish them through this
+/// sink only after that check; constructing a run binds no extra capture.
 #[must_use]
 pub fn captured_sink(sink: Arc<dyn RunReceiptSink>) -> Arc<dyn RunReceiptSink> {
-    match CAPTURE.with(|slot| slot.borrow().clone()) {
-        Some(kept) => Arc::new(CapturedSink { sink, kept }),
-        None => sink,
+    let kept = CAPTURE.with(|slot| slot.borrow().clone());
+    if kept.is_empty() {
+        sink
+    } else {
+        Arc::new(CapturedSink {
+            sink,
+            capture: SettlementCapture {
+                kept,
+                native_admission: None,
+            },
+        })
     }
 }
 
-/// A host sink with a capture beside it.
 struct CapturedSink {
     sink: Arc<dyn RunReceiptSink>,
-    kept: Kept,
+    capture: SettlementCapture,
 }
 
 impl RunReceiptSink for CapturedSink {
     fn record(&self, receipt: RunReceipt) {
-        if matches!(receipt.event, RunEvent::Settled { .. }) {
-            self.kept
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(receipt.clone());
-        }
+        self.capture.record(&receipt);
         self.sink.record(receipt);
     }
 
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.sink.budget_hit(seat, guard, denied);
+    }
+}
+
+/// The capture targets bound to a handle, copied to each permit it admits.
+#[derive(Clone, Default)]
+pub(super) struct SettlementCapture {
+    kept: Vec<Kept>,
+    native_admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
+}
+
+impl RunAdmission {
+    /// This run, keeping settlements from calls admitted through the returned
+    /// handle for the captures currently visible on this thread. Other
+    /// handles to the same run gain no observer. Already bound captures stay
+    /// bound, once each; cloning and the other handle overlays preserve them.
+    #[must_use]
+    pub fn capturing_settlements(&self) -> Self {
+        let mut run = self.clone();
+        CAPTURE.with(|slot| {
+            for kept in slot.borrow().iter() {
+                if !run
+                    .capture
+                    .kept
+                    .iter()
+                    .any(|bound| Arc::ptr_eq(bound, kept))
+                {
+                    run.capture.kept.push(Arc::clone(kept));
+                }
+            }
+        });
+        run
+    }
+}
+
+impl SettlementCapture {
+    pub(super) fn native_admission(&self) -> Option<&crate::dreamer_wake::DecisionCallAdmission> {
+        self.native_admission.as_ref()
+    }
+
+    pub(super) fn bind_native_admission(
+        &mut self,
+        admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
+    ) {
+        self.native_admission = admission;
+    }
+
+    pub(super) fn record(&self, receipt: &RunReceipt) {
+        if matches!(receipt.event, RunEvent::Settled { .. }) {
+            if let Some(admission) = &self.native_admission {
+                admission.record_native_meter();
+            }
+            for kept in &self.kept {
+                let mut captured = receipt.clone();
+                captured.native_admission = self.native_admission.clone();
+                kept.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(captured);
+            }
+        }
     }
 }

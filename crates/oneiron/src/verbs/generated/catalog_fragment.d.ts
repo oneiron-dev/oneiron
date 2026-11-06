@@ -559,7 +559,7 @@ declare namespace Sdk {
   type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[]; birth_assertions?: MessageReplyAssertions | null };
   type ReasoningPartKind = "full" | "summary" | "encrypted" | "count";
   type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
-  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
+  type ContentPart = { kind: "text"; text: string; signature?: string | null } | { kind: "reasoning"; text: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; parts?: ContentPart[] | null; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
@@ -1935,7 +1935,7 @@ declare namespace Sdk {
   type Of360Ar3MetricTier = { interface_version: number; metric_definitions: Of360MetricDefinitionSet; report: Of360EvalReport };
   type EvidenceVersion = { id: string; body_hash: string };
   type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
-  type StopCause = "done" | "deadline" | "provider_failure";
+  type StopCause = "done" | "deadline" | "generation_allowance" | "capture_unsupported" | "provider_failure";
   type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
   type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
   type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
@@ -2115,7 +2115,7 @@ declare namespace Sdk {
   type ImageBox = { top: number; bottom: number; left: number; right: number };
   type ImagePoint = { x: number; y: number };
   type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
-  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
+  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "generation_allowance" | "capture_unsupported" | "exploration_budget";
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type PolicyReadError = "settlement_invariant";
   type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; model_notes_cut?: boolean; typed_decisions?: TypedDecision[]; read_error?: PolicyReadError | null };
@@ -3354,7 +3354,7 @@ declare namespace Sdk {
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs" | "reasoning_summary";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
-  type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
+  type LabelReadFailure = "EmittedText" | "NotEosStop" | "TokenCap" | "MissingLabels" | "Malformed";
   type FatalLlmError = { HostStore: { operation: string } } | "InvalidRequest" | { InvalidRequestDetail: { message: string; code?: string | null } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type TransportFaultKind = "not_sent" | "io_after_send" | "refused" | "unexpected_frame" | "ended_with_error";
@@ -3372,7 +3372,7 @@ declare namespace Sdk {
   type ModelStreamSubscribe = { stream_key: string };
   type ModelStreamSubscribed = { stream_ref: string; stream_key: string; handle: string; status: ModelStreamStatus };
   type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null };
-  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string; signature?: string | null } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
+  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string; signature?: string | null } | { event: "reasoning_start"; part_id: string; signature?: string | null; reasoning_kind?: ReasoningPartKind; data?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string; signature?: string | null } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus };
   type ModelStreamDetach = { stream_key: string; handle: string };
   type ModelStreamDetached = { stream_ref: string; stream_key: string; handle: string; detached: boolean };

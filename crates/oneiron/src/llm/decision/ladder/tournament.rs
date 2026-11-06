@@ -2,17 +2,20 @@
 //!
 //! A rung whose provider takes fewer options than a choice question offers is not skipped:
 //! the options split into as few chunks as its bound allows, sized evenly, and each chunk
-//! is one read through [`ask`], its pin on the question's receipt. A chunk's choice is its
+//! is one native provider read, its pin on the question's receipt. A chunk's choice is its
 //! winner; a chunk that abstains sends none on. One winner stands with its chunk's answer.
 //! Two or more meet in a final read among the winners, with the person question beside it
 //! when the call asks one, in rounds while they are still more than the bound. The bound
 //! sets the chunk count; nothing caps it. A score question, or a provider whose bound
 //! cannot make a round smaller, still skips the rung.
 
-use super::{DecisionPack, DecisionProvider, Read, Readings, ask, take};
+use super::capture::Capture;
+use super::{DecisionPack, DecisionProvider, Read, Readings, capture};
 use crate::Result;
 use crate::llm::decision::types::invalid;
-use crate::llm::decision::{AnswerContract, DecisionAnswer, DecisionQuestion, ProviderPin};
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionQuestion, ProviderPin, StopCause,
+};
 
 /// The fewest options a provider must take for a tournament to read a wider choice: a
 /// chunk of one cannot narrow the field.
@@ -26,7 +29,7 @@ pub(super) fn chunks(provider: &dyn DecisionProvider, question: &DecisionQuestio
         && bound >= MIN_TOURNAMENT_CHUNK_OPTIONS
 }
 
-/// One read per `pack` question, as [`take`] gives them: a question `provider` takes whole
+/// One read per `pack` question, as [`super::take`] gives them: a question `provider` takes whole
 /// is one plain read, with `person` beside it; a wider choice is a tournament.
 pub(super) fn read_pack(
     provider: &dyn DecisionProvider,
@@ -34,6 +37,7 @@ pub(super) fn read_pack(
     pack: &DecisionPack<'_>,
     person: Option<&DecisionQuestion>,
     readings: &mut [Readings],
+    mut capture: Option<&mut Capture<'_, '_>>,
 ) -> Result<Vec<Read>> {
     let mut reads = Vec::with_capacity(pack.questions.len());
     for (question, readings) in pack.questions.iter().zip(readings.iter_mut()) {
@@ -42,10 +46,24 @@ pub(super) fn read_pack(
             ..*pack
         };
         let read = if chunks(provider, question) {
-            tournament(provider, pin, &one, person, readings)?
+            tournament(
+                provider,
+                pin,
+                &one,
+                person,
+                readings,
+                capture.as_deref_mut(),
+            )?
         } else {
-            let answered = ask(provider, &one, person);
-            take(pin, &one, answered, std::slice::from_mut(readings))?.remove(0)
+            capture::read(
+                provider,
+                pin,
+                &one,
+                person,
+                capture.as_deref_mut(),
+                std::slice::from_mut(readings),
+            )?
+            .remove(0)
         };
         reads.push(read);
     }
@@ -59,6 +77,7 @@ fn tournament(
     pack: &DecisionPack<'_>,
     person: Option<&DecisionQuestion>,
     readings: &mut Readings,
+    mut capture: Option<&mut Capture<'_, '_>>,
 ) -> Result<Read> {
     let question = pack.questions[0];
     let AnswerContract::Choice { options } = &question.contract else {
@@ -67,28 +86,63 @@ fn tournament(
     let bound = provider.capability().max_options;
     let mut field = options.clone();
     let mut started = false;
+    let mut measured_cost = false;
     loop {
         if field.len() <= bound {
-            return read_chunk(provider, pin, pack, &field, person, readings, started);
+            let mut read = read_chunk(
+                provider,
+                pin,
+                pack,
+                &field,
+                person,
+                readings,
+                started,
+                capture.as_deref_mut(),
+            )?;
+            if let Read::Answer(answer) = &mut read
+                && started
+                && (measured_cost || answer.cost_per_thousand.is_some())
+            {
+                // A chunk quote is not the whole tournament's quote. Fallback
+                // calls may also quote different currencies.
+                answer.cost_per_thousand = Some(None);
+            }
+            return Ok(read);
         }
         let count = field.len().div_ceil(bound);
         let size = field.len().div_ceil(count);
         let mut winners = Vec::new();
         let mut abstained = None;
         for chunk in field.chunks(size) {
-            let read = read_chunk(provider, pin, pack, chunk, None, readings, started)?;
-            started = true;
+            let read = read_chunk(
+                provider,
+                pin,
+                pack,
+                chunk,
+                None,
+                readings,
+                started,
+                capture.as_deref_mut(),
+            )?;
             let Read::Answer(answer) = read else {
                 return Ok(read);
             };
+            measured_cost |= answer.cost_per_thousand.is_some();
+            started = true;
             match answer.answer.clone() {
                 DecisionAnswer::Choice(winner) => winners.push((winner, answer)),
                 _ => abstained = Some(answer),
             }
         }
         match winners.len() {
-            0 => return Ok(abstained.map_or(Read::Cut, Read::Answer)),
-            1 => return Ok(Read::Answer(winners.remove(0).1)),
+            0 => return Ok(abstained.map_or(Read::Cut(StopCause::Deadline), Read::Answer)),
+            1 => {
+                let mut answer = winners.remove(0).1;
+                if measured_cost {
+                    answer.cost_per_thousand = Some(None);
+                }
+                return Ok(Read::Answer(answer));
+            }
             _ => field = winners.into_iter().map(|(winner, _)| winner).collect(),
         }
     }
@@ -96,6 +150,10 @@ fn tournament(
 
 /// One read of `pack`'s question over `options` alone. A read past the first that finds
 /// no work time left is the tournament's cut: earlier ones went out.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a tournament chunk retains its native mode and started prefix"
+)]
 fn read_chunk(
     provider: &dyn DecisionProvider,
     pin: &ProviderPin,
@@ -104,9 +162,10 @@ fn read_chunk(
     person: Option<&DecisionQuestion>,
     readings: &mut Readings,
     started: bool,
+    capture: Option<&mut Capture<'_, '_>>,
 ) -> Result<Read> {
     if started && !pack.deadline.decision_may_start() {
-        return Ok(Read::Cut);
+        return Ok(Read::Cut(StopCause::Deadline));
     }
     let mut question = pack.questions[0].clone();
     question.contract = AnswerContract::Choice {
@@ -117,6 +176,17 @@ fn read_chunk(
         questions: &questions,
         ..*pack
     };
-    let answered = ask(provider, &chunk, person);
-    Ok(take(pin, &chunk, answered, std::slice::from_mut(readings))?.remove(0))
+    let read = capture::read(
+        provider,
+        pin,
+        &chunk,
+        person,
+        capture,
+        std::slice::from_mut(readings),
+    )?
+    .remove(0);
+    Ok(match read {
+        Read::NotStarted(cause) if started => Read::Cut(cause),
+        read => read,
+    })
 }

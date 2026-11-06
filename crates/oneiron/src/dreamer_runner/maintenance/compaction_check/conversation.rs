@@ -190,7 +190,7 @@ pub(super) async fn run_conversation_check(
             record(ctx.vault, attempt_id, &declaration, &settled, now)?;
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         Reading::Deferred => {
@@ -376,7 +376,7 @@ fn judgment(response: &LlmResponse, declaration: &ConversationCheckDeclaration) 
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

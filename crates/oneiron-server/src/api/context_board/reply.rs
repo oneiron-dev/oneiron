@@ -269,7 +269,7 @@ async fn reply(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -303,7 +303,7 @@ async fn reply(
 fn text_message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }
 }
 fn unavailable() -> MemoryError {

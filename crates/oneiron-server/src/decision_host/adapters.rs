@@ -2,26 +2,33 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use oneiron::llm::LabelReadGenerationReader;
 use oneiron::llm::decision::{
-    AnswerContract, DecisionReadProvider, HostRuleRef, RemoteDecisionCapability,
+    CapturedDecision, CapturedDecisionPack, DecisionCallContext, DecisionGenerationAdmission,
+    DecisionReadOutcome, DecisionReadProvider, HostRuleRef,
 };
 use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
 
+use super::native_capture::{HouseReadObserver, HouseReadRun};
+
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
     DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
     HouseGate, HouseRead, LadderNotes, ModelId, ProviderCapability, ProviderDecision, ProviderPin,
-    ReasoningEffort, RemoteDecisionSeat, RetrievalDeadline, SeatCandidate, SeatNotes, SeatPhase,
-    SeatRequest, SeatTask, SystemOneRung, Vault,
+    ReasoningEffort, RetrievalDeadline, SeatCandidate, SeatNotes, SeatTask, SystemOneRung, Vault,
 };
 
-impl DecisionReadGate for HouseGate {
-    fn read(
+impl HouseGate {
+    fn read_with_source(
         &self,
         deadline: &RetrievalDeadline,
-        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+        source: Option<&oneiron::llm::decision::DecisionCallSource<'_>>,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&oneiron::llm::decision::DecisionCallAdmission>,
+        ) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
         let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
         // The host's own work: its turn comes while no caller waits for one,
@@ -44,23 +51,84 @@ impl DecisionReadGate for HouseGate {
             Arc::clone(&self.admission.receipts),
             crate::decision_verdict::rung_payer(),
         );
-        let permit = run
+        let run = match source {
+            Some(_) => run.capturing_settlements(),
+            None => run,
+        };
+        let mut permit = run
             .admit_paid(&self.connector, meter.reserve_units())
             .map_err(|_| refused("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| refused("refused at dispatch"))?;
-        let gated = read(permit.lease());
+        let mut context = run.work_context();
+        context.physical = crate::models::physical_for_paid(&self.connector);
+        permit.lease().attach_work_context(context);
+        if let Some(source) = source
+            && let Err(error) = permit.capture_native_decision_source(source)
+        {
+            tracing::warn!(%error, "native decision source was not captured");
+        }
+        let gated = read(permit.lease(), permit.native_decision_admission());
         let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
         let outcome = match &gated {
             GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+            GatedRead::StoppedPaidPrefix { usage } => CallOutcome::Answered(usage),
+            GatedRead::Read(Ok(answer))
+            | GatedRead::ReadOnRun {
+                read: Ok(answer), ..
+            } => CallOutcome::Answered(&answer.usage),
+            GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                CallOutcome::Failed
+            }
         };
         if let Err(denied) = permit.settle(outcome) {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
-        Ok(gated)
+        Ok(match gated {
+            GatedRead::NotStarted => GatedRead::NotStarted,
+            GatedRead::StoppedPaidPrefix { usage } => GatedRead::StoppedPaidPrefix { usage },
+            GatedRead::Read(read) | GatedRead::ReadOnRun { read, .. } => {
+                GatedRead::ReadOnRun { read, run }
+            }
+        })
+    }
+}
+
+impl DecisionReadGate for HouseGate {
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.read_with_source(deadline, None, &mut |lease, _| read(lease))
+    }
+}
+
+struct SourcedHouseGate<'a, 'source> {
+    gate: &'a HouseGate,
+    source: Option<&'a oneiron::llm::decision::DecisionCallSource<'source>>,
+}
+
+impl DecisionReadGate for SourcedHouseGate<'_, '_> {
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.gate
+            .read_with_source(deadline, self.source, &mut |lease, _| read(lease))
+    }
+
+    fn read_with_native_admission(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&oneiron::llm::decision::DecisionCallAdmission>,
+        ) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.gate.read_with_source(deadline, self.source, read)
     }
 }
 
@@ -68,51 +136,86 @@ impl DecisionReadGate for HouseGate {
 /// turn, admission, dispatch and settlement as [`HouseGate`], but the permit comes from
 /// the caller's run, already sourced with the call's evidence, instead of a run of the
 /// gate's own. The caller's run carries its own line, so no verdict meter wraps it.
-struct RunHouseGate<'a> {
+struct RunHouseGate<'a, 'source> {
     gate: &'a HouseGate,
     run: RunAdmission,
+    source: Option<&'a oneiron::llm::decision::DecisionCallSource<'source>>,
 }
 
-impl DecisionReadGate for RunHouseGate<'_> {
+impl DecisionReadGate for RunHouseGate<'_, '_> {
+    fn send_guard(&self) -> Option<&(dyn Fn() -> bool + Sync)> {
+        self.run.send_guard().map(|guard| guard as _)
+    }
+
     fn read(
         &self,
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
-        let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
-        // The host's own work: its turn comes while no caller waits for one,
-        // and the wait ends with the caller's work time (FIX 9526). A turn
-        // that never came admits nothing and pays nothing.
-        let Ok(_turn) = self
-            .gate
-            .admission
-            .turns
-            .admit_background_blocking_for(deadline.decision_time_left())
-        else {
-            return Ok(GatedRead::NotStarted);
-        };
-        let permit = self
-            .run
-            .admit_paid(
-                &self.gate.connector,
-                self.run.declaration().budget().reserve_units,
-            )
-            .map_err(|_| refused("refused by the budget"))?;
-        self.run
-            .dispatch_paid(permit.lease(), &self.gate.connector)
-            .map_err(|_| refused("refused at dispatch"))?;
-        let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
-        // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
-        };
-        if let Err(denied) = permit.settle(outcome) {
-            tracing::error!(%denied, "a house decision read's settlement was refused");
-        }
-        Ok(gated)
+        self.read_with_native_admission(deadline, &mut |lease, _| read(lease))
+    }
+
+    fn read_with_native_admission(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&oneiron::llm::decision::DecisionCallAdmission>,
+        ) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        super::run_native_read(&self.run, || {
+            let refused =
+                |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
+            // The host's own work: its turn comes while no caller waits for one,
+            // and the wait ends with the caller's work time (FIX 9526). A turn
+            // that never came admits nothing and pays nothing.
+            let Ok(_turn) = self
+                .gate
+                .admission
+                .turns
+                .admit_background_blocking_for(deadline.decision_time_left())
+            else {
+                return Ok(GatedRead::NotStarted);
+            };
+            let mut permit = self
+                .run
+                .admit_paid(
+                    &self.gate.connector,
+                    self.run.declaration().budget().reserve_units,
+                )
+                .map_err(|_| refused("refused by the budget"))?;
+            self.run
+                .dispatch_paid(permit.lease(), &self.gate.connector)
+                .map_err(|_| refused("refused at dispatch"))?;
+            let mut context = self.run.work_context();
+            context.physical = crate::models::physical_for_paid(&self.gate.connector);
+            permit.lease().attach_work_context(context);
+            if let Some(source) = self.source
+                && let Err(error) = permit.capture_native_decision_source(source)
+            {
+                tracing::warn!(%error, "native decision source was not captured");
+            }
+            let gated = read(permit.lease(), permit.native_decision_admission());
+            let unread = oneiron::llm::LlmUsage::zero();
+            // A read that went out and failed keeps its reservation as spend.
+            let outcome = match &gated {
+                GatedRead::NotStarted => CallOutcome::Answered(&unread),
+                GatedRead::StoppedPaidPrefix { usage } => CallOutcome::Answered(usage),
+                GatedRead::Read(Ok(answer))
+                | GatedRead::ReadOnRun {
+                    read: Ok(answer), ..
+                } => CallOutcome::Answered(&answer.usage),
+                GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                    CallOutcome::Failed
+                }
+            };
+            if let Err(denied) = permit.settle(outcome) {
+                if !self.run.is_unrecorded() {
+                    tracing::error!(%denied, "a house decision read's settlement was refused");
+                }
+            }
+            Ok(gated)
+        })
     }
 }
 
@@ -136,13 +239,61 @@ impl DecisionProvider for HouseRead {
         self.reader.cost_per_thousand()
     }
 
+    fn decide_captured(
+        &self,
+        call: &DecisionCall<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        let generation = match context.generation {
+            Some(admission) => Some((self.reader.generation_reader()?, admission)),
+            None => None,
+        };
+        // A configured native reader prepares nonlocal extraction before funding.
+        if *oneiron::inference_context::admitted_as(context.purpose)
+            == oneiron::llm::CallPurpose::Extraction
+            && self.gate.connector.locality != oneiron::ModelLocality::OnDevice
+            && self.native.is_none()
+        {
+            return None;
+        }
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_captured_request(call, generation, context)
+        });
+        Some(CapturedDecision { result, receipts })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        let generation = match context.generation {
+            Some(admission) => Some((self.reader.generation_reader()?, admission)),
+            None => None,
+        };
+        // A configured native reader prepares nonlocal extraction before funding.
+        if *oneiron::inference_context::admitted_as(context.purpose)
+            == oneiron::llm::CallPurpose::Extraction
+            && self.gate.connector.locality != oneiron::ModelLocality::OnDevice
+            && self.native.is_none()
+        {
+            return None;
+        }
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_pack_captured_request(pack, generation, context)
+        });
+        Some(CapturedDecisionPack { result, receipts })
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         // A call that carries its caller's run reads on it (FIX 10443).
         if let Some(run) = call.run {
             let gate = RunHouseGate {
                 gate: &self.gate,
                 run: run.sourced(Some(call.evidence.to_vec())),
+                source: None,
             };
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -150,9 +301,11 @@ impl DecisionProvider for HouseRead {
                 &self.paired,
                 self.person.as_ref(),
             )?
+            .observed_by(&observer)
             .decide(call);
         }
-        self.provider()?.decide(call)
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        self.provider()?.observed_by(&observer).decide(call)
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
@@ -161,7 +314,9 @@ impl DecisionProvider for HouseRead {
             let gate = RunHouseGate {
                 gate: &self.gate,
                 run: run.sourced(Some(pack.evidence.to_vec())),
+                source: None,
             };
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -169,9 +324,138 @@ impl DecisionProvider for HouseRead {
                 &self.paired,
                 self.person.as_ref(),
             )?
+            .observed_by(&observer)
             .decide_pack(pack);
         }
-        self.provider()?.decide_pack(pack)
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        self.provider()?.observed_by(&observer).decide_pack(pack)
+    }
+}
+
+struct HouseExtractionPreparer<'house, 'context> {
+    house: &'house HouseRead,
+    reader: &'house Arc<crate::models::DecisionReader>,
+    context: &'house DecisionCallContext<'context>,
+}
+
+impl oneiron::llm::decision::DecisionReadPreparer for HouseExtractionPreparer<'_, '_> {
+    fn prepare<'request>(
+        &self,
+        request: &oneiron::llm::LabelReadRequest<'request>,
+    ) -> oneiron::Result<Box<dyn oneiron::llm::decision::PreparedDecisionRead + 'request>> {
+        self.reader.prepare_captured(
+            request,
+            &self.house.vault,
+            self.context,
+            self.house.gate.connector.locality,
+        )
+    }
+}
+
+impl HouseRead {
+    fn decide_captured_request(
+        &self,
+        call: &DecisionCall<'_>,
+        generation: Option<(
+            &dyn LabelReadGenerationReader,
+            &dyn DecisionGenerationAdmission,
+        )>,
+        context: &DecisionCallContext<'_>,
+    ) -> oneiron::Result<DecisionReadOutcome<ProviderDecision>> {
+        let mut answers = self.decide_pack_captured_request(
+            &DecisionPack {
+                questions: &[call.question],
+                evidence: call.evidence,
+                images: call.images,
+                audio: call.audio,
+                state: call.state,
+                deadline: call.deadline,
+                run: call.run,
+                labels: call.labels,
+            },
+            generation,
+            context,
+        )?;
+        answers
+            .pop()
+            .ok_or_else(|| oneiron::Error::InvalidConfig("malformed decision read".into()))
+    }
+
+    fn decide_pack_captured_request(
+        &self,
+        pack: &DecisionPack<'_>,
+        generation: Option<(
+            &dyn LabelReadGenerationReader,
+            &dyn DecisionGenerationAdmission,
+        )>,
+        context: &DecisionCallContext<'_>,
+    ) -> oneiron::Result<Vec<DecisionReadOutcome<ProviderDecision>>> {
+        let preparer = self
+            .native
+            .as_ref()
+            .filter(|_| {
+                context.native_source.is_some()
+                    || (*oneiron::inference_context::admitted_as(context.purpose)
+                        == oneiron::llm::CallPurpose::Extraction
+                        && self.gate.connector.locality != oneiron::ModelLocality::OnDevice)
+            })
+            .map(|reader| HouseExtractionPreparer {
+                house: self,
+                reader,
+                context,
+            });
+        let read = |provider: DecisionReadProvider<'_>| {
+            let provider = match &preparer {
+                Some(preparer) => provider.prepared_by(preparer),
+                None => provider,
+            };
+            match generation {
+                Some((native, admission)) => {
+                    provider.decide_pack_with_generation(pack, native, admission)
+                }
+                None => provider.decide_pack(pack).map(|answers| {
+                    answers
+                        .into_iter()
+                        .map(DecisionReadOutcome::Answered)
+                        .collect()
+                }),
+            }
+        };
+        if let Some(run) = pack.run {
+            let gate = RunHouseGate {
+                gate: &self.gate,
+                run: run
+                    .sourced(Some(pack.evidence.to_vec()))
+                    .capturing_settlements(),
+                source: context.native_source.as_ref(),
+            };
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
+            return read(
+                DecisionReadProvider::new(
+                    self.pin.clone(),
+                    self.reader.as_ref(),
+                    &gate,
+                    &self.paired,
+                    self.person.as_ref(),
+                )?
+                .observed_by(&observer),
+            );
+        }
+        let gate = SourcedHouseGate {
+            gate: &self.gate,
+            source: context.native_source.as_ref(),
+        };
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        read(
+            DecisionReadProvider::new(
+                self.pin.clone(),
+                self.reader.as_ref(),
+                &gate,
+                &self.paired,
+                self.person.as_ref(),
+            )?
+            .observed_by(&observer),
+        )
     }
 }
 
@@ -202,158 +486,65 @@ impl DecisionProvider for SystemOneRung {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
-        let abstain = ProviderDecision {
-            answer: DecisionAnswer::Abstain,
-            probability: None,
-            paired: None,
-            person: None,
-            served: None,
-        };
-        let score_levels = call.score_levels().unwrap_or_default();
-        if matches!(call.question.contract, AnswerContract::Score { .. }) && score_levels.is_empty()
-        {
-            return Ok(abstain);
-        }
-        let request = SeatRequest {
-            question: call.question.clone(),
-            state: call.state.clone(),
-            images: call.images.to_vec(),
-            audio: call.audio.to_vec(),
-            score_levels,
-            posture: self.posture,
-            remote_opt_in: self.remote_opt_in,
-            phase: SeatPhase::Background,
-        };
-        // More levels than the seat reads passes it over (FIX 9909).
-        if !RemoteDecisionCapability::default().takes(&request) {
-            return Ok(abstain);
-        }
-        request
-            .validate_remote()
-            .map_err(|_| failed("the posture or the request keeps this call local"))?;
-        // A broker or key that is not there refuses the call before its
-        // measurement starts.
-        self.seat
-            .preflight()
-            .map_err(|_| failed("its credential broker or vault-secret key is not there"))?;
-        // A call that carries its caller's run measures on it (FIX 10443).
-        if let Some(run) = call.run {
-            return self.decide_on_run(call, request, run);
-        }
-        // Inside a verdict, use the caller's own line and room payer (FIX 1123,
-        // FIX 3795); outside one, keep the rung's meter and the vault owner.
-        let guard = crate::decision_verdict::rung_meter(&self.guard);
-        let run = self
-            .models
-            .funded_run(
-                self.connector.connector.clone(),
-                guard.clone(),
-                crate::decision_verdict::rung_payer(),
-            )
-            .sourced(Some(call.evidence.to_vec()));
-        let permit = run
-            .admit_paid(&self.connector, guard.reserve_units())
-            .map_err(|_| failed("refused by the budget"))?;
-        run.dispatch_paid(permit.lease(), &self.connector)
-            .map_err(|_| failed("refused at dispatch"))?;
-        // A measurement admitted after the work time is spent never starts.
-        if call.deadline.decision_time_left().is_zero() {
-            permit
-                .settle(CallOutcome::Failed)
-                .map_err(|_| failed("settlement refused"))?;
-            return Err(failed("admitted after the work time"));
-        }
-        let asked = self.runtime.block_on(async {
-            let cancel = call.deadline.work_cancel();
-            tokio::select! {
-                biased;
-                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
-                result = self.seat.ask(
-                    request,
-                    permit.lease(),
-                    call.deadline.decision_time_left(),
-                ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
-            }
-        });
-        let answer = match asked {
-            Ok(answer) => {
-                permit
-                    .settle(CallOutcome::Answered(&answer.usage))
-                    .map_err(|_| failed("settlement refused"))?;
-                answer
-            }
-            Err(error) => {
-                // The seat may still bill a failed or cancelled call.
-                permit
-                    .settle(CallOutcome::Failed)
-                    .map_err(|_| failed("settlement refused"))?;
-                return Err(error);
-            }
-        };
-        let abstained = answer.answer == DecisionAnswer::Abstain;
-        Ok(ProviderDecision {
-            answer: answer.answer,
-            probability: (!abstained).then_some(answer.probability),
-            paired: None,
-            person: None,
-            served: None,
+        self.decide_with_context(call, None)
+            .map(|outcome| match outcome {
+                DecisionReadOutcome::Answered(answer) => answer,
+                DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                    unreachable!("an ordinary decision has no generation gate")
+                }
+            })
+    }
+
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        self.decide_pack_with_context(pack, None).map(|outcomes| {
+            outcomes
+                .into_iter()
+                .map(|outcome| match outcome {
+                    DecisionReadOutcome::Answered(answer) => answer,
+                    DecisionReadOutcome::NotStarted | DecisionReadOutcome::Stopped => {
+                        unreachable!("an ordinary decision has no generation gate")
+                    }
+                })
+                .collect()
         })
     }
-}
 
-impl SystemOneRung {
-    /// [`DecisionProvider::decide`] for a call that carries its caller's run (FIX 10443):
-    /// the measurement admits on that run as this rung's paid connector, sourced with
-    /// the call's evidence, and settles there; the seat's own meter is untouched. The
-    /// caller's run carries its own line, so no verdict meter wraps it.
-    fn decide_on_run(
+    fn decide_captured(
         &self,
         call: &DecisionCall<'_>,
-        request: SeatRequest,
-        run: &RunAdmission,
-    ) -> oneiron::Result<ProviderDecision> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
-        let run = run.sourced(Some(call.evidence.to_vec()));
-        let permit = run
-            .admit_paid(&self.connector, run.declaration().budget().reserve_units)
-            .map_err(|_| failed("refused by the budget"))?;
-        run.dispatch_paid(permit.lease(), &self.connector)
-            .map_err(|_| failed("refused at dispatch"))?;
-        // A measurement admitted after the work time is spent never starts; the
-        // dispatched permit's drop keeps its reservation as spend, as the own-meter
-        // path's settlement does.
-        if call.deadline.decision_time_left().is_zero() {
-            return Err(failed("admitted after the work time"));
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecision> {
+        // Extraction needs an explicit catalog binding; without one it stays
+        // unsupported before capture.
+        if *oneiron::inference_context::admitted_as(context.purpose)
+            == oneiron::llm::CallPurpose::Extraction
+            && self.native_catalog.is_none()
+        {
+            return None;
         }
-        let asked = self.runtime.block_on(self.seat.ask(
-            request,
-            permit.lease(),
-            call.deadline.decision_time_left(),
-        ));
-        let answer = match asked {
-            Ok(answer) => {
-                permit
-                    .settle(CallOutcome::Answered(&answer.usage))
-                    .map_err(|_| failed("settlement refused"))?;
-                answer
-            }
-            Err(error) => {
-                // The seat may still bill a failed call.
-                permit
-                    .settle(CallOutcome::Failed)
-                    .map_err(|_| failed("settlement refused"))?;
-                return Err(failed(&format!("the seat failed: {error}")));
-            }
-        };
-        let abstained = answer.answer == DecisionAnswer::Abstain;
-        Ok(ProviderDecision {
-            answer: answer.answer,
-            probability: (!abstained).then_some(answer.probability),
-            paired: None,
-            person: None,
-            served: None,
-        })
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_with_context(call, Some(context))
+        });
+        Some(CapturedDecision { result, receipts })
+    }
+
+    fn decide_pack_captured(
+        &self,
+        pack: &DecisionPack<'_>,
+        context: &DecisionCallContext<'_>,
+    ) -> Option<CapturedDecisionPack> {
+        // Extraction needs an explicit catalog binding; without one it stays
+        // unsupported before capture.
+        if *oneiron::inference_context::admitted_as(context.purpose)
+            == oneiron::llm::CallPurpose::Extraction
+            && self.native_catalog.is_none()
+        {
+            return None;
+        }
+        let (result, receipts) = oneiron::llm::run_admission::capture_settlements_shared(|| {
+            self.decide_pack_with_context(pack, Some(context))
+        });
+        Some(CapturedDecisionPack { result, receipts })
     }
 }
 

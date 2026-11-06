@@ -455,6 +455,9 @@ pub enum Error {
     /// Invalid runtime configuration input.
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+    /// A decision reader exhausted its requested generation-token budget.
+    #[error("invalid config: {0}")]
+    DecisionTokenCap(String),
     /// Natural-language temporal retrieval hint could not be parsed.
     #[error("invalid temporal expression: {0}")]
     InvalidTemporalExpression(TemporalExpressionParseError),
@@ -680,6 +683,7 @@ impl Error {
             Self::InvalidVad { .. } => ErrorKind::InvalidVad,
             Self::MapFull => ErrorKind::MapFull,
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
+            Self::DecisionTokenCap(_) => ErrorKind::InvalidConfig,
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,

@@ -667,7 +667,7 @@ pub(super) fn request_tokens(request: &LlmRequest) -> u64 {
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => count_context_pack_tokens(text) as u64,
+            ContentPart::Text { text, .. } => count_context_pack_tokens(text) as u64,
             _ => 0,
         })
         .sum()
@@ -942,7 +942,7 @@ pub(super) fn epoch_frame(
         }
         return Ok(Some(Some(crate::LlmMessage {
             role: crate::LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: fold.stub() }],
+            content: vec![ContentPart::Text { text: fold.stub(), signature: None }],
         })));
     };
     if seq as u64 != row.first() {
@@ -973,6 +973,7 @@ pub(super) fn epoch_frame(
                 text.as_deref(),
                 &handles,
             ),
+            signature: None,
         }],
     })))
 }

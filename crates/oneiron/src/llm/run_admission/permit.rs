@@ -7,6 +7,7 @@ use super::super::{
     InferenceCallReceipt, ModelLocality, PinnedConfigViolation,
 };
 use super::admission::{CallOrigin, RunCall, RunDenied, RunInner};
+use super::capture::SettlementCapture;
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
     AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
@@ -41,6 +42,7 @@ pub struct RunPermit {
     /// The host stays awake from admission until the call settles (FIX 506).
     _awake: RunAwake,
     settled: bool,
+    pub(super) capture: SettlementCapture,
 }
 
 /// A permit's hold on the host's wake assertion, if the host set one.
@@ -80,6 +82,26 @@ impl RunPermit {
     #[must_use]
     pub fn lease(&self) -> &BudgetLease {
         &self.lease
+    }
+
+    /// Keeps this native decision's original source on its captured settlement.
+    /// Repeating this operation never draws another invocation. The host's
+    /// ordinary receipt sink and this permit's dispatch and settlement are unchanged.
+    pub fn capture_native_decision_source(
+        &mut self,
+        source: &crate::dreamer_wake::DecisionCallSource<'_>,
+    ) -> crate::Result<()> {
+        if self.capture.native_admission().is_none() {
+            let admission = source.admitted(&self.run.guard, &self.lease)?;
+            self.capture.bind_native_admission(admission);
+        }
+        Ok(())
+    }
+
+    /// Borrows the source captured on this actual permit before the native read.
+    #[must_use]
+    pub fn native_decision_admission(&self) -> Option<&crate::dreamer_wake::DecisionCallAdmission> {
+        self.capture.native_admission()
     }
 
     #[must_use]
@@ -328,6 +350,7 @@ impl RunInner {
             rates: offer.rates.clone(),
             _awake: RunAwake::hold(),
             settled: false,
+            capture: SettlementCapture::default(),
         })
     }
 
@@ -433,6 +456,7 @@ impl RunInner {
             rates: connector.rates.clone(),
             _awake: RunAwake::hold(),
             settled: false,
+            capture: SettlementCapture::default(),
         })
     }
 

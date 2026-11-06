@@ -40,6 +40,8 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::models::ServedOffer;
 use crate::server::SyncServer;
 
+mod private_policy;
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/v1/ai/anonymous-chat", post(chat))
@@ -168,9 +170,11 @@ pub(crate) async fn ai_anonymous_chat(
             &policy_budget,
             // The host's owner-plane wording and dial (FIX 5043), its
             // decision ladder's paired question lent (FIX 1201).
-            &server
-                .decision_host()
-                .policy_model_config(&server.policy_doors.owner),
+            &private_policy::owner_policy_config(
+                server,
+                auth,
+                server.decision_host().private_human_pin(),
+            ),
         )
         .await;
     let closed = session.close();
@@ -255,12 +259,14 @@ impl Responder for AnonymousChatResponder<'_> {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: notice.body.clone(),
+                        signature: None,
                     }],
                 }));
             request.messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: text.to_owned(),
+                    signature: None,
                 }],
             });
             let response = generate_private(
@@ -276,7 +282,7 @@ impl Responder for AnonymousChatResponder<'_> {
                 .content
                 .iter()
                 .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
+                    ContentPart::Text { text, .. } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect())

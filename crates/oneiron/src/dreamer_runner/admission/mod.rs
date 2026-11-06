@@ -5,10 +5,20 @@
 //! lease, and the optional durable started-milestone claim co-commit.
 
 mod buckets;
+mod budget_line;
+mod native_call;
+pub(in crate::dreamer_runner) use self::native_call::record_native_net_settlement_in_txn;
+pub(crate) use self::native_call::{
+    NativeCallPayment, NativeNetSnapshot, NativeNetTally, bind_native_call_terminal_in_txn,
+    invoice_native_call_in_txn, record_native_call_meter_in_txn,
+    record_native_house_completions_in_txn, record_native_net_response_in_txn,
+    retain_native_call_in_txn,
+};
 mod requester;
 mod settlement;
 mod spend;
 mod validation;
+pub(crate) use self::budget_line::{AdmittedBudgetLine, AdmittedCallId, NativeMeterSnapshot};
 use self::validation::validate_admission_input;
 
 use std::ops::Bound;
@@ -57,9 +67,9 @@ pub(super) const BUDGET_RESERVATION: SideTable<
     DreamerBudgetReservation,
     Raw,
 > = SideTable::new(&side_table::DREAMER_BUDGET_RESERVATION);
-/// Exact attempt/step memo charged by one wake checkpoint, holding the
-/// terminal claim the charge paid for (FIX 7489).
-const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), EntityId, Raw> =
+/// Exact terminal claim charged by one wake checkpoint, independent of
+/// which memo the attempt/step index selects later (FIX 7489).
+const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32], EntityId), EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
 
 /// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget
@@ -589,6 +599,7 @@ impl DreamerRunnerStore<'_> {
             let reservation = DreamerBudgetReservation {
                 budget_id: input.budget_id,
                 attempt_id: attempt.id,
+                birth_generation: Some(attempt.attempt_count),
                 reserved_units: input.reserve_units,
                 owed_units: 0,
                 created_at: input.now,
@@ -612,12 +623,18 @@ impl DreamerRunnerStore<'_> {
         crate::task_verb::highway_runner::accept_leased_task_in_txn(self.vault, wtxn, &attempt)?;
 
         let status = decode_dreamer_attempt_status(attempt)?;
+        let admitted_budget_line = AdmittedBudgetLine::new(
+            status.attempt.id,
+            status.attempt.attempt_count,
+            reservation.budget_id.clone(),
+        );
 
         Ok(DreamerKindAdmissionResult {
             outcome: DreamerAdmissionOutcome::Admitted(Box::new(DreamerAdmittedAttempt {
                 status,
                 budget,
                 reservation,
+                admitted_budget_line,
             })),
             budget_exhausted_candidate: None,
             requester_withdrawn_candidate: None,
@@ -663,6 +680,7 @@ impl DreamerRunnerStore<'_> {
         let reservation = DreamerBudgetReservation {
             budget_id: input.budget_id,
             attempt_id: input.child_attempt,
+            birth_generation: None,
             reserved_units: input.reserve_units,
             owed_units: 0,
             created_at: input.now,

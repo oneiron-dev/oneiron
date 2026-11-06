@@ -155,6 +155,8 @@ pub enum ReasoningPartKind {
 pub enum ContentPart {
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     Reasoning {
         text: String,
@@ -213,6 +215,8 @@ pub enum LlmStreamEvent {
     },
     TextEnd {
         part_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     ReasoningStart {
         part_id: String,

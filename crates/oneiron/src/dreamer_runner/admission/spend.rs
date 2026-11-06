@@ -234,3 +234,25 @@ fn charge_beyond_free(budget: &mut DreamerBudgetRecord, free: u64, units: u64) -
     budget.overdraft_units = owed - paid;
     Ok(())
 }
+
+impl DreamerRunnerStore<'_> {
+    /// Charge an original invoice now, not as a reservation's owed amount.
+    /// A reservation may belong to a later generation of the same attempt;
+    /// neither its funding nor its owed SUM is touched by this payment.
+    pub(super) fn charge_native_invoice_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        line: &str,
+        attempt: AttemptId,
+        units: u64,
+        now: u64,
+    ) -> Result<()> {
+        let mut budget = self.owing_budget_in_txn(wtxn, line)?;
+        let free = budget.remaining_units;
+        charge_beyond_free(&mut budget, free, units)?;
+        crate::dreamer_runner::charge_free_time_item_in_txn(self.vault, wtxn, attempt, units)?;
+        budget.updated_at = budget.updated_at.max(now);
+        validate_budget_record(&budget)?;
+        put_budget_record_in_txn(self.vault, wtxn, &budget)
+    }
+}

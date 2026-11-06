@@ -83,7 +83,8 @@ pub fn run_judge_audit_with_decisions(
     let mut cases = Vec::with_capacity(fixtures.len());
     for fixture in fixtures {
         // A hunk the floor holds is `unclear`: no attribution, an abstention.
-        let (split, trace) = classify_amendment_traced(&fixture.evidence, decisions, &[], floor)?;
+        let (split, trace) =
+            classify_amendment_traced(Some(vault), &fixture.evidence, decisions, &[], floor)?;
         let answer = split
             .and_then(|split| split.sole())
             .filter(|class| *class != AttributionVerdict::Unclear);

@@ -84,6 +84,7 @@ impl GeminiAccumulator {
             Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
         };
         if let Some(parts) = parts {
+            let mut seen_text = false;
             for part in parts {
                 // A part holds one piece of data. A second beside its text, a
                 // function call above all, would vanish behind a tool-free
@@ -96,6 +97,10 @@ impl GeminiAccumulator {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    if seen_text {
+                        self.end_text(&mut events)?;
+                    }
+                    seen_text = true;
                     let reasoning = part.get("thought").and_then(Value::as_bool) == Some(true);
                     let part_id = self.text_part(reasoning, &mut events)?;
                     if reasoning {
@@ -109,7 +114,13 @@ impl GeminiAccumulator {
                             )?,
                         );
                     } else {
-                        events.extend(self.assembly.text(&part_id, text)?);
+                        events.extend(self.assembly.text_with_signature(
+                            &part_id,
+                            text,
+                            part.get("thoughtSignature")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                        )?);
                     }
                 } else if let Some(call) = part.get("functionCall") {
                     self.end_text(&mut events)?;
@@ -132,8 +143,20 @@ impl GeminiAccumulator {
                 } else if part.as_object().is_some_and(|fields| fields.len() == 1)
                     && part.get("thoughtSignature").is_some_and(Value::is_string)
                 {
-                    // Signature-only metadata is not unsupported content.
-                    continue;
+                    // Keep the standalone signature at its own position, without
+                    // assigning it to or overwriting an earlier part's signature.
+                    self.end_text(&mut events)?;
+                    let part_id = self.text_part(true, &mut events)?;
+                    events.extend(
+                        self.assembly.reasoning(
+                            &part_id,
+                            "",
+                            part.get("thoughtSignature")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                        )?,
+                    );
+                    self.end_text(&mut events)?;
                 } else {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }

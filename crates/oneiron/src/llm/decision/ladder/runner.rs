@@ -2,19 +2,19 @@
 //! Entry: DecisionLadder.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use super::DecisionCallContext;
+use super::capture::Capture;
 use super::{
-    AskTo, DecisionLadder, DecisionPack, HumanDecisionRequest, OpenPack, Read, Readings, Route,
-    abstained, ask, asks_person, millis, price_answers, step_cause, take, takes, validate_pin,
-    validate_state,
+    DecisionLadder, DecisionPack, OpenPack, Read, Readings, Route, capture, next_rung,
+    price_answers, takes, validate_pin, validate_state,
 };
 use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, Reasoning, ReceiptAsk, StopCause,
-    TypedDecision,
+    DecisionRung, DecisionWireLabels, StopCause, TypedDecision,
 };
-use crate::llm::run_admission::RunAdmission;
+use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
@@ -193,6 +193,41 @@ impl DecisionLadder<'_> {
         )
     }
 
+    /// [`Self::run_pack`] using one caller-owned table for every read, including
+    /// auxiliary questions and later rungs. Questions and receipts remain canonical.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the wire table joins run_pack's routing inputs"
+    )]
+    pub fn run_pack_labeled(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        labels: &dyn DecisionWireLabels,
+    ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media_common(
+            questions,
+            principal,
+            evidence,
+            &[],
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            None,
+            Some(labels),
+            None,
+        )
+    }
+
     /// [`Self::run_pack`] over images the questions read. Each image fills the state field
     /// of its name, and each receipt keeps every image's evidence ref and version, never
     /// its pixels. A Box question needs at least one image.
@@ -246,7 +281,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
-        let mut pack = self.open(
+        self.run_pack_media_common(
             questions,
             principal,
             evidence,
@@ -257,41 +292,10 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
-        )?;
-        let mut readings = pack.readings();
-        let mut first = Vec::with_capacity(questions.len());
-        if dial.first == DecisionRung::Human {
-            first.extend(questions.iter().map(|_| None));
-        } else {
-            // An empty rung is skipped, not a refusal: the first rung in span that serves
-            // the pack reads every chunk (FIX 12278).
-            let serving = self
-                .first_serving(dial.first, dial.ceiling, questions, images, audio)
-                .ok_or_else(|| invalid("decision provider unavailable"))?;
-            pack.dial.first = serving;
-            // Past the questions-per-call row the pack goes as several requests in turn.
-            let per_call = policy.questions_per_call();
-            for (chunk, readings) in questions
-                .chunks(per_call)
-                .zip(readings.chunks_mut(per_call))
-            {
-                let call = DecisionPack {
-                    questions: chunk,
-                    evidence,
-                    images,
-                    audio,
-                    state,
-                    deadline,
-                    run: None,
-                };
-                first.extend(
-                    self.read(serving, &call, pack.person, readings)?
-                        .into_iter()
-                        .map(Some),
-                );
-            }
-        }
-        self.close(&pack, first, readings)
+            None,
+            None,
+            None,
+        )
     }
 
     /// [`Self::run_pack_media`] metered on the caller's run (FIX 10443): the terminal
@@ -316,6 +320,83 @@ impl DecisionLadder<'_> {
         deadline: &RetrievalDeadline,
         run: &RunAdmission,
     ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media_common(
+            questions,
+            principal,
+            evidence,
+            images,
+            audio,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            Some(run),
+            None,
+            None,
+        )
+    }
+
+    /// Native captured reads on the caller's optional run. Settlements remain in
+    /// `receipts` even if a later provider result or answer validation fails.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the original pack inputs retain the caller's run and capture inventory"
+    )]
+    pub fn run_pack_media_captured(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        run: Option<&RunAdmission>,
+        context: &DecisionCallContext<'_>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> Result<Vec<TypedDecision>> {
+        let mut capture = Capture { context, receipts };
+        self.run_pack_media_common(
+            questions,
+            principal,
+            evidence,
+            images,
+            audio,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            run,
+            None,
+            Some(&mut capture),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the original pack inputs share one optional native capture mode"
+    )]
+    fn run_pack_media_common(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        run: Option<&RunAdmission>,
+        labels: Option<&dyn DecisionWireLabels>,
+        mut capture: Option<&mut Capture<'_, '_>>,
+    ) -> Result<Vec<TypedDecision>> {
         let mut pack = self.open(
             questions,
             principal,
@@ -327,19 +408,19 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         )?;
         let mut readings = pack.readings();
         let mut first = Vec::with_capacity(questions.len());
+        let mut first_rungs = Vec::with_capacity(questions.len());
         if dial.first == DecisionRung::Human {
             first.extend(questions.iter().map(|_| None));
+            first_rungs.extend(questions.iter().map(|_| DecisionRung::Human));
         } else {
-            // An empty rung is skipped, not a refusal: the first rung in span that serves
-            // the pack reads every chunk (FIX 12278).
             let serving = self
                 .first_serving(dial.first, dial.ceiling, questions, images, audio)
                 .ok_or_else(|| invalid("decision provider unavailable"))?;
             pack.dial.first = serving;
-            // Past the questions-per-call row the pack goes as several requests in turn.
             let per_call = policy.questions_per_call();
             for (chunk, readings) in questions
                 .chunks(per_call)
@@ -352,16 +433,42 @@ impl DecisionLadder<'_> {
                     audio,
                     state,
                     deadline,
-                    run: Some(run),
+                    run,
+                    labels,
                 };
-                first.extend(
-                    self.read(serving, &call, pack.person, readings)?
-                        .into_iter()
-                        .map(Some),
-                );
+                let mut selected = serving;
+                loop {
+                    let reads = self.read(
+                        selected,
+                        &call,
+                        pack.person,
+                        readings,
+                        capture.as_deref_mut(),
+                    )?;
+                    // Only a native pre-request unsupported result can reach every
+                    // unstarted slot here. A tournament with a prefix returns Cut.
+                    if reads
+                        .iter()
+                        .all(|read| matches!(read, Read::NotStarted(StopCause::CaptureUnsupported)))
+                    {
+                        let next = (selected < dial.ceiling).then(|| next_rung(selected));
+                        if let Some(next) = next.and_then(|next| {
+                            self.first_serving(next, dial.ceiling, chunk, images, audio)
+                        }) {
+                            selected = next;
+                            continue;
+                        }
+                        // The whole native chunk exhausted its takers; do not probe
+                        // the same pack again by splitting it into singletons.
+                        selected = dial.ceiling;
+                    }
+                    first_rungs.extend(reads.iter().map(|_| selected));
+                    first.extend(reads.into_iter().map(Some));
+                    break;
+                }
             }
         }
-        self.close_with_run(&pack, first, readings, run)
+        self.close_common(&pack, first, readings, Some(&first_rungs), run, capture)
     }
 
     /// A pack's checked routing inputs, before its first read.
@@ -381,6 +488,7 @@ impl DecisionLadder<'_> {
         policy: &'a DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &'a RetrievalDeadline,
+        labels: Option<&'a dyn DecisionWireLabels>,
     ) -> Result<OpenPack<'a>> {
         if questions.is_empty() {
             return Err(invalid("invalid decision pack"));
@@ -448,6 +556,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         })
     }
 
@@ -459,30 +568,7 @@ impl DecisionLadder<'_> {
         first: Vec<Option<Read>>,
         readings: Vec<Readings>,
     ) -> Result<Vec<TypedDecision>> {
-        pack.questions
-            .iter()
-            .zip(&pack.rows)
-            .zip(first)
-            .zip(readings)
-            .map(|(((&question, &row), first), readings)| {
-                let route = Route {
-                    question,
-                    principal: pack.principal,
-                    evidence: pack.evidence,
-                    images: pack.images,
-                    audio: pack.audio,
-                    state: pack.state,
-                    dial: pack.dial,
-                    row,
-                    person_row: pack.person_row,
-                    person: pack.person,
-                    policy: pack.policy,
-                    reversibility: pack.reversibility,
-                    deadline: pack.deadline,
-                };
-                self.route(&route, first, readings, None)
-            })
-            .collect()
+        self.close_common(pack, first, readings, None, None, None)
     }
 
     /// [`Self::close`] metered on the caller's run (FIX 10443): each step-up read admits
@@ -494,12 +580,43 @@ impl DecisionLadder<'_> {
         readings: Vec<Readings>,
         run: &RunAdmission,
     ) -> Result<Vec<TypedDecision>> {
+        self.close_common(pack, first, readings, None, Some(run), None)
+    }
+
+    /// Close a generated pack through the same native captured-provider path.
+    pub(in crate::llm::decision) fn close_captured(
+        &self,
+        pack: &OpenPack<'_>,
+        first: Vec<Option<Read>>,
+        readings: Vec<Readings>,
+        run: Option<&RunAdmission>,
+        context: &DecisionCallContext<'_>,
+        receipts: &mut Vec<RunReceipt>,
+    ) -> Result<Vec<TypedDecision>> {
+        let mut capture = Capture { context, receipts };
+        self.close_common(pack, first, readings, None, run, Some(&mut capture))
+    }
+
+    fn close_common(
+        &self,
+        pack: &OpenPack<'_>,
+        first: Vec<Option<Read>>,
+        readings: Vec<Readings>,
+        first_rungs: Option<&[DecisionRung]>,
+        run: Option<&RunAdmission>,
+        mut capture: Option<&mut Capture<'_, '_>>,
+    ) -> Result<Vec<TypedDecision>> {
         pack.questions
             .iter()
             .zip(&pack.rows)
             .zip(first)
             .zip(readings)
-            .map(|(((&question, &row), first), readings)| {
+            .enumerate()
+            .map(|(index, (((&question, &row), first), readings))| {
+                let mut dial = pack.dial;
+                if let Some(rungs) = first_rungs {
+                    dial.first = rungs[index];
+                }
                 let route = Route {
                     question,
                     principal: pack.principal,
@@ -507,241 +624,18 @@ impl DecisionLadder<'_> {
                     images: pack.images,
                     audio: pack.audio,
                     state: pack.state,
-                    dial: pack.dial,
+                    dial,
                     row,
                     person_row: pack.person_row,
                     person: pack.person,
                     policy: pack.policy,
                     reversibility: pack.reversibility,
                     deadline: pack.deadline,
+                    labels: pack.labels,
                 };
-                self.route(&route, first, readings, Some(run))
+                self.route(&route, first, readings, run, capture.as_deref_mut())
             })
             .collect()
-    }
-
-    /// One question's routing after the first read, `first` (none when the dial starts at
-    /// the person).
-    fn route(
-        &self,
-        call: &Route<'_>,
-        first: Option<Read>,
-        mut readings: Readings,
-        run: Option<&RunAdmission>,
-    ) -> Result<TypedDecision> {
-        let Route {
-            question,
-            principal,
-            evidence,
-            images,
-            audio,
-            state,
-            dial,
-            row,
-            person_row,
-            person,
-            policy,
-            reversibility,
-            deadline,
-        } = *call;
-        let mut rung = dial.first;
-        let mut prior = None;
-        // The pin that served `prior`: a later cut rung's pin joins the receipt
-        // (FIX 9907) but never speaks for an answer it did not give. Its cost goes with it.
-        let mut prior_pin = None;
-        let mut prior_cost = None;
-        let mut answered = None;
-        let mut in_band = false;
-        let mut needs_person = false;
-        let mut unavailable = false;
-        let mut stop = StopCause::Done;
-        let mut reasoning = Reasoning::NotNeeded;
-        // Whether the first answer has been weighed for the one step up, and the cause of
-        // the read in hand when it is that step.
-        let mut weighed = false;
-        let mut stepping = None;
-        let mut next_read = first;
-        // The think row routes only on a paired reading, so it applies only beside one.
-        let think_row = policy.think_threshold().filter(|_| self.paired.is_some());
-        while let Some(read) = next_read.take() {
-            let answer = match read {
-                Read::Answer(answer) => answer,
-                Read::NotStarted => {
-                    stop = StopCause::Deadline;
-                    if let Some(cause) = stepping {
-                        reasoning = Reasoning::Skipped(cause);
-                    }
-                    break;
-                }
-                Read::Cut => {
-                    stop = StopCause::Deadline;
-                    if let Some(cause) = stepping {
-                        reasoning = Reasoning::Cut(cause);
-                    }
-                    break;
-                }
-            };
-            if let Some(cause) = stepping.take() {
-                reasoning = Reasoning::Ran(cause);
-            }
-            answered = Some(rung);
-            needs_person = asks_person(&answer, person_row);
-            // A rung that abstains answered nothing, so the question goes on to the next
-            // rung that can take it (ARCH-0076 #fit-ask: rules first, then the local head,
-            // ending at the next authorised role). The first answer may step up once more.
-            let passes = answer.answer == DecisionAnswer::Abstain;
-            let cause = if passes || weighed {
-                None
-            } else {
-                weighed = true;
-                in_band = answer.probability.is_some_and(|p| row.band.contains(p));
-                step_cause(&answer, in_band, row.mode, think_row)
-            };
-            prior = Some(answer);
-            prior_pin = readings.pins.last().cloned();
-            prior_cost = readings.cost;
-            if needs_person {
-                rung = DecisionRung::Human;
-                break;
-            }
-            if (!passes && cause.is_none()) || rung >= dial.ceiling {
-                break;
-            }
-            // A stronger rung, the person's included, starts only while work time is left.
-            match self.next_available(rung, dial.ceiling, question, images, audio) {
-                None => {
-                    unavailable = true;
-                    if let Some(cause) = cause {
-                        reasoning = Reasoning::Skipped(cause);
-                    }
-                }
-                Some(_) if !deadline.decision_may_start() => {
-                    stop = StopCause::Deadline;
-                    if let Some(cause) = cause {
-                        reasoning = Reasoning::Skipped(cause);
-                    }
-                }
-                Some(DecisionRung::Human) => rung = DecisionRung::Human,
-                Some(next) => {
-                    let questions = [question];
-                    let pack = DecisionPack {
-                        questions: &questions,
-                        evidence,
-                        images,
-                        audio,
-                        state,
-                        deadline,
-                        run,
-                    };
-                    next_read = Some(
-                        self.read(next, &pack, person, std::slice::from_mut(&mut readings))?
-                            .remove(0),
-                    );
-                    rung = next;
-                    stepping = cause;
-                }
-            }
-        }
-        // At a cut an irreversible step never takes an unfinished answer, and no step
-        // takes an answer the call does not have, or one inside its band, enforced or
-        // in shadow (packet rule 5: an in-band answer is not eligible).
-        let abstains_at_cut = stop == StopCause::Deadline
-            && (prior
-                .as_ref()
-                .is_none_or(|prior| prior.answer == DecisionAnswer::Abstain)
-                || reversibility == Reversibility::OutboundEffect
-                || in_band);
-        if abstains_at_cut && dial.ceiling == DecisionRung::Human {
-            rung = DecisionRung::Human;
-        }
-        let mut human_ask = None;
-        let mut asked = None;
-        let outcome = if rung == DecisionRung::Human {
-            validate_pin(&self.human_pin, DecisionRung::Human)?;
-            let reason = if needs_person {
-                HumanAskReason::NeedsPerson
-            } else if abstains_at_cut {
-                HumanAskReason::Deadline
-            } else if prior.is_some() {
-                HumanAskReason::Uncertain
-            } else {
-                HumanAskReason::OwnerSelected
-            };
-            let to = self.ask_to.cloned().unwrap_or_else(AskTo::owner);
-            // The ask carries the state the reads weighed (FIX 2424), and its receipt
-            // names the role it went to (ARCH-0076, "Who answered").
-            let seq = self.human.queue_with_state(
-                HumanDecisionRequest {
-                    question: question.clone(),
-                    principal,
-                    evidence: evidence.to_vec(),
-                    reason,
-                    // The prior is the last provider read's answer, from the pin that
-                    // served it.
-                    prior_provider: prior.as_ref().and(prior_pin.clone()),
-                    prior,
-                    queue_pin: self.human_pin.clone(),
-                    to: to.clone(),
-                    correlation: self.correlation,
-                },
-                state,
-            )?;
-            asked = Some(ReceiptAsk::queued(&to, seq));
-            readings.pins.push(self.human_pin.clone());
-            human_ask = Some(reason);
-            abstained()
-        } else if abstains_at_cut {
-            human_ask = Some(HumanAskReason::Deadline);
-            abstained()
-        } else if unavailable {
-            // No rung up to the ceiling can take the step: a typed abstention.
-            human_ask = Some(HumanAskReason::ProviderUnavailable);
-            abstained()
-        } else {
-            prior.expect("a non-human rung has an answer")
-        };
-        // A rung that abstained answered nothing.
-        let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
-        let evidence_versions = images
-            .iter()
-            .map(|image| image.evidence.clone())
-            .chain(audio.iter().map(|clip| clip.evidence.clone()))
-            .collect();
-        Ok(TypedDecision {
-            answer: outcome.answer,
-            probability: outcome.probability,
-            evidence: evidence.to_vec(),
-            in_band,
-            human_ask,
-            receipt: DecisionReceipt {
-                question: question.id,
-                question_version: question.version,
-                principal,
-                providers: readings.pins,
-                band: row.band,
-                band_version: row.version,
-                evidence_versions,
-                // The cost its answering provider knows, at the rung that answered.
-                cost_per_thousand: prior_cost.filter(|_| answered.is_some()),
-                paired: readings.paired,
-                person: readings.person,
-                time: Some(DecisionTime {
-                    budget_ms: millis(deadline.budget()),
-                    used_ms: millis(deadline.used()),
-                    stop,
-                    answered,
-                    reasoning,
-                }),
-                images: readings.images,
-                think_row: think_row.map(|row| row.version),
-                person_row: person_row.map(|row| row.version),
-                rule: readings
-                    .rule
-                    .filter(|_| answered == Some(DecisionRung::Rule)),
-                asked,
-                state_cut: None,
-            },
-        })
     }
 
     /// One provider request on the call's clock, one read per pack question. The first read
@@ -749,12 +643,13 @@ impl DecisionLadder<'_> {
     /// rung in span that serves it, and a step-up only reads an admitted rung, so no caller
     /// reaches here empty or unable to take a question; the checks below stay as defense
     /// and fail even with no time left. A failure with time left still fails the call.
-    fn read(
+    pub(super) fn read(
         &self,
         rung: DecisionRung,
         pack: &DecisionPack<'_>,
         person: Option<&DecisionQuestion>,
         readings: &mut [Readings],
+        capture: Option<&mut Capture<'_, '_>>,
     ) -> Result<Vec<Read>> {
         let provider = self
             .slot(rung)
@@ -770,7 +665,7 @@ impl DecisionLadder<'_> {
         }
         if !pack.deadline.decision_may_start() {
             return Ok((0..pack.questions.len())
-                .map(|_| Read::NotStarted)
+                .map(|_| Read::NotStarted(StopCause::Deadline))
                 .collect());
         }
         // A choice wider than the provider's option bound is read in chunks (FIX 11235).
@@ -779,9 +674,9 @@ impl DecisionLadder<'_> {
             .iter()
             .all(|question| provider.capability().takes(question))
         {
-            take(&pin, pack, ask(provider, pack, person), readings)?
+            capture::read(provider, &pin, pack, person, capture, readings)?
         } else {
-            super::tournament::read_pack(provider, &pin, pack, person, readings)?
+            super::tournament::read_pack(provider, &pin, pack, person, readings, capture)?
         };
         // Each answer's receipt carries what its provider knows it costs.
         price_answers(&reads, readings, provider.cost_per_thousand());
