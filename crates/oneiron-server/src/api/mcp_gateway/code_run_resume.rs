@@ -29,7 +29,7 @@
 //! next call enters the run as before.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use oneiron::EntityId;
 use oneiron::authority::InvocationSlipBinding;
@@ -39,7 +39,7 @@ use oneiron::runtime_hooks::verb::{VerbAskInstrument, VerbAskRefusal};
 
 use super::McpCallContext;
 use crate::mcp::McpCodeExecutionError;
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// The served MCP runs parked on a durable wait, each with the owned
 /// continuation that enters it again once the wait's reply is delivered
@@ -47,6 +47,12 @@ use crate::server::SyncServer;
 #[derive(Default)]
 pub(crate) struct McpCodeRunContinuations {
     runs: Mutex<HashMap<EntityId, McpCodeRunSlot>>,
+    /// The host's write gate for background work, the one its connector
+    /// settler passes through. Each re-entry holds one admission of it from
+    /// before it is spawned until it returns, so a managed vault frozen for
+    /// reap sees it in flight, and admits none while frozen. Unset until
+    /// the settler starts: no run is entered again before then.
+    admission: OnceLock<HousekeepingAdmission>,
 }
 
 /// One run's place in the registry.
@@ -75,6 +81,18 @@ impl McpCodeRunSlot {
 }
 
 impl McpCodeRunContinuations {
+    /// Binds re-entries to `admit`, the host's write gate for its connector
+    /// settler's passes. The first binding stands.
+    pub(crate) fn admit_with(&self, admit: HousekeepingAdmission) {
+        let _ = self.admission.set(admit);
+    }
+
+    /// One admission for a re-entry, held until it returns; `None` while
+    /// the host admits no background write, or before the settler starts.
+    fn admit(&self) -> Option<Box<dyn Send>> {
+        self.admission.get().and_then(|admit| admit())
+    }
+
     fn slots(&self) -> MutexGuard<'_, HashMap<EntityId, McpCodeRunSlot>> {
         self.runs.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -408,8 +426,15 @@ fn reenter_if_ready(server: &Arc<SyncServer>, continuation: McpCodeRunContinuati
         McpCodeRunReadiness::Parked => {}
         McpCodeRunReadiness::Moved => server.mcp_code_run_continuations.discard(&continuation),
         McpCodeRunReadiness::Delivered => {
+            // A re-entry writes as the host's own background work: it takes
+            // the host's write admission before it is spawned and holds it
+            // through its last write. While none is admitted (a managed
+            // vault frozen for reap), its run waits for a later pass.
+            let Some(admission) = server.mcp_code_run_continuations.admit() else {
+                return;
+            };
             if let Some(entry) = McpCodeRunEntry::claim(server, &continuation) {
-                tokio::spawn(reenter(Arc::clone(server), entry, continuation));
+                tokio::spawn(reenter(Arc::clone(server), entry, continuation, admission));
             }
         }
     }
@@ -423,7 +448,10 @@ async fn reenter(
     server: Arc<SyncServer>,
     entry: McpCodeRunEntry,
     continuation: McpCodeRunContinuation,
+    admission: Box<dyn Send>,
 ) {
+    // Held until the entry returns, past its host worker's last write.
+    let _admission = admission;
     if !caller_stands(&server, &continuation).await || !entry.sole() {
         return;
     }
