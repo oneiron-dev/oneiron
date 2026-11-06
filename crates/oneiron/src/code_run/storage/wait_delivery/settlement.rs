@@ -4,9 +4,11 @@
 //!
 //! A connector call's wait also holds its settled reply for the call's
 //! caller (FIX 6656). Every canonical settle writes that membership in its
-//! own writer, whichever wrapper settles the wait.
+//! own writer, whichever wrapper settles the wait. When the caller's erase
+//! dropped the call row first, the settle applies the release that erase
+//! recorded (FIX 19257).
 
-use super::super::wait_holders::hold_settled_for_caller_in_txn;
+use super::super::wait_holders::{apply_caller_release_in_txn, hold_settled_for_caller_in_txn};
 use super::{
     SETTLED, SETTLED_TAG, WAITERS, WaitDelivery, WaitKey, deliver_in_txn, reply_text,
     settled_in_txn, waiter_prefix,
@@ -31,7 +33,10 @@ pub(crate) fn deliver_wait_in_txn(
 /// listed it derived from (FIX 5455), when it lists them. When `wait_id` is
 /// a connector call's wait, the call's caller joins the wait's holders in
 /// this writer, after every parked run joined (FIX 6656). So the membership
-/// commits with the settled row, before any post-commit observer runs.
+/// commits with the settled row, before any post-commit observer runs. With
+/// no call row left, a caller membership the call's erase released still
+/// applies: the settled row takes its erased form once no membership keeps
+/// it (FIX 19257).
 pub(crate) fn deliver_wait_listing_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -67,8 +72,9 @@ pub(crate) fn deliver_wait_listing_in_txn(
             delivered += 1;
         }
     }
-    if let Some(caller) = connector_call_caller_in_txn(vault, txn, wait_id)? {
-        hold_settled_for_caller_in_txn(vault, txn, wait_id, caller)?;
+    match connector_call_caller_in_txn(vault, txn, wait_id)? {
+        Some(caller) => hold_settled_for_caller_in_txn(vault, txn, wait_id, caller)?,
+        None => apply_caller_release_in_txn(&vault.store, txn, wait_id)?,
     }
     Ok(delivered)
 }

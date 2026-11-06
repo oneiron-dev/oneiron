@@ -32,7 +32,9 @@
 //! names the caller, under [`CALLER_GENERATION`]; the caller's erase marks
 //! it Erased, and once no membership of the wait keeps the reply, its
 //! settled row takes its erased form. A settle after that erase lands
-//! erased.
+//! erased. The call's erase records that release before it drops the call
+//! row ([`release_settled_for_caller_in_txn`], FIX 19257). A settle that
+//! finds no call row then applies the recorded release.
 //!
 //! Each delivery and settled reply is a row-held response in checkpoint
 //! images (`response`, FIX 6588): a settled row's erased form is its final
@@ -431,6 +433,68 @@ pub(super) fn hold_settled_for_caller_in_txn(
         erase_settled_unheld_in_txn(store, wtxn, wait_id)?;
     }
     Ok(())
+}
+
+/// Releases `caller`'s hold on the settled reply of its connector call's
+/// wait `wait_id`, in the erase's writer `wtxn` (FIX 19257). The call's
+/// erase runs this before it drops the call row, because only that row
+/// names the caller. The caller's membership says Erased even when the
+/// wait has not settled yet, so a later settle finds the release with no
+/// call row left. It does not wait for the caller's hard-delete marker. A
+/// settled reply takes its erased form once no other membership of the
+/// wait keeps it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_settled_for_caller_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+    caller: EntityId,
+) -> Result<()> {
+    let key = (wait_id, caller, CALLER_GENERATION);
+    HOLDERS.put(store, wtxn, &key, &WaitHolder::Erased)?;
+    erase_settled_unheld_in_txn(store, wtxn, wait_id)
+}
+
+/// Applies a connector caller's recorded release to wait `wait_id`'s
+/// settled row, in the settling writer `wtxn`, after every parked run
+/// joined (FIX 19257). The settle runs this when it finds no call row. A
+/// caller membership of the wait that says Deleted or Erased is the release
+/// the call's erase recorded: the settled row takes its erased form once no
+/// other membership keeps it. A wait with no such membership stays as it
+/// is, so a call row missing for another reason releases nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn apply_caller_release_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+) -> Result<()> {
+    if caller_released_in_txn(store, wtxn, wait_id)? {
+        erase_settled_unheld_in_txn(store, wtxn, wait_id)?;
+    }
+    Ok(())
+}
+
+/// Whether a caller membership of `wait_id`, under [`CALLER_GENERATION`],
+/// says Deleted or Erased (FIX 19257). A row that does not decode is no
+/// release.
+fn caller_released_in_txn(store: &Store, txn: &heed::RoTxn<'_>, wait_id: EntityId) -> Result<bool> {
+    for row in HOLDERS.iter_raw_from(store, txn, wait_id.as_bytes())? {
+        let (key, bytes) = row?;
+        let caller = matches!(
+            <(EntityId, EntityId, u64) as SideKey>::decode_key(&key),
+            Some((_, _, CALLER_GENERATION))
+        );
+        if caller && HOLDERS.decode_value(&bytes).is_ok_and(WaitHolder::erased) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Leaves `wait_id`'s settled row its erased form when every membership of
