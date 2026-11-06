@@ -1,7 +1,10 @@
 //! Resumable depth-first walks for `find` and `grep`. A walk's sealed
-//! position names each directory still open, the listing page it reads and
-//! how far into that page it got, and where the next file's lines resume, so
-//! a page that its output or scan limit cut picks up exactly where it stopped.
+//! position names each directory still open and the listing page it reads,
+//! which starts right after the last entry it finished, and where the next
+//! file's lines resume and in which entry, so a page that its output or scan
+//! limit cut picks up where it stopped. An entry written or removed before
+//! the resume point shifts nothing (FIX 4885): the page resumes by the
+//! listing's own cursor, not by a count into a page read again.
 
 use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
@@ -27,6 +30,10 @@ enum WalkVerb<'a> {
     Grep { pattern: &'a str },
 }
 
+/// The first byte of a sealed walk position in this format: one sealed
+/// before resume-by-cursor (FIX 4885) does not open.
+const WALK_POSITION_FORMAT: u8 = 2;
+
 /// Where a walk resumes.
 #[derive(Debug, Default)]
 struct WalkPosition {
@@ -34,8 +41,9 @@ struct WalkPosition {
     root_done: bool,
     /// The directories still open, the root first.
     frames: Vec<WalkFrame>,
-    /// Where the next file's lines resume, when a page ended inside it.
-    lines: Option<LinePosition>,
+    /// Where the next file's lines resume, when a page ended inside it, and
+    /// the path of the entry they belong to: they resume that entry only.
+    lines: Option<(String, LinePosition)>,
 }
 
 #[derive(Debug)]
@@ -43,19 +51,25 @@ struct WalkFrame {
     /// The directory's name in its parent; empty for the root.
     name: String,
     /// The listing page the frame reads: `None` for the first, else the
-    /// cursor the page before it handed out.
+    /// cursor of the page that starts right after the last entry the walk
+    /// finished, or the one the page before it handed out.
     page: Option<String>,
-    /// How many entries of that page the walk has passed.
+    /// How many entries of that page the walk has passed: none when `page`
+    /// starts right after the last one it finished.
     passed: usize,
 }
 
 impl SealedPosition for WalkPosition {
     fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![u8::from(self.root_done)];
-        put_optional(
-            &mut bytes,
-            self.lines.map(|lines| lines.to_bytes()).as_deref(),
-        );
+        let mut bytes = vec![WALK_POSITION_FORMAT, u8::from(self.root_done)];
+        match &self.lines {
+            Some((path, lines)) => {
+                bytes.push(1);
+                put_field(&mut bytes, path.as_bytes());
+                put_field(&mut bytes, &lines.to_bytes());
+            }
+            None => bytes.push(0),
+        }
         for frame in &self.frames {
             put_field(&mut bytes, frame.name.as_bytes());
             put_optional(&mut bytes, frame.page.as_deref().map(str::as_bytes));
@@ -66,14 +80,21 @@ impl SealedPosition for WalkPosition {
 
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let mut fields = Fields(bytes);
+        if fields.take::<1>()? != [WALK_POSITION_FORMAT] {
+            return None;
+        }
         let root_done = match fields.take::<1>()? {
             [0] => false,
             [1] => true,
             _ => return None,
         };
-        let lines = match fields.optional()? {
-            Some(lines) => Some(LinePosition::from_bytes(lines)?),
-            None => None,
+        let lines = match fields.take::<1>()? {
+            [0] => None,
+            [1] => {
+                let path = String::from_utf8(fields.field()?.to_vec()).ok()?;
+                Some((path, LinePosition::from_bytes(fields.field()?)?))
+            }
+            _ => return None,
         };
         let mut frames = Vec::new();
         while !fields.0.is_empty() {
@@ -213,8 +234,9 @@ impl GraphFsResolver<'_, '_> {
             if !self.coreutils_path_visible(root)? {
                 return Ok(false);
             }
-            if let Visited::Cut(lines) = self.visit(verb, root, false, at.lines.take(), walk)? {
-                at.lines = lines;
+            let lines = lines_of(&mut at.lines, root);
+            if let Visited::Cut(lines) = self.visit(verb, root, false, lines, walk)? {
+                at.lines = lines.map(|lines| (root.to_owned(), lines));
                 return Ok(true);
             }
             if !recursive {
@@ -235,32 +257,32 @@ impl GraphFsResolver<'_, '_> {
             };
             dirs.push(dir);
         }
-        let mut pages: Vec<Option<GraphFsPage>> = at.frames.iter().map(|_| None).collect();
+        // Each open directory's page as read this call, and the index of the
+        // next entry in it.
+        let mut pages: Vec<Option<(GraphFsPage, usize)>> = at.frames.iter().map(|_| None).collect();
         while let Some(depth) = at.frames.len().checked_sub(1) {
             if steps >= GRAPH_FS_MAX_SCAN_ROWS {
                 return Ok(true);
             }
-            let page = match pages[depth].take() {
-                Some(page) => page,
+            let (page, index) = match pages[depth].take() {
+                Some(read) => read,
                 None => {
                     steps += 1;
                     let page = self.readdir(&dirs[depth], at.frames[depth].page.as_deref())?;
                     if let Some(read) = page.read_receipt() {
                         fold_receipt(&mut walk.receipt, read.clone());
                     }
-                    page
+                    (page, at.frames[depth].passed)
                 }
             };
             let entry = page
                 .entries()
-                .get(at.frames[depth].passed)
+                .get(index)
                 .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
                 .cloned();
+            let after = page.entry_cursor(index).map(str::to_owned);
             let next_page = page.next_cursor().map(str::to_owned);
-            pages[depth] = Some(page);
-            // Lines to resume belong to the entry the walk stopped on, so to
-            // the first one it reaches now.
-            let lines = at.lines.take();
+            pages[depth] = Some((page, index));
             let Some(entry) = entry else {
                 // This page is walked: on to the listing's next page, or back up.
                 if let Some(next_page) = next_page {
@@ -278,13 +300,16 @@ impl GraphFsResolver<'_, '_> {
             steps += 1;
             let child = join_graph_path(&dirs[depth], entry.name());
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
+            // Lines to resume belong to the entry the walk stopped on: the
+            // first one it reaches now, when that is still the same path.
+            let lines = lines_of(&mut at.lines, &child);
             if self.coreutils_path_visible(&child)? {
                 if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, lines, walk)? {
-                    at.lines = lines;
+                    at.lines = lines.map(|lines| (child, lines));
                     return Ok(true);
                 }
                 if is_dir {
-                    at.frames[depth].passed += 1;
+                    pass(&mut at.frames[depth], &mut pages[depth], after);
                     at.frames.push(WalkFrame {
                         name: entry.name().to_owned(),
                         page: None,
@@ -295,7 +320,7 @@ impl GraphFsResolver<'_, '_> {
                     continue;
                 }
             }
-            at.frames[depth].passed += 1;
+            pass(&mut at.frames[depth], &mut pages[depth], after);
         }
         Ok(false)
     }
@@ -341,6 +366,32 @@ impl GraphFsResolver<'_, '_> {
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))
             }
         }
+    }
+}
+
+/// The lines to resume in the entry at `path`: the saved ones, when they
+/// belong to it. Whatever was saved is spent at the first entry reached, as
+/// the walk resumes at the entry it stopped on; one that went since starts
+/// none of its lines in another.
+fn lines_of(saved: &mut Option<(String, LinePosition)>, path: &str) -> Option<LinePosition> {
+    saved
+        .take()
+        .and_then(|(owner, lines)| (owner == path).then_some(lines))
+}
+
+/// Marks the entry at `read`'s index finished: the walk goes on to the next
+/// one in the page it read, and a later call resumes right after this one,
+/// by its listing's own cursor when it gives one (FIX 4885), else by count.
+fn pass(frame: &mut WalkFrame, read: &mut Option<(GraphFsPage, usize)>, after: Option<String>) {
+    if let Some((_, index)) = read {
+        *index += 1;
+    }
+    match after {
+        Some(after) => {
+            frame.page = Some(after);
+            frame.passed = 0;
+        }
+        None => frame.passed += 1,
     }
 }
 
