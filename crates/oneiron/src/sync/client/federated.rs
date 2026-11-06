@@ -468,7 +468,7 @@ impl SyncClient {
             let born = watch_births(&vault, births.births(), || {
                 self.import_accepted_window_update(admission_key.as_str(), &window, update)?;
                 let lane = AssetBodyLane::FederationReceive { role: durable.role };
-                with_manager_peer(&self.manager, lane, |peer| {
+                with_manager_peer(&self.manager, lane, None, |peer| {
                     for (body, bytes) in &carried_bodies {
                         if let Err(error) = land_carried_body(peer, admission_key, body, bytes) {
                             tracing::warn!(

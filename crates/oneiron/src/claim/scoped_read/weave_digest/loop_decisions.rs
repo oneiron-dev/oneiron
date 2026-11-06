@@ -166,6 +166,41 @@ pub(crate) fn scrub_saved_weave_loop_reasons_in_txn(
     Ok(())
 }
 
+/// The decisions whose reasons a saved period copies where
+/// [`scrub_saved_weave_loop_reasons_in_txn`] would clear them: an unnamed
+/// row's nonempty reason codes. Read only. A decision skeleton made without
+/// that scrub would leave the copies where a later erase, which takes the
+/// skeleton as scrubbed, cannot find them, so the owner's discard of a
+/// world copy keeps such a decision whole (FIX 14534).
+pub(crate) fn saved_weave_loop_reason_decisions_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<[u8; 16]>> {
+    let keys = store
+        .vault_meta
+        .prefix_iter(txn, DIGEST_PREFIX)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<Result<Vec<_>>>()?;
+    let mut quoted = BTreeSet::new();
+    for key in keys {
+        let Some(raw) = digest_row_in(store, txn, &key)? else {
+            continue;
+        };
+        let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw) else {
+            continue;
+        };
+        for item in wire.sections.iter().flat_map(|section| &section.items) {
+            if let WireItem::LoopDecision(row) = item
+                && !row.claim_was_named
+                && !row.reason_codes.is_empty()
+            {
+                quoted.insert(row.decision_id.bytes);
+            }
+        }
+    }
+    Ok(quoted)
+}
+
 /// A loop row's claim, actor and evidence refs, for its period's erase
 /// index; none for any other row.
 pub(super) fn row_refs(item: &WeaveItem) -> Vec<EntityId> {

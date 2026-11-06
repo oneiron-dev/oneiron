@@ -288,22 +288,29 @@ pub(crate) fn canonical_witness_message_body_for_test(
     .encode_body()
 }
 
-/// The REPLICATED MESSAGE door for a row one of the owner's own machines sent
-/// (FIX 9600; L02 01:07).
+/// The REPLICATED MESSAGE door for a row one of the owner's own machines
+/// wrote (FIX 9600, FIX 12113; L02 01:07, 23:24).
 ///
 /// Its caller holds the row's own-device lane (`sync::ingest::own_device`):
-/// `machine`, an own machine whose connection proved it, sent these exact
-/// bytes at this id, and no federation peer's import brought them. That proof
-/// covers the connection and the bytes and names no actor, and a MESSAGE body
+/// `machine` wrote these exact bytes at this id, as its writer proof over
+/// them verified; an own machine's proven connection sent them, and no
+/// federation peer's import brought them. That proof covers the writer and
+/// the bytes and names no actor, and a MESSAGE body
 /// names its author bucket, never an actor, so a row passes only where this
 /// store itself binds its author, all read in `txn`:
 ///
 /// * `user`: the vault owner's own words, when this is a personal vault whose
 ///   embedded owner PERSON is live (the one person who speaks as `user`
 ///   there) and `machine` still stands on this vault's machine roster.
-/// * `companion`: its actor is named only by the row's `AuthoredBy` edge and
-///   carried birth, which the lane covers neither of, and the edge lands in a
-///   later pass than the body: nothing here binds it to a live actor.
+/// * `companion`: an agent's words, when this is a personal vault, `machine`
+///   still stands on its roster, and the same window update that brought the
+///   row names, by the row's `AuthoredBy` edge, `authored_by`: an actor that
+///   is a live PERSON or AGENT_DEF here, as a local companion write names
+///   its writing actor (FIX 9600). A row whose window names no author, or an
+///   author this store holds but not live, is refused as today. An author
+///   that has not landed here yet, and is not deleted, merged or split, makes
+///   the row wait for it (FIX 21271): its refusal keeps the row's retry
+///   (`companion_author_pending`).
 /// * `system`: the engine's own voice, never a replay's.
 ///
 /// Every row it does not admit, a body that is no canonical envelope first
@@ -318,12 +325,27 @@ pub(crate) fn validate_own_device_witness_message_body(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     machine: EntityId,
+    authored_by: Option<EntityId>,
     body: &[u8],
 ) -> Result<()> {
-    if matches!(
-        validate_canonical_witness_message_body(body),
-        Ok(WitnessMessageBodyAuthor::User)
-    ) {
+    let author = validate_canonical_witness_message_body(body);
+    if let (Ok(WitnessMessageBodyAuthor::Companion), Some(actor)) = (&author, authored_by) {
+        // As for `user` below, a store fault admits nothing and refuses.
+        match companion_speaks_from(store, txn, machine, actor) {
+            Ok(CompanionAuthor::Speaks) => return Ok(()),
+            Ok(CompanionAuthor::NotArrived) => {
+                return Err(crate::error::Error::Record(
+                    crate::error::RecordError::InvalidWitnessMessageBody(COMPANION_AUTHOR_PENDING),
+                ));
+            }
+            Ok(CompanionAuthor::Refused) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "an own machine's companion MESSAGE: its author and the roster did not read; refused as a replay"
+            ),
+        }
+    }
+    if matches!(author, Ok(WitnessMessageBodyAuthor::User)) {
         // A store fault reading the roster or the vault's kind admits nothing
         // and refuses as the replicated door does, so the row is quarantined
         // as today rather than failing its window.
@@ -339,9 +361,79 @@ pub(crate) fn validate_own_device_witness_message_body(
     validate_replicated_witness_message_body(body)
 }
 
+/// The refusal of an own machine's companion row whose author has not
+/// landed here yet (FIX 21271): the ingest ladder keeps its retry.
+const COMPANION_AUTHOR_PENDING: &str =
+    "an own machine's companion MESSAGE waits for its author to arrive";
+
+/// Whether `error` is the refusal of a companion row that waits for its
+/// author, a dependency, not a verdict on the row.
+#[cfg(feature = "sync")]
+pub(crate) fn companion_author_pending(error: &crate::error::Error) -> bool {
+    matches!(
+        error,
+        crate::error::Error::Record(crate::error::RecordError::InvalidWitnessMessageBody(
+            COMPANION_AUTHOR_PENDING
+        ))
+    )
+}
+
+/// How the author a companion row's window names stands here.
+enum CompanionAuthor {
+    /// A live PERSON or AGENT_DEF a local companion write may name.
+    Speaks,
+    /// No row of it is here yet, and nothing here deletes, merges or splits
+    /// it: the row waits for it.
+    NotArrived,
+    /// Anything else, refused as a replay.
+    Refused,
+}
+
+/// How `actor`, the author a companion row's window names, stands here,
+/// when `machine` stands on this vault's machine roster and this is a
+/// personal vault; [`CompanionAuthor::Refused`] otherwise. All read in
+/// `txn`.
+fn companion_speaks_from(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    machine: EntityId,
+    actor: EntityId,
+) -> Result<CompanionAuthor> {
+    let row = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &actor)?;
+    let speaker = row
+        .as_deref()
+        .and_then(crate::batch::EntityMetadataHeader::parse)
+        .is_some_and(|header| {
+            header.entity_type == crate::registry::ENTITY_TYPE_PERSON
+                || header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+        });
+    if (row.is_some() && !speaker)
+        || crate::identity_topology::entity_lifecycle_state_for_store_in_txn(store, txn, &actor)?
+            != crate::identity_topology::EntityLifecycleState::Active
+        || crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &actor)?.deleted
+    {
+        return Ok(CompanionAuthor::Refused);
+    }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    if fold.machine_proof_key(machine).is_none()
+        || crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?.is_some()
+    {
+        return Ok(CompanionAuthor::Refused);
+    }
+    Ok(if speaker {
+        CompanionAuthor::Speaks
+    } else {
+        CompanionAuthor::NotArrived
+    })
+}
+
 /// Whether `machine` stands on this vault's machine roster and this is a
 /// personal vault whose embedded owner PERSON is live, all in `txn`: the one
-/// person whose words its `user` bucket holds, sending from a machine still
+/// person whose words its `user` bucket holds, written on a machine still
 /// theirs.
 fn owner_speaks_from(store: &Store, txn: &heed::RoTxn<'_>, machine: EntityId) -> Result<bool> {
     let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
