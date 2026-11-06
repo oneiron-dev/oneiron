@@ -6639,6 +6639,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_agents_verb_classes_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.verb_classes.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_agents_verb_classes_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.verb_classes.configure", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_repo_git_push_mint(
         &self,
         input: serde_json::Value,

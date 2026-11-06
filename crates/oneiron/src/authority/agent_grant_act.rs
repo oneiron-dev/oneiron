@@ -48,7 +48,9 @@ pub(crate) enum AgentGrantAct {
     /// `grant` is the new FEDERATION_GRANT row's id; `repo_bounds` the repo
     /// bounds he gave besides, signed with the rest (FIX 6867). A `GitPush`
     /// `grant_kind` grants raw git push to the `git_push_bounds` repos alone
-    /// (G1-PUSH); the same act, signer and fold carry it.
+    /// (G1-PUSH); the same act, signer and fold carry it. `verb_classes`
+    /// names the verb classes he gave beside the scope's exact verbs (FIX
+    /// 8735); empty when he named none.
     Mint {
         grant: EntityId,
         member: EntityId,
@@ -57,6 +59,7 @@ pub(crate) enum AgentGrantAct {
         repo_bounds: Option<RepoAccessBounds>,
         grant_kind: FederationGrantKind,
         git_push_bounds: Option<GitPushBounds>,
+        verb_classes: BTreeSet<String>,
     },
     /// The owner revokes the Grant `grant`, acknowledging exactly the
     /// topology decision tokens the writer collected (FIX 5114).
@@ -78,6 +81,7 @@ impl AgentGrantAct {
                 repo_bounds,
                 grant_kind,
                 git_push_bounds,
+                verb_classes,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -87,6 +91,7 @@ impl AgentGrantAct {
                     repo_bounds,
                     grant_kind,
                     git_push_bounds,
+                    verb_classes,
                 },
             ),
             Self::Revoke {

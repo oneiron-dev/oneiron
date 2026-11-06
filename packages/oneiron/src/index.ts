@@ -2477,10 +2477,16 @@ export class Oneiron {
         set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
       },
       grants: {
-        /** The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door. */
+        /** The owner grants one named agent explicit verbs and verb classes in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it. */
         mint: (input: Facade.AgentGrantMintRequest): Facade.AgentGrantMinted => this.#call(() => this.#client.vaultAgentsGrantsMint(input) as Facade.AgentGrantMinted),
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),
+      },
+      verb_classes: {
+        /** The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash. */
+        get: (input: Facade.EmptyRequest = {}): Facade.AgentVerbClassesView => this.#call(() => this.#client.vaultAgentsVerbClassesGet(input) as Facade.AgentVerbClassesView),
+        /** The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once. */
+        configure: (input: Facade.AgentVerbClassesConfigureRequest): Facade.AgentVerbClassesReceipt => this.#call(() => this.#client.vaultAgentsVerbClassesConfigure(input) as Facade.AgentVerbClassesReceipt),
       },
       /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
       base: (input: Facade.EmptyRequest = {}): Facade.BaseAgentList => this.#call(() => this.#client.vaultAgentsBase(input) as Facade.BaseAgentList),

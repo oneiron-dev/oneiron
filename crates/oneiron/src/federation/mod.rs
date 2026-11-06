@@ -10,9 +10,11 @@
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
+mod agent_verb_class;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
 };
+pub(crate) use agent_verb_class::AgentVerbClasses;
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
