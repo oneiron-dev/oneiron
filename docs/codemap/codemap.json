@@ -36886,7 +36886,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -36942,6 +36942,16 @@
      "surface": {
       "crate-vis": 21,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/origin_positions.rs",
+     "purpose": "Canonical source facts for same-vault ASSET and ASSET_TEXT positions",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -76354,7 +76364,7 @@
      "path": "src/sync/client/own_device.rs",
      "purpose": "The proof that window bytes this client takes come from one of the owner's own machines (FIX 11709)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -77590,7 +77600,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/ingest/peer_import.rs",
@@ -77824,9 +77834,9 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 24,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -77907,6 +77917,31 @@
      "purpose": "Origin claim carriers under an erase (FIX 3877)",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/origin_positions.rs",
+     "purpose": "Row-paired lifecycle helpers for optional same-vault origin-position data",
+     "surface": {
+      "crate-vis": 11,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnDevicePositionImport"
+     ],
+     "path": "src/sync/origin_positions/import.rs",
+     "purpose": "Exact optional position operations of one successful own-device import",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -91430,7 +91465,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92186,7 +92221,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 360,
+     "files": 362,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92398,7 +92433,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6503,
+   "source_files": 6506,
    "test_files": 895
   },
   "oneiron-android": {
