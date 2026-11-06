@@ -8,8 +8,10 @@ use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod documents;
+mod entity_documents;
 mod window_rows;
 pub(super) use documents::DocumentRows;
+pub(super) use entity_documents::EntityDocumentRows;
 pub(super) use window_rows::WindowRows;
 
 /// Recovery-only proof for an AddressedTo edge retained by a soft-erased
@@ -194,107 +196,6 @@ fn pointer(body: &[u8]) -> Result<Option<String>> {
         .ok_or(invalid("entity document pointer type"))?;
     id(super::canonical::parse_id(value)?)?;
     Ok(Some(value.to_owned()))
-}
-
-pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
-    strict(snapshot.entity_documents.iter().map(|row| row.entity_id))?;
-    // A proposal bundle may span documents: the snapshot carries every member
-    // or the bundle is not recoverable from it.
-    let mut proposals = BTreeMap::new();
-    let mut forks = BTreeSet::new();
-    for row in &snapshot.entity_documents {
-        validate_history(row)?;
-        for fork in row.history.iter().flat_map(|history| &history.forks) {
-            if !forks.insert(fork.fork) {
-                return Err(invalid("entity document fork duplicated"));
-            }
-            let (len, settled, actor, lineage, members) =
-                proposals.entry(fork.proposal).or_insert((
-                    fork.proposal_len,
-                    fork.proposal_settled,
-                    fork.actor,
-                    &fork.proposal_opener_lineage,
-                    BTreeSet::new(),
-                ));
-            if (*len, *settled, *actor) != (fork.proposal_len, fork.proposal_settled, fork.actor)
-                || **lineage != fork.proposal_opener_lineage
-                || !members.insert(fork.proposal_index)
-            {
-                return Err(invalid("entity document proposal bundle"));
-            }
-        }
-    }
-    if proposals
-        .values()
-        .any(|(len, _, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
-    {
-        return Err(invalid(
-            "entity document proposal spans entities outside the snapshot",
-        ));
-    }
-    let rows: BTreeMap<_, _> = snapshot
-        .entity_documents
-        .iter()
-        .map(|row| (row.entity_id, row))
-        .collect();
-    for entity in &snapshot.entity_blobs {
-        let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            || entity.blob.len() == ENTITY_METADATA_HEADER_LEN
-        {
-            if rows.contains_key(&entity.id) {
-                return Err(invalid("entity document owner cannot be NOTE or shell"));
-            }
-            continue;
-        }
-        let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
-        let ref_id = pointer(body)?;
-        let row = rows.get(&entity.id).copied();
-        match (ref_id, row) {
-            (None, None) => continue,
-            (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
-                if let Some(actor) = row.birth_actor {
-                    id(actor)?;
-                }
-                if row.birth_at != header.occurred_start {
-                    return Err(invalid("entity document birth timestamp"));
-                }
-                let mut reader = std::io::Cursor::new(body);
-                let value = rmpv::decode::read_value(&mut reader)
-                    .map_err(|_| invalid("entity document pointer row"))?;
-                let rmpv::Value::Map(fields) = value else {
-                    return Err(invalid("entity document pointer row"));
-                };
-                let others: Vec<_> = fields
-                    .iter()
-                    .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
-                    .collect();
-                if others
-                    .iter()
-                    .any(|(key, _)| key.as_str().is_some_and(crate::ports::is_metadata_field))
-                {
-                    return Err(invalid("editable metadata remains in the entity row"));
-                }
-                match &row.field {
-                    None if others.is_empty() => {}
-                    Some(field)
-                        if crate::ports::is_text_field(field)
-                            && !others
-                                .iter()
-                                .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
-                    _ => return Err(invalid("entity document text field")),
-                }
-            }
-            _ => return Err(invalid("entity document coverage or pointer binding")),
-        }
-    }
-    if rows
-        .keys()
-        .any(|entity| !snapshot.entity_blobs.iter().any(|row| &row.id == entity))
-    {
-        return Err(invalid("entity document owner absent"));
-    }
-    Ok(())
 }
 
 /// A causal row binds inside itself: every version leads to the head, pins

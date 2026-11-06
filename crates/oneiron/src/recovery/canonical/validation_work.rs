@@ -8,6 +8,7 @@ pub(crate) struct CanonicalValidation {
     stage: ValidationStage,
     window_rows: validation::WindowRows,
     document_rows: validation::DocumentRows,
+    entity_document_rows: validation::EntityDocumentRows,
     asset_body_refs: asset_body_refs::AssetBodyRefsValidation,
 }
 
@@ -58,7 +59,10 @@ impl CanonicalValidation {
                 ValidationStage::EntityDocuments
             }
             ValidationStage::EntityDocuments => {
-                validation::validate_entity_documents(snapshot)?;
+                if !self.entity_document_rows.advance(snapshot, max_rows)? {
+                    return Ok(false);
+                }
+                self.entity_document_rows = validation::EntityDocumentRows::default();
                 ValidationStage::RowBirths
             }
             ValidationStage::RowBirths => {
@@ -78,6 +82,10 @@ impl CanonicalValidation {
         if matches!(self.stage, ValidationStage::WindowRows) {
             let (stage, next) = self.window_rows.position();
             return format!("window rows {stage} {next}");
+        }
+        if matches!(self.stage, ValidationStage::EntityDocuments) {
+            let (stage, next) = self.entity_document_rows.position();
+            return format!("entity documents {stage} {next}");
         }
         if matches!(self.stage, ValidationStage::Documents) {
             let (stage, next) = self.document_rows.position();
