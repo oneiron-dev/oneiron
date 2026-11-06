@@ -18,7 +18,9 @@ pub enum RepoProposalDecision {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoProposalSettlement {
     pub receipt: EntityId,
-    pub actor: EntityId,
+    /// The owner who settled it; `None` once that actor was erased (FIX
+    /// 5220). The decision stays.
+    pub actor: Option<EntityId>,
     pub decision: RepoProposalDecision,
     pub settled_at: u64,
 }
@@ -47,7 +49,7 @@ impl Vault {
             ));
         }
         if let Some(settled) = &row.settlement {
-            return if settled.actor == actor && settled.decision == decision {
+            return if settled.actor == Some(actor) && settled.decision == decision {
                 Ok(row)
             } else {
                 Err(invalid("proposal already has a different settlement"))
@@ -119,7 +121,7 @@ impl Vault {
         };
         row.settlement = Some(RepoProposalSettlement {
             receipt,
-            actor,
+            actor: Some(actor),
             decision,
             settled_at: now,
         });
