@@ -39,6 +39,7 @@
 use oneiron_base::message_body_fields as body;
 mod freshness;
 mod held;
+mod hint_read;
 mod history;
 mod input;
 mod marker;
@@ -82,7 +83,9 @@ pub(crate) use verbs::{envelope_view, mention_view};
 pub(crate) use held::{settle_held_tags_in_txn, settle_held_tags_scoped_in_txn};
 pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn, turn_role};
 pub(crate) use marker::text_entity_type_in_txn;
-pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn, same_marker_identity};
+pub(crate) use marker::{
+    mark_on_publication_in_txn, mark_turn_in_txn, mark_turn_scoped_in_txn, same_marker_identity,
+};
 pub(crate) use output::{check_links, check_mood_parts, check_span_order};
 pub(crate) use owed::{forget_tag_pass_in_txn, owe_tag_pass_in_txn, tag_pass_owed_in_txn};
 pub(crate) use provisional::{

@@ -13,10 +13,11 @@ use crate::attempt_queue::{
 };
 use crate::error::Result;
 use crate::memory::extraction::EncoderOutput;
+use crate::tagging::hint_read::QueuedHintRead;
 use crate::tagging::history;
 use crate::tagging::input::{TurnInput, turn_text_in_txn};
 use crate::tagging::marker::{TaggingMode, retry_marker_in_txn};
-use crate::tagging::save::{self, Answer};
+use crate::tagging::save::{self, Answer, HintRead};
 use crate::tagging::tags::tagged_messages_absent_in_txn;
 use crate::tagging::trace::{
     SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex,
@@ -83,6 +84,16 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         let turn = call.payload.turn;
         let made_by = self.encoder.model_id().as_str().to_owned();
+        let hint_lane = if matches!(self.config.mode, TaggingMode::Save) {
+            match call.payload.hint_read.open(&self.vault) {
+                Ok(read) => read,
+                Err(error) => {
+                    return self.retry(call, TaggingFailure::HintRead { code: error.code }, trace);
+                }
+            }
+        } else {
+            None
+        };
         // A re-tag's surprise, for the wake its save owes once it commits.
         let retag = Cell::new(None);
         let trace = self
@@ -123,7 +134,24 @@ impl TaggingReconciler {
                             envelope,
                         };
                         let now = self.stamp_in_txn(txn)?;
-                        let saved = save::save_in_txn(&self.vault, txn, answer, &self.config, now)?;
+                        let current = self.persisted_payload_in_txn(txn, call.record.id)?;
+                        let hint_read = match current.as_ref().map(|payload| &payload.hint_read) {
+                            Some(read) if *read == call.payload.hint_read => match read {
+                                QueuedHintRead::Internal => HintRead::Internal,
+                                QueuedHintRead::Caller { .. } => {
+                                    HintRead::Caller(hint_lane.as_ref())
+                                }
+                            },
+                            _ => HintRead::Caller(None),
+                        };
+                        let saved = save::save_with_hint_read_in_txn(
+                            &self.vault,
+                            txn,
+                            answer,
+                            &self.config,
+                            now,
+                            hint_read,
+                        )?;
                         retag.set(saved.surprise.filter(|_| saved.retagged));
                         TaggingOutcome::Saved {
                             spans: output.spans.len(),
@@ -316,6 +344,7 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         let reason = match failure {
             TaggingFailure::Call { .. } => "call_failed",
+            TaggingFailure::HintRead { .. } => "hint_read_failed",
             TaggingFailure::Refused { .. } => "answer_refused",
             TaggingFailure::Panicked => "tagger_panicked",
         };

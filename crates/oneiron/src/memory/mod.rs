@@ -123,6 +123,7 @@ pub mod origin_doors;
 mod outbound;
 mod owner_door;
 mod presented_credential;
+mod queued_identity_hint;
 pub(crate) mod read_capture;
 mod read_lane;
 mod read_selection;
@@ -308,6 +309,7 @@ pub use outbound::{
     CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, OutboundDraftInput,
     OutboundIntentReceipt, OutboundScheduleContext,
 };
+pub(crate) use queued_identity_hint::OnDeviceIdentityHintReader;
 pub use read_selection::RecallWorlds;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,

@@ -368,6 +368,11 @@ fn failure_view(failure: &TaggingFailure) -> TaggingFailureView {
             code: Some(code.clone()),
             refusal: None,
         },
+        TaggingFailure::HintRead { code } => TaggingFailureView {
+            class: "hint_read".to_owned(),
+            code: Some(code.clone()),
+            refusal: None,
+        },
         TaggingFailure::Refused { refusal } => TaggingFailureView {
             class: "refused".to_owned(),
             code: None,

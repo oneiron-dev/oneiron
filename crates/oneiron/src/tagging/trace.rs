@@ -193,6 +193,8 @@ pub enum TaggingFailure {
     /// The tagger call returned an error. `code` is the host's failure class
     /// (the tagger client puts no vault text in it) or the engine error kind.
     Call { code: String },
+    /// The original optional hint reader failed for a non-policy reason.
+    HintRead { code: String },
     /// The answer broke a contract rule.
     Refused { refusal: OutputRefusal },
     /// The tagger panicked.

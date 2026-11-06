@@ -34,7 +34,13 @@ impl Memory<'_> {
             } else {
                 crate::memory::extraction::ExtractionWork::Live
             };
-            crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id, work)?;
+            crate::tagging::mark_turn_scoped_in_txn(
+                self.vault,
+                wtxn,
+                plan.turn_id,
+                work,
+                self.queued_identity_hint_reader(),
+            )?;
             crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
             crate::workspace_roster::stage_project_detection_in_txn(
                 self.vault,
