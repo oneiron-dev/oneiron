@@ -207,6 +207,11 @@ impl Sender {
         let mut watch = KeyWatch::new(secret);
         let mut cleared = Zeroizing::new(Vec::new());
         let mut read = 0_usize;
+        // Relayed events go on as soon as the watch clears them, a frame at
+        // most at a time; other streamed bodies go in whole frames (FIX
+        // 15702). The watch still holds back any bytes that could begin a
+        // form of the key.
+        let eager = call.shape.relays_events();
         let cut = loop {
             let (passed, last) = match response.chunk().await {
                 Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
@@ -224,7 +229,8 @@ impl Sender {
             }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
-            while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
+            while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len())
+            {
                 let end = cleared.len().min(sent + STREAM_CHUNK);
                 within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
                 sent = end;
