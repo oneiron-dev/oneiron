@@ -168,15 +168,15 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         &listen.limits,
     )?);
     let questions = Arc::clone(&served.questions);
-    crate::http_listener::serve(
-        listener,
-        routes(served),
-        listen.limits.connections(),
-        questions,
-        async {
-            let _ = tokio::signal::ctrl_c().await;
-        },
-    )
+    // One read hands a body at most its piece, the room it reserves before
+    // it reads ([`body`], FIX 149).
+    let connections = crate::http_listener::ConnectionLimits {
+        max_read_buffer_bytes: Some(body::BODY_PIECE_BYTES),
+        ..listen.limits.connections()
+    };
+    crate::http_listener::serve(listener, routes(served), connections, questions, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
     .await;
     Ok(())
 }

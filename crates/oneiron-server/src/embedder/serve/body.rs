@@ -5,8 +5,11 @@
 //! never waits behind an upload, and a larger one on the large budget. A body
 //! that declares none is read a piece at a time on the large budget: before
 //! each piece is taken, room for [`BODY_PIECE_BYTES`] past what has arrived
-//! is reserved, and a piece the transport hands over past that room is kept
-//! only once its room is reserved too. Room a body being read grows into is
+//! is reserved, and the endpoint's listener caps each connection's HTTP/1
+//! read buffer at that bound, so one read hands over no more than that room.
+//! A piece that still arrives past it (the buffer's spare capacity) is
+//! charged to the budget at once, owed past its free bytes, never held
+//! uncharged across a wait. Room a body being read grows into is
 //! taken at once when it is free, ahead of bodies not yet read, which wait
 //! for it to end anyway; otherwise it waits in order up to the queue
 //! deadline, as a declared body's room does, and a wait that runs out
@@ -35,8 +38,9 @@ use crate::byte_line::HeldBytes;
 /// The room a body that declares no length keeps reserved on the large
 /// budget past what it has received before it takes its next piece: as much
 /// as the largest small body. Short of it, the reservation grows to two such
-/// pieces past what has arrived.
-const BODY_PIECE_BYTES: usize = SMALL_BODY_BYTES;
+/// pieces past what has arrived. It is also the endpoint listener's HTTP/1
+/// read buffer cap, so one read hands over no more than this room.
+pub(super) const BODY_PIECE_BYTES: usize = SMALL_BODY_BYTES;
 
 /// A request body as it arrived, in its pieces.
 pub(super) struct BodyPieces(Vec<Bytes>);
@@ -151,7 +155,15 @@ pub(super) async fn read_body(
                 ));
             }
             Some(_) => {}
-            None => grow_reservation(served, &mut held, &mut reserved, received).await?,
+            // Past the room reserved ahead it is charged now, before any
+            // wait, so it is never held uncharged.
+            None if received > reserved => {
+                served
+                    .large_bodies
+                    .charge(&mut held, received, &served.questions);
+                reserved = received;
+            }
+            None => {}
         }
         pieces.push(piece);
     }
