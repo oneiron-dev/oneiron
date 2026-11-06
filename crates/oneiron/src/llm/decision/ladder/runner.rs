@@ -12,7 +12,7 @@ use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionRung, StopCause, TypedDecision,
+    DecisionRung, DecisionWireLabels, StopCause, TypedDecision,
 };
 use crate::llm::run_admission::{RunAdmission, RunReceipt};
 use crate::retrieval_depth::RetrievalDeadline;
@@ -193,6 +193,41 @@ impl DecisionLadder<'_> {
         )
     }
 
+    /// [`Self::run_pack`] using one caller-owned table for every read, including
+    /// auxiliary questions and later rungs. Questions and receipts remain canonical.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the wire table joins run_pack's routing inputs"
+    )]
+    pub fn run_pack_labeled(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        labels: &dyn DecisionWireLabels,
+    ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media_common(
+            questions,
+            principal,
+            evidence,
+            &[],
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            None,
+            Some(labels),
+            None,
+        )
+    }
+
     /// [`Self::run_pack`] over images the questions read. Each image fills the state field
     /// of its name, and each receipt keeps every image's evidence ref and version, never
     /// its pixels. A Box question needs at least one image.
@@ -259,6 +294,7 @@ impl DecisionLadder<'_> {
             deadline,
             None,
             None,
+            None,
         )
     }
 
@@ -296,6 +332,7 @@ impl DecisionLadder<'_> {
             reversibility,
             deadline,
             Some(run),
+            None,
             None,
         )
     }
@@ -335,6 +372,7 @@ impl DecisionLadder<'_> {
             reversibility,
             deadline,
             run,
+            None,
             Some(&mut capture),
         )
     }
@@ -356,6 +394,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
         run: Option<&RunAdmission>,
+        labels: Option<&dyn DecisionWireLabels>,
         mut capture: Option<&mut Capture<'_, '_>>,
     ) -> Result<Vec<TypedDecision>> {
         let mut pack = self.open(
@@ -369,6 +408,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         )?;
         let mut readings = pack.readings();
         let mut first = Vec::with_capacity(questions.len());
@@ -394,6 +434,7 @@ impl DecisionLadder<'_> {
                     state,
                     deadline,
                     run,
+                    labels,
                 };
                 let mut selected = serving;
                 loop {
@@ -447,6 +488,7 @@ impl DecisionLadder<'_> {
         policy: &'a DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &'a RetrievalDeadline,
+        labels: Option<&'a dyn DecisionWireLabels>,
     ) -> Result<OpenPack<'a>> {
         if questions.is_empty() {
             return Err(invalid("invalid decision pack"));
@@ -514,6 +556,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         })
     }
 
@@ -588,6 +631,7 @@ impl DecisionLadder<'_> {
                     policy: pack.policy,
                     reversibility: pack.reversibility,
                     deadline: pack.deadline,
+                    labels: pack.labels,
                 };
                 self.route(&route, first, readings, run, capture.as_deref_mut())
             })

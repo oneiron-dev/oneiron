@@ -38,6 +38,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         } = *call;
         let mut rung = dial.first;
         let mut prior = None;
@@ -76,6 +77,7 @@ impl DecisionLadder<'_> {
                                 state,
                                 deadline,
                                 run,
+                                labels,
                             };
                             next_read = Some(
                                 self.read(
@@ -169,6 +171,7 @@ impl DecisionLadder<'_> {
                         state,
                         deadline,
                         run,
+                        labels,
                     };
                     next_read = Some(
                         self.read(
