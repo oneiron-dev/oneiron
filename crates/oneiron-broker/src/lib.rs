@@ -13,9 +13,11 @@
 //! body spooled and checked before the credential comes, the reply relayed
 //! byte for byte and cut if it echoes the credential. Its third
 //! ([`LfsCallHeader`]) sends one Git LFS batch call or basic-transfer
-//! action by the same steps: the repository credential on a batch alone,
+//! action by the same steps: the repository credential on a batch,
 //! installed by the broker, and an action's own headers on that action
-//! alone.
+//! alone; where a batch reply hands the credential back in an action's
+//! header, the daemon sees a placeholder, and the broker installs the
+//! credential again only on that action at the repository's own origin.
 //!
 //! It runs no model and no generated code, and it does not link the engine.
 //! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the
@@ -65,8 +67,8 @@ pub use git_http::{
 #[cfg(unix)]
 pub use git_http::{GitReply, PreparedGitCall};
 pub use lfs_http::{
-    LfsActionTarget, LfsBatchTarget, LfsCallHeader, LfsOperation, LfsRequestDigest, LfsTarget,
-    check_lfs_headers, lfs_request_digest,
+    LFS_CREDENTIAL_PLACEHOLDER, LfsActionTarget, LfsBatchTarget, LfsCallHeader, LfsOperation,
+    LfsRequestDigest, LfsTarget, check_lfs_headers, lfs_request_digest,
 };
 #[cfg(unix)]
 pub use lfs_http::{LfsReply, PreparedLfsCall};

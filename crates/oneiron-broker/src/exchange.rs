@@ -5,8 +5,10 @@
 //! file, takes its digest again as it passes, and acknowledges; only then
 //! does the daemon write its credential segment; the broker sends once and
 //! streams the reply, cut rather than rewritten when it holds a literal
-//! form of the credential. Each adapter keeps its own target, digest
-//! domain, headers and request; these modules hold the rest.
+//! form of the credential (an LFS batch reply's exact echoes in its action
+//! headers alone are rewritten first, `lfs_http`). Each adapter keeps its
+//! own target, digest domain, headers and request; these modules hold the
+//! rest.
 //!
 //! - [`client`]: the daemon's side, from the opening word to the reply's
 //!   end.
