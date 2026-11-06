@@ -38,11 +38,12 @@ impl Memory<'_> {
         let contact_ref = self.resolve_ref(&input.contact_ref)?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         owner_in(self, &txn, owner)?;
-        let (ledger, label_heads) =
-            self.vault
-                .commitment_ledger_for_counterparty_in_txn(&txn, &contact_ref, |id| {
-                    Ok(lane.graph_ask_raw_in_txn(&txn, id)?.is_some())
-                })?;
+        let (ledger, label_heads) = self.vault.commitment_ledger_for_counterparty_in_txn(
+            &lane.store_read(),
+            &txn,
+            &contact_ref,
+            |id| Ok(lane.graph_ask_raw_in_txn(&txn, id)?.is_some()),
+        )?;
         let owed_by_them = self.commitment_ledger_items_in(&lane, &txn, ledger.owed_by_them)?;
         let owed_to_them = self.commitment_ledger_items_in(&lane, &txn, ledger.owed_to_them)?;
         self.produced_from(label_heads);

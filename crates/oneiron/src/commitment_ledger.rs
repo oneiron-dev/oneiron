@@ -95,14 +95,20 @@ impl Vault {
         contact_ref: &EntityId,
     ) -> Result<CommitmentLedger> {
         let txn = self.store.env.read_txn()?;
-        self.commitment_ledger_for_counterparty_in_txn(&txn, contact_ref, |_| Ok(true))
-            .map(|(ledger, _)| ledger)
+        self.commitment_ledger_for_counterparty_in_txn(
+            &self.store.read(),
+            &txn,
+            contact_ref,
+            |_| Ok(true),
+        )
+        .map(|(ledger, _)| ledger)
     }
 
-    /// Projects only admitted rows, with the contact, identity and obligations
-    /// read from the caller's snapshot.
+    /// Projects only admitted rows in the caller's snapshot. Obligation ids and
+    /// bodies use `store`; contact and identity labels still use the vault base.
     pub(crate) fn commitment_ledger_for_counterparty_in_txn(
         &self,
+        store: &impl EntityStoreRead,
         txn: &heed::RoTxn<'_>,
         contact_ref: &EntityId,
         mut admit: impl FnMut(&EntityId) -> Result<bool>,
@@ -158,7 +164,7 @@ impl Vault {
         ))?;
 
         let (mut owed_by_them, mut owed_to_them) =
-            self.project_commitment_rows(txn, contact_ref, &mut admit)?;
+            self.project_commitment_rows(store, txn, contact_ref, &mut admit)?;
         sort_due(&mut owed_by_them);
         sort_due(&mut owed_to_them);
 
@@ -182,6 +188,7 @@ impl Vault {
     /// commitments into `(owed_by_them, owed_to_them)`, unsorted.
     fn project_commitment_rows(
         &self,
+        store: &impl EntityStoreRead,
         rtxn: &heed::RoTxn<'_>,
         contact_ref: &EntityId,
         admit: &mut impl FnMut(&EntityId) -> Result<bool>,
@@ -189,16 +196,12 @@ impl Vault {
         let mut owed_by_them = Vec::new();
         let mut owed_to_them = Vec::new();
 
-        for entry in self
-            .store
-            .port_entity_ids_by_type(rtxn, ENTITY_TYPE_CLAIM, None)?
-        {
+        for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_CLAIM, None)? {
             let id = entry?;
             if !admit(&id)? {
                 continue;
             }
-            let raw = self
-                .store
+            let raw = store
                 .port_entity_record(rtxn, &id)?
                 .map(|row| row.encode())
                 .ok_or(Error::CorruptedIndex("claim type index"))?;

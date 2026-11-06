@@ -210,6 +210,7 @@ pub(crate) fn build_prep_pack_scoped(
         |txn, _| {
             super::ledger::ledger_prep_items(
                 read.vault(),
+                &read.store_read(),
                 txn,
                 &request.event,
                 request.fired_at,
