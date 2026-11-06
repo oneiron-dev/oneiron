@@ -69,12 +69,13 @@ pub use step::{
     validate_json_schema,
 };
 pub(crate) use step::{
-    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
-    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
-    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
-    trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
-    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+    StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck,
+    call_as_step_checked_with_unsaved_usage, consume_step_wait_in_txn, deindex_dreamer_step_claim,
+    forget_step_memo, forget_step_memo_in_txn, index_dreamer_step_claim_for_put,
+    open_step_wait_in_txn, register_detached_step_in_txn, retire_peer_wait_binding_for_trap_in_txn,
+    signal_step_wait_in_txn, trap_consume_precheck_in_txn,
+    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
+    wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
@@ -104,8 +105,8 @@ pub use oneiron_model::llm::{
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
 pub use oneiron_model::llm::{
-    LabelReadFailure, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
-    joint_marginals,
+    LabelReadDistribution, LabelReadFailure, LabelReadGenerationOutcome, LabelReadGenerationReader, LabelReadModel,
+    LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 pub use oneiron_model::llm::{TokenScore, first_token_alternatives};

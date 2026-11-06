@@ -311,6 +311,9 @@ pub enum SyncStatus {
 /// Events emitted by the sync client for the host application.
 #[derive(Debug)]
 pub enum SyncEvent {
+    /// A request-owned, unrecorded Human notification for the application to render.
+    /// Delivery to this event channel grants nothing and does not answer the ask.
+    PrivateHumanAsk(crate::sync::transport::PrivateHumanAsk),
     StatusChanged(SyncStatus),
     WindowUpdated {
         window_key: String,

@@ -420,7 +420,7 @@ pub fn classify_amendment(
     hunks: &[EditHunk<'_>],
     floor: f32,
 ) -> Result<Option<AttributionSplit>> {
-    classify_amendment_traced(evidence, decisions, hunks, floor).map(|(split, _)| split)
+    classify_amendment_traced(None, evidence, decisions, hunks, floor).map(|(split, _)| split)
 }
 
 /// [`classify_amendment`], beside what answered it for the held-out audit's
@@ -431,6 +431,7 @@ pub fn classify_amendment(
 ///
 /// As [`classify_amendment`].
 pub(super) fn classify_amendment_traced(
+    vault: Option<&crate::Vault>,
     evidence: &AmendmentEvidence,
     decisions: Option<&AttributionDecisions<'_>>,
     hunks: &[EditHunk<'_>],
@@ -493,6 +494,9 @@ pub(super) fn classify_amendment_traced(
             Ok((Some(settled_split(class, &request, &masses)?), trace))
         }
         None => {
+            if let (Some(vault), Some(decisions)) = (vault, decisions) {
+                let _ = vault.measure_decision_pack(&decisions.bands, request.regions());
+            }
             let (split, trace) = classify_split_traced(decisions, &request, &masses)?;
             Ok((split.map(|(split, _)| split), trace))
         }

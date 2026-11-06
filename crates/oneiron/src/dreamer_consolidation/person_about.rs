@@ -487,7 +487,7 @@ impl<E> PersonAboutExecutor<'_, E> {
         if written == Some(digest) || facts.is_empty() {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         let locality = self
@@ -546,12 +546,14 @@ impl<E> PersonAboutExecutor<'_, E> {
                         role: LlmMessageRole::System,
                         content: vec![ContentPart::Text {
                             text: self.instruction.to_owned(),
+                            signature: None,
                         }],
                     },
                     LlmMessage {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: prompt_lines(&admitted),
+                            signature: None,
                         }],
                     },
                 ],
@@ -591,7 +593,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             };
             let backend =
                 CallBackend::new(self.backend, self.sourced, Some(fact_claim_ids.clone()));
-            let response = match call_as_step_checked(
+            let (response, binding) = match call_as_step_checked(
                 &step_ctx,
                 backend.get(),
                 self.guard,
@@ -601,17 +603,19 @@ impl<E> PersonAboutExecutor<'_, E> {
             .await
             {
                 Ok(StepOutcome::Finished {
-                    response, memoized, ..
+                    response,
+                    memoized,
+                    binding,
+                    ..
                 }) => {
-                    if let Err(error) =
-                        charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                    if let Err(error) = charges.record_terminal(ctx.vault, binding, &response.usage)
                     {
                         if !memoized {
                             charges.record_usage(&response.usage);
                         }
                         return spent_or_deferred(error, ctx, &charges);
                     }
-                    response
+                    (response, binding)
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
                     return Ok(charges
@@ -650,9 +654,12 @@ impl<E> PersonAboutExecutor<'_, E> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431, OF-193a).
                 Err(reason) => {
-                    return match charges
-                        .park_refused_reply(ctx.vault, attempt_id, step_hash, reason)
-                    {
+                    return match charges.park_refused_reply(
+                        ctx.vault,
+                        binding.attempt_id,
+                        binding.step_hash,
+                        reason,
+                    ) {
                         Ok(parked) => Ok(parked),
                         Err(error) => spent_or_deferred(error, ctx, &charges),
                     };
@@ -687,7 +694,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(FACTS_DRIFT_RETRY_SECS),
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
@@ -730,7 +737,7 @@ impl<E> PersonAboutExecutor<'_, E> {
         }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: charges.units,
-            step_hashes: charges.step_hashes.clone(),
+            step_bindings: charges.step_bindings.clone(),
         })
     }
 }

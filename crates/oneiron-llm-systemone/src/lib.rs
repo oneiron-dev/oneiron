@@ -5,10 +5,12 @@
 //! HTTPS client with a bearer key, or a host's (the credential broker, which
 //! adds the key from the vault for one call at a time).
 
+use oneiron::code_run::model_call::native_seat_read_digests;
+use oneiron::llm::DispatchRelease;
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
-    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRequest,
+    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRead, SeatReadFuture, SeatRequest,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
@@ -17,6 +19,12 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
+
+mod pack;
+pub use pack::{
+    PreparedSystemOnePackRead, SystemOnePackAnswer, SystemOnePackPrediction, SystemOnePackQuestion,
+    SystemOnePackRead, SystemOnePackRequest,
+};
 
 /// The largest reply body the seat reads.
 pub const MAX_RESPONSE_BYTES: usize = 65_536;
@@ -42,6 +50,39 @@ pub struct SystemOneHttpRequest {
     pub time_left: Duration,
 }
 
+/// One validated logical read and the exact native request built for it.
+/// It stays tied to the seat that built it until that seat sends its owned bytes.
+pub struct PreparedSystemOneRead<'seat> {
+    seat: &'seat SystemOneSeat,
+    request: SeatRequest,
+    sent: SystemOneHttpRequest,
+}
+
+impl<'seat> PreparedSystemOneRead<'seat> {
+    /// The actual endpoint, model, headers and transformed body, before credentials.
+    /// Inspecting this request does not authorize or send it.
+    pub fn request(&self) -> &SystemOneHttpRequest {
+        &self.sent
+    }
+
+    /// Sends this read on its original seat without rebuilding its body.
+    /// The caller supplies its current work time after admission. A borrowed
+    /// credential release remains at the transport's physical boundary.
+    pub fn ask_recorded<'call>(
+        mut self,
+        lease: &'call BudgetLease,
+        time_left: Duration,
+        release: Option<DispatchRelease<'call>>,
+    ) -> SeatReadFuture<'call>
+    where
+        'seat: 'call,
+    {
+        self.sent.time_left = time_left;
+        let seat = self.seat;
+        Box::pin(seat.send_prepared(self, lease, true, release))
+    }
+}
+
 /// A reply as it came: its status, and its body for a success, at most
 /// [`MAX_RESPONSE_BYTES`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +102,21 @@ pub trait SystemOneTransport: Send + Sync {
         request: SystemOneHttpRequest,
         lease: &'a BudgetLease,
     ) -> SystemOneTransportFuture<'a>;
+
+    /// Sends with this call's release check. Native transports override this
+    /// to place the check after their own preparation, before physical I/O.
+    fn send_released<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            release()?;
+            lease.begin_physical_attempt();
+            self.send(request, lease).await
+        })
+    }
 
     /// Every check the transport makes before it sends, with no I/O (a
     /// broker it cannot reach, a key its custody door would refuse); `Ok`,
@@ -155,36 +211,21 @@ impl SystemOneSeat {
         request: &SeatRequest,
         time_left: Duration,
     ) -> LlmResult<SystemOneHttpRequest> {
+        self.build_questions(
+            request,
+            json!({"decision": build_question(request)}),
+            time_left,
+        )
+        .await
+    }
+
+    async fn build_questions(
+        &self,
+        request: &SeatRequest,
+        questions: Value,
+        time_left: Duration,
+    ) -> LlmResult<SystemOneHttpRequest> {
         let model = format!("{}-{}", self.pin.model, self.pin.version);
-        let (kind, criteria) = match &request.question.contract {
-            // The question's criteria triple, as what a yes and a no mean.
-            AnswerContract::Noul => (
-                "noul",
-                QuestionCriteria::from_state(&request.state).map(
-                    |criteria| json!({"true": criteria.yes_means(), "false": criteria.no_means()}),
-                ),
-            ),
-            AnswerContract::Choice { options } => {
-                let map: BTreeMap<&str, Value> =
-                    options.iter().map(|s| (s.as_str(), Value::Null)).collect();
-                ("choice", Some(json!(map)))
-            }
-            AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
-            // The wire has no point: a Point asks for a box, read as its centre.
-            AnswerContract::Box | AnswerContract::Point => ("box", None),
-        };
-        // A question that is no yes/no reads its criteria as the rubric of its
-        // own form after its instructions (FIX 2181).
-        let rubric = QuestionCriteria::rubric_in(&request.state, &request.question.contract)
-            .filter(|_| request.question.contract != AnswerContract::Noul);
-        let instructions = match rubric {
-            Some(rubric) => format!("{}\n\n{rubric}", request.question.text),
-            None => request.question.text.clone(),
-        };
-        let mut question = json!({"type":kind,"instructions":instructions});
-        if let Some(criteria) = criteria {
-            question["criteria"] = criteria;
-        }
         // Each image is an asset; its state field holds the asset's reference, which
         // the question names in backticks.
         let mut state = request.state.clone();
@@ -202,8 +243,11 @@ impl SystemOneSeat {
                 }),
             );
         }
-        let images = !assets.is_empty() || kind == "box";
-        let mut body = json!({"model":model,"state":state,"questions":{"decision":question}});
+        let images = !assets.is_empty()
+            || questions.as_object().is_some_and(|questions| {
+                questions.values().any(|question| question["type"] == "box")
+            });
+        let mut body = json!({"model":model,"state":state,"questions":questions});
         if !assets.is_empty() {
             body["assets"] = Value::Object(assets);
         }
@@ -219,28 +263,78 @@ impl SystemOneSeat {
             time_left,
         })
     }
-}
 
-impl RemoteDecisionSeat for SystemOneSeat {
-    fn pin(&self) -> ProviderPin {
-        self.pin.clone()
+    /// Validates and builds this read once, without a lease, credential or I/O.
+    /// The same transformed body can be inspected before a paid admission and
+    /// then sent by the returned read on this seat alone.
+    pub async fn prepare_read(
+        &self,
+        request: SeatRequest,
+        time_left: Duration,
+    ) -> LlmResult<PreparedSystemOneRead<'_>> {
+        request.validate_remote()?;
+        let sent = self.build(&request, time_left).await?;
+        Ok(PreparedSystemOneRead {
+            seat: self,
+            request,
+            sent,
+        })
     }
 
-    fn image_edge(&self) -> Option<u32> {
-        Some(MAX_IMAGE_EDGE)
-    }
-
-    fn ask<'a>(
+    /// A recorded read with its caller's release checked at the transport's
+    /// physical send boundary. The seat never stores the borrowed check.
+    pub fn ask_recorded_released<'a>(
         &'a self,
         request: SeatRequest,
         lease: &'a BudgetLease,
-        time_left: std::time::Duration,
-    ) -> SeatFuture<'a> {
-        Box::pin(async move {
-            request.validate_remote()?;
-            let sent = self.build(&request, time_left).await?;
+        time_left: Duration,
+        release: DispatchRelease<'a>,
+    ) -> SeatReadFuture<'a> {
+        Box::pin(self.ask_inner(request, lease, time_left, true, Some(release)))
+    }
+
+    async fn ask_inner(
+        &self,
+        request: SeatRequest,
+        lease: &BudgetLease,
+        time_left: Duration,
+        capture: bool,
+        release: Option<DispatchRelease<'_>>,
+    ) -> SeatRead {
+        let prepared = match self.prepare_read(request, time_left).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return SeatRead {
+                    request: None,
+                    result: Err(error),
+                };
+            }
+        };
+        self.send_prepared(prepared, lease, capture, release).await
+    }
+
+    async fn send_prepared(
+        &self,
+        prepared: PreparedSystemOneRead<'_>,
+        lease: &BudgetLease,
+        capture: bool,
+        release: Option<DispatchRelease<'_>>,
+    ) -> SeatRead {
+        let PreparedSystemOneRead { request, sent, .. } = prepared;
+        let mut digests = None;
+        let result = async {
+            if capture {
+                // Fingerprint the built JSON tree, not the pre-transform request
+                // or its wire encoding. The host warns/skips missing evidence.
+                digests = serde_json::from_slice::<Value>(&sent.body)
+                    .ok()
+                    .and_then(|body| native_seat_read_digests(&body).ok());
+            }
             let model = sent.model.clone();
-            let response = self.transport.send(sent, lease).await?;
+            let response = match release {
+                Some(release) => self.transport.send_released(sent, lease, release).await?,
+                None => self.transport.send(sent, lease).await?,
+            };
             if !(200..300).contains(&response.status) {
                 return Err(if response.status >= 500 || response.status == 429 {
                     RetryableLlmError::ServerError.into()
@@ -268,7 +362,44 @@ impl RemoteDecisionSeat for SystemOneSeat {
                 "output_tokens": wire.usage.output_tokens,
             });
             Ok(parsed)
+        }
+        .await;
+        SeatRead {
+            request: digests,
+            result,
+        }
+    }
+}
+
+impl RemoteDecisionSeat for SystemOneSeat {
+    fn pin(&self) -> ProviderPin {
+        self.pin.clone()
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        Some(MAX_IMAGE_EDGE)
+    }
+
+    fn ask<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: std::time::Duration,
+    ) -> SeatFuture<'a> {
+        Box::pin(async move {
+            self.ask_inner(request, lease, time_left, false, None)
+                .await
+                .result
         })
+    }
+
+    fn ask_recorded<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: Duration,
+    ) -> SeatReadFuture<'a> {
+        Box::pin(self.ask_inner(request, lease, time_left, true, None))
     }
 }
 
@@ -325,6 +456,55 @@ impl SystemOneTransport for BearerTransport {
             })
         })
     }
+
+    fn send_released<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+        release: DispatchRelease<'a>,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            let mut post = self
+                .client
+                .post(&request.endpoint)
+                .timeout(request.time_left)
+                .bearer_auth(&self.bearer);
+            for (name, value) in &request.headers {
+                post = post.header(name.as_str(), value.as_str());
+            }
+            release()?;
+            lease.begin_physical_attempt();
+            let mut response = post
+                .body(request.body)
+                .send()
+                .await
+                .map_err(transport_error)?;
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                return Ok(SystemOneHttpResponse {
+                    status,
+                    body: Vec::new(),
+                });
+            }
+            if response
+                .content_length()
+                .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
+            {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+                if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(SystemOneHttpResponse {
+                status,
+                body: bytes,
+            })
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -340,7 +520,52 @@ struct WireUsage {
     output_tokens: u64,
 }
 
+fn build_question(request: &SeatRequest) -> Value {
+    let (kind, criteria) = match &request.question.contract {
+        // The question's criteria triple, as what a yes and a no mean.
+        AnswerContract::Noul => (
+            "noul",
+            QuestionCriteria::from_state(&request.state).map(
+                |criteria| json!({"true": criteria.yes_means(), "false": criteria.no_means()}),
+            ),
+        ),
+        AnswerContract::Choice { options } => {
+            let map: BTreeMap<&str, Value> =
+                options.iter().map(|s| (s.as_str(), Value::Null)).collect();
+            ("choice", Some(json!(map)))
+        }
+        AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
+        // The wire has no point: a Point asks for a box, read as its centre.
+        AnswerContract::Box | AnswerContract::Point => ("box", None),
+    };
+    // A question that is no yes/no reads its criteria as the rubric of its
+    // own form after its instructions (FIX 2181).
+    let rubric = QuestionCriteria::rubric_in(&request.state, &request.question.contract)
+        .filter(|_| request.question.contract != AnswerContract::Noul);
+    let instructions = match rubric {
+        Some(rubric) => format!("{}\n\n{rubric}", request.question.text),
+        None => request.question.text.clone(),
+    };
+    let mut question = json!({"type":kind,"instructions":instructions});
+    if let Some(criteria) = criteria {
+        question["criteria"] = criteria;
+    }
+    question
+}
+
 fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<SeatAnswer> {
+    let (answer, probability) = parse_prediction(value, request)?;
+    Ok(SeatAnswer {
+        answer,
+        probability,
+        usage: LlmUsage::zero(),
+    })
+}
+
+fn parse_prediction(
+    value: &Value,
+    request: &SeatRequest,
+) -> oneiron::LlmResult<(DecisionAnswer, f64)> {
     let invalid = || oneiron::LlmError::from(FatalLlmError::InvalidRequest);
     let kind = value
         .get("type")
@@ -454,11 +679,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
     if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
         return Err(invalid());
     }
-    Ok(SeatAnswer {
-        answer,
-        probability,
-        usage: LlmUsage::zero(),
-    })
+    Ok((answer, probability))
 }
 
 fn valid_probabilities(probabilities: &serde_json::Map<String, Value>) -> bool {
@@ -475,6 +696,5 @@ fn transport_error(error: reqwest::Error) -> oneiron::LlmError {
         RetryableLlmError::ServerError.into()
     }
 }
-
 #[cfg(test)]
 mod tests;

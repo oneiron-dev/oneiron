@@ -225,6 +225,37 @@ impl BrokerContext {
         })
     }
 
+    /// [`Self::send`] with the caller's release after connection and key retrieval.
+    pub(crate) async fn send_released(
+        &self,
+        secret: &str,
+        header: &CallHeader,
+        body: &[u8],
+        wait: Duration,
+        release: oneiron::llm::DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> LlmResult<BrokerAnswer> {
+        header
+            .check(body)
+            .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+        let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
+        let reply = super::broker::call_with_key_released(
+            &client,
+            &self.inner.keys,
+            secret,
+            header,
+            body,
+            Some(release),
+            Some(lease),
+        )
+        .await?;
+        let (status, _) = answered(reply.outcome)?;
+        Ok(BrokerAnswer {
+            status,
+            body: reply.body,
+        })
+    }
+
     /// Opens the one streamed call `header` checks, with the key read at
     /// `keys` (a seat's model door, FIX 15702 slice 2), and leaves its reply
     /// to the caller: its outcome, then its body as the broker clears it.
@@ -363,6 +394,43 @@ impl SystemOneTransport for SystemOneLeg {
             let mut answer = self
                 .context
                 .send(&self.secret, &header, &request.body, request.time_left)
+                .await?;
+            Ok(SystemOneHttpResponse {
+                status: answer.status,
+                body: std::mem::take(&mut *answer.body),
+            })
+        })
+    }
+
+    fn send_released<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+        release: oneiron::llm::DispatchRelease<'a>,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            let url = reqwest::Url::parse(&request.endpoint)
+                .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
+            let header = CallHeader::new(
+                lease.id().to_owned(),
+                Shape::SystemOne,
+                url.origin().ascii_serialization(),
+                url.path().to_owned(),
+                request.headers,
+                request.model,
+                is_cloud_node(),
+                &request.body,
+            );
+            let mut answer = self
+                .context
+                .send_released(
+                    &self.secret,
+                    &header,
+                    &request.body,
+                    request.time_left,
+                    release,
+                    lease,
+                )
                 .await?;
             Ok(SystemOneHttpResponse {
                 status: answer.status,

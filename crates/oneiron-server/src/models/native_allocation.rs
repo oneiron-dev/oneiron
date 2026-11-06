@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use oneiron::llm::run_admission::{
     AllocationCallKey, AllocationStoreError, BudgetLine, DurableAllocationHold, LeaseUnit, Payer,
     PayerPerson, PersistentAllocation, RunAdmission, RunAttribution, RunDeclaration, RunEvent,
-    RunReceipt, RunReceiptSink, VaultAllocationLedger, captured_sink,
+    RunReceipt, RunReceiptSink, VaultAllocationLedger,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId};
 
@@ -46,10 +46,11 @@ impl NativeRunAllocation {
             RunDeclaration::undeclared(line),
             meter,
             Arc::clone(&self.allocation),
-            captured_sink(Arc::clone(&self.receipts)),
+            Arc::clone(&self.receipts),
             payer,
             attribution,
         )
+        .capturing_settlements()
     }
 
     pub(crate) fn declared_run(
@@ -70,10 +71,11 @@ impl NativeRunAllocation {
             declaration,
             meter,
             Arc::clone(&self.allocation),
-            captured_sink(Arc::clone(&self.receipts)),
+            Arc::clone(&self.receipts),
             None,
             None,
         )
+        .capturing_settlements()
     }
 }
 

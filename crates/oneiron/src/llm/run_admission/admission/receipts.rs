@@ -1,6 +1,7 @@
 //! Admission and terminal receipts share one original clock-stamped value.
 use super::{CallFacts, ModelId, RunDenied, RunInner, RunPermit};
 use crate::llm::run_admission::{RunEvent, RunReceipt};
+use super::super::capture::SettlementCapture;
 
 impl RunInner {
     pub(super) fn receipt_for(
@@ -10,6 +11,7 @@ impl RunInner {
         subject: &str,
         admitted: Result<RunPermit, RunDenied>,
         model: Option<ModelId>,
+        capture: &SettlementCapture,
         intent: Option<&dyn crate::llm::run_admission::AllocationCallIntent>,
     ) -> Result<RunPermit, RunDenied> {
         let admitted =
@@ -23,7 +25,8 @@ impl RunInner {
                 },
             );
         match admitted {
-            Ok((permit, receipt)) => {
+            Ok((mut permit, receipt)) => {
+                permit.capture = capture.clone();
                 if let Some(model) = model {
                     self.lock_calls().insert(
                         permit.lease.id().to_owned(),
@@ -88,6 +91,7 @@ impl RunInner {
             run: self.run.clone(),
             revision,
             event,
+            native_admission: None,
         }
     }
 

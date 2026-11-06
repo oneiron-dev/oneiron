@@ -209,6 +209,7 @@ impl ServedCompactionBackend {
                         at,
                         ContentPart::Text {
                             text: format!("{SELF_WRITER_FRAME}\n\n{}", home.text),
+                            signature: None,
                         },
                     );
                 }

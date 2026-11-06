@@ -5,9 +5,10 @@ use super::{
     invalid, paired_valid,
 };
 use oneiron_contracts::{EntityId, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderDecision {
     pub answer: DecisionAnswer,
     pub probability: Option<f64>,
@@ -19,12 +20,31 @@ pub struct ProviderDecision {
     /// model: a seat rung that served the call, its fallback included (FIX 2730). It
     /// keeps the provider pin's rung and version, and the receipt names it instead.
     pub served: Option<ProviderPin>,
+    /// Cost per thousand units from this answer's own measurement. An outer `None`
+    /// uses the provider's rate; `Some(None)` records an unknown measured cost and
+    /// must not fall back to a rate for a different model.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_measured_cost"
+    )]
+    pub cost_per_thousand: Option<Option<f64>>,
+}
+
+fn deserialize_measured_cost<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer).map(Some)
 }
 
 /// A yes/no reading beside the answer ("does this need more thinking?" or "ask a
 /// person?"). It is never an answer option.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PairedAnswer {
+    #[serde(with = "super::codec::entity")]
     pub question: EntityId,
     pub question_version: u32,
     /// P(yes).

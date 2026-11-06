@@ -63,7 +63,7 @@ fn invalid(reason: &str) -> Error {
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 
@@ -96,14 +96,14 @@ async fn lens_step(
     Ok(
         match call_as_step(step_ctx, backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
-                if let Err(error) = charges.record_terminal(
-                    step_ctx.vault,
-                    step_ctx.attempt_id,
-                    step_hash,
-                    &response.usage,
-                ) {
+                if let Err(error) =
+                    charges.record_terminal(step_ctx.vault, binding, &response.usage)
+                {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }
@@ -145,7 +145,7 @@ fn answer_text(response: &LlmResponse) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -183,11 +183,11 @@ fn lens_request(
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: instruction }],
+                content: vec![ContentPart::Text { text: instruction, signature: None }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text }],
+                content: vec![ContentPart::Text { text, signature: None }],
             },
         ],
         tools: Vec::new(),
@@ -382,7 +382,7 @@ pub async fn run_weave_lens(
                 }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             // The refused answer and why go back to the model; the repair
@@ -393,6 +393,7 @@ pub async fn run_weave_lens(
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: weave_lens_repair_text(&stored.report.value, &refused),
+                        signature: None,
                     }],
                 });
                 reason = refused;
@@ -423,6 +424,6 @@ pub async fn run_weave_lens(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }

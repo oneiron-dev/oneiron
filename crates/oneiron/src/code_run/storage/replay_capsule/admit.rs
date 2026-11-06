@@ -585,7 +585,7 @@ fn same_bytes(kept: Option<&[u8]>, held: Option<&[u8]>) -> bool {
 fn text_part<'r>(request: &'r LlmRequest, slot: &ExposureSlot) -> Option<&'r str> {
     let message = request.messages.get(usize::try_from(slot.message).ok()?)?;
     match message.content.get(usize::try_from(slot.part).ok()?)? {
-        ContentPart::Text { text } => Some(text.as_str()),
+        ContentPart::Text { text, .. } => Some(text.as_str()),
         _ => None,
     }
 }
