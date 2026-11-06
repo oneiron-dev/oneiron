@@ -369,6 +369,7 @@ impl Memory<'_> {
                     claim_ref: input.claim_ref.clone(),
                     review_id: review_id.to_owned(),
                     decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
                 },
             )?;
             Some(settlement.receipt_ref)

@@ -31840,13 +31840,13 @@ pub fn vault_claims_review(
     memory: &Memory<'_>,
     input: crate::memory::ClaimProposalReviewRequest,
 ) -> MemoryResult<crate::memory::ClaimProposalReview> {
-    memory.claim_review_as_owner(&memory.embedded_owner("vault.claims.review")?, &input)
+    memory.claim_review(&input)
 }
 pub fn vault_claims_settle(
     memory: &Memory<'_>,
     input: crate::memory::ClaimSettleRequest,
 ) -> MemoryResult<crate::memory::ClaimSettlement> {
-    memory.claim_settle_as_owner(&memory.embedded_owner("vault.claims.settle")?, &input)
+    memory.claim_settle(&input)
 }
 pub fn vault_craft_candidates(
     memory: &Memory<'_>,

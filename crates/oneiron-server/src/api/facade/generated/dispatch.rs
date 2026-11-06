@@ -18993,7 +18993,7 @@ async fn vault_claims_review(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(call, "vault.claims.review")?;
     let caller = facade_actor(server, auth)?;
     let value = input?;
@@ -19033,7 +19033,7 @@ async fn vault_claims_settle(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(call, "vault.claims.settle")?;
     let caller = facade_actor(server, auth)?;
     let value = input?;
