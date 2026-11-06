@@ -91,6 +91,10 @@ pub(crate) struct BundleAttempt {
     /// finds, after a lost acknowledgement or a restart, still shows it to
     /// the owner. A row written without it carries none.
     pub(super) unmerged_sections: Vec<UnmergedSection>,
+    /// When this install assembled the upload, in recorded-clock seconds
+    /// (FIX 19525): the order in which reconciled attempts' sections are
+    /// shown, newest last. `None` for a row written before it was kept.
+    pub(super) assembled_at: Option<u64>,
 }
 
 impl BundleAttempt {
@@ -170,7 +174,11 @@ impl BundleAttempt {
                 out.extend_from_slice(world.as_bytes());
             }
         }
-        if !self.unmerged_sections.is_empty() {
+        // The third tail (FIX 19525): when the upload was assembled, then
+        // its unmerged sections. A row written before it was kept has none,
+        // and encodes byte for byte as it was stored.
+        if self.assembled_at.is_some() || !self.unmerged_sections.is_empty() {
+            out.extend_from_slice(&self.assembled_at.unwrap_or_default().to_be_bytes());
             out.extend_from_slice(&(self.unmerged_sections.len() as u64).to_be_bytes());
             for section in &self.unmerged_sections {
                 encode_unmerged(&mut out, section)?;
@@ -235,10 +243,15 @@ impl BundleAttempt {
             }
             at = end;
         }
-        let unmerged_sections = if at == raw.len() {
-            Vec::new()
+        let (assembled_at, unmerged_sections) = if at == raw.len() {
+            (None, Vec::new())
         } else {
-            decode_unmerged(raw, &mut at)?
+            let assembled_at = u64::from_be_bytes(
+                read_at(raw, &mut at, 8)?
+                    .try_into()
+                    .map_err(|_| Error::InvalidKey)?,
+            );
+            (Some(assembled_at), decode_unmerged(raw, &mut at)?)
         };
         if at != raw.len() {
             return Err(Error::InvalidKey);
@@ -258,6 +271,7 @@ impl BundleAttempt {
             incomplete_authority,
             awaiting_reader,
             unmerged_sections,
+            assembled_at,
         })
     }
 }
@@ -301,17 +315,14 @@ fn read_at<'a>(raw: &'a [u8], at: &mut usize, len: usize) -> Result<&'a [u8]> {
     Ok(bytes)
 }
 
-/// Reads the third tail at `at` (FIX 19525): written only when it lists a
-/// section, so a count of none never decodes.
+/// Reads the unmerged sections of the third tail at `at` (FIX 19525), none
+/// or more.
 fn decode_unmerged(raw: &[u8], at: &mut usize) -> Result<Vec<UnmergedSection>> {
     let count = u64::from_be_bytes(
         read_at(raw, at, 8)?
             .try_into()
             .map_err(|_| Error::InvalidKey)?,
     );
-    if count == 0 {
-        return Err(Error::InvalidKey);
-    }
     let mut sections = Vec::new();
     for _ in 0..count {
         let world: [u8; 16] = read_at(raw, at, 16)?
