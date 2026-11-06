@@ -47,10 +47,17 @@ impl Vault {
         &self,
         hint: &SessionImportHint,
         ask: EntityId,
+        memory: &crate::Memory<'_>,
     ) -> Result<VerbHookWaitStatus> {
         let call = session_hook_call(HOST_SESSION_OPEN, hint.id, hint.key.actor, 0);
-        let status =
-            self.verb_hook_wait_status(call.invocation, &call.verb, call.actor, call.class, ask)?;
+        let status = self.verb_hook_wait_status_on_turn(
+            call.invocation,
+            &call.verb,
+            call.actor,
+            call.class,
+            ask,
+            memory.task_work_turn(),
+        )?;
         Ok(
             if status == VerbHookWaitStatus::Waiting && !self.hooks_enabled()? {
                 VerbHookWaitStatus::Ready

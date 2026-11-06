@@ -63,8 +63,10 @@ An explicit, newly admitted caller retry that reclaims the upload lease
 records that actual caller before continuing. A background retry does not
 renew or widen its authority.
 
-Both session pre-hooks reuse a calling operation's held task-work turn.
-An ask never needs a second permit while that operation holds the only
-one. The existing busy-session deadline remains saved during an ask: it
-is bypassed only while the native ask is waiting, and applies again if
+Both session pre-hooks and a retained retry's wait-status probe reuse a
+calling operation's held task-work turn. Only the turn is shared with the
+ask's saved author; the caller's authority is not. An ask never needs a
+second permit while that operation holds the only one. The existing
+busy-session deadline remains saved during an ask: it is bypassed only
+while the native ask is waiting, and applies again if
 the sitting is busy after the ask proceeds. No new timeout is introduced.

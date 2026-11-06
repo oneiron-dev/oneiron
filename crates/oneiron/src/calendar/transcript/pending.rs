@@ -273,7 +273,7 @@ fn land(
     let memory = pending.caller.memory(vault, actor, class)?;
     let result = (|| {
         if let (Some(hint), Some(ask)) = (&pending.retry.session, pending.retry.ask) {
-            match vault.session_import_hook_wait(hint, ask)? {
+            match vault.session_import_hook_wait(hint, ask, &memory)? {
                 VerbHookWaitStatus::Waiting => {
                     return Ok(TranscriptIngestOutcome::HookPending {
                         session_ref: hint.id(),
