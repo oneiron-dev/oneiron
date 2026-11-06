@@ -511,8 +511,8 @@ side_tables! {
     /// publication and purge (34 bytes: phase, request id, reason, deleted_at LE, window_ts LE).
     /// Key: hex32 (entity id).
     DELETION_TOPOLOGY_DELETE_INTENT: SyncState b"topology-delete-intent:" Raw;
-    /// One pending update of an entity document (document family). Key: hex32 (entity id) ":" hex8
-    /// (sequence).
+    /// One pending update of an entity document (document family). Key: hex32 (document slot) ":"
+    /// hex8 (Sequence) or decimal20 (Generation).
     DOCUMENT_UPDATE: SyncState b"u:e:" Raw;
     /// ARCH-0023b document family: pending root-document CRDT updates applied on top of d:root at
     /// startup; read-only in this crate (written server-side). Key: hex8 (sequence).
