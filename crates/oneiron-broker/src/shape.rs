@@ -26,6 +26,9 @@ pub enum Shape {
     /// with a broker-set upgrade, Bearer. The create frame is JSON with a
     /// top-level `model`; provider events stream back as text frames.
     OpenAiResponses,
+    /// OpenAI-compatible chat without the version prefix: `POST
+    /// …/chat/completions`, JSON, top-level body `model`, Bearer.
+    OpenAiChatUnversioned,
     /// Anthropic-compatible messages: `POST …/v1/messages`, top-level body
     /// `model`, `x-api-key: <key>`.
     AnthropicMessages,
@@ -94,6 +97,14 @@ pub enum Shape {
     /// An Anthropic-compatible model listing: `GET …/v1/models`, no body,
     /// `x-api-key`.
     AnthropicModels,
+    /// Cartesia speech: `POST …/tts/bytes`, JSON, top-level body `model_id`,
+    /// `x-api-key: <key>`. The reply is audio bytes, streamed.
+    CartesiaSpeech,
+    /// ElevenLabs speech:
+    /// `POST …/v1/text-to-speech/{id}?output_format=pcm_24000`, JSON,
+    /// top-level body `model_id`, `xi-api-key: <key>`. The reply is audio
+    /// bytes, streamed.
+    ElevenLabsSpeech,
 }
 
 struct Row {
@@ -136,6 +147,8 @@ enum Body {
 enum Selector {
     /// The body's `model`: its top-level key, or its form field.
     Body,
+    /// The body's `model_id`: a hosted speech wire's top-level key.
+    BodyModelId,
     /// The path's `{model}` segment. The body names none.
     Path,
     /// Nowhere on the wire: the request reads or removes a job or a file, or
@@ -199,6 +212,14 @@ const OPENAI_RESPONSES: Row = openai(
     Body::Json,
     Selector::Body,
     true,
+);
+
+const OPENAI_CHAT_UNVERSIONED: Row = openai(
+    "POST",
+    &["chat", "completions"],
+    Body::Json,
+    Selector::Body,
+    false,
 );
 
 const ANTHROPIC_MESSAGES: Row = Row {
@@ -358,6 +379,30 @@ const ANTHROPIC_MODELS: Row = Row {
     redirect: None,
 };
 
+const CARTESIA_SPEECH: Row = Row {
+    method: "POST",
+    endpoint: &["tts", "bytes"],
+    query: None,
+    body: Body::Json,
+    model: Selector::BodyModelId,
+    auth_header: "x-api-key",
+    auth_prefix: "",
+    streams: true,
+    redirect: None,
+};
+
+const ELEVENLABS_SPEECH: Row = Row {
+    method: "POST",
+    endpoint: &["v1", "text-to-speech", "{id}"],
+    query: Some("output_format=pcm_24000"),
+    body: Body::Json,
+    model: Selector::BodyModelId,
+    auth_header: "xi-api-key",
+    auth_prefix: "",
+    streams: true,
+    redirect: None,
+};
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
@@ -368,6 +413,7 @@ impl Shape {
         match self {
             Self::OpenAiChat => &OPENAI_CHAT,
             Self::OpenAiResponses => &OPENAI_RESPONSES,
+            Self::OpenAiChatUnversioned => &OPENAI_CHAT_UNVERSIONED,
             Self::AnthropicMessages => &ANTHROPIC_MESSAGES,
             Self::OpenAiImages => &OPENAI_IMAGES,
             Self::OpenAiImageEdits => &OPENAI_IMAGE_EDITS,
@@ -388,6 +434,8 @@ impl Shape {
             Self::Health => &HEALTH,
             Self::GeminiModels => &GEMINI_MODELS,
             Self::AnthropicModels => &ANTHROPIC_MODELS,
+            Self::CartesiaSpeech => &CARTESIA_SPEECH,
+            Self::ElevenLabsSpeech => &ELEVENLABS_SPEECH,
         }
     }
 
@@ -473,10 +521,10 @@ impl Shape {
 
     /// Checks the body against the row (its content type, and one JSON
     /// object, one plain multipart form, or nothing) and reads the model the
-    /// request names: the body's `model`, or the path's model segment. A
-    /// shape whose request names no model on the wire gives `None`, and the
-    /// call's bound wire model stands for it. `headers` are the call's, names
-    /// lowercase.
+    /// request names: the body's `model` (or `model_id`), or the path's model
+    /// segment. A shape whose request names no model on the wire gives `None`,
+    /// and the call's bound wire model stands for it. `headers` are the
+    /// call's, names lowercase.
     pub fn read_model(
         self,
         path: &str,
@@ -488,14 +536,20 @@ impl Shape {
             .iter()
             .find(|(name, _)| name == "content-type")
             .map(|(_, value)| value.as_str());
+        let key = match row.model {
+            Selector::BodyModelId => "model_id",
+            _ => "model",
+        };
         let named = match (row.body, content_type) {
             (Body::Empty, None) if body.is_empty() => None,
-            (Body::Json | Body::JsonOrForm, Some(JSON)) => scan_json(body)?,
+            (Body::Json | Body::JsonOrForm, Some(JSON)) => scan_json_key(body, key)?,
             (Body::Form | Body::JsonOrForm, Some(kind)) => form::read_model(kind, body)?,
             _ => return Err(Refusal::Body),
         };
         match row.model {
-            Selector::Body => named.map(Some).ok_or(Refusal::SelectorMissing),
+            Selector::Body | Selector::BodyModelId => {
+                named.map(Some).ok_or(Refusal::SelectorMissing)
+            }
             Selector::Path if named.is_some() => Err(Refusal::SelectorRepeated),
             Selector::Path => self
                 .match_path(path)?
@@ -553,15 +607,22 @@ fn plain_id(id: &str) -> bool {
 /// The top-level `model` string of one JSON object, or `None` when it has
 /// none.
 fn scan_json(body: &[u8]) -> Result<Option<String>, Refusal> {
+    scan_json_key(body, "model")
+}
+
+/// The top-level `key` string of one JSON object, or `None` when it has
+/// none. The strictness is the key's only: a duplicate, a non-string, a
+/// route override and trailing bytes refuse as they do for `model`.
+fn scan_json_key(body: &[u8], key: &'static str) -> Result<Option<String>, Refusal> {
     let mut decoder = serde_json::Deserializer::from_slice(body);
     let selector = decoder
-        .deserialize_map(SelectorVisitor)
+        .deserialize_map(SelectorVisitor(key))
         .map_err(|_| Refusal::Body)??;
     decoder.end().map_err(|_| Refusal::Body)?;
     Ok(selector)
 }
 
-struct SelectorVisitor;
+struct SelectorVisitor(&'static str);
 
 impl<'de> Visitor<'de> for SelectorVisitor {
     type Value = Result<Option<String>, Refusal>;
@@ -578,7 +639,7 @@ impl<'de> Visitor<'de> for SelectorVisitor {
                 map.next_value::<IgnoredAny>()?;
                 continue;
             }
-            if key == "model" {
+            if key == self.0 {
                 let value = map.next_value::<serde_json::Value>()?;
                 if selector.is_some() {
                     refusal = Some(Refusal::SelectorRepeated);
