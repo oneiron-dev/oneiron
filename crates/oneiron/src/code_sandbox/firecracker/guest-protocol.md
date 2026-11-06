@@ -190,3 +190,25 @@ poisons its step after either failure or a transport error. Output does not alte
 `step_result`, the terminal status, workspace proposals, or the shared protocol
 version. Release the matching guest executable, rootfs/container agent, and engine
 together: an older guest still drops its output imports before sending any frame.
+
+## Native OCI loopback ingress
+
+Native-session PID 1 also binds a separate AF_VSOCK stream listener on port 55
+before the command starts. The host uses Firecracker's base `uds_path` and its
+`CONNECT 55\n` / `OK <host-port>\n` handshake, not a guest-initiated `_55`
+Unix listener. The private request contains the existing session bridge token
+(32 bytes), address family (one byte: 4 or 6), address (16 bytes, IPv4 in its
+first four), and port (two big-endian bytes). The reply is a signed big-endian
+32-bit errno. Success uses `NativeFenceGuard::connect_loopback` in the same
+fence; it is not a new TCP listener or an authority grant.
+
+After success each direction carries big-endian 32-bit chunk lengths followed
+by those bytes, with a maximum 32 KiB data frame, zero for directional EOF,
+and `u32::MAX` for full close. This preserves half-close without exposing
+Firecracker's host-EOF full shutdown as the native stream's half-close.
+Stdio 52, control 53 and egress 54 are unchanged. See
+`docs/ops/native-session-ingress.md` for permit and session-custody rules.
+
+Adopting this native-session source needs matching guest/rootfs bytes and
+artifact/release pins. No build, deploy, kernel change or generic protocol
+version bump follows from adding the source alone.

@@ -19,6 +19,12 @@ impl LoopbackConnection {
         Self { stream, charge }
     }
 
+    /// Carries an already admitted native transport and its original floor
+    /// permit together. This constructor performs no port or authority check.
+    pub fn from_parts(stream: UnixStream, charge: HostNetPermit) -> Self {
+        Self { stream, charge }
+    }
+
     /// Transfers the stream and its room together. Keep the permit until
     /// the stream closes, including when adapting it to an async runtime.
     pub fn into_parts(self) -> (UnixStream, HostNetPermit) {
