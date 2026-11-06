@@ -1,15 +1,15 @@
-//! Namespace-aware WebDAV multistatus decoding for the pack's CalDAV wire
-//! (fix list row 16307): no DTD and no external entities. Each element keeps
+//! Namespace-aware WebDAV multistatus decoding shared by the pack and
+//! calendar host: no DTD and no external entities. Each element keeps
 //! which of the two namespaces read here it is in (none for any other), its
 //! local name, text and attributes. A document holds at most a million
-//! elements.
+//! elements on the pack path; the calendar host keeps its byte-only bound.
 
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
 
-pub(super) const DAV: &str = "DAV:";
-pub(super) const CAL: &str = "urn:ietf:params:xml:ns:caldav";
+pub const DAV: &str = "DAV:";
+pub const CAL: &str = "urn:ietf:params:xml:ns:caldav";
 
 /// The most elements one document holds.
 const MAX_NODES: usize = 1_000_000;
@@ -34,10 +34,11 @@ fn namespace(uri: &str) -> Option<Namespace> {
 
 /// One element of a multistatus document.
 #[derive(Default)]
-pub(super) struct Node {
+pub struct Node {
     ns: Option<Namespace>,
     name: String,
-    pub(super) text: String,
+    /// Element text.
+    pub text: String,
     /// Its attributes by local name, their values as written.
     attributes: Vec<(String, String)>,
     children: Vec<Node>,
@@ -58,18 +59,16 @@ impl Drop for Node {
 }
 
 impl Node {
-    pub(super) fn child(&self, ns: &str, name: &str) -> Option<&Self> {
+    /// The first child with this DAV or CalDAV name.
+    pub fn child(&self, ns: &str, name: &str) -> Option<&Self> {
         let ns = namespace(ns)?;
         self.children
             .iter()
             .find(|node| node.ns == Some(ns) && node.name == name)
     }
 
-    pub(super) fn children<'a>(
-        &'a self,
-        ns: &str,
-        name: &'a str,
-    ) -> impl Iterator<Item = &'a Self> {
+    /// Children with this DAV or CalDAV name, in document order.
+    pub fn children<'a>(&'a self, ns: &str, name: &'a str) -> impl Iterator<Item = &'a Self> {
         let ns = namespace(ns);
         self.children
             .iter()
@@ -109,6 +108,20 @@ pub(super) fn status_code(line: &str) -> Option<u16> {
 /// Text that is not UTF-8, malformed XML, a DTD, an element with no
 /// namespace, or a root other than `DAV:multistatus`.
 pub(super) fn parse(bytes: &[u8]) -> Result<Node, &'static str> {
+    parse_with_element_limit(bytes, Some(MAX_NODES))
+}
+
+/// Parses a multistatus document under the caller's existing byte bound,
+/// without the pack's separate element limit.
+///
+/// # Errors
+///
+/// Returns the same XML, namespace, DTD and root errors as the pack parser.
+pub fn parse_unbounded(bytes: &[u8]) -> Result<Node, &'static str> {
+    parse_with_element_limit(bytes, None)
+}
+
+fn parse_with_element_limit(bytes: &[u8], max_nodes: Option<usize>) -> Result<Node, &'static str> {
     let text = std::str::from_utf8(bytes).map_err(|_| "DAV XML is not UTF-8")?;
     let mut reader = NsReader::from_str(text);
     let mut stack = vec![Node::default()];
@@ -119,7 +132,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Node, &'static str> {
         match event {
             Event::Start(tag) | Event::Empty(tag) => {
                 nodes += 1;
-                if nodes > MAX_NODES {
+                if max_nodes.is_some_and(|limit| nodes > limit) {
                     return Err("DAV XML holds too many elements");
                 }
                 let (ns, local) = reader.resolver().resolve_element(tag.name());
@@ -212,6 +225,6 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Node, &'static str> {
 }
 
 /// `text` escaped for an XML element's content.
-pub(super) fn escape(text: &str) -> String {
+pub fn escape(text: &str) -> String {
     quick_xml::escape::escape(text).into_owned()
 }

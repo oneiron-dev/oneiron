@@ -214,7 +214,7 @@ impl HttpCalDav {
         let local = property.split(':').next_back().unwrap_or(property);
         let value = document
             .children(DAV, "response")
-            .find_map(|r| r.property(ns, local)?.child(DAV, "href"))
+            .find_map(|r| xml::property(r, ns, local)?.child(DAV, "href"))
             .map(|n| n.text.trim().to_owned())
             .ok_or_else(|| failure("discover", "required DAV property absent"))?;
         Ok(self.url(&value)?.to_string())
@@ -266,14 +266,14 @@ impl CalDavWire for HttpCalDav {
         let selected = document
             .children(DAV, "response")
             .filter(|row| {
-                row.property(DAV, "resourcetype")
+                xml::property(row, DAV, "resourcetype")
                     .and_then(|n| n.child(CAL, "calendar"))
                     .is_some()
             })
             .find_map(|row| {
                 let href = row.child(DAV, "href")?.text.trim();
                 let url = self.url(href).ok()?;
-                let name = row.property(DAV, "displayname").map(|n| n.text.as_str());
+                let name = xml::property(row, DAV, "displayname").map(|n| n.text.as_str());
                 (calendar_ref == href || calendar_ref == url.as_str() || Some(calendar_ref) == name)
                     .then(|| url.to_string())
             })
@@ -320,7 +320,7 @@ impl CalDavWire for HttpCalDav {
                 }
                 continue;
             }
-            let ics = match row.property(CAL, "calendar-data") {
+            let ics = match xml::property(row, CAL, "calendar-data") {
                 Some(data) => data.text.as_bytes().to_vec(),
                 None => {
                     let response = self.request(
@@ -353,7 +353,7 @@ impl CalDavWire for HttpCalDav {
                 .ok_or_else(|| failure("sync", "calendar resource has no VEVENT"))?;
             changes.push(RemoteCalendarChange::Upsert(RemoteCalendarObject {
                 href,
-                etag: row.property(DAV, "getetag").map(|n| n.text.clone()),
+                etag: xml::property(row, DAV, "getetag").map(|n| n.text.clone()),
                 uid: event.uid.clone(),
                 sequence: event.sequence,
                 content_hash: event.content_hash,

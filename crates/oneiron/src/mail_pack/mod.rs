@@ -43,7 +43,7 @@ mod caldav_calendar;
 mod calendar;
 mod compliance;
 mod credential;
-mod dav_xml;
+pub mod dav_xml;
 mod doors;
 mod gmail;
 mod google_calendar;
