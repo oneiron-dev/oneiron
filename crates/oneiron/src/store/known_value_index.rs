@@ -695,6 +695,23 @@ impl Vault {
         }
         Ok(Some(KnownSource { ids, handles }))
     }
+
+    /// Runs `read` with the values custody knows now (FIX 8966): one pass of
+    /// [`Self::known_source`], its matcher built for this read alone under
+    /// the custody read guard and wiped when `read` returns; `None` when
+    /// custody knows no value. Call it outside any write transaction.
+    ///
+    /// # Errors
+    /// The pass's own, or `read`'s.
+    pub(crate) fn with_known_values<T>(
+        &self,
+        read: impl FnOnce(Option<&KnownValues>) -> Result<T>,
+    ) -> Result<T> {
+        match self.known_source()? {
+            Some(source) => source.pass(read)?,
+            None => read(None),
+        }
+    }
 }
 
 /// A handle as a text stands it in for a value: `[secret sc12]`.
