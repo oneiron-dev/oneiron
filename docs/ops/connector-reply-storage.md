@@ -24,12 +24,15 @@ still use `SentValue::clear_bytes`.
 
 Clearing detects change during the existing string and key walk without
 cloning the whole parsed Value when there is at most one effective pass,
-or both passes can only shrink or only grow strings. A nonempty
-all-whitespace credential still has its raw pass. The original full-Value
-clone and final comparison remain when the replacement text is longer
-than the nonempty trimmed credential but shorter than the raw credential.
-This distinction does not change the returned bytes, replacement order,
-or handling of malformed bodies.
+both passes can only shrink or only grow strings, or the credential and
+replacement have different non-whitespace character sequences. The last
+case compares only those two texts with allocation-free iterators; it does
+not walk the reply again. A nonempty all-whitespace credential still has
+its raw pass. The original full-Value clone and final comparison remain
+when the replacement text is longer than the nonempty trimmed credential
+but shorter than the raw credential, and both texts have the same
+non-whitespace character sequence. This distinction does not change the
+returned bytes, replacement order, or handling of malformed bodies.
 
 The raw body is cleared before the reply becomes acknowledged, deferred,
 or handed to a question worker. An unreadable spool or failed clear write
