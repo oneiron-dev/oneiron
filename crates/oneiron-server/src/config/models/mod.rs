@@ -44,7 +44,9 @@ mod tests;
 mod training;
 mod validation;
 mod voice;
+mod worker_controller;
 mod workers;
+pub(crate) use worker_controller::worker_controller_config;
 
 pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
 pub use compaction::CompactionSettings;
