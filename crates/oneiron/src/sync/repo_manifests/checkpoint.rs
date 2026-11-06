@@ -4,7 +4,7 @@
 //! pointers, and no actor, so it seals whole under its CODE entity.
 #![allow(
     dead_code,
-    reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
+    reason = "KS7-3b's Loro projection drives this (CHECKPOINT_PAYLOADS_ENABLED, on since KS7-6)"
 )]
 
 use std::collections::BTreeMap;

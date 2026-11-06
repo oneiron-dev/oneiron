@@ -37,8 +37,8 @@ impl Vault {
     ///
     /// The factory resolves the manifest itself and is fail-closed: when the
     /// loaded resolution forces fail-closed (malformed manifest, unsupported
-    /// schema version, engine-version floor, unknown axis, row-count
-    /// overflow) it refuses with [`Error::InvalidConfig`] and never
+    /// schema version, engine-version floor, unknown axis) it refuses with
+    /// [`Error::InvalidConfig`] and never
     /// substitutes an empty or fabricated table. Production callers keep
     /// admitting with `guard.admit_for_request(&request)` exactly as before.
     pub fn policy_budget_guard(
