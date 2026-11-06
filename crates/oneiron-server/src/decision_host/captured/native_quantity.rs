@@ -44,11 +44,18 @@ impl SystemOneRung {
             },
         };
         let invoice = self.native_systemone_invoice(prepared.request(), admission);
-        let read = prepared.ask_recorded(lease, time_left, release).await;
-        if let (Some(invoice), Ok(answer)) = (invoice, &read.result)
-            && let Err(error) = invoice.record_systemone_usage(&answer.usage)
-        {
-            tracing::warn!(%error, "native SystemOne quantity was not retained");
+        let (read, response) = prepared.ask_observed(lease, time_left, release).await;
+        if let Some(invoice) = invoice {
+            if let Some(response) = response
+                && let Err(error) = invoice.record_systemone_response(&response)
+            {
+                tracing::warn!(%error, "native SystemOne raw response was not retained");
+            }
+            if let Ok(answer) = &read.result
+                && let Err(error) = invoice.record_systemone_usage(&answer.usage)
+            {
+                tracing::warn!(%error, "native SystemOne quantity was not retained");
+            }
         }
         read
     }
@@ -76,11 +83,18 @@ impl SystemOneRung {
             }
         };
         let invoice = self.native_systemone_invoice(prepared.request(), admission);
-        let read = prepared.ask_recorded(lease, time_left, release).await;
-        if let (Some(invoice), Ok(answer)) = (invoice, &read.result)
-            && let Err(error) = invoice.record_systemone_usage(&answer.usage)
-        {
-            tracing::warn!(%error, "native SystemOne quantity was not retained");
+        let (read, response) = prepared.ask_observed(lease, time_left, release).await;
+        if let Some(invoice) = invoice {
+            if let Some(response) = response
+                && let Err(error) = invoice.record_systemone_response(&response)
+            {
+                tracing::warn!(%error, "native SystemOne raw response was not retained");
+            }
+            if let Ok(answer) = &read.result
+                && let Err(error) = invoice.record_systemone_usage(&answer.usage)
+            {
+                tracing::warn!(%error, "native SystemOne quantity was not retained");
+            }
         }
         read
     }
@@ -91,8 +105,16 @@ impl SystemOneRung {
 pub(super) fn retained_native_usage(
     admission: Option<&DecisionCallAdmission>,
 ) -> Option<oneiron::LlmUsage> {
-    match admission?.terminal_usage() {
-        Ok(usage) => usage,
+    let admission = admission?;
+    match admission.terminal_usage() {
+        Ok(Some(usage)) => Some(usage),
+        Ok(None) => match admission.systemone_response() {
+            Ok(response) => response.and_then(|response| response.observed_usage()),
+            Err(error) => {
+                tracing::warn!(%error, "native SystemOne raw response was not available");
+                None
+            }
+        },
         Err(error) => {
             tracing::warn!(%error, "native SystemOne quantity was not available");
             None
