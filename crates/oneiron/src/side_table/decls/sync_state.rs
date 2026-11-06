@@ -185,6 +185,10 @@ side_tables! {
     /// Digest of which install keys counted as mine-machine signers when an authority write last
     /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
     IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// One proposing actor's opaque ramp-scope handle on this vault (FIX 9870): 32 random bytes.
+    /// Local and erasable; never replicates, never restored from an image. Key: hex32 (actor
+    /// entity id).
+    IDENTITY_TOPOLOGY_PROPOSER_SCOPE: SyncState b"it:proposer-scope:" Raw;
     /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
     /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
     IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
@@ -504,8 +508,8 @@ side_tables! {
     /// publication and purge (34 bytes: phase, request id, reason, deleted_at LE, window_ts LE).
     /// Key: hex32 (entity id).
     DELETION_TOPOLOGY_DELETE_INTENT: SyncState b"topology-delete-intent:" Raw;
-    /// One pending document-slot update (document family). Key: hex32 (source slot) ":" hex8
-    /// (sequence) or 20-digit decimal (generation).
+    /// One pending update of an entity document (document family). Key: hex32 (entity id) ":" hex8
+    /// (sequence).
     DOCUMENT_UPDATE: SyncState b"u:e:" Raw;
     /// ARCH-0023b document family: pending root-document CRDT updates applied on top of d:root at
     /// startup; read-only in this crate (written server-side). Key: hex8 (sequence).

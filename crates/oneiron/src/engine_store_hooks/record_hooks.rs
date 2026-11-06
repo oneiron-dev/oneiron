@@ -327,6 +327,26 @@ impl StoreRecordHooks for EngineRecordHooks {
         crate::identity_topology::redact_author_attribution_in_txn(vault, wtxn, target, now)
     }
 
+    fn drive_enrollment_outbound_leg(
+        &self,
+        vault: &crate::Vault,
+        local_node_id: u64,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        sender: &mut (dyn crate::outbound_consent::OutboundResultSender + '_),
+        now_ms: u64,
+    ) -> std::result::Result<
+        crate::campaign::enrollment::EnrollmentLegDrive,
+        crate::outbound_intent_ledger::IntentLedgerError,
+    > {
+        crate::campaign::enrollment::drive_enrollment_outbound_leg(
+            vault,
+            local_node_id,
+            attempt,
+            sender,
+            now_ms,
+        )
+    }
+
     fn record_comm_send_receipt(
         &self,
         vault: &crate::Vault,
@@ -373,6 +393,53 @@ impl StoreRecordHooks for EngineRecordHooks {
 
     fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()> {
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)
+    }
+
+    fn record_comm_thread_event_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        thread_ref: &str,
+        party: &str,
+        joined: bool,
+        occurred_at: u64,
+    ) -> crate::write_envelope::communication::CommResult<()> {
+        crate::comm::record_comm_thread_event_in_txn(
+            vault,
+            txn,
+            thread_ref,
+            party,
+            joined,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_inbound_reply_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()> {
+        crate::comm::record_comm_inbound_reply_in_txn(
+            vault,
+            wtxn,
+            party,
+            channel_class,
+            occurred_at,
+        )
+    }
+
+    fn record_comm_inbound_stop_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        party: &str,
+        channel_class: &str,
+        occurred_at: u64,
+    ) -> Result<()> {
+        crate::comm::record_comm_inbound_stop_in_txn(vault, wtxn, party, channel_class, occurred_at)
     }
 
     fn forget_claim_reassignments_in_txn(
@@ -698,6 +765,38 @@ impl StoreRecordHooks for EngineRecordHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn do_not_contact_subjects_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        counterparty: &str,
+    ) -> Result<Vec<EntityId>> {
+        crate::campaign::claims::do_not_contact_subjects_in_txn(store, txn, counterparty)
+    }
+
+    fn subjects_do_not_contact_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        subjects: &[EntityId],
+        channel: Option<&str>,
+        scope: &str,
+    ) -> Result<bool> {
+        crate::campaign::claims::subjects_do_not_contact_in_txn(
+            store, txn, subjects, channel, scope,
+        )
+    }
+
+    fn apply_suppression_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        cause: crate::write_envelope::cohort_claims::suppression::SuppressionCause,
+        input: &crate::write_envelope::cohort_claims::suppression::SuppressionInput,
+    ) -> Result<crate::write_envelope::cohort_claims::suppression::SuppressionReceipt> {
+        crate::campaign::send_hygiene::apply_suppression_in_txn(vault, wtxn, cause, input)
     }
 
     fn is_restrictive_comm_predicate(
