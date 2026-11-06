@@ -284,7 +284,7 @@ pub(super) fn seeds_late_fork(image: &AuthorityCheckpointV2, hash: &AuthorityEnt
         let Some(ancestor) = image.rows.get(&at) else {
             return false;
         };
-        if ancestor.world.is_none() && image.holds_rejected(&at) {
+        if ancestor.world.is_none() && (!image.keeps_state(&at) || image.holds_rejected(&at)) {
             return false;
         }
         stack.extend(ancestor.parents.iter().copied());
