@@ -74,6 +74,7 @@ pub(crate) struct ApplyOpsGateMode {
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     pub(super) prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
     pub(super) prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
+    pub(super) prepared_setup_owner: Option<crate::agent_def::PreparedSetupOwner>,
 }
 
 impl ApplyOpsGateMode {
@@ -101,6 +102,39 @@ impl ApplyOpsGateMode {
             caller_envelopes: HashMap::new(),
             prepared_person_substrate: None,
             prepared_agent_birth: None,
+            prepared_setup_owner: None,
+        }
+    }
+
+    pub(crate) fn for_agent_setup(
+        birth: crate::agent_def::PreparedAgentDefinitionBirth,
+        owner: Option<crate::agent_def::PreparedSetupOwner>,
+    ) -> Self {
+        Self::new(false, true)
+            .with_prepared_agent_birth(Some(birth))
+            .with_prepared_setup_owner(owner)
+    }
+
+    pub(crate) fn with_prepared_setup_owner(
+        mut self,
+        owner: Option<crate::agent_def::PreparedSetupOwner>,
+    ) -> Self {
+        self.prepared_setup_owner = owner;
+        self
+    }
+
+    pub(super) fn take_setup_owner_before(
+        &mut self,
+        id: EntityId,
+    ) -> Option<crate::agent_def::PreparedSetupOwner> {
+        if self
+            .prepared_setup_owner
+            .as_ref()
+            .is_some_and(|owner| owner.is_before(id))
+        {
+            self.prepared_setup_owner.take()
+        } else {
+            None
         }
     }
 

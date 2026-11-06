@@ -92,8 +92,13 @@ impl PreparedSubjectHead {
         std::iter::once(self.fact.id).chain(self.superseded.iter().map(|(id, _)| *id))
     }
 
-    pub(super) fn apply(self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        super::write_captured_head_in_txn(
+    pub(super) fn apply(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        owner: Option<crate::agent_def::PreparedSetupOwner>,
+    ) -> Result<()> {
+        super::write_captured_head_with_setup_owner_in_txn(
             vault,
             txn,
             &self.fact.id,
@@ -104,6 +109,7 @@ impl PreparedSubjectHead {
             },
             self.at,
             self.superseded.into_iter().map(|(id, _)| id),
+            owner,
         )
     }
 }
@@ -313,16 +319,27 @@ impl PreparedAgentSubjects {
     }
 
     pub(crate) fn apply(self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        self.apply_with_setup_owners(vault, txn, &mut Vec::new())
+    }
+
+    pub(crate) fn apply_with_setup_owners(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        owners: &mut Vec<crate::agent_def::PreparedSetupOwner>,
+    ) -> Result<()> {
         let writer = crate::WriteActor::new(self.agent, crate::EdgeActorClass::Agent);
         super::validation::require_person_in_txn(&vault.store, txn, &self.person)?;
         super::validate_writer_in_txn(vault, txn, writer)?;
         if let Some(model) = self.model {
-            model.apply(vault, txn)?;
+            let owner = crate::agent_def::take_setup_owner_before(owners, model.fact.id);
+            model.apply(vault, txn, owner)?;
         }
         super::validate_anchor_entities_in_txn(vault, txn, self.agent, self.person)?;
         super::validate_writer_in_txn(vault, txn, writer)?;
         if let Some(anchor) = self.anchor {
-            anchor.apply(vault, txn)?;
+            let owner = crate::agent_def::take_setup_owner_before(owners, anchor.fact.id);
+            anchor.apply(vault, txn, owner)?;
         }
         Ok(())
     }

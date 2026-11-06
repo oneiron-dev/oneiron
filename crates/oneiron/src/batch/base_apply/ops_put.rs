@@ -71,6 +71,22 @@ pub(super) fn apply_put_arm(
             && facet == crate::write_envelope::claim_body::substrate_facet_id(owner)?
             && stored_entity_type(store, wtxn, &owner)?.is_none()
         {
+            let prepared_owner = if gate_mode
+                .prepared_setup_owner
+                .as_ref()
+                .is_some_and(|prepared| prepared.matches(id, owner))
+            {
+                gate_mode.prepared_setup_owner.take()
+            } else {
+                None
+            };
+            let (owner_body, owner_substrate) = match prepared_owner {
+                Some(prepared) => {
+                    let (body, substrate) = prepared.into_person_put();
+                    (body, Some(substrate))
+                }
+                None => (crate::vault::encode_embedded_owner_actor_body()?, None),
+            };
             apply_ops_with_origin(
                 store,
                 config,
@@ -81,7 +97,7 @@ pub(super) fn apply_put_arm(
                     entity_type: crate::registry::ENTITY_TYPE_PERSON,
                     occurred,
                     learned_at,
-                    data: crate::vault::encode_embedded_owner_actor_body()?,
+                    data: owner_body,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
@@ -91,7 +107,8 @@ pub(super) fn apply_put_arm(
                 ApplyOpsGateMode::new(
                     state.record_gate_decisions,
                     state.persist_gate_pending_consent,
-                ),
+                )
+                .with_prepared_person_substrate(owner_substrate),
                 origin,
             )?;
         }
@@ -259,7 +276,8 @@ pub(super) fn apply_put_arm(
                 state.record_gate_decisions,
                 state.persist_gate_pending_consent,
             )
-            .with_birth_mask(state.birth_mask),
+            .with_birth_mask(state.birth_mask)
+            .with_prepared_setup_owner(gate_mode.take_setup_owner_before(source_id)),
             origin,
         )?;
     }
