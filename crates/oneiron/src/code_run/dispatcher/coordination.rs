@@ -168,6 +168,7 @@ impl<'a> HostSelfDispatcher<'a> {
             return Err(invalid());
         }
         crate::task_verb::HostBinding::from_leased(&live.attempt, Some(run_id))
+            .map(|binding| binding.with_executor_run_ref(&self.run_ref))
             .map_err(|_| invalid())
     }
 
