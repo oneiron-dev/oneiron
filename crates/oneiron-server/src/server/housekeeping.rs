@@ -200,6 +200,24 @@ impl SyncServer {
                     tracing::warn!(panicked = error.is_panic(), "housekeeping task failed");
                 }
             }
+            // Every retained shared environment gets its own bounded pass
+            // under the same admission, sequentially in this existing task
+            // (FIX 11136). Active and left handles are both included.
+            for vault in server.shared_vault_handles() {
+                let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
+                match tokio::task::spawn_blocking(move || vault.housekeeping(budget)).await {
+                    Ok(Ok(report)) => log_report(&report),
+                    Ok(Err(error)) => {
+                        tracing::warn!(kind = ?error.kind(), "shared-env housekeeping could not read its schedule");
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            panicked = error.is_panic(),
+                            "shared-env housekeeping task failed"
+                        );
+                    }
+                }
+            }
             server
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
                 .await;
@@ -385,10 +403,33 @@ impl SyncServer {
         let vault = Arc::clone(self.vault());
         let consults = Arc::clone(&vault);
         let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
+        let shared = self
+            .shared_vault_handles()
+            .into_iter()
+            .map(|vault| {
+                let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
+                (vault, budget)
+            })
+            .collect::<Vec<_>>();
         let pass = tokio::spawn(async move {
-            if let Ok(done) =
-                tokio::task::spawn_blocking(move || vault.housekeeping_all(budget)).await
-            {
+            let done = tokio::task::spawn_blocking(move || vault.housekeeping_all(budget)).await;
+            // The owner's "run now" covers every retained environment too,
+            // with an independent budget per handle (FIX 11136).
+            for (vault, budget) in shared {
+                match tokio::task::spawn_blocking(move || vault.housekeeping_all(budget)).await {
+                    Ok(Ok(report)) => log_report(&report),
+                    Ok(Err(error)) => {
+                        tracing::warn!(kind = ?error.kind(), "shared-env owner housekeeping failed");
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            panicked = error.is_panic(),
+                            "shared-env owner housekeeping task failed"
+                        );
+                    }
+                }
+            }
+            if let Ok(done) = done {
                 let _ = report.send(done);
             }
             // Overdue consults expire on the owner's pass too (DOOR-063).
@@ -410,10 +451,22 @@ impl SyncServer {
                 return;
             }
         };
-        let pruned = self.mcp_registry.lock().await.prune_revoked_or_expired(now);
+        let (pruned, evicted) = {
+            let mut cursors = self.memories_cursors.lock().await;
+            let mut registry = self.mcp_registry.lock().await;
+            let stale = registry.stale_connection_ids(now);
+            let pruned = registry.prune_revoked_or_expired(now);
+            let before = cursors.entries.len() + cursors.read_sets.len();
+            for id in stale {
+                cursors.close_mcp_connection(&id.0);
+            }
+            let evicted = before.saturating_sub(cursors.entries.len() + cursors.read_sets.len());
+            (pruned, evicted)
+        };
         if pruned > 0 {
             tracing::info!(
                 pruned,
+                evicted,
                 "housekeeping pruned revoked or expired MCP credentials"
             );
         }

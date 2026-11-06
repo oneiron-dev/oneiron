@@ -43,6 +43,8 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_optimize::SufficiencyCard;
 
 mod cutover;
+mod stock;
+pub(super) use stock::stock_move_kinds;
 
 /// Ranks a probe reads: a target found below this depth scores as missed.
 pub const SPACE_PROBE_DEPTH: usize = 10;
@@ -803,6 +805,7 @@ impl Vault {
         by: SetupDoor<'_>,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
         let (moving, candidate_space, incumbent_space, probes, versions) = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &rtxn)?)?;
@@ -1058,6 +1061,7 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<()> {
         let check = {
+            let _bodies = self.pin_all_result_bodies();
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             let Some(space) = embedding_space_in_txn(&self.store, &rtxn, candidate)? else {

@@ -14,6 +14,9 @@
 //! through it again from the start each `CATCH_UP_RESCAN` after a pass ends,
 //! so a pair kept for want of the Coach's Grant runs once that Grant is
 //! minted (FIX 7031).
+mod wake;
+pub(super) use wake::{WakeExecutor, WakeHost};
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -57,13 +60,6 @@ pub(super) fn coach_dial(server: &SyncServer, coach: Option<&HeldLadder>) -> Dec
     }
 }
 
-/// The host's wording of the route question; the state carries the case or
-/// the report.
-const WORDING: &str = "Which fix does this agent need so its work can go on? \
-    Choose skill_edit when the skill it ran is wrong, prompt_inject when it needs \
-    a nudge and a fresh start from before it failed, environment when a tool, a \
-    grant or a connector it needs is missing or broken, and person when none of \
-    these fits or a person must look.";
 const TICK: Duration = Duration::from_secs(5);
 /// How long after a finished catch-up scan the next one starts from the
 /// start, so a Grant minted later re-runs its NoGrant pairs (FIX 7031).
@@ -89,6 +85,10 @@ pub(crate) fn spawn(
     publisher: Arc<[PublisherCandidate]>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    let _ = server
+        .ai
+        .coach_heal_wake
+        .set(WakeHost::new(Arc::clone(&publisher)));
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -145,11 +145,7 @@ fn catch_up_step(
 ) -> Option<Option<EntityId>> {
     let after = step?;
     let vault = server.vault();
-    let pinned: Vec<&str> = publisher
-        .iter()
-        .map(|candidate| candidate.id.as_str())
-        .collect();
-    match vault.queue_code_fix_top_ups(after, &pinned, vault.now_recorded_at()) {
+    match vault.queue_code_fix_top_ups(after, publisher, vault.now_recorded_at()) {
         Ok(next) => next.map(Some),
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "past code-fix work waits for the next round");
@@ -180,7 +176,7 @@ fn round(server: &Arc<SyncServer>, publisher: &[PublisherCandidate]) -> oneiron:
     Ok(())
 }
 
-fn run_one(
+pub(super) fn run_one(
     server: &Arc<SyncServer>,
     admitted: &DreamerAdmittedAttempt,
     publisher: &[PublisherCandidate],
@@ -205,7 +201,7 @@ fn run_one(
         principal,
         dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
-        wording: WORDING.to_owned(),
+        wording: server.ai.dreamer_wording().coach_heal_route().to_owned(),
         budget: DECIDE_BUDGET,
     };
     // A case's or a report's `skill_edit` heal drafts its revision on the
