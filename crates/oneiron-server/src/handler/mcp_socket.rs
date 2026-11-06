@@ -71,8 +71,9 @@ const MAX_MCP_CALLS_IN_FLIGHT: usize = 8;
 const MAX_ANSWER_BYTES: usize = 24 * 1024 * 1024;
 
 /// The upgrade headers each call's request repeats, so the routes judge where
-/// the caller sits and where it came from as they did for the upgrade.
-const CARRIED_HEADERS: [header::HeaderName; 2] = [header::HOST, header::ORIGIN];
+/// the caller sits and where it came from as they did for the upgrade. The
+/// User-Agent is the same connection's upgrade observation, for signing audit.
+const CARRIED_HEADERS: [header::HeaderName; 3] = [header::HOST, header::ORIGIN, header::USER_AGENT];
 const CARRIED_FORWARDING_HEADERS: [&str; 4] = [
     "forwarded",
     "x-forwarded-for",
