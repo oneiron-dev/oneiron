@@ -35,7 +35,9 @@ use crate::write_envelope::provenance::made_by::MadeBy;
 // The version chain's reads: the head, the tree, one version's metadata
 // and its bytes, with the gate on a compaction step's response (FIX 5977).
 mod checked;
+mod queue_check;
 mod reads;
+pub(crate) use queue_check::{append_queue_check_output_in_txn, mint_queue_check_artifact_id};
 pub use reads::BlobBytes;
 
 /// Blob artifact version record. Key: id16 (artifact) + u64be (version).
@@ -200,6 +202,11 @@ pub(super) const KEY_MADE_BY: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[12];
 pub enum BlobArtifactAppendOutcome {
     Landed(BlobArtifactVersion),
     Proposed(PendingProposalView),
+}
+
+enum VersionAuthority<'proof, 'bytes> {
+    Actor(WriteActor),
+    QueueCheck(&'proof crate::merge_queue::QueueCheckFieldToken<'bytes>),
 }
 
 impl Vault {
@@ -661,6 +668,44 @@ impl Vault {
         preserve_made_by: bool,
         reanchor_html: bool,
     ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_with_authority_in_txn(
+            wtxn,
+            artifact_id,
+            body,
+            provenance,
+            VersionAuthority::Actor(actor),
+            occurred,
+            learned_at,
+            fork_parent,
+            calc_engine,
+            made_by,
+            preserve_made_by,
+            reanchor_html,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn append_blob_artifact_version_body_with_authority_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        body: VersionBody<'_>,
+        provenance: &BlobVersionProvenance,
+        authority: VersionAuthority<'_, '_>,
+        occurred: TimeRange,
+        learned_at: u64,
+        fork_parent: Option<u64>,
+        calc_engine: Option<&CalcEngineStamp>,
+        made_by: Option<&MadeBy>,
+        preserve_made_by: bool,
+        reanchor_html: bool,
+    ) -> Result<BlobArtifactVersion> {
+        let actor = match &authority {
+            VersionAuthority::Actor(actor) => *actor,
+            VersionAuthority::QueueCheck(token) => {
+                WriteActor::new(token.recorded_actor(), crate::edge::EdgeActorClass::Human)
+            }
+        };
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
             stamp.validate()?;
@@ -775,7 +820,9 @@ impl Vault {
         // The artifact is the logical owner of this content-addressed version.
         // The ASSET bytes and head/index rows are supporting effects of it;
         // the canonical claim is a second semantic content owner.
-        self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, &actor)?;
+        if let VersionAuthority::Actor(actor) = &authority {
+            self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, actor)?;
+        }
         match body {
             VersionBody::Bytes(bytes) => {
                 crate::ports::BlobStore::port_blob_put(
@@ -792,9 +839,13 @@ impl Vault {
             }
         }
         self.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
-        self.batch_in()
-            .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
-            .apply_actor(wtxn, &actor)?;
+        let claim = self
+            .batch_in()
+            .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at);
+        match &authority {
+            VersionAuthority::Actor(actor) => claim.apply_actor(wtxn, actor)?,
+            VersionAuthority::QueueCheck(_) => claim.apply(wtxn)?,
+        }
 
         let record = BlobArtifactVersion {
             version: next_version,

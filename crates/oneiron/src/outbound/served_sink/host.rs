@@ -117,6 +117,7 @@ pub struct ServedTransports {
     endpoints: ServedEndpoints,
     native_mail: Option<StalwartConfig>,
     broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
+    apns_applications: Vec<Arc<super::apns::ApnsApplication>>,
 }
 
 impl ServedTransports {
@@ -126,6 +127,7 @@ impl ServedTransports {
             endpoints,
             native_mail: None,
             broker_model_listing: None,
+            apns_applications: Vec::new(),
         }
     }
 
@@ -143,6 +145,32 @@ impl ServedTransports {
     pub fn with_broker_model_listing(mut self, host: Arc<dyn BrokerModelListingHost>) -> Self {
         self.broker_model_listing = Some(host);
         self
+    }
+
+    /// Fixed configured APNs apps, each with its own topic, environment and
+    /// connection pool. Credentials remain in the existing T0 secret door.
+    pub fn with_apns_applications(mut self, configs: Vec<super::ApnsAppConfig>) -> Result<Self> {
+        let mut applications: Vec<Arc<super::apns::ApnsApplication>> = Vec::new();
+        for config in configs {
+            if applications
+                .iter()
+                .any(|application| application.id() == config.id)
+            {
+                return Err(Error::InvalidConfig(
+                    "duplicate APNs application id".to_owned(),
+                ));
+            }
+            applications.push(Arc::new(super::apns::ApnsApplication::new(config)?));
+        }
+        self.apns_applications = applications;
+        Ok(self)
+    }
+
+    pub(super) fn apns_application(&self, id: &str) -> Option<&super::apns::ApnsApplication> {
+        self.apns_applications
+            .iter()
+            .map(Arc::as_ref)
+            .find(|application| application.id() == id)
     }
 
     pub(crate) fn broker_model_listing(&self) -> Option<&Arc<dyn BrokerModelListingHost>> {

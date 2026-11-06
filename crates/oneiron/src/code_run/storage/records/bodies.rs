@@ -731,6 +731,38 @@ pub(crate) fn lift_code_run_file_hold_in_txn(
     crate::provenance::body::queue_pruned_file_in_txn(dbs, wtxn, digest)
 }
 
+/// Drops the key rows of restore-unlanded inline bodies (FIX 11417), only
+/// when no body row or descriptor holds them and the reopened destination
+/// can journal their instance history. Archived or unbound destinations
+/// keep their mappings. The custody keys are not erased.
+///
+/// # Errors
+///
+/// Storage errors, and a key row that does not decode.
+pub(crate) fn retire_unlanded_inline_body_keys_in_txn(
+    dbs: &(impl crate::store::ManifestDbs + crate::side_table::SideTableDbs),
+    wtxn: &mut heed::RwTxn<'_>,
+    unlanded: &[[u8; 32]],
+) -> Result<()> {
+    for digest in unlanded {
+        let Some(key) = crate::store::body_key_row_in_txn(dbs, wtxn, digest)? else {
+            continue;
+        };
+        if !key.inline
+            || RAW_OUTPUTS
+                .get_borrowed(dbs, wtxn, &body_handle(digest))?
+                .is_some()
+            || crate::provenance::body::digest_is_held_in_txn(dbs, wtxn, digest)?
+        {
+            continue;
+        }
+        if crate::store::journal_restored_body_key_in_txn(dbs, wtxn, digest, &key)? {
+            crate::store::retire_body_key_in_txn(dbs, wtxn, digest)?;
+        }
+    }
+    Ok(())
+}
+
 /// The digest a raw result body row's key names by its handle.
 fn handle_digest(key: &[u8]) -> Option<[u8; 32]> {
     let handle = key.strip_prefix(RAW_OUTPUTS.decl().prefix)?;

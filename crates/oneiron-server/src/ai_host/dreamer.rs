@@ -27,9 +27,7 @@ use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{
-    HostInferenceBinding, HostInferenceContext, WorkCancel, WorkClass, WorkContext,
-};
+use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -642,11 +640,11 @@ impl ObservedFactory {
                 RoleBackend {
                     backend: Arc::clone(&backend) as Arc<dyn LlmBackend>,
                     model: route.model.clone(),
-                    binding: HostInferenceBinding::Advertised {
-                        model: route.model.clone(),
-                        locality: route.locality,
-                        keyless: route.ladder.all_keyless_own_server(),
-                    },
+                    binding: route.ladder.host_binding(
+                        route.model.clone(),
+                        route.locality,
+                        route.ladder.all_keyless_own_server(),
+                    ),
                     sourced: Some(backend),
                 },
             );
@@ -809,6 +807,11 @@ impl PassExecutorFactory for ObservedFactory {
                 .get()
                 .and_then(std::sync::Weak::upgrade)
                 .and_then(super::coach_heal::WakeExecutor::for_server),
+            coach_host: self
+                .question_timer
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .and_then(super::coach_host::WakeExecutor::for_server),
         })
     }
 
@@ -825,6 +828,11 @@ impl PassExecutorFactory for ObservedFactory {
             .get()
             .and_then(std::sync::Weak::upgrade)
             .and_then(super::coach_heal::WakeExecutor::for_server);
+        let coach_host = self
+            .question_timer
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .and_then(super::coach_host::WakeExecutor::for_server);
         let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
             (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
@@ -875,6 +883,7 @@ impl PassExecutorFactory for ObservedFactory {
                         check,
                         decisions,
                         coach_heal: coach_heal.clone(),
+                        coach_host: coach_host.clone(),
                     })
                     .collect()
             })
@@ -1098,6 +1107,7 @@ struct ObservedExecutor<'p, E> {
     /// The server's decision host, which judges a completed TASK try's Done.
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
     coach_heal: Option<super::coach_heal::WakeExecutor>,
+    coach_host: Option<super::coach_host::WakeExecutor>,
 }
 
 /// The host's loan to a Dreamer-lane TASK's realization: the pass's route
@@ -1268,6 +1278,9 @@ impl ResidentLend<'_> {
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
             let keyless = ladder.all_keyless_own_server();
+            // The host's binding for this ladder, before the run's backend
+            // takes it (I2-LOCAL: supervised native when it is on device).
+            let binding = ladder.host_binding(model.clone(), locality, keyless);
             let deadline =
                 Instant::now().checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
             let run = self
@@ -1305,13 +1318,9 @@ impl ResidentLend<'_> {
                 ResidentDreamModel {
                     backend: &backend,
                     guard: &step,
-                    model: model.clone(),
+                    model,
                     inference: HostInferenceContext {
-                        binding: HostInferenceBinding::Advertised {
-                            model,
-                            locality,
-                            keyless,
-                        },
+                        binding,
                         extraction_egress: egress.as_deref(),
                     },
                     role: None,
@@ -1390,9 +1399,9 @@ pub(super) fn own_dreaming_slot(
 
 /// The model a resident's slot names, as this server serves it: a model id
 /// as it stands, a role on its live route, else a tier the vault's manifest
-/// binds a chat-wire role to,
-/// on the vault's live route for that slot (the first such role this server
-/// serves). None when the slot names nothing served here.
+/// binds a chat-wire role to, served at the vault's live route for that
+/// slot and only there (the first such role this server serves). None when
+/// the slot names nothing served here.
 pub(super) fn served_slot_model(
     vault: &Vault,
     runtime: &ModelRuntime,
@@ -1427,6 +1436,16 @@ pub(super) fn served_slot_model(
         return Ok(None);
     };
     let route = vault.model_route(slot_kind)?.unwrap_or(widest);
+    // A tier the manifest binds is served at that slot's live route, as a
+    // role's own work is (I2-LOCAL): on device, the model's on-device view,
+    // and nothing whose served place is not that route; a direct model id
+    // above keeps its default ladder.
+    let served_at_route = |model: ModelId| {
+        router
+            .served_at(&model, route)
+            .filter(|(locality, _)| *locality == route)
+            .map(|(locality, ladder)| (model, locality, ladder))
+    };
     Ok(manifest
         .roles
         .values()
@@ -1438,12 +1457,51 @@ pub(super) fn served_slot_model(
                 binding.route_models.get(&route).cloned()
             }
         })
-        .find_map(served))
+        .find_map(served_at_route))
+}
+
+/// Dreamer executions in flight on the server's status. One that ends
+/// without its outcome (a panic the driver contains, or a dropped future)
+/// still ends, counted failed, so the Dreamer never reads working after it.
+struct DreamerRunning<'p> {
+    status: &'p StatusCell,
+    count: u64,
+    ended: bool,
+}
+
+impl<'p> DreamerRunning<'p> {
+    fn start(status: &'p StatusCell, count: u64) -> Self {
+        status.dreamer_started(count);
+        Self {
+            status,
+            count,
+            ended: false,
+        }
+    }
+
+    /// The executions ended with their outcomes, folded in by `change`.
+    fn end(mut self, change: impl FnOnce(&mut super::status::AiStatus)) {
+        self.ended = true;
+        self.status.dreamer_ended(self.count, change);
+    }
+}
+
+impl Drop for DreamerRunning<'_> {
+    fn drop(&mut self) {
+        if self.ended {
+            return;
+        }
+        let count = self.count;
+        self.status.dreamer_ended(count, |status| {
+            status.dreamer.failed = status.dreamer.failed.saturating_add(count);
+            status.dreamer.last_error = Some("dreamer execution ended without its outcome".into());
+        });
+    }
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
     fn runs_coach_host_jobs(&self) -> bool {
-        self.inner.runs_coach_host_jobs()
+        self.coach_host.is_some() || self.inner.runs_coach_host_jobs()
     }
 
     fn runs_coach_heals(&self) -> bool {
@@ -1455,10 +1513,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Working;
-            status.dreamer.started += 1;
-        });
+        let running = DreamerRunning::start(self.status, 1);
         // The kind of an attempt that ends without its work because the host
         // lends no resident instruction: it still ends (a park would strand
         // the nightly item, a Retry would loop every pass), but the status
@@ -1467,6 +1522,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         let outcome = if attempt.status.attempt.kind
             == oneiron::dreamer_runner::COACH_HEAL_ATTEMPT_KIND
             && let Some(coach) = &self.coach_heal
+        {
+            coach.execute(attempt, ctx.now_ms / 1_000).await
+        } else if attempt.status.attempt.kind
+            == oneiron::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND
+            && let Some(coach) = &self.coach_host
         {
             coach.execute(attempt, ctx.now_ms / 1_000).await
         } else if attempt.status.payload.attempt_type
@@ -1547,8 +1607,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             );
         }
         let one_writer_reads = ctx.vault.dreamer_one_writer_reads();
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Waiting;
+        running.end(|status| {
             status.dreamer_one_writer_reads = one_writer_reads;
             match &outcome {
                 Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
@@ -1583,16 +1642,12 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
     ) -> Vec<oneiron::Result<DreamerAttemptExecution>> {
         let started = u64::try_from(window.len()).unwrap_or(u64::MAX);
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Working;
-            status.dreamer.started = status.dreamer.started.saturating_add(started);
-        });
+        let running = DreamerRunning::start(self.status, started);
         let outcomes = self.inner.execute_partition_window(window).await;
         let one_writer_reads = window
             .first()
             .map(|(_, ctx)| ctx.vault.dreamer_one_writer_reads());
-        self.status.update(|status| {
-            status.dreamer.state = WorkState::Waiting;
+        running.end(|status| {
             if let Some(reads) = one_writer_reads {
                 status.dreamer_one_writer_reads = reads;
             }
