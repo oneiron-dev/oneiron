@@ -46,6 +46,26 @@ impl CitationPin {
             && loro::cursor::Cursor::decode(&anchor.end).is_ok();
         whole.then_some((entity, citation))
     }
+
+    /// Whether this pin quotes a version of the history `version` names:
+    /// every operation its frontier names is one `version` holds (FIX
+    /// 3464).
+    pub(crate) fn within(&self, version: &loro::VersionVector) -> bool {
+        decode_frontier(&self.anchor.frontier).is_ok_and(|frontier| {
+            !frontier.is_empty() && frontier.iter().all(|id| version.includes_id(id))
+        })
+    }
+
+    /// Whether `other` is this pin bound in another history: the same
+    /// citation of the same quote in the same document (FIX 3464).
+    #[cfg(feature = "sync")]
+    pub(crate) fn twin_of(&self, other: &Self) -> bool {
+        self.citation == other.citation
+            && self.entity == other.entity
+            && self.document == other.document
+            && self.anchor.quote == other.anchor.quote
+            && self.anchor.hash == other.anchor.hash
+    }
 }
 
 /// What merging one pin a window carried did (FIX 853).
@@ -541,6 +561,19 @@ impl Vault {
         pins(self, txn, message)
     }
 
+    /// The version MESSAGE `message`'s document here replaces, when a
+    /// canonical restore rebuilt it or it came here as one's successor (FIX
+    /// 3464): the window's copies of its pins of that history are their
+    /// twins' on the successor.
+    #[cfg(feature = "sync")]
+    pub(crate) fn replaced_message_version_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Option<loro::VersionVector>> {
+        super::succession::replaced_version_in(&self.store, txn, message)
+    }
+
     /// Installs `pin`, which a window brought from another of the owner's
     /// machines, in the caller's write transaction (FIX 853). A pin is
     /// written once: an equal one is held, and a different one for the same
@@ -573,7 +606,7 @@ impl Vault {
             let mut held = prior.clone();
             held.actor = held.actor.erased_here(self, txn)?;
             let Some(stands) = held.erased_wins(pin) else {
-                return Ok(PinMerge::Conflict);
+                return superseded_twin_in_txn(self, txn, &message, &key, &prior, pin);
             };
             if *stands == prior {
                 return Ok(PinMerge::Held);
@@ -595,6 +628,41 @@ impl Vault {
         }
         ENTITY_DOC_PIN.put(&self.store, txn, &key, pin)?;
         Ok(PinMerge::Written)
+    }
+}
+
+/// What a pin that differs from `prior`, the one held here, does where the
+/// two are twins and one is of the history a canonical restore's successor
+/// replaced here (FIX 3464): a copy of the replaced history is held, as its
+/// twin on the successor is here; the successor's twin, which quotes this
+/// vault's document, takes the replaced one's place, keeping an erase the
+/// replaced one carried. Any other stands as a conflict.
+#[cfg(feature = "sync")]
+fn superseded_twin_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    key: &HexPair,
+    prior: &CitationPin,
+    pin: &CitationPin,
+) -> Result<PinMerge> {
+    let Some(replaced) = super::succession::replaced_version_in(&vault.store, txn, message)? else {
+        return Ok(PinMerge::Conflict);
+    };
+    if !prior.twin_of(pin) {
+        return Ok(PinMerge::Conflict);
+    }
+    match (prior.within(&replaced), pin.within(&replaced)) {
+        (false, true) => Ok(PinMerge::Held),
+        (true, false) if quotes_document(vault, txn, message, pin) => {
+            let mut twin = pin.clone();
+            if prior.actor == DocActor::Erased {
+                twin.actor = DocActor::Erased;
+            }
+            ENTITY_DOC_PIN.put(&vault.store, txn, key, &twin)?;
+            Ok(PinMerge::Written)
+        }
+        _ => Ok(PinMerge::Conflict),
     }
 }
 

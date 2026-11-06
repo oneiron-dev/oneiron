@@ -78,6 +78,22 @@ impl Succession {
     }
 }
 
+/// The version `entity`'s document here replaces, when a canonical restore
+/// rebuilt it or it came here as a restore's successor (FIX 3553).
+#[cfg(feature = "sync")]
+pub(super) fn replaced_version_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<VersionVector>> {
+    if !super::storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    Ok(super::storage::head(store, txn, entity)?
+        .restored
+        .and_then(|restored| VersionVector::decode(&restored.replaces.version).ok()))
+}
+
 /// `version` as a canonical snapshot carries it: (peer, counter) pairs in
 /// peer order, the same on every capture.
 pub(super) fn origin_version(version: &VersionVector) -> Vec<(u64, i32)> {
