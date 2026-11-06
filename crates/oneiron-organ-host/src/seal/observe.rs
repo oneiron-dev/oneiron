@@ -14,7 +14,7 @@ use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf, Value};
 
 use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
 use crate::handlers::AskHandlers;
-use crate::host::{CallMeasure, CallSize};
+use crate::host::{CallMeasure, CallSize, LentRegion, OrganHost};
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
 use crate::spec::{LentInput, OrganCall};
@@ -40,22 +40,59 @@ impl HostedSealer<'_> {
         handlers: &AskHandlers<'_>,
         measure: &mut CallMeasure,
     ) -> Result<(Value, OrganOutcome), EsignSealerError> {
-        let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
-        let called = self.host.call_sized_with(
-            self.vault,
-            call,
-            lent,
-            handlers,
-            call_size(lent_bytes),
-            measure,
-        );
-        measure_frames(self.vault, measure);
-        let mut outcome = called.map_err(super::host_failure)?;
-        let report = std::mem::replace(&mut outcome.report, Value::Nil);
-        let (reply, observed) = Observed::split(report);
-        observed.measure(self.vault);
-        Ok((reply, outcome))
+        sized_call(self.host, self.vault, call, lent, handlers, measure)
     }
+}
+
+/// The shared call path needs a host and a vault, not a signing identity.
+pub(super) fn sized_call(
+    host: &OrganHost,
+    vault: &Vault,
+    call: OrganCall,
+    lent: Vec<LentInput>,
+    handlers: &AskHandlers<'_>,
+    measure: &mut CallMeasure,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    let lent_bytes = lent.iter().map(|input| input.bytes.len() as u64).sum();
+    let called = host.call_sized_with(vault, call, lent, handlers, call_size(lent_bytes), measure);
+    read_sized_call(vault, called, measure)
+}
+
+/// The region and absolute deadline were admitted by this caller, not
+/// reconstructed from a new duration here.
+pub(super) fn sized_region_call_until(
+    host: &OrganHost,
+    vault: &Vault,
+    call: OrganCall,
+    input: LentRegion,
+    handlers: &AskHandlers<'_>,
+    deadline: std::time::Instant,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    let size = call_size(input.len());
+    let mut measure = CallMeasure::default();
+    let called = host.call_sized_region_until_with(
+        vault,
+        call,
+        input,
+        handlers,
+        size,
+        &mut measure,
+        deadline,
+    );
+    read_sized_call(vault, called, &measure)
+}
+
+fn read_sized_call(
+    vault: &Vault,
+    called: Result<OrganOutcome, crate::error::HostError>,
+    measure: &CallMeasure,
+) -> Result<(Value, OrganOutcome), EsignSealerError> {
+    measure_frames(vault, measure);
+    let mut outcome = called.map_err(super::host_failure)?;
+    let report = std::mem::replace(&mut outcome.report, Value::Nil);
+    let (reply, observed) = Observed::split(report);
+    observed.measure(vault);
+    Ok((reply, outcome))
 }
 
 /// What a seal or verification call books, and the memory grant of its

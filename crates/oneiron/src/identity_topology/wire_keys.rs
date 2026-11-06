@@ -100,8 +100,9 @@ pub(super) const EVENT_KIND_PROPOSAL_RESOLUTION: &str = "proposal_resolution";
 /// Automatic retirement of a proposal whose participant was deleted.
 pub(super) const EVENT_KIND_PROPOSAL_CANCELLATION: &str = "proposal_cancellation";
 
-/// Ramp-scope actor stamped when the resolved proposal bound no deciding
-/// actor. The DEC-0006 tuple is total — an unattributed proposer is its own
+/// Ramp-scope actor stamped when the resolved proposal bound no proposer
+/// handle (FIX 9870): no actor wrote it, or its seal predates admission v4.
+/// The DEC-0006 tuple is total — an unattributed proposer is its own
 /// scope, never an absent field (MS-06 rebuilds per-scope stats from
 /// receipts ALONE, so a missing component would silently merge scopes).
 pub const PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED: &str = "unattributed";
@@ -128,6 +129,10 @@ pub(super) const BODY_KEY_SEAL_CAUSE: &str = "cause";
 /// A decision seal's causal point: the authority-log heads its carrier held,
 /// canonical ascending 32-byte hashes, never on an engine seal (FIX 4649).
 pub(super) const BODY_KEY_AUTHORITY_HEADS: &str = "authority_heads";
+/// A v4 seal's proposer stamp (FIX 9870): the proposer scope handle of a
+/// validated merge or split proposal, or nil for every other decision. A v3
+/// seal carries no such field.
+pub(super) const BODY_KEY_PROPOSER_SCOPE_ACTOR: &str = "proposer_scope_actor";
 pub(super) const BODY_KEY_SIGNATURE: &str = "signature";
 pub(super) const EVENT_KIND_AUTHOR_ATTRIBUTION: &str = "author_attribution";
 pub(super) const EVENT_KIND_AUTHOR_REDACTION: &str = "author_redaction";

@@ -132,6 +132,9 @@ impl Vault {
             // A shared vault's role and record scope, in the committing writer
             // (FIX 9846).
             self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, entity)? {
+                return Err(refusal);
+            }
             let mut head = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &head)?;
             let before = doc.doc.oplog_vv();

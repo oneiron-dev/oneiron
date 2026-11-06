@@ -119,9 +119,10 @@ pub use self::managed_backup::{
 pub use self::managed_holder::{
     MANAGED_OWNER_ACTION_HEADER, MANAGED_OWNER_BOUND_HEADERS, MANAGED_PERSON_ACTION_HEADER,
     MANAGED_VOICE_MAX_SKEW_SECS, MANAGED_VOICE_METHOD, MANAGED_VOICE_NONCE_BYTES,
-    MANAGED_VOICE_PATH, ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest,
-    ManagedOwnerTranscript, ManagedPersonAction, ManagedVoiceBody, ManagedWidenAction,
-    ManagedWidenTranscript, embedded_owner_holder_hex, managed_voice_body, managed_voice_nonce,
+    MANAGED_VOICE_PATH, MANAGED_WIDEN_ACTION_HEADER, ManagedOwnerAction, ManagedOwnerHead,
+    ManagedOwnerRequest, ManagedOwnerTranscript, ManagedPersonAction, ManagedVoiceBody,
+    ManagedWidenAction, ManagedWidenTranscript, embedded_owner_holder_hex, managed_voice_body,
+    managed_voice_nonce,
 };
 pub use self::owner_signing_recovery::{
     OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,

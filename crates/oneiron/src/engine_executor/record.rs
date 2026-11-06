@@ -159,6 +159,19 @@ pub(super) fn record_config_marker(
     record_text_output(storage, record, CONFIG_OUTPUT_PATH.to_owned(), &text)
 }
 
+pub(super) fn executor_config_marker_bytes(
+    storage: &ExecutorStorage<'_>,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<Vec<u8>> {
+    Ok(serde_json::to_vec(&ExecutorConfigMarker {
+        schema_version: REPLAY_METADATA_SCHEMA_VERSION,
+        config_hash: executor_config_hash_hex(storage, config, continuation),
+        prompt_fingerprint: prompt_fingerprint.to_owned(),
+    })?)
+}
+
 /// Verifies run identity and reports whether the deployed prompt drifted.
 ///
 /// Identity mismatch is always a refusal, before anything is read or written.
@@ -175,6 +188,48 @@ pub(super) fn validate_executor_config_marker(
     let marker = load_config_marker(storage, record)?.ok_or_else(|| {
         Error::InvalidConfig("engine executor replay missing config marker".to_owned())
     })?;
+    validate_config_marker(storage, &marker, config, prompt_fingerprint, continuation)
+}
+
+/// Validates a canonical marker in the caller's snapshot and custody guard.
+pub(super) fn validate_executor_config_marker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &CodeRunReplayRecord,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<PromptBinding> {
+    let output = record
+        .outputs
+        .iter()
+        .find(|output| output.path == CONFIG_OUTPUT_PATH)
+        .ok_or_else(|| {
+            Error::InvalidConfig("engine executor replay missing config marker".to_owned())
+        })?;
+    let _pin = vault.pin_result_body(output.raw_blake3);
+    let raw = vault
+        .code_run_result_body_in_txn(txn, output)?
+        .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+    let text = super::store::decode_text_output(raw)?;
+    let marker: ExecutorConfigMarker = serde_json::from_str(&text)
+        .map_err(|_| Error::CorruptedIndex("executor replay config marker"))?;
+    validate_config_marker(
+        &ExecutorStorage::Canonical(vault),
+        &marker,
+        config,
+        prompt_fingerprint,
+        continuation,
+    )
+}
+
+fn validate_config_marker(
+    storage: &ExecutorStorage<'_>,
+    marker: &ExecutorConfigMarker,
+    config: &EngineExecutorConfig,
+    prompt_fingerprint: &str,
+    continuation: Option<&[u8; 32]>,
+) -> EngineExecutorResult<PromptBinding> {
     if marker.schema_version != REPLAY_METADATA_SCHEMA_VERSION {
         return Err(Error::InvalidConfig(
             "engine executor replay config marker schema changed".to_owned(),

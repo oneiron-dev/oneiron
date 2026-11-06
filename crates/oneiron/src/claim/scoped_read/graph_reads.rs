@@ -122,7 +122,6 @@ impl ScopedRead<'_> {
             usize::MAX,
             false,
         )?;
-        let suppressed = admitted.source.suppression() + admitted.suppressed;
         let value = admitted.source.visible().then(|| {
             admitted
                 .edges
@@ -132,7 +131,7 @@ impl ScopedRead<'_> {
         });
         Ok(ScopedReadResult {
             value,
-            receipt: self.receipt_for(None, &policy, &filter, suppressed),
+            receipt: self.receipt_for(None, &policy, &filter, 0),
         })
     }
 
@@ -146,13 +145,12 @@ impl ScopedRead<'_> {
                     .map(|visible| visible.then_some(()))
             })?;
             if !admitted.visible() {
-                let suppressed = admitted.suppression();
                 return Ok(ScopedReadResult {
                     value: MemoryTimeline {
                         anchor: *anchor,
                         records: Vec::new(),
                     },
-                    receipt: self.receipt_for(None, &policy, &filter, suppressed),
+                    receipt: self.receipt_for(None, &policy, &filter, 0),
                 });
             }
             (filter, policy)
@@ -162,7 +160,6 @@ impl ScopedRead<'_> {
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let anchor_allowed = self.timeline_anchor_allowed_in(&txn, &policy, &filter, anchor)?
             && self.timeline_anchor_allowed_in(&txn, &fresh_policy, &fresh_filter, anchor)?;
-        let mut suppressed = 0;
         let mut kept = Vec::new();
         for record in timeline.records {
             let admitted = self.admit_in(&txn, &record.id, || {
@@ -176,7 +173,6 @@ impl ScopedRead<'_> {
                     )?)
                 .then_some(()))
             })?;
-            suppressed += admitted.suppression();
             if admitted.visible() {
                 kept.push(record);
             }
@@ -188,7 +184,7 @@ impl ScopedRead<'_> {
         }
         timeline.records = kept;
         let mut receipt = self.receipt_for(None, &policy, &filter, 0);
-        receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, suppressed));
+        receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
         Ok(ScopedReadResult {
             value: timeline,
             receipt,

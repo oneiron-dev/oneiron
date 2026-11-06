@@ -54,4 +54,3 @@ pub enum ModelStepResult {
     /// receipt keeps its metadata; the step is over and is never asked again.
     Erased,
 }
-
