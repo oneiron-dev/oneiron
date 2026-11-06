@@ -105,12 +105,13 @@ pub(crate) fn validate_receipt_archive_put(
     Ok(())
 }
 pub(crate) fn stage_receipt_archive_put(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     kind: u8,
     body: &[u8],
 ) -> Result<()> {
+    let store = write.store;
     if kind == ENTITY_TYPE_ASSET
         && let Some(source) = decode(body)?
     {
@@ -122,7 +123,7 @@ pub(crate) fn stage_receipt_archive_put(
     let owned = receipt_archives_for_holder(store, txn, id)?;
     if !owned.is_empty() {
         if kind != ENTITY_TYPE_CLAIM || !super::codec::is_inert_holder(body) {
-            retire_receipt_archives_for_holder(store, txn, id)?;
+            retire_receipt_archives_for_holder(write, txn, id)?;
         } else {
             // Pending source delivery must not reserve or veto a legitimate
             // holder. Retire a now-provably-uncited payload, not the claim.
@@ -144,7 +145,7 @@ pub(crate) fn stage_receipt_archive_put(
                 }
                 if source.body_sha256 == hash && !source.matches_body(body) {
                     RETIRED_SOURCE.put(store, txn, &source_id, &())?;
-                    erase_source_payload(store, txn, &source_id)?;
+                    erase_source_payload(write, txn, &source_id)?;
                 }
             }
         }
@@ -201,10 +202,11 @@ pub(super) fn read_source(
 /// Premark the full source-only closure before deindexing. An adversarial pending
 /// carrier chain cannot recurse through callbacks or grant deletion of a holder.
 pub(crate) fn retire_receipt_archives_for_holder(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     holder: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     if RETIRED_HOLDER.contains(store, txn, holder)? {
         return Ok(());
     }
@@ -223,11 +225,16 @@ pub(crate) fn retire_receipt_archives_for_holder(
         }
     }
     for id in sources {
-        erase_source_payload(store, txn, &id)?;
+        erase_source_payload(write, txn, &id)?;
     }
     Ok(())
 }
-fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+fn erase_source_payload(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let store = write.store;
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(());
     };
@@ -238,7 +245,7 @@ fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId)
     if header.entity_type != ENTITY_TYPE_ASSET || id_of_bytes(body)? != *id {
         return Err(invalid());
     }
-    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, id)?;
+    let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, id)?;
     crate::ppr::invalidate_ppr_for_delete(store, txn, id, &neighbors)?;
     if graph {
         crate::store::graph_version::increment_graph_version(store, txn)?;
@@ -249,14 +256,15 @@ fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId)
     Ok(())
 }
 pub(crate) fn remove_receipt_archive_custody(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     if BINDING.contains(store, txn, id)? {
         RETIRED_SOURCE.put(store, txn, id, &())?;
     }
-    retire_receipt_archives_for_holder(store, txn, id)
+    retire_receipt_archives_for_holder(write, txn, id)
 }
 
 pub(crate) fn receipt_archive_custody_exists(
@@ -275,10 +283,11 @@ pub(crate) fn receipt_archive_custody_exists(
 /// Deletion intent retires this ID as a possible not-yet-seen source too.
 /// Kind-change cleanup uses the narrower holder retirement above instead.
 pub(crate) fn retire_receipt_archives_for_erased_id(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     RETIRED_SOURCE.put(store, txn, id, &())?;
-    retire_receipt_archives_for_holder(store, txn, id)
+    retire_receipt_archives_for_holder(write, txn, id)
 }

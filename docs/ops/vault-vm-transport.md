@@ -50,8 +50,9 @@ credential.
   `network`, and one at or after it refuses a profile without it, so profiles
   change with the host library.
 - The managed profile (FIX 6809) adds a required manifest field,
-  `vm_managed_profile_revision: 1`. Its floor is the engine commit that merged
-  FIX 6809. An image before it ignores the profile's files, so its vault would
+  `vm_managed_profile_revision`, now 2: revision 2 (FIX 13706-13708) also reads
+  the posture and checkpoint opt-out files. Its floor is the engine commit that
+  merged that revision. An image before it ignores the profile's files, so its vault would
   start without its tenancy or its owner's choices. The supervisor checks the
   revision, with the hashes and that floor, before it stages any of the files,
   prepares the VMM or hands over F, C or A, and boots no image before the floor
@@ -441,10 +442,10 @@ A NIC does not replace the custody anchor proxy. The host's loopback is not the
 guest's, so an anchor URL on the host's `127.0.0.1` relay still goes through
 1033.
 
-## Managed profile (FIX 6809)
+## Managed profile (FIX 6809, FIX 13706-13708)
 
 A vault VM's engine takes the same managed-profile flags a supervisor passes a
-node's child. In a VM they come from five typed files on the config drive,
+node's child. In a VM they come from seven typed files on the config drive,
 which the guest's bootstrap reads itself. There is no generic argument file and
 no shell parser.
 
@@ -455,6 +456,8 @@ no shell parser.
 | `/config/failure-signal-export` (`VM_GUEST_FAILURE_SIGNAL_EXPORT_FILE`) | `true` or `false` | `--failure-signal-export true` or `--failure-signal-export false` |
 | `/config/failure-signal-training` (`VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE`) | `true` or `false`, apart from the export file | `--failure-signal-training true` or `--failure-signal-training false` |
 | `/config/fast-dims` (`VM_GUEST_FAST_DIMS_FILE`) | Decimal digits: a nonzero width a u16 holds | `--fast-dims <width>` |
+| `/config/privacy-posture` (`VM_GUEST_PRIVACY_POSTURE_FILE`) | `managed`, `relay` or `self-host` | `--privacy-posture <value>`. Our cloud writes `managed`: the hosted checkpoint policy and the host signer before the engine serves (QUORUM-HOST-ROOT = C) |
+| `/config/checkpoint-host-opt-out` (`VM_GUEST_CHECKPOINT_HOST_OPT_OUT_FILE`) | `true` or `false` | `true`: a bare `--managed-checkpoint-host-opt-out`, the operator's enterprise/advanced capability. `false`: no flag |
 
 - Each body is the whole value, with at most one final LF: no space, CR, sign,
   prefix, comment or second line. Write the hex in lowercase and end each file
@@ -466,7 +469,7 @@ no shell parser.
   bytes or not in its form refuses the provisioning as `provision_failed`. The
   refusal names the file, never its bytes.
 - On each boot that serves (an open or a restore, not an inspection) the
-  bootstrap reads all five with `network.json`, before the vault's key goes in.
+  bootstrap reads all seven with `network.json`, before the vault's key goes in.
   An open's engine and a restore's engine get the same flags.
 - The engine checks the values as it does on a node: `--member-vault` needs
   `--organization-owner`, a shared vault's organization is its derivation
@@ -616,7 +619,7 @@ overwrite.
   reconcile are the supervisor's.
 - **Host network.** The TAP, its rules, DNS sourcing, operator relays and the
   network's activation are the supervisor's (FIX 6808's host half).
-- **Profile publication.** Writing and removing the five profile files under
+- **Profile publication.** Writing and removing the seven profile files under
   the config drive's lock, building the drive an open and a restore share, and
   holding back a profile until the image's revision and floor check out are the
   supervisor's (FIX 6809's LC half, FIX 7081).

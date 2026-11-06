@@ -130,6 +130,15 @@ impl Vault {
         // replica holds the WORLD row (fix 7). A soft delete or an archive
         // keeps them: the world restores from old bundles.
         if decoded.is_hard() {
+            // Keep the positive body binding until its native disposition
+            // settles; the source fence then covers absent entity rows too.
+            crate::deletion::checkpoint_payload::settle_workflow_tool_payloads_for_reason_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                decoded.reason,
+            )?;
+            crate::agent_dispatch::erase_workflow_tool_source_in_txn(&self.store, wtxn, id)?;
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
@@ -168,8 +177,16 @@ impl Vault {
                 wtxn,
                 id,
             )?;
-            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
-            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_source_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::skill_hub::retire_refinement_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
             let had_birth_sources = crate::store::agent_birth_custody::birth_custody_exists_in_txn(
@@ -177,8 +194,16 @@ impl Vault {
                 wtxn,
                 id,
             )?;
-            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
-            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::receipt::retire_receipt_archives_for_erased_id(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector, ledger_changed) =
@@ -241,10 +266,26 @@ impl Vault {
         let ledger_clear = self.tombstone_ledger_clear(id);
         if !self.active_delete_scope_exists_after_probe_in_txn(wtxn, id, ledger_clear)? {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, wtxn, id)?;
-            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
-            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
-            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
-            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_source_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::skill_hub::retire_refinement_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::receipt::retire_receipt_archives_for_erased_id(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map

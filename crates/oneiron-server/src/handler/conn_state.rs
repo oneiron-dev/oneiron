@@ -75,6 +75,11 @@ pub(super) struct ConnState {
     /// socket's loop takes it, through `&mut`; the mutex keeps the state
     /// `Sync`.
     pub(super) asset_bodies: std::sync::Mutex<oneiron::sync::AssetBodySession>,
+    /// The peer's hello listed sealed world-update frames (DEC-0005 fix 8).
+    pub(super) sealed_world_updates: bool,
+    /// The peer asked for sealed world updates on this socket: stored ones
+    /// are pushed to it from then on.
+    pub(super) sealed_updates_live: bool,
 }
 
 impl ConnState {
@@ -104,6 +109,8 @@ impl ConnState {
             window_pad_carrier: std::collections::HashSet::new(),
             repo_copy_generations: std::sync::Mutex::default(),
             asset_bodies: std::sync::Mutex::default(),
+            sealed_world_updates: false,
+            sealed_updates_live: false,
         }
     }
 

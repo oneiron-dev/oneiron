@@ -60,6 +60,12 @@ pub(crate) fn private_threads_readable_with_read_in(
     viewers: &[EntityId],
     current: bool,
 ) -> Result<bool> {
+    // A row a mail source's audience binds, or whose words came from one,
+    // reads only to that source's people, the owner's read included
+    // (FIX 12559, owner MAIL-SHARE = A). A vault with no source binds none.
+    if !crate::source_audience::readable_with_read_in(vault, dbs, txn, id, raw, viewers)? {
+        return Ok(false);
+    }
     if crate::store::ManifestDbs::is_union(dbs) {
         let base = vault.store.read();
         let Some(walk) = thread_walk_kept(vault, &base, txn, id, raw)? else {
