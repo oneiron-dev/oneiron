@@ -6,9 +6,9 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{CodeError, Error, Result};
+use crate::git_wire::git_path_text;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::secret_custody::SecretSight;
-use gix::bstr::ByteSlice;
 use gix::object::tree::EntryKind;
 use std::fmt;
 use std::io::Read;
@@ -233,13 +233,15 @@ pub(super) fn collect_repo_blobs(
                 "Git tree entry could not be decoded",
             ))
         })?;
-        let filename = entry.filename().to_str().map_err(|_| {
+        // A name outside UTF-8 keeps its exact bytes as a Git path's text
+        // (FIX 21326), never a lossy label or a skipped file.
+        let filename = git_path_text(entry.filename()).map_err(|_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "Git tree path must be UTF-8",
+                "Git tree path must not contain NUL",
             ))
         })?;
         let path = if prefix.is_empty() {
-            filename.to_owned()
+            filename.into_owned()
         } else {
             format!("{prefix}/{filename}")
         };
