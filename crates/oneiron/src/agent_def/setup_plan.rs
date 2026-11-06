@@ -81,13 +81,15 @@ pub(crate) struct PreparedAgentSetup {
     pub(super) birth: PreparedAgentDefinitionBirth,
     pub(super) person: Option<PreparedAgentPerson>,
     pub(super) owners: Vec<PreparedSetupOwner>,
-    entity_puts: Vec<EntityId>,
+    entity_puts: Vec<SetupEntityPut<'static>>,
 }
 
 impl PreparedAgentSetup {
-    /// Every native Put, in order, including repeated ids and superseded heads.
-    pub(crate) fn entity_puts(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.entity_puts.iter().copied()
+    /// Every encoded native Put, in order, including repeated ids and superseded heads.
+    pub(crate) fn entity_puts(&self) -> impl Iterator<Item = (EntityId, u8, &[u8])> + '_ {
+        self.entity_puts
+            .iter()
+            .map(|put| (put.id, put.entity_type, put.data.as_ref()))
     }
 }
 
@@ -172,8 +174,14 @@ pub(crate) fn prepare_agent_setup_in_txn(
             }
         }
     }
-    let entity_puts = preceding.iter().map(|put| put.id).collect();
-    drop(preceding);
+    let entity_puts = preceding
+        .into_iter()
+        .map(|put| SetupEntityPut {
+            id: put.id,
+            entity_type: put.entity_type,
+            data: Cow::Owned(put.data.into_owned()),
+        })
+        .collect();
     Ok(PreparedAgentSetup {
         birth,
         person,
