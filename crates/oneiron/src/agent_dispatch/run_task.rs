@@ -17,13 +17,22 @@
 //! (`Vault::executor_leases_released`).
 //!
 //! A run tree moves with its root (REVIEW-6638): only a root run, a dispatch
-//! with no parent attempt, gets a run TASK. A child the run spawns, at any
-//! depth, has none of its own: its claim walks `parent_attempt` up to its
-//! root's run TASK and runs it only while this machine holds the root's
-//! lease, under a fence at the root's generation, and takes, renews and
+//! with no parent attempt, gets a run TASK at its dispatch. A child the run
+//! spawns, at any depth, runs under its nearest ancestor's: its claim walks
+//! `parent_attempt` up to that run TASK and runs it only while this machine
+//! holds that lease, under a fence at its generation, and takes, renews and
 //! settles nothing on it. When the root moves, every child on the old
 //! machine stands down at that fence, and the root, rerun on the machine
 //! that took it, spawns its children there.
+//!
+//! A child that outlives its root becomes a root of its own (REVIEW-6638).
+//! The write that settles a run TASK mints one, flagged `outlived_root`, for
+//! each child of the run still pending in this queue with no pending try
+//! above it, as a root's dispatch mints its own: its frozen payload keeps
+//! its parent's identity. From then on it takes, renews and settles its own
+//! lease, its own children follow it, and the reaper hands it over as a
+//! root; the machine that takes it holds no row of its settled parent and
+//! runs it without one (`super::agent_run`).
 //!
 //! On one machine the lease is always its own, so nothing new refuses: a
 //! run with no run TASK (dispatched before this change) runs as before. A
@@ -37,7 +46,7 @@
 //! queue row there, is `super::run_handover` (slice 6).
 //! Entry: `mint_agent_run_task_in_txn`, `take_agent_run_lease_in_txn`.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
@@ -76,10 +85,11 @@ pub(crate) const AGENT_RUN_LEASE_HOLD_SECS: u64 = 15 * 60;
 /// How many links a claim or a settlement follows back to find the run TASK
 /// a try runs under: each `retry_of` link from a retry, a landing successor,
 /// an owner's continuation or a try a handover queued here to the try its
-/// dispatch minted, and each `parent_attempt` link from a spawned child up
-/// to its root (REVIEW-6638), all within this one bound. Engine call (CALLS,
-/// FIX 4747): past it, or past a try this queue does not hold whose own id
-/// names no run TASK, the row has no run TASK and runs as before.
+/// run TASK was minted under, and each `parent_attempt` link from a spawned
+/// child up to its nearest ancestor with one (REVIEW-6638), all within this
+/// one bound. Engine call (CALLS, FIX 4747): past it, or past a try this
+/// queue does not hold whose own id names no run TASK, the row has no run
+/// TASK and runs as before.
 const AGENT_RUN_RETRY_CHAIN_WALK: usize = 64;
 
 /// The typed cause a local try ends with when its run TASK names another
@@ -163,10 +173,15 @@ pub struct AgentRunFence {
     pub task_ref: EntityId,
     pub node_id: u64,
     pub generation: u64,
-    /// A spawned child's fence on its root's run TASK (REVIEW-6638): it
-    /// holds the root's lease at the generation the child's claim read, and
-    /// renews nothing; only the root's own claim, steps, park and resume,
-    /// and the reaper's pass renew it.
+    /// The try the claim fenced.
+    pub attempt: AttemptId,
+    /// A spawned child's fence on its nearest ancestor's run TASK
+    /// (REVIEW-6638): it holds that lease at the generation the child's
+    /// claim read, and renews nothing; only that run's own claim, steps,
+    /// park and resume, and the reaper's pass renew it. Once that run
+    /// settles here, the fence follows the run TASK its settlement minted
+    /// for the child's tree, read through `attempt`
+    /// (`outlived_root_standing_in`).
     pub child: bool,
 }
 
@@ -259,6 +274,11 @@ pub(super) struct AgentRunTaskBody {
     project_ref: Option<String>,
     pub(super) executor: AgentRunExecutorLease,
     pub(super) outcome: Option<AgentRunOutcome>,
+    /// The run is a spawned child that outlived its root (REVIEW-6638): the
+    /// settlement of the run it ran under minted this TASK, and its frozen
+    /// payload names the parent that settled. A machine that takes it holds
+    /// no row of that parent, and runs it as a root of its own.
+    outlived_root: bool,
     pub(super) created_at: u64,
 }
 
@@ -381,10 +401,12 @@ pub(super) fn closing(vault: &Vault) -> bool {
 /// (`held_until` now). The TASK is born at the dispatch scope's world and
 /// facet, as `tasks.create` stamps a narrowed writer's TASKs.
 ///
-/// Only a root run gets one (REVIEW-6638): a dispatch with a parent attempt,
-/// a child its run spawned, mints none. The child runs under its root's run
-/// TASK and moves with it: the root, rerun on the machine that takes it,
-/// spawns its children there.
+/// Only a root run gets one at its dispatch (REVIEW-6638): a dispatch with a
+/// parent attempt, a child its run spawned, mints none. The child runs under
+/// its root's run TASK and moves with it: the root, rerun on the machine
+/// that takes it, spawns its children there. A child that outlives its root
+/// gets one of its own when the root settles
+/// ([`settle_agent_run_task_in_txn`]), and becomes a root.
 ///
 /// It never fails the dispatch it rides. Engine call (CALLS, FIX 4747): the
 /// mint runs in a savepoint, and one the batch refuses (the secret scan
@@ -399,7 +421,28 @@ pub(super) fn mint_agent_run_task_in_txn(
     now: u64,
 ) -> Result<()> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-    match put_agent_run_task_in_txn(vault, &mut savepoint, attempt, input, now) {
+    let record = AttemptQueue::new(vault).get_in_txn(&savepoint, attempt);
+    let minted = match record {
+        // Only a root run gets a run TASK at its dispatch (REVIEW-6638): a
+        // spawned child runs under its root's (`agent_run_task_ref_in`).
+        Ok(Some(record)) if spawning_parent(&record.payload).is_none() => {
+            put_agent_run_task_in_txn(vault, &mut savepoint, &record, input, false, now)
+        }
+        Ok(_) => Ok(false),
+        Err(error) => Err(error),
+    };
+    commit_minted_agent_run_task(savepoint, attempt, minted)
+}
+
+/// Commits the savepoint a run TASK's mint for the try `attempt` wrote in,
+/// when it `minted` one; a mint that failed is logged and leaves the run with
+/// no run TASK of its own (FIX 4747).
+fn commit_minted_agent_run_task(
+    savepoint: heed::RwTxn<'_>,
+    attempt: AttemptId,
+    minted: Result<bool>,
+) -> Result<()> {
+    match minted {
         Ok(true) => savepoint.commit()?,
         Ok(false) => {}
         Err(error) => tracing::warn!(
@@ -411,31 +454,28 @@ pub(super) fn mint_agent_run_task_in_txn(
     Ok(())
 }
 
-/// [`mint_agent_run_task_in_txn`]'s write: `false` when the run TASK already
-/// stands, the row is gone, or the row is a spawned child's.
+/// The write that mints the run TASK of the try `record` under its own id,
+/// from `input`, the dispatch input its payload freezes: `false` when that
+/// run TASK already stands or the run is not one to mint for. A root's
+/// dispatch mints it; a root's settlement mints it for a child that outlived
+/// that root, `outlived_root` (REVIEW-6638). Both pass the same gates.
 fn put_agent_run_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    attempt: AttemptId,
+    record: &AttemptRecord,
     input: &AgentDispatchInput,
+    outlived_root: bool,
     now: u64,
 ) -> Result<bool> {
+    let attempt = record.id;
     let task_ref = agent_run_task_id(attempt)?;
     if vault.get_entity_type_in_txn(&*wtxn, &task_ref)?.is_some() {
-        return Ok(false);
-    }
-    let Some(record) = AttemptQueue::new(vault).get_in_txn(&*wtxn, attempt)? else {
-        return Ok(false);
-    };
-    // Only a root run gets a run TASK (REVIEW-6638): a spawned child runs
-    // under its root's (`agent_run_task_ref_in`).
-    if spawning_parent(&record.payload).is_some() {
         return Ok(false);
     }
     // Only a run whose claim takes the lease gets a run TASK: a workflow
     // leaf and a resident's TASK-root run keep their pumps' path, and their
     // leases would never be renewed.
-    if !super::agent_run::agent_pump_claims_in(vault, &*wtxn, &record)? {
+    if !super::agent_run::agent_pump_claims_in(vault, &*wtxn, record)? {
         return Ok(false);
     }
     let world = input.scope.as_ref().and_then(|scope| scope.world);
@@ -488,6 +528,7 @@ fn put_agent_run_task_in_txn(
             held_until,
         },
         outcome: None,
+        outlived_root,
         created_at: record.created_at,
     };
     let encoded = rmp_serde::to_vec_named(&body)
@@ -524,12 +565,14 @@ fn put_agent_run_task_in_txn(
 /// machine's settlement, or a run TASK this version does not read is left as
 /// it is. A closing process takes none.
 ///
-/// A spawned child's claim (REVIEW-6638) reads its root's run TASK: while
-/// the root's lease names this machine, the child runs under a fence at the
-/// root's generation as it stands, and the claim writes nothing to the TASK;
-/// it takes, renews and reopens nothing, as only the root's own claim and
-/// the reaper's pass do. A root another machine holds or settled, or whose
-/// run TASK does not read, ends the child unrun, as it ends the root's try.
+/// A spawned child's claim (REVIEW-6638) reads its nearest ancestor's run
+/// TASK, its root's or a child's that outlived its root: while that lease
+/// names this machine, the child runs under a fence at its generation as it
+/// stands, and the claim writes nothing to the TASK; it takes, renews and
+/// reopens nothing, as only that run's own claim and the reaper's pass do.
+/// A run another machine holds or settled, or whose run TASK does not read,
+/// ends the child unrun, as it ends that run's own try. A child that
+/// outlived its root claims its own run TASK as a root does.
 pub(crate) fn take_agent_run_lease_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -552,6 +595,7 @@ pub(crate) fn take_agent_run_lease_in_txn(
             task_ref,
             node_id,
             generation: held.generation,
+            attempt: row.id,
             child: true,
         })),
         ClaimStanding::Own(held) => {
@@ -574,6 +618,7 @@ pub(crate) fn take_agent_run_lease_in_txn(
                 task_ref,
                 node_id,
                 generation: lease.generation,
+                attempt: row.id,
                 child: false,
             }))
         }
@@ -581,10 +626,10 @@ pub(crate) fn take_agent_run_lease_in_txn(
 }
 
 /// The typed cause a queued `row` ends with unrun, judged in `wtxn` (FIX
-/// 4747): another machine holds its run (for a spawned child, its root's),
-/// or settled it, or its run TASK stands but does not read. `None` for a row
-/// this machine may run, one with no run TASK, and any row while this
-/// process closes.
+/// 4747): another machine holds its run (for a spawned child, its nearest
+/// ancestor's), or settled it, or its run TASK stands but does not read.
+/// `None` for a row this machine may run, one with no run TASK, and any row
+/// while this process closes.
 pub(crate) fn agent_run_unrun_cause_in(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -610,8 +655,9 @@ pub(crate) fn agent_run_unrun_cause_in(
 pub(super) struct AgentRunTaskLink {
     pub(super) task_ref: EntityId,
     /// The try is a child its run spawned, at any depth, or a retry of one
-    /// (REVIEW-6638): the run TASK is its root's. Its claim fences it on
-    /// the root's lease and takes nothing; its settlement settles nothing.
+    /// (REVIEW-6638): the run TASK is its nearest ancestor's, its root's or
+    /// a child's that outlived its root. Its claim fences it on that lease
+    /// and takes nothing; its settlement settles nothing.
     pub(super) child: bool,
 }
 
@@ -621,18 +667,21 @@ enum AgentRunTaskWalk {
     /// `retry_of` only: the run TASK that froze this try's own payload or
     /// the payload of a try it retries. What a hard erase takes.
     Retries,
-    /// `parent_attempt` from a spawned child up to its root, then the
-    /// root's `retry_of` chain: the run TASK the try runs under.
+    /// The `retry_of` chain, then `parent_attempt` from a spawned child up
+    /// to the try that spawned it, and so on up the tree: the run TASK the
+    /// try runs under.
     Tree,
 }
 
-/// The run TASK `row` runs under, read in `txn`: the one its own dispatch
-/// minted, else the one of the try it retries, followed back through
-/// `retry_of`; for a spawned child (REVIEW-6638), its root's, followed up
-/// through `parent_attempt` first ([`AGENT_RUN_RETRY_CHAIN_WALK`] bounds
-/// both). A try this queue does not hold ends the walk at the run TASK its
-/// own id names: a try a handover queued here links the run's original try,
-/// which another machine ran (FIX 4747 slice 6). `None` for a row with none.
+/// The run TASK `row` runs under, read in `txn`: the one minted under its
+/// own id, else the one of the try it retries, followed back through
+/// `retry_of`; for a spawned child with none in its retry lineage
+/// (REVIEW-6638), its nearest ancestor's, followed up through
+/// `parent_attempt` ([`AGENT_RUN_RETRY_CHAIN_WALK`] bounds both). So the
+/// run TASK a child got when it outlived its root wins over its root's. A
+/// try this queue does not hold ends the walk at the run TASK its own id
+/// names: a try a handover queued here links the run's original try, which
+/// another machine ran (FIX 4747 slice 6). `None` for a row with none.
 /// Any entity that stands under a run TASK id is that run's TASK, whether or
 /// not this version reads its body: only no entity there is no run TASK. A
 /// run TASK a hard erase took is none either (REVIEW-6615): the run runs
@@ -673,12 +722,14 @@ fn agent_run_task_erased_in(
 
 /// The run TASK the try `attempt`, retrying `retry_of` and spawned by
 /// `parent`, links to by `walk`, read in `txn`, with whether a hard erase
-/// took it. A tree walk ([`AgentRunTaskWalk::Tree`]) goes up
-/// `parent_attempt` first: a spawned child mints no run TASK, so the walk
-/// passes over its id to the try that spawned it (REVIEW-6638). At a try
-/// that names no parent, it takes the first id along the `retry_of` chain
-/// at which a run TASK stands or a hard erase took one. Every link counts
-/// against [`AGENT_RUN_RETRY_CHAIN_WALK`].
+/// took it: the first try the walk reaches under whose id a run TASK stands
+/// or a hard erase took one. From each try it follows `retry_of`; a tree
+/// walk ([`AgentRunTaskWalk::Tree`]), at a try that retries none, goes on up
+/// `parent_attempt` to the try that spawned it (REVIEW-6638), as a child's
+/// retries name its parent too. So a child's own run TASK, minted when it
+/// outlived its root, wins over every ancestor's, and a child with none
+/// passes over its lineage to its parent's. Every link counts against
+/// [`AGENT_RUN_RETRY_CHAIN_WALK`].
 fn agent_run_task_slot_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -691,32 +742,87 @@ fn agent_run_task_slot_in(
     let (mut id, mut retry_of) = (attempt, retry_of);
     let mut parent = parent.filter(|_| walk == AgentRunTaskWalk::Tree);
     let mut child = false;
+    let linked = |slot: Option<(EntityId, bool)>, child: bool| {
+        slot.map(|(task_ref, erased)| (AgentRunTaskLink { task_ref, child }, erased))
+    };
     for _ in 0..AGENT_RUN_RETRY_CHAIN_WALK {
-        let next = if let Some(spawner) = parent {
-            child = true;
-            spawner
-        } else {
-            if let Some((task_ref, erased)) = agent_run_task_slot_at_in(store, txn, id)? {
-                return Ok(Some((AgentRunTaskLink { task_ref, child }, erased)));
-            }
-            let Some(prior) = retry_of else {
-                return Ok(None);
-            };
-            prior
-        };
-        // A try this queue does not hold (a handover queued this try after
-        // another machine ran that one) ends the walk at its own run TASK id
-        // (FIX 4747 slice 6).
-        let Some(next_row) = queue.get_in_txn(txn, next)? else {
-            return Ok(agent_run_task_slot_at_in(store, txn, next)?
-                .map(|(task_ref, erased)| (AgentRunTaskLink { task_ref, child }, erased)));
-        };
-        if walk == AgentRunTaskWalk::Tree {
-            parent = spawning_parent(&next_row.payload);
+        if let Some(slot) = agent_run_task_slot_at_in(store, txn, id)? {
+            return Ok(linked(Some(slot), child));
         }
-        (id, retry_of) = (next_row.id, next_row.retry_of);
+        if let Some(prior) = retry_of {
+            if let Some(prior_row) = queue.get_in_txn(txn, prior)? {
+                if walk == AgentRunTaskWalk::Tree {
+                    parent = spawning_parent(&prior_row.payload);
+                }
+                (id, retry_of) = (prior_row.id, prior_row.retry_of);
+                continue;
+            }
+            // A try this queue does not hold (a handover queued this try
+            // after another machine ran that one) ends the walk at its own
+            // run TASK id (FIX 4747 slice 6); with none there, a child's walk
+            // goes on to the try that spawned its lineage.
+            let slot = agent_run_task_slot_at_in(store, txn, prior)?;
+            if slot.is_some() || parent.is_none() {
+                return Ok(linked(slot, child));
+            }
+        }
+        let Some(spawner) = parent else {
+            return Ok(None);
+        };
+        child = true;
+        // A spawner this queue does not hold ends the walk at its own run
+        // TASK id, as a retried try does.
+        let Some(spawner_row) = queue.get_in_txn(txn, spawner)? else {
+            return Ok(linked(
+                agent_run_task_slot_at_in(store, txn, spawner)?,
+                child,
+            ));
+        };
+        parent = spawning_parent(&spawner_row.payload);
+        (id, retry_of) = (spawner_row.id, spawner_row.retry_of);
     }
     Ok(None)
+}
+
+/// Whether `row` is a try of a spawned child that outlived its root
+/// (REVIEW-6638), read in `txn`: the run TASK of its own retry lineage,
+/// which the settlement of the run it ran under minted, says so. Such a run
+/// is a root of its own. Its parent settled, and a machine that took the run
+/// over may hold no row of that parent: a walk up its tree ends at it there.
+pub(super) fn outlived_root_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &AttemptRecord,
+) -> Result<bool> {
+    let Some((link, false)) = agent_run_task_slot_in(
+        &vault.store,
+        txn,
+        row.id,
+        row.retry_of,
+        None,
+        AgentRunTaskWalk::Retries,
+    )?
+    else {
+        return Ok(false);
+    };
+    match agent_run_task_body_in(vault, txn, link.task_ref) {
+        Ok(body) => Ok(body.is_some_and(|body| body.outlived_root)),
+        Err(Error::Record(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// [`outlived_root_in`] of the try `attempt`, read in `txn`; `false` for a
+/// try this queue does not hold.
+pub(super) fn attempt_outlived_root_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<bool> {
+    match AttemptQueue::new(vault).get_in_txn(txn, attempt)? {
+        Some(row) => outlived_root_in(vault, txn, &row),
+        None => Ok(false),
+    }
 }
 
 /// The run TASK id `attempt` names, read in `txn`, with whether a hard erase
@@ -837,17 +943,63 @@ pub(super) fn update_agent_run_task_body_in_txn(
         .apply(wtxn)
 }
 
-/// What the run TASK `fence` names says of it, read in `txn`.
+/// What the run TASK `fence` names says of it, read in `txn`. A spawned
+/// child's fence follows the run TASK a settlement minted for the child's
+/// tree while it was claimed here instead (REVIEW-6638,
+/// [`outlived_root_standing_in`]).
 fn agent_run_fence_standing_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fence: &AgentRunFence,
 ) -> Result<FenceStanding> {
+    if fence.child
+        && let Some(standing) = outlived_root_standing_in(vault, txn, fence)?
+    {
+        return Ok(standing);
+    }
     Ok(match agent_run_task_body_in(vault, txn, fence.task_ref)? {
         None => FenceStanding::Absent,
         Some(body) if fence.holds(body.executor) => FenceStanding::Holds(body.executor),
         Some(body) => FenceStanding::Moved(body.executor),
     })
+}
+
+/// What a spawned child's `fence` holds once the run whose TASK it names
+/// settled here with the child claimed (REVIEW-6638): that settlement
+/// minted a run TASK for the child, or for the pending try above it that the
+/// child follows, with this machine's lease at the first generation. The
+/// child's walk ends there now, and it runs under that run TASK, as a claim
+/// then would: the fence holds while it names this machine at that
+/// generation, and a handover moves it and stands the child down. `None`
+/// while the child's walk still ends at the run TASK the fence names: no
+/// settlement minted one for its tree, and that run TASK judges the fence.
+fn outlived_root_standing_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fence: &AgentRunFence,
+) -> Result<Option<FenceStanding>> {
+    let Some(row) = AttemptQueue::new(vault).get_in_txn(txn, fence.attempt)? else {
+        return Ok(None);
+    };
+    let Some(link) =
+        agent_run_task_ref_in(vault, txn, &row)?.filter(|link| link.task_ref != fence.task_ref)
+    else {
+        return Ok(None);
+    };
+    let promoted = AgentRunFence {
+        task_ref: link.task_ref,
+        generation: AGENT_RUN_LEASE_FIRST_GENERATION,
+        ..*fence
+    };
+    Ok(
+        agent_run_task_body_in(vault, txn, link.task_ref)?.map(|body| {
+            if promoted.holds(body.executor) {
+                FenceStanding::Holds(body.executor)
+            } else {
+                FenceStanding::Moved(body.executor)
+            }
+        }),
+    )
 }
 
 /// The one local log line a run's stand-down writes: the TASK, this
@@ -1078,10 +1230,16 @@ pub(crate) fn agent_run_moved_in(
 /// retry or a landing handoff settles no run, as its later try carries it
 /// on. For an unfenced try, a body that does not read is passed over.
 ///
-/// Only the root's own try settles the run (REVIEW-6638): the try the TASK
-/// names live, or its retry lineage, as the walk finds it. A spawned child
-/// never does: its settlement only meets its root's fence above, so a child
-/// of a run that moved aborts and ends unrun.
+/// Only the run's own try settles it (REVIEW-6638): the try the TASK names
+/// live, or its retry lineage, as the walk finds it, of a root or of a child
+/// that outlived its root. A spawned child under the run's TASK never does:
+/// its settlement only meets that fence above, so a child of a run that
+/// moved aborts and ends unrun.
+///
+/// A child that outlives its root becomes a root of its own (REVIEW-6638):
+/// the write that settles the run mints a run TASK for each of its children
+/// still pending in this queue ([`promote_outliving_children_in_txn`]), so
+/// none is left with no portable record when this machine closes.
 pub(crate) fn settle_agent_run_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1141,12 +1299,91 @@ pub(crate) fn settle_agent_run_task_in_txn(
     let now = vault.store.clock.now_recorded_at();
     // A settled run needs its frozen payload no more: the TASK drops it, so
     // its text lives on no machine past the run (the TASK's sync history
-    // keeps the old bytes until its window is cut).
+    // keeps the old bytes until its window is cut). Each child it leaves
+    // pending carries its own.
     update_agent_run_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
         body.queue_payload.clear();
         Ok(())
-    })
+    })?;
+    promote_outliving_children_in_txn(vault, wtxn, task_ref, now)
+}
+
+/// Mints a run TASK of its own, in the write that settles the run TASK
+/// `run_task`, for each spawned child that outlives that run (REVIEW-6638):
+/// each try still pending in this queue (queued, scheduled, leased, parked
+/// or landing) that runs under `run_task` as a child, with no pending try
+/// of the run above it on its walk there. A pending try below another
+/// follows it, as it then walks to that try's new run TASK; a terminal
+/// child gets none, and its pending children are minted for in its place.
+///
+/// Each run TASK is minted as a root's dispatch mints its own
+/// (`put_agent_run_task_in_txn`): under the child's own id, with this
+/// machine's lease at the first generation, the child's frozen payload
+/// (which names its parent) and its world and project, through the same
+/// gates, and flagged `outlived_root`. A mint the gates pass over or that
+/// fails, in its own savepoint, leaves that child under the settled run's
+/// TASK, on this machine, as before. A child claimed here when its run
+/// settled follows its new run TASK at its fence
+/// (`outlived_root_standing_in`).
+fn promote_outliving_children_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    run_task: EntityId,
+    now: u64,
+) -> Result<()> {
+    let queue = AttemptQueue::new(vault);
+    // Each try pending here that runs under `run_task`, and whether it is
+    // a child there.
+    let mut pending = BTreeMap::new();
+    for row in queue.kind_working_rows_in_txn(&*wtxn, DREAMER_RUNNER_ATTEMPT_KIND)? {
+        if !row.state.is_pending() {
+            continue;
+        }
+        if let Some(link) = agent_run_task_ref_in(vault, &*wtxn, &row)?
+            && link.task_ref == run_task
+        {
+            pending.insert(row.id, (row, link.child));
+        }
+    }
+    for (row, child) in pending.values() {
+        if !child || pending_try_above_in(&queue, &*wtxn, row, &pending)? {
+            continue;
+        }
+        let Some(input) = super::codec::record_dispatch_input(row) else {
+            continue;
+        };
+        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+        let minted = put_agent_run_task_in_txn(vault, &mut savepoint, row, &input, true, now);
+        commit_minted_agent_run_task(savepoint, row.id, minted)?;
+    }
+    Ok(())
+}
+
+/// Whether a try of `pending` stands above `row` on its walk to its run
+/// TASK: up its `retry_of` chain, then to the try that spawned it, as
+/// [`agent_run_task_slot_in`] walks, within [`AGENT_RUN_RETRY_CHAIN_WALK`].
+fn pending_try_above_in(
+    queue: &AttemptQueue<'_>,
+    txn: &heed::RoTxn<'_>,
+    row: &AttemptRecord,
+    pending: &BTreeMap<AttemptId, (AttemptRecord, bool)>,
+) -> Result<bool> {
+    let above = |below: &AttemptRecord| below.retry_of.or_else(|| spawning_parent(&below.payload));
+    let mut next = above(row);
+    for _ in 0..AGENT_RUN_RETRY_CHAIN_WALK {
+        let Some(id) = next else {
+            return Ok(false);
+        };
+        if pending.contains_key(&id) {
+            return Ok(true);
+        }
+        let Some(next_row) = queue.get_in_txn(txn, id)? else {
+            return Ok(false);
+        };
+        next = above(&next_row);
+    }
+    Ok(false)
 }
 
 /// Hard-erases the run TASK of each try in `rows`, each a try's id and the
@@ -1155,7 +1392,8 @@ pub(crate) fn settle_agent_run_task_in_txn(
 /// copy of that payload, and its body names the run's agent and requester.
 /// Each is found by its try's derived id, following `retry_of` as a claim
 /// does but never `parent_attempt`, as a spawned child's payload is in no
-/// run TASK (REVIEW-6638), and goes by the engine row's hard erase in this
+/// run TASK but the one it got when it outlived its root, under its own
+/// lineage's id (REVIEW-6638), and goes by the engine row's hard erase in this
 /// transaction, as an erased participant's connector reply body goes in the
 /// same pass: its provenance, indexes and row, its permanent `dt:` marker,
 /// and its `pt:` tombstone in the window of its learned time, which that
@@ -1176,7 +1414,8 @@ pub(crate) fn erase_agent_run_tasks_in_txn(
     let mut tasks = BTreeSet::new();
     for (attempt, retry_of) in rows {
         // The run TASK that froze this try's payload: a spawned child's
-        // payload is in no run TASK, as its root's froze only the root's.
+        // payload is in no run TASK of an ancestor's, as each froze only its
+        // own, and in its own once it outlived its root.
         if let Some((link, _)) = agent_run_task_slot_in(
             write.store,
             &*wtxn,
