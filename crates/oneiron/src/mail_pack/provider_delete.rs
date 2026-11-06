@@ -174,14 +174,22 @@ fn resume_forget(vault: &Vault, key: &(EntityId, [u8; 32])) -> Result<()> {
     for row in &owed.rows {
         vault.delete_entity_with_reason(row, DeleteReason::UserDelete)?;
     }
-    let others = {
-        let txn = vault.store.env.read_txn()?;
-        conversation_holds_others_in(vault, &txn, key, &owed.conversation)?
-    };
-    if !others {
+    // One writer decides whether another message still holds the thread:
+    // then this debt retires in it. The last keeps its debt until the
+    // CONVERSATION's delete is done, so two forgets that end together never
+    // both leave it to the other.
+    let last = vault.with_write_txn_grouped(|txn| {
+        if conversation_holds_others_in(vault, txn, key, &owed.conversation)? {
+            FORGET_OWED.delete(&vault.store, txn, key)?;
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+    if last {
         vault.delete_entity_with_reason(&owed.conversation, DeleteReason::UserDelete)?;
+        vault.with_write_txn_grouped(|txn| FORGET_OWED.delete(&vault.store, txn, key).map(drop))?;
     }
-    vault.with_write_txn_grouped(|txn| FORGET_OWED.delete(&vault.store, txn, key).map(drop))
+    Ok(())
 }
 
 /// Whether a message of `key`'s source other than `key` holds
