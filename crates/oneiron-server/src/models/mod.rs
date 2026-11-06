@@ -560,13 +560,18 @@ struct NativeLocal {
 
 /// `provider`'s on-device alternative (I2-LOCAL), when managed EXL3 workers
 /// this process launches serve some of its chat models over a native channel
-/// whose peer is checked against the supervised child, and its calls are free
-/// work (`Payer::Local`, no key). Its backend is the provider's chat adapter
-/// over [`native_exl3::NativeLocalTransport`], for those models alone, so the
-/// request mapping, output cap and response format are the provider's own.
-/// `None` otherwise: the provider's own backend serves every call, at its own
-/// locality, as it always has. A provider holding a Responses socket keeps
-/// its socket and HTTP path, as its own transport does.
+/// whose peer is checked against the supervised child. Free and paid work
+/// alike (FIX 14889): each offer over it keeps the provider offer's payer,
+/// key custody and rates, so a paid provider's on-device call is charged as
+/// its own-server call is ([`offer::native_local_offer`]). Its backend is the
+/// provider's chat adapter over [`native_exl3::NativeLocalTransport`], for
+/// those models alone, so the request mapping, output cap and response format
+/// are the provider's own; the native channel carries the request body and
+/// no key, since it is checked against the child instead. A key the provider
+/// holds still makes its calls paid. `None` otherwise: the provider's own
+/// backend serves every call, at its own locality, as it always has. A
+/// provider holding a Responses socket keeps its socket and HTTP path, as
+/// its own transport does.
 #[cfg(unix)]
 fn build_native_local(
     name: &str,
@@ -577,11 +582,7 @@ fn build_native_local(
         provider.kind,
         ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
     );
-    // Paid work has no on-device offer, so no locality turns it free.
-    let free = provider.payer == oneiron::llm::run_admission::Payer::Local
-        && provider.key_secret.is_none()
-        && provider.key_env.is_none();
-    if !chat || !free || provider.responses_socket.is_some() {
+    if !chat || provider.responses_socket.is_some() {
         return None;
     }
     let routes = worker_host::native_local_routes(name, provider, &config.workers);
