@@ -24,12 +24,17 @@
 //! owner roster key, or an anchor the fold
 //! recorded for a stored root, never a key the join names for itself. A join
 //! signed by any other key folds as every unvouched row does: invalid, with
-//! no sequence slot, so it never forks or blocks the act's sequence. Every
-//! group names the frontier's admission tip. The writer prefers the
+//! no sequence slot, so it never forks or blocks the act's sequence. When a
+//! head admits the signer, every first-level group names the frontier's
+//! admission tip. The writer prefers the
 //! lowest-hash admitting head whose planned groups also admit the signer
 //! after merging their states (FIX 8499); if none is proven, it keeps the
-//! old lowest-hash tip and fold/readback decision. It reads no role,
-//! clearance or owner act beyond that, and grants nothing.
+//! old lowest-hash tip and fold/readback decision. When no head admits the
+//! signer alone, the writer first joins a support set of at most one join's
+//! heads whose merged state admits it, then carries that join forward: each
+//! later join names the one before it and the next heads in hash order, and
+//! every merge is proven to admit before any join is signed (FIX 8527). It
+//! reads no role, clearance or owner act beyond that, and grants nothing.
 //!
 //! A writer whose own side heads alone fill one entry joins them the same
 //! way first, by the same key, in the scope of the branch they ride (FIX
@@ -185,6 +190,121 @@ pub(super) fn plan_frontier_joins(
         .collect()
 }
 
+/// Where a wide frontier's joins start.
+enum JoinStart {
+    /// A head whose own state admits the signer: every first-level group of
+    /// [`plan_frontier_joins`] names it (FIX 7908, FIX 8499).
+    Tip(AuthorityEntryHash),
+    /// No head admits the signer alone: a support set whose merge does,
+    /// then the joins that carry it forward (FIX 8527).
+    Support(SupportJoins),
+}
+
+/// A support-set bootstrap (FIX 8527): the first join names `support`, the
+/// heads whose merged state admits the signer; each later join names the
+/// join before it and the next of `chunks`, the other heads in hash order,
+/// until the tips fit. Every join's merged state was proven to admit the
+/// signer before any join is signed.
+struct SupportJoins {
+    support: BTreeSet<AuthorityEntryHash>,
+    chunks: Vec<BTreeSet<AuthorityEntryHash>>,
+}
+
+/// `state` merged onto `base`, or `state` alone when there is no base.
+fn merge_onto(base: Option<&FoldState>, state: &FoldState) -> FoldState {
+    base.map_or_else(|| state.clone(), |base| merge_states(base, state))
+}
+
+/// The merge of the states at `heads`, as the fold merges a row's parents;
+/// `None` when one of them has no state here or none is named.
+fn merged_state(
+    heads: &BTreeSet<AuthorityEntryHash>,
+    states: &BTreeMap<AuthorityEntryHash, Option<FoldState>>,
+) -> Option<FoldState> {
+    let mut merged: Option<FoldState> = None;
+    for head in heads {
+        let state = states.get(head)?.as_ref()?;
+        merged = Some(merge_onto(merged.as_ref(), state));
+    }
+    merged
+}
+
+/// A support set of at most [`AUTHORITY_FRONTIER_JOIN_ARITY`] of `heads`
+/// whose merged state `admits`, with that state (FIX 8527). Each round
+/// merges the set so far with the other heads that have a state, in hash
+/// order, and adds the first head at which that merge admits, until the
+/// set's own merge admits. Deterministic: it reads the heads' hashes and
+/// states alone. Bounded by the arity: at most that many rounds, each one
+/// pass over `heads`. `None` when a round finds no head, or when the set
+/// would outgrow one join.
+fn support_set(
+    heads: &BTreeSet<AuthorityEntryHash>,
+    states: &BTreeMap<AuthorityEntryHash, Option<FoldState>>,
+    admits: impl Fn(&FoldState) -> bool,
+) -> Option<(BTreeSet<AuthorityEntryHash>, FoldState)> {
+    let mut support: BTreeSet<AuthorityEntryHash> = BTreeSet::new();
+    let mut merged: Option<FoldState> = None;
+    while support.len() < AUTHORITY_FRONTIER_JOIN_ARITY {
+        let mut reach = merged.clone();
+        let mut found = None;
+        for head in heads.iter().filter(|head| !support.contains(*head)) {
+            let Some(state) = states.get(head).and_then(Option::as_ref) else {
+                continue;
+            };
+            let next = merge_onto(reach.as_ref(), state);
+            if admits(&next) {
+                found = Some((*head, state));
+                break;
+            }
+            reach = Some(next);
+        }
+        let (head, state) = found?;
+        support.insert(head);
+        let next = merge_onto(merged.as_ref(), state);
+        if admits(&next) {
+            return Some((support, next));
+        }
+        merged = Some(next);
+    }
+    None
+}
+
+/// The support-set bootstrap for `heads` when no head admits the signer
+/// alone (FIX 8527, Engine 13:54 call B): [`support_set`], then the other
+/// heads in hash order, in chunks of one fewer than a join's arity beside
+/// the join carried forward, until the heads not yet joined and that join
+/// fit `room`. Each carried merge must still admit. `None` when no support
+/// set fits one join, or a carried merge does not admit or reads a head
+/// with no state here: today's refusal, nothing signed.
+fn plan_support_joins(
+    heads: &BTreeSet<AuthorityEntryHash>,
+    states: &BTreeMap<AuthorityEntryHash, Option<FoldState>>,
+    room: usize,
+    admits: impl Fn(&FoldState) -> bool,
+) -> Option<SupportJoins> {
+    let (support, mut merged) = support_set(heads, states, &admits)?;
+    let others: Vec<AuthorityEntryHash> = heads
+        .iter()
+        .copied()
+        .filter(|head| !support.contains(head))
+        .collect();
+    let mut rest = others.as_slice();
+    let mut chunks: Vec<BTreeSet<AuthorityEntryHash>> = Vec::new();
+    // The tips: the heads not yet joined, and the join carried forward.
+    while rest.len() + 1 > room {
+        let (chunk, tail) = rest.split_at(rest.len().min(AUTHORITY_FRONTIER_JOIN_ARITY - 1));
+        for head in chunk {
+            merged = merge_states(&merged, states.get(head)?.as_ref()?);
+        }
+        if !admits(&merged) {
+            return None;
+        }
+        chunks.push(chunk.iter().copied().collect());
+        rest = tail;
+    }
+    Some(SupportJoins { support, chunks })
+}
+
 /// The `FrontierJoin` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer must be one [`admits_join_signer`] admits in the join's
@@ -223,12 +343,14 @@ impl Vault {
     /// entry's [`MAX_PARENTS`] for an act that names the heads alone). Each
     /// level of [`plan_frontier_joins`] is signed by `signer`, at the
     /// sequences its act would take, until the tips fit, and every first-level
-    /// group names the admission tip; the joins land in one put, and the fold
+    /// group names the admission tip. When no head admits the signer alone,
+    /// the joins are instead [`plan_support_joins`]'s: a support set's join,
+    /// carried forward (FIX 8527). The joins land in one put, and the fold
     /// read back is returned, for the act's sequence and parents. `None` when
-    /// the heads fit, or when no single head admits the signer: today's path,
-    /// nothing written. A wide frontier is measured on Phase2 A's
-    /// `authority_record_items` row, which asks past it and never waits or
-    /// refuses.
+    /// the heads fit, or when no head admits the signer and no support set
+    /// carries it: today's path, nothing written. A wide frontier is
+    /// measured on Phase2 A's `authority_record_items` row, which asks past
+    /// it and never waits or refuses.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] when a join did not
@@ -302,7 +424,7 @@ impl Vault {
             return Ok(None);
         }
         measure_authority_work(self.limit_watch(), heads.len());
-        let Some(tip) = self.admission_tip_in_txn(txn, heads, signer)? else {
+        let Some(start) = self.join_start_in_txn(txn, heads, signer, room)? else {
             return Ok(None);
         };
         let now = self.instant_in_txn(txn)?.secs();
@@ -311,21 +433,37 @@ impl Vault {
             end: now,
         };
         let mut seq = signer.first_sequence(fold)?;
-        let mut tips = heads.clone();
-        let mut level_tip = Some(tip);
         let mut rows = Vec::new();
         let mut joins = Vec::new();
-        while tips.len() > room {
-            for group in plan_frontier_joins(&tips, level_tip) {
-                let join = signer.sign(fold, scope, seq, group.clone(), now)?;
-                seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
-                let hash = authority_entry_hash(&join)?;
-                tips.retain(|tip| !group.contains(tip));
-                tips.insert(hash);
-                joins.push(hash);
-                rows.push((join, at, now));
+        let mut stage = |group: BTreeSet<AuthorityEntryHash>| -> Result<AuthorityEntryHash> {
+            let join = signer.sign(fold, scope, seq, group, now)?;
+            seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
+            let hash = authority_entry_hash(&join)?;
+            joins.push(hash);
+            rows.push((join, at, now));
+            Ok(hash)
+        };
+        match start {
+            JoinStart::Tip(tip) => {
+                let mut tips = heads.clone();
+                let mut level_tip = Some(tip);
+                while tips.len() > room {
+                    for group in plan_frontier_joins(&tips, level_tip) {
+                        tips.retain(|tip| !group.contains(tip));
+                        tips.insert(stage(group)?);
+                    }
+                    level_tip = None;
+                }
             }
-            level_tip = None;
+            // FIX 8527: the support set's join, then each chunk beside the
+            // join before it; every merge was proven to admit the signer.
+            JoinStart::Support(SupportJoins { support, chunks }) => {
+                let mut carried = stage(support)?;
+                for mut group in chunks {
+                    group.insert(carried);
+                    carried = stage(group)?;
+                }
+            }
         }
         let staged = self.put_authority_log_entries_in_txn(txn, &rows)?;
         let joined = self.authority_view_readonly_in_txn(txn)?;
@@ -335,20 +473,23 @@ impl Vault {
         Ok(Some((joined, staged)))
     }
 
-    /// The lowest-hash admitting head whose planned first-level groups also
-    /// admit `signer` on their merged states (FIX 8499), read from the same
-    /// capture as the causal points. A divergent head can conflict with an
-    /// older tip's carrier revision while a newer tip heals that conflict.
-    /// If no candidate proves its groups, keep today's lowest admitting tip
-    /// and fold/readback decision. `None` when no head admits or the capture
-    /// is unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]); split
-    /// admission evidence needing more than one carrying head stays open.
-    fn admission_tip_in_txn(
+    /// Where `heads`' joins start, read from the same capture as the causal
+    /// points. The lowest-hash admitting head whose planned first-level
+    /// groups also admit `signer` on their merged states (FIX 8499): a
+    /// divergent head can conflict with an older tip's carrier revision while
+    /// a newer tip heals that conflict. If no candidate proves its groups,
+    /// keep today's lowest admitting tip and fold/readback decision. When no
+    /// head admits alone, [`plan_support_joins`] for `room` (FIX 8527).
+    /// `None` when no head admits and no support set carries the signer, or
+    /// the capture is unavailable
+    /// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    fn join_start_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         heads: &BTreeSet<AuthorityEntryHash>,
         signer: FrontierSigner<'_>,
-    ) -> Result<Option<AuthorityEntryHash>> {
+        room: usize,
+    ) -> Result<Option<JoinStart>> {
         let states: Option<BTreeMap<AuthorityEntryHash, Option<FoldState>>> =
             match super::act_standing::head_states_in_txn(&self.store, txn, heads) {
                 Ok(states) => states,
@@ -366,28 +507,19 @@ impl Vault {
             .iter()
             .filter_map(|(head, state)| state.as_ref().filter(|state| admits(state)).map(|_| *head))
             .collect();
+        if candidates.is_empty() {
+            return Ok(plan_support_joins(heads, &states, room, &admits).map(JoinStart::Support));
+        }
         for tip in &candidates {
             let groups_admit = plan_frontier_joins(heads, Some(*tip))
-                .into_iter()
-                .all(|group| {
-                    let mut merged: Option<FoldState> = None;
-                    for head in group {
-                        let Some(state) = states.get(&head).and_then(Option::as_ref) else {
-                            return false;
-                        };
-                        merged = Some(match merged {
-                            Some(merged) => merge_states(&merged, state),
-                            None => state.clone(),
-                        });
-                    }
-                    merged.as_ref().is_some_and(&admits)
-                });
+                .iter()
+                .all(|group| merged_state(group, &states).as_ref().is_some_and(&admits));
             if groups_admit {
-                return Ok(Some(*tip));
+                return Ok(Some(JoinStart::Tip(*tip)));
             }
         }
         // Incomplete evidence or no better partition keeps today's tip and
         // the existing fold/readback decision, never a new refusal here.
-        Ok(candidates.first().copied())
+        Ok(candidates.first().copied().map(JoinStart::Tip))
     }
 }

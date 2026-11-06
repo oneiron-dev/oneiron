@@ -377,8 +377,9 @@ fn parent_state(
 }
 
 /// The fold state at each of `heads`, from the capture the causal points
-/// read: where a frontier join finds its admission tip (FIX 7908). `None`
-/// where history the fold needs is not held here.
+/// read: where a frontier join finds its admission tip (FIX 7908) or its
+/// support set (FIX 8527). `None` where history the fold needs is not held
+/// here.
 pub(super) fn head_states_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
