@@ -60,11 +60,10 @@ pub use history::{
 pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{
     BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
-    BriefContextBound, BriefCredentialCeiling, BriefGrant, BriefGrants, BriefParentBound,
-    BriefParentCeiling, BriefPlacement, BriefPolicyExtension, BriefPolicyMapEntry,
-    BriefPolicyValue, BriefRunCeiling, BriefSkillRow, BriefWorkingHandle, BriefWorkingSet,
-    CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput, SelfBriefSession,
-    SelfBriefState, brief_credential_ceiling, brief_run_ceiling,
+    BriefClassPrecedence, BriefContextBound, BriefCredentialCeiling, BriefGrant, BriefGrants,
+    BriefParentBound, BriefParentCeiling, BriefPlacement, BriefRunCeiling, BriefSkillRow,
+    BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief, SelfBrief,
+    SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling, brief_run_ceiling,
 };
 mod hook_pins;
 mod memories;

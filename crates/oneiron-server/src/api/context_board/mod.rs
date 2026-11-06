@@ -980,12 +980,12 @@ pub(crate) async fn describe_self_for_auth(
         // checked above), the person its subject anchor names, the owner's
         // agent Grants that stand for it, the credential ceiling and the
         // comm reach of the slip it presented, the first beside the read key
-        // it was admitted on, the clock and the skills this session loaded,
-        // with every field no host resolves named on one unavailable line,
-        // never stated as a value. A session label binds no dispatch
-        // attempt, so the run and parent ceilings and the run's comm reach
-        // are among them, as is the budget, as no run line binds a
-        // credential's call.
+        // it was admitted on, the policy's class ceilings, the clock and the
+        // skills this session loaded, with every field no host resolves
+        // named on one unavailable line, never stated as a value. A session
+        // label binds no dispatch attempt, so the run and parent ceilings
+        // and the run's comm reach are among them, as is the budget, as no
+        // run line binds a credential's call.
         None => {
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {

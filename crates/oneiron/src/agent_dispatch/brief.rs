@@ -20,7 +20,6 @@ use crate::context_board::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
-use crate::gate::PolicyApprovalCeiling;
 use crate::policy_manifest_doors::PolicyCeiling;
 use crate::write_envelope::WriteActor;
 
@@ -89,7 +88,7 @@ impl Vault {
                 txn,
                 WriteActor::new(target, EdgeActorClass::Agent),
             )
-            .map(policy_ceiling);
+            .map(PolicyCeiling::of_approval);
             ancestors.push(BriefParentBound {
                 attempt: parent,
                 actor: target,
@@ -172,12 +171,4 @@ fn bound_dispatch_in_txn(
         return Ok(None);
     }
     Ok(Some((row, input)))
-}
-
-/// The public name of a live definition's approval bound.
-fn policy_ceiling(ceiling: PolicyApprovalCeiling) -> PolicyCeiling {
-    match ceiling {
-        PolicyApprovalCeiling::Auto => PolicyCeiling::Auto,
-        PolicyApprovalCeiling::Proposed => PolicyCeiling::Proposed,
-    }
 }

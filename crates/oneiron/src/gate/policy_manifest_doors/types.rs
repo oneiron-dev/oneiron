@@ -11,6 +11,16 @@ pub enum PolicyCeiling {
     Proposed,
 }
 
+impl PolicyCeiling {
+    /// The public name of the Gate's approval ceiling `ceiling`.
+    pub(crate) const fn of_approval(ceiling: crate::gate::PolicyApprovalCeiling) -> Self {
+        match ceiling {
+            crate::gate::PolicyApprovalCeiling::Auto => Self::Auto,
+            crate::gate::PolicyApprovalCeiling::Proposed => Self::Proposed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyCriticality {
