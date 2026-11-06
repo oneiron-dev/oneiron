@@ -94,6 +94,13 @@ impl SheetAnswerBundle {
     /// Fail closed before passing untrusted answer positions or values to the
     /// session; the same check runs at Keep against a public proposal.
     pub(crate) fn ops(&self) -> Result<Vec<EditOp>> {
+        self.checked_op_count()?;
+        let mut ops = Vec::new();
+        self.append_ops(&mut ops);
+        Ok(ops)
+    }
+
+    fn checked_op_count(&self) -> Result<usize> {
         fn invalid() -> Error {
             Error::Artifact(ArtifactError::InvalidEditManifest(
                 "invalid typed sheet answer bundle",
@@ -110,7 +117,7 @@ impl SheetAnswerBundle {
             return Err(invalid());
         }
         let mut seen = BTreeSet::new();
-        let mut ops = Vec::new();
+        let mut count = 0;
         for answer in &self.answers {
             let cell = answer.cell;
             if cell.col < self.range.start.col
@@ -133,19 +140,27 @@ impl SheetAnswerBundle {
             {
                 return Err(invalid());
             }
+            if answer.value.is_some() {
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return Err(invalid());
+        }
+        Ok(count)
+    }
+
+    fn append_ops(&self, ops: &mut Vec<EditOp>) {
+        for answer in &self.answers {
             if let Some(value) = &answer.value {
                 ops.push(EditOp::SetCell {
                     sheet: self.sheet.clone(),
-                    cell,
+                    cell: answer.cell,
                     before: answer.before.clone(),
                     after: value.clone(),
                 });
             }
         }
-        if ops.is_empty() {
-            return Err(invalid());
-        }
-        Ok(ops)
     }
 }
 
@@ -192,7 +207,22 @@ impl Vault {
         run_ref: &str,
         resources: &Resources,
     ) -> Result<EditOutcome> {
-        let plan = EditPlan::new(bundle.ops()?);
+        let count = bundle.checked_op_count()?;
+        let mut plan_backing = resources.hold();
+        plan_backing
+            .take_len::<EditOp>(count)
+            .map_err(crate::office_body::machine_memory_refused)?;
+        let mut ops = Vec::new();
+        ops.try_reserve_exact(count).map_err(|error| {
+            Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+        })?;
+        if ops.capacity() > count {
+            plan_backing
+                .take_len::<EditOp>(ops.capacity() - count)
+                .map_err(crate::office_body::machine_memory_refused)?;
+        }
+        bundle.append_ops(&mut ops);
+        let plan = EditPlan::new(ops);
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
         let batch_size = policy
@@ -223,12 +253,7 @@ impl Vault {
         // Verify the source independently of the edit session, including any
         // caller-supplied before values, before the agent edits a copy.
         verify_sheet_answer_bytes(&bundle, Some(&source), None)?;
-        let outcome = self.propose_blob_artifact_edit(
-            artifact_id,
-            &session,
-            &plan,
-            run_ref,
-        )?;
+        let outcome = self.propose_blob_artifact_edit(artifact_id, &session, &plan, run_ref)?;
         Ok(match outcome {
             EditOutcome::Proposed(mut proposal) => {
                 // The session's applied-op manifest must agree with the ask;

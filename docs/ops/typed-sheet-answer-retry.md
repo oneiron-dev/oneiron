@@ -34,7 +34,12 @@ vectors into staging instead of cloning them. This does not consume or delete
 the stored answer-progress row. A staging error can still retry that canonical
 row under a new caller deadline. The native staging call also keeps one owned
 edit plan through application and the exact applied-operation comparison;
-it does not clone a second operation vector just to borrow that plan.
+it does not clone a second operation vector just to borrow that plan. Before
+allocating the native plan vector, the same caller resource port reserves its
+validated operation count, excluding abstentions. Any allocator-reported capacity
+surplus is admitted before filling the vector. Its hold remains alive until the
+plan is freed. This counts the operation-vector backing only, not cloned strings
+or cell-value payloads, validation scratch or transient allocator surplus.
 
 The facade rechecks the original read rows through the current credential
 before continuing or restaging and before returning or retaining results.
