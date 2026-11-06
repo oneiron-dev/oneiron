@@ -78,15 +78,7 @@ pub(crate) fn trusted_soft_addressing_edge(
     Ok(true)
 }
 
-pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    validate_manifest_and_order(snapshot)?;
-    validate_window_rows(snapshot)?;
-    snapshot.validate_asset_body_refs()?;
-    validate_documents(snapshot)?;
-    validate_entity_documents(snapshot)
-}
-
-fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
+pub(super) fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
     if crate::deletion::parse_window_label(&snapshot.window).is_none() {
         return Err(invalid("window key"));
     }
@@ -171,7 +163,7 @@ fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
     Ok(())
 }
 
-fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
+pub(super) fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
     let world = snapshot
         .window
         .split_once('@')
