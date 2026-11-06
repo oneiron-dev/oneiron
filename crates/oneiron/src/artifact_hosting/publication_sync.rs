@@ -425,8 +425,16 @@ impl Vault {
             return Ok(Staged);
         }
         for file in &snapshot.files {
-            // Checks the ASSET is there and hashes to the manifest's name.
-            if crate::codebase::read_asset_blob_in_txn(self, wtxn, &file.content_hash).is_err() {
+            // Checks the ASSET is there and hashes to the manifest's name,
+            // its bytes streamed through the checked reader and never held
+            // whole (FIX 7202).
+            let checked = crate::codebase::with_asset_blob_reader_in_txn(
+                self,
+                wtxn,
+                &file.content_hash,
+                |_| Ok(()),
+            );
+            if checked.is_err() {
                 return Ok(Staged);
             }
         }
