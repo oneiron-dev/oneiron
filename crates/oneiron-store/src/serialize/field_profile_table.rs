@@ -1,19 +1,26 @@
 //! Static entity-type x [`FieldProfile`] to allowed-field-slice table.
 
-use crate::registry::ENTITY_TYPE_FACET;
-use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-};
 use crate::serialize::pack_format::FieldProfile;
+use oneiron_base::registry::ENTITY_TYPE_ACCESS_GRANT;
+use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron_base::registry::ENTITY_TYPE_CLAIM;
+use oneiron_base::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
+use oneiron_base::registry::ENTITY_TYPE_EVENT;
+use oneiron_base::registry::ENTITY_TYPE_FACET;
+use oneiron_base::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use oneiron_base::registry::ENTITY_TYPE_MACHINE;
+use oneiron_base::registry::ENTITY_TYPE_NOTE;
+use oneiron_base::registry::ENTITY_TYPE_OUTBOUND_GRANT;
+use oneiron_base::registry::ENTITY_TYPE_PERSON;
+use oneiron_base::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT;
+use oneiron_base::registry::ENTITY_TYPE_PSYCH_PROFILE;
+use oneiron_base::registry::ENTITY_TYPE_SKILL;
+use oneiron_base::registry::ENTITY_TYPE_SUMMARY;
+use oneiron_base::registry::ENTITY_TYPE_TASK;
+use oneiron_base::registry::ENTITY_TYPE_TASK_LIST;
+use oneiron_base::registry::ENTITY_TYPE_TURN;
 
-pub(super) fn fields_for_profile(
-    entity_type: u8,
-    profile: FieldProfile,
-) -> &'static [&'static str] {
+pub fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
     match (entity_type, profile) {
         // CLAIM profiles are drawn from the pinned on-disk key set (D11) —
         // sourced from `claim::CLAIM_BODY_KEYS` so the read projection can
@@ -59,9 +66,7 @@ pub(super) fn fields_for_profile(
         // `instructions` prompt must never surface in Minimal/Standard packs.
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
         (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => {
-            &crate::store::agent_record::AGENT_DEF_BODY_KEYS
-        }
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::agent_record::AGENT_DEF_BODY_KEYS,
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
@@ -129,6 +134,15 @@ pub(super) fn fields_for_profile(
         }
         (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Full) => {
             crate::write_envelope::counterparty_fields::COUNTERPARTY_CONTACT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Minimal) => {
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Standard) => {
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_OUTBOUND_GRANT, FieldProfile::Full) => {
+            crate::serialize::outbound_grant_fields::OUTBOUND_GRANT_FIELDS_FULL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
             crate::write_envelope::profile_snapshot::PSYCH_PROFILE_FIELDS_MINIMAL

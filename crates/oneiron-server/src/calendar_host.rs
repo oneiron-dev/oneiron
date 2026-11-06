@@ -18,7 +18,7 @@ mod transcript_drain;
 mod xml;
 pub(crate) use caldav::HttpCalDav;
 pub(crate) use card_pass::spawn_calendar_card_pass;
-pub(crate) use feed_poll::spawn_ics_feed_polls;
+pub(crate) use feed_poll::spawn_calendar_polls;
 pub(crate) use ics::HttpIcsFeed;
 pub(crate) use pattern_head::PatternLabelHead;
 pub(crate) use safeguard::calendar_body_screener;

@@ -351,14 +351,16 @@ impl ConnectorCallHost for ServedConnectorCallHost {
         self.elicitations.bind_call(handle, call_ref);
     }
 
+    fn take_awaiting_resume(&mut self, handle: &str, call_ref: EntityId) -> Option<RoundResume> {
+        self.resume
+            .take()
+            .filter(|_| self.elicitations.call_ref(handle) == Some(call_ref))
+    }
+
     fn awaiting_call_committed(&mut self, handle: &str, call_ref: EntityId) {
         let bound = self.elicitations.call_ref(handle) == Some(call_ref);
         if !bound && let Err(error) = self.vault.mark_connector_input_uncertain(&call_ref, handle) {
             tracing::warn!(%error, "connector call questions not marked uncertain");
-        }
-        // The row kept the round; its resume state goes beside it (FIX 9157).
-        if let Some(resume) = self.resume.take().filter(|_| bound) {
-            resume.keep(&self.vault, handle, &call_ref);
         }
     }
 }
