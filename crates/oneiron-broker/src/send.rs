@@ -96,10 +96,10 @@ impl Sender {
         CallDeadline::start(self.timeout)
     }
 
-    /// The verified client a git exchange sends through, and its idle
-    /// bound: [`SendPolicy::timeout`] without progress.
-    pub(crate) fn git_client(&self) -> (&Client, Duration) {
-        (&self.client, self.timeout)
+    /// The verified client a git exchange sends through, under its own
+    /// idle bound, never this policy's timeout.
+    pub(crate) fn git_client(&self) -> &Client {
+        &self.client
     }
 
     /// Sends `body` to `url` once with the key in the shape's auth header,

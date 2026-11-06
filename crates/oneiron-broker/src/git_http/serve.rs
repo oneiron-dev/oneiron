@@ -47,7 +47,8 @@ async fn exchange(
     header: &GitCallHeader,
     sender: &Sender,
 ) -> io::Result<()> {
-    let (client, idle) = sender.git_client();
+    let client = sender.git_client();
+    let idle = header.idle();
     let prepared = match header.check() {
         Ok(url) => spool(stream, header, idle).await?.map(|spool| (url, spool)),
         Err(reason) => {

@@ -9,15 +9,18 @@
 //!   host is asked for again there; any other is the refusal naming its
 //!   target, as for an anonymous source.
 //! - **Fetch.** Stock Git fetches, with no credential, from a source relay
-//!   of this invocation alone: a loopback listener on an OS-assigned port
-//!   under an unguessable in-memory path, serving the upload-pack
-//!   advertisement and RPC of the one resolved repository. Each request is
-//!   judged again (the call's credential not revoked, the binding still
-//!   admitting this importer for this host), its body spooled to a private
-//!   unnamed file, decoded from any gzip, and its digest taken; the broker
-//!   gets the exchange and its body, acknowledges both, and only then is
-//!   the credential read at the custody door (`origin:import-fetch`), copied
-//!   once and handed to the broker. The reply streams back to Git exactly as
+//!   of this invocation alone: a loopback listener on an OS-assigned port,
+//!   serving the upload-pack advertisement and RPC of the one resolved
+//!   repository. Its URL rides Git's argv, which other local users can
+//!   read, so it is no capability: each request must carry the relay's
+//!   random ticket in a header Git's environment holds, and anything else
+//!   is not found. Each request is judged again (the call's credential not
+//!   revoked, the binding still admitting this importer for this host), its
+//!   body spooled to a private unnamed file, decoded from any gzip, and its
+//!   digest taken; the broker gets the exchange and its body, acknowledges
+//!   both, and only then is the credential read at the custody door
+//!   (`origin:import-fetch`) in the one snapshot that judges the binding
+//!   once more, copied once and handed to the broker. The reply streams back to Git exactly as
 //!   the repository sent it; a reply the broker cut ends Git's read broken,
 //!   never clean.
 //!
@@ -44,10 +47,10 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use futures_util::StreamExt as _;
 use oneiron::EntityId;
-use oneiron::git_wire::{GitImportFetchOutcome, GitOid, GitRefName, GitWire};
-use oneiron::repo_mutation::external_import::{
-    EXTERNAL_IMPORT_FETCH_EFFECTOR, ExternalImportSource, REDIRECT_REFUSED,
+use oneiron::git_wire::{
+    GitImportFetchOutcome, GitOid, GitRefName, GitWire, SOURCE_RELAY_TICKET_HEADER,
 };
+use oneiron::repo_mutation::external_import::{ExternalImportSource, REDIRECT_REFUSED};
 use oneiron_broker::{
     BrokerError, GitCallHeader, GitExchange, GitReply, GitRepository, GitRequestDigest, GitTarget,
     MAX_SECRET, Outcome, StreamPart, git_request_digest,
@@ -121,7 +124,8 @@ pub(super) fn fetch_through_broker(
         Err(refused) => return Ok(refused),
     };
     let relay = SourceRelay::start(call.runtime, Arc::clone(&leg), resolved)?;
-    let fetched = wire.fetch_external_exact_via_relay(&relay.url, source_ref, base, head);
+    let fetched =
+        wire.fetch_external_exact_via_relay(&relay.url, &relay.ticket, source_ref, base, head);
     let noted = relay.stop();
     Ok(match (fetched?, noted) {
         (GitImportFetchOutcome::Refused(_), Some(code)) => GitImportFetchOutcome::Refused(code),
@@ -198,16 +202,20 @@ impl SourceLeg {
             })
     }
 
-    /// The binding's credential, read at the custody door for this
-    /// effector and copied once into a buffer wiped on drop.
+    /// The binding's credential, read at the custody door in the one
+    /// snapshot that judges the binding again (its scopes still this host,
+    /// its actor still this importer or behind its Grant), and copied once
+    /// into a buffer wiped on drop. A binding rebound since it was judged
+    /// never reaches the broker.
     fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
         let mut secret = Zeroizing::new(Vec::new());
         let mut oversized = false;
         self.server
             .vault()
-            .inject_secret_at_door(
+            .inject_external_import_source_credential(
                 &self.binding,
-                EXTERNAL_IMPORT_FETCH_EFFECTOR,
+                &self.origin,
+                self.importer,
                 &mut |value: &[u8]| {
                     if value.len() > MAX_SECRET {
                         oversized = true;
@@ -219,7 +227,14 @@ impl SourceLeg {
                     Ok(())
                 },
             )
-            .map_err(|_| "binding_refused_at_door".to_owned())?;
+            .map_err(|error| match error {
+                oneiron::Error::Refused(reason) => reason
+                    .split(':')
+                    .next()
+                    .unwrap_or("binding_refused")
+                    .to_owned(),
+                _ => "binding_refused_at_door".to_owned(),
+            })?;
         if oversized || secret.is_empty() {
             return Err("binding_not_a_header".to_owned());
         }
@@ -254,7 +269,7 @@ impl SourceLeg {
             self.id,
             self.sequence.fetch_add(1, Ordering::Relaxed)
         );
-        let header = GitCallHeader::new(call, target, headers, len, digest);
+        let header = GitCallHeader::new(call, target, headers, len, digest, self.idle);
         let (connection, isolation) =
             self.broker
                 .git_connection(self.idle)
@@ -382,13 +397,32 @@ fn code<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-/// What one source relay serves: its leg and the one resolved repository.
+/// What one source relay serves: its leg, the one resolved repository, and
+/// the ticket each request must carry.
 struct RelayState {
     leg: Arc<SourceLeg>,
     repository: GitRepository,
+    ticket: Zeroizing<String>,
 }
 
 impl RelayState {
+    /// Whether `parts` carries this relay's ticket, compared in constant
+    /// time.
+    fn ticketed(&self, parts: &Parts) -> bool {
+        let presented = parts
+            .headers
+            .get(SOURCE_RELAY_TICKET_HEADER)
+            .map(HeaderValue::as_bytes)
+            .unwrap_or_default();
+        let expected = self.ticket.as_bytes();
+        presented.len() == expected.len()
+            && presented
+                .iter()
+                .zip(expected)
+                .fold(0_u8, |differ, (left, right)| differ | (left ^ right))
+                == 0
+    }
+
     /// Sends Git's request through the broker and answers with the reply:
     /// its status and content type, and its body streamed as it comes.
     async fn forward(
@@ -464,6 +498,9 @@ async fn source_info_refs(
     RawQuery(query): RawQuery,
     parts: Parts,
 ) -> Response {
+    if !relay.ticketed(&parts) {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
     match advertised_service(&query.unwrap_or_default()) {
         Ok(GitService::UploadPack) => {}
         Ok(GitService::ReceivePack) => {
@@ -485,6 +522,9 @@ async fn source_upload_pack(
     parts: Parts,
     body: Body,
 ) -> Response {
+    if !relay.ticketed(&parts) {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
     if header_value(&parts.headers, CONTENT_TYPE.as_str()).as_deref() != Some(UPLOAD_PACK_REQUEST) {
         return relay.leg.refuse(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -563,13 +603,16 @@ async fn spool_request(
 /// One bound fetch's loopback source relay.
 struct SourceRelay {
     url: String,
+    /// The ticket Git presents in [`SOURCE_RELAY_TICKET_HEADER`].
+    ticket: Zeroizing<String>,
     stop: Option<oneshot::Sender<()>>,
     leg: Arc<SourceLeg>,
 }
 
 impl SourceRelay {
     /// Serves `repository`'s upload-pack through `leg` on an OS-assigned
-    /// loopback port under a fresh unguessable path.
+    /// loopback port under a fresh random path, to requests carrying a
+    /// fresh random ticket.
     fn start(
         runtime: &Handle,
         leg: Arc<SourceLeg>,
@@ -578,9 +621,17 @@ impl SourceRelay {
         let mut secret = [0_u8; 32];
         rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut secret);
         let secret: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
+        let mut ticket = Zeroizing::new([0_u8; 32]);
+        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *ticket);
+        let mut hex = Zeroizing::new(String::with_capacity(64));
+        for &byte in ticket.iter() {
+            hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+            hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 15)]));
+        }
         let state = Arc::new(RelayState {
             leg: Arc::clone(&leg),
             repository,
+            ticket: hex.clone(),
         });
         let base = format!("/{secret}/{SOURCE_REPO_SEGMENT}");
         let app = Router::new()
@@ -608,6 +659,7 @@ impl SourceRelay {
         }));
         Ok(Self {
             url: format!("http://127.0.0.1:{port}{base}"),
+            ticket: hex,
             stop: Some(stop),
             leg,
         })

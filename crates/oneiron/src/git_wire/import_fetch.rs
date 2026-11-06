@@ -29,6 +29,7 @@ use crate::store::code_snapshot::RepoRef;
 
 use oneiron_store::git_wire::import_fetch::profile;
 pub(super) use profile::ImportProcessProfile;
+pub use profile::SOURCE_RELAY_TICKET_HEADER;
 
 /// The scratch ref the one fetched outside ref lands on.
 const IMPORT_SCRATCH_REF: &str = "refs/oneiron-import/source";
@@ -140,24 +141,27 @@ impl GitWire<'_> {
     }
 
     /// Fetches exactly `source_ref` as [`Self::fetch_external_exact`] does,
-    /// from the invocation's own loopback source relay `relay_url` (OSH-3):
-    /// the relay sends each exchange through the credential broker, which
-    /// alone installs the credential, so the child carries none.
+    /// from the invocation's own loopback source relay `relay_url` (OSH-3),
+    /// each request carrying the relay's `ticket` in a header the child's
+    /// environment holds, never its argv: the relay sends each exchange
+    /// through the credential broker, which alone installs the credential,
+    /// so the child carries none.
     ///
     /// # Errors
-    /// A URL that is not a loopback relay, a scratch store that cannot be
-    /// made, or a local read failure. A refused fetch or proof is an
-    /// outcome.
+    /// A URL that is not a loopback relay, a malformed ticket, a scratch
+    /// store that cannot be made, or a local read failure. A refused fetch
+    /// or proof is an outcome.
     pub fn fetch_external_exact_via_relay(
         &self,
         relay_url: &str,
+        ticket: &str,
         source_ref: &GitRefName,
         base: &GitOid,
         head: &GitOid,
     ) -> Result<GitImportFetchOutcome> {
         validate_argv_token(relay_url)?;
         self.fetch_exact_into_scratch(relay_url, source_ref, base, head, |root| {
-            ImportProcessProfile::source_relay(root, relay_url)
+            ImportProcessProfile::source_relay(root, relay_url, ticket)
         })
     }
 

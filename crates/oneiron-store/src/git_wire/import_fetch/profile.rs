@@ -24,8 +24,10 @@ use oneiron_base::error::Result;
 enum ImportLeg {
     /// The anonymous https fetch.
     Source,
-    /// The fetch from the loopback source relay, no credential.
-    SourceRelay,
+    /// The fetch from the loopback source relay: no credential, only the
+    /// relay's ticket header line, which the environment carries and the
+    /// argv never does.
+    SourceRelay { ticket: zeroize::Zeroizing<String> },
     /// The push to the loopback door relay.
     Relay,
 }
@@ -42,7 +44,7 @@ impl std::fmt::Debug for ImportProcessProfile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self.leg {
             ImportLeg::Source => "ImportProcessProfile::Source(..)",
-            ImportLeg::SourceRelay => "ImportProcessProfile::SourceRelay(..)",
+            ImportLeg::SourceRelay { .. } => "ImportProcessProfile::SourceRelay(..)",
             ImportLeg::Relay => "ImportProcessProfile::Relay(..)",
         })
     }
@@ -79,21 +81,30 @@ impl ImportProcessProfile {
     }
 
     /// The source relay fetch's profile under the scratch `root`, from the
-    /// loopback `relay_url` only. The child carries no credential: the
-    /// relay's broker installs it.
+    /// loopback `relay_url` only, each request carrying the relay's
+    /// `ticket` in the [`SOURCE_RELAY_TICKET_HEADER`] header. The URL rides
+    /// the child's argv, which other local users can read; the ticket rides
+    /// its environment only. The child carries no credential: the relay's
+    /// broker installs it.
     ///
     /// # Errors
-    /// A root that is not absolute, or a URL that is not a loopback relay.
-    pub fn source_relay(root: &Path, relay_url: &str) -> Result<Self> {
+    /// A root that is not absolute, a URL that is not a loopback relay, or
+    /// a ticket that is not one token of visible ASCII.
+    pub fn source_relay(root: &Path, relay_url: &str, ticket: &str) -> Result<Self> {
         if relay_url.strip_prefix(LOOPBACK).is_none() {
             return Err(invalid(
                 "an import fetch through the broker reads its loopback source relay only",
             ));
         }
         loopback_relay(relay_url)?;
+        if ticket.is_empty() || !ticket.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+            return Err(invalid("an import source relay ticket is malformed"));
+        }
         Ok(Self {
             root: pinned_root(root)?,
-            leg: ImportLeg::SourceRelay,
+            leg: ImportLeg::SourceRelay {
+                ticket: zeroize::Zeroizing::new(format!("{SOURCE_RELAY_TICKET_HEADER}: {ticket}")),
+            },
         })
     }
 
@@ -122,7 +133,8 @@ impl ImportProcessProfile {
             ("http.followRedirects", "false"),
             ("http.proxy", ""),
             ("http.sslVerify", "true"),
-            // An empty value clears every header a config names.
+            // An empty value clears every header a config names; a source
+            // relay's ticket, when there is one, is the header left.
             ("http.extraHeader", ""),
             ("credential.helper", ""),
             ("submodule.recurse", "false"),
@@ -138,7 +150,12 @@ impl ImportProcessProfile {
                 policy.push(("protocol.https.allow", "always"));
                 "https"
             }
-            ImportLeg::SourceRelay | ImportLeg::Relay => {
+            ImportLeg::SourceRelay { ticket } => {
+                policy.push(("protocol.http.allow", "always"));
+                policy.push(("http.extraHeader", ticket.as_str()));
+                "http"
+            }
+            ImportLeg::Relay => {
                 policy.push(("protocol.http.allow", "always"));
                 "http"
             }
@@ -160,6 +177,9 @@ impl ImportProcessProfile {
         own_process_group(command)
     }
 }
+
+/// The request header that carries an import source relay's ticket.
+pub const SOURCE_RELAY_TICKET_HEADER: &str = "x-oneiron-relay-ticket";
 
 /// The loopback origin an invocation's own relays listen on.
 const LOOPBACK: &str = "http://127.0.0.1:";
