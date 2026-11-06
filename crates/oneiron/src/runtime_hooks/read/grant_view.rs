@@ -2,8 +2,8 @@
 //! one check its scoped reads, its verdict's evidence (FIX 10068) and its
 //! verb input (FIX 10084) share, on top of what the reading key admits.
 
-use crate::claim::{ClaimReadStatus, PointRead, ReadRow};
-use crate::memory::{EntityView, Memory, MemoryResult};
+use crate::claim::{ClaimReadStatus, PointRead, ReadRow, ScopedReadResult};
+use crate::memory::{EntityView, ImageViewRequest, Memory, MemoryError, MemoryResult, PulledImage};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result};
 
@@ -21,7 +21,7 @@ pub(in crate::runtime_hooks) fn shows_row(grant: &HookGrant, row: &ReadRow) -> R
         let claim = crate::claim::decode_claim_body(body, true)?;
         return Ok(grant.admits(&claim));
     }
-    Ok(grant.predicates.is_empty() && grant.worlds.is_empty())
+    Ok(shows_non_claim(grant))
 }
 
 /// The evidence views of a hook's `ai.verdict` that its grant shows (FIX
@@ -40,7 +40,7 @@ pub fn hook_evidence_views(
     grant: &HookGrant,
     views: Vec<EntityView>,
 ) -> MemoryResult<(Vec<EntityView>, Vec<EntityId>)> {
-    if views.is_empty() || (grant.predicates.is_empty() && grant.worlds.is_empty()) {
+    if views.is_empty() || shows_non_claim(grant) {
         return Ok((views, Vec::new()));
     }
     let ids = views
@@ -64,4 +64,31 @@ pub fn hook_evidence_views(
         }
     }
     Ok((shown, withheld))
+}
+
+/// An ASSET has neither a claim predicate nor a world. A hook sees its
+/// pixels only when its grant shows non-claim rows, on top of its reader's
+/// ordinary admission. The normal image pull keeps its bytes, version,
+/// secret masking and served-form receipt together.
+///
+/// # Errors
+///
+/// A narrowed grant, an unavailable reader, or the ordinary image pull
+/// refusing the handle.
+pub fn hook_pull_image(
+    memory: &Memory<'_>,
+    grant: &HookGrant,
+    request: &ImageViewRequest,
+) -> MemoryResult<ScopedReadResult<PulledImage>> {
+    if !shows_non_claim(grant) {
+        return Err(MemoryError::not_found(
+            "the hook's grant does not show this image",
+        ));
+    }
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
+    crate::memory::pull_image(&lane, request, true)
+}
+
+fn shows_non_claim(grant: &HookGrant) -> bool {
+    grant.predicates.is_empty() && grant.worlds.is_empty()
 }
