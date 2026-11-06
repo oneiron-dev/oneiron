@@ -188,7 +188,7 @@ unchanged.
 - **Generated-image deck assets:** their adapter receipts stay engine-side.
 - **The Office oracle:** live Word, Excel and PowerPoint runs are Phase 2.
 
-## Bubble-size sequence writes
+## Native chart sequence writes
 
 `deck.transaction` schema 2 accepts `set_series_values` with `sequence: "size"`
 for a bubble series' existing workbook-backed `c:bubbleSize` range. The write uses
@@ -198,9 +198,10 @@ cache together, and re-imports before landing. The other sequence names remain
 `categories` takes the same leaf-first, level-major vector the native reader
 returns, including missing points. A same-length write updates each retained
 level's points in place and all overlapping workbook-backed caches; the level
-order, outer point count, formulas and unrelated XML remain unchanged. Literal,
-external, formula-backed, shared or
-length-changing ranges keep the native writer's existing refusals. Live exports
+order, outer point count, formulas and unrelated XML remain unchanged. Writing a
+missing value removes every cached point with that index, including duplicates.
+Literal, external, formula-backed, shared or length-changing ranges keep the
+native writer's existing refusals. Live exports
 still use the full rewrite when a size sequence is added or removed, is literal,
 grows beyond its existing range, or the checked native write refuses. This does
 not add a stock-chart seeder or change stock-placeholder read/skip behavior.

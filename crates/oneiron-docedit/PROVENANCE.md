@@ -135,3 +135,9 @@ including a self-closed one, retains its bytes. Single-level caches keep their
 existing count and point-splice path. Length, kind, date, workbook and fresh
 read-back checks remain unchanged. No native wire/schema version changes;
 source qualification is not a compiler, runtime or PowerPoint fidelity proof.
+
+The same chart pack (FIX 18236) removes every direct cached point at an
+index written as Missing, including duplicate indices. Deletion spans are
+collected in the existing point-index pass; nonmissing writes and insertion
+anchors keep their last-wins map and prior byte-preserving behavior. The fresh
+cache/workbook read-back remains the landing check.

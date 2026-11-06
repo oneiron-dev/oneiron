@@ -103,15 +103,25 @@ fn patched_points(
             }
         }
     };
-    let held: BTreeMap<usize, usize> = tree
-        .children(cache)
-        .filter(|(_, child)| child.is(C, "pt"))
-        .filter_map(|(at, pt)| Some((pt.attr("idx")?.trim().parse().ok()?, at)))
-        .collect();
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (at, pt) in tree.children(cache).filter(|(_, child)| child.is(C, "pt")) {
+        let Some(idx) = pt
+            .attr("idx")
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+        else {
+            continue;
+        };
+        held.insert(idx, at);
+        if new
+            .get(idx)
+            .is_none_or(|cell| matches!(cell, Cell::Missing))
+        {
+            edits.push((pt.span.clone(), Vec::new()));
+        }
+    }
     for (&idx, &pt) in &held {
         let point = &tree.nodes[pt];
         let Some(value) = new.get(idx).and_then(text) else {
-            edits.push((point.span.clone(), Vec::new()));
             continue;
         };
         if old.get(idx) == new.get(idx) {
