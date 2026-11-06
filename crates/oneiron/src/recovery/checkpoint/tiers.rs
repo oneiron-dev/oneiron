@@ -174,6 +174,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // the carrier's body, which could confirm a guess of its
                 // author once that actor is erased (FIX 17143).
                 b"it:authored:",
+                // So is the record of which machine wrote a MESSAGE row: a
+                // digest of the row, and a restored install wrote nothing
+                // (FIX 12113).
+                b"mw:",
             ]
             .iter()
             .any(|p| key.starts_with(p))
