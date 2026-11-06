@@ -4,7 +4,7 @@
 //! itself is `room_scope` (R17: one function, one implementation).
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
@@ -221,6 +221,18 @@ impl WordClosure<'_> {
             store, self.txn, id, raw, &held,
         )?
         .is_some_and(|record| admits(self.scope, &record))
+        {
+            return Ok(None);
+        }
+        if let Some(header) = EntityMetadataHeader::parse(raw)
+            && !super::retained_copy_admits(
+                store,
+                self.txn,
+                &id,
+                header.entity_type,
+                None,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?
         {
             return Ok(None);
         }

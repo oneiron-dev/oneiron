@@ -185,6 +185,19 @@ pub(crate) async fn handle_mcp_request(
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
                         client_surface: params.client_surface(),
+                        signing_request_transport: Some(
+                            oneiron::memory::SigningRequestTransport::new(
+                                connection
+                                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                                    // Embedded locality uses loopback:0, not a TCP peer.
+                                    .filter(|peer| peer.0.port() != 0)
+                                    .map(|peer| peer.0.ip()),
+                                headers
+                                    .get(axum::http::header::USER_AGENT)
+                                    .and_then(|value| value.to_str().ok())
+                                    .map(str::to_owned),
+                            ),
+                        ),
                         ..actor.clone()
                     };
                     let args =

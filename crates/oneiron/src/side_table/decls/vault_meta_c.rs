@@ -530,6 +530,10 @@ side_tables! {
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
     CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored [accepts: crate::context_board::context_board_plugin_block_accepts_masked];
+    /// One actor's own board layout (BOARD-LAYOUT): the live layout its board
+    /// renders under and its one pending batch. Key: id16 (actor).
+    CONTEXT_BOARD_LAYOUT: VaultMeta b"context_board.layout.v1:" Named Engine
+        => crate::context_board::erase_board_layout_actor_in_txn;
     /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
     /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
