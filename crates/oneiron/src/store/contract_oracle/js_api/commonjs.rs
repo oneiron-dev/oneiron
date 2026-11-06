@@ -17,7 +17,7 @@ enum Target {
 }
 
 // Property receivers are captured from the original module value, before
-// evaluating the chain's single fresh terminal value.
+// evaluating the chain's single terminal value.
 enum ChainReference {
     Whole,
     Exports,
@@ -126,12 +126,13 @@ pub(super) fn collect(
                 property_reference_chain(assignment, semantic, alias, native_module, &mut accounted)
             {
                 commonjs = true;
+                let fresh = fresh_value(value);
                 let mut module_replaced = false;
                 let mut exports_rebound = false;
                 for reference in references.into_iter().rev() {
                     match reference {
                         ChainReference::Whole => {
-                            if !module_replaced {
+                            if fresh && !module_replaced {
                                 module.bindings.clear();
                                 value_bindings(value, module);
                                 module_replaced = true;
@@ -145,7 +146,11 @@ pub(super) fn collect(
                         }
                     }
                 }
-                alias = module_replaced && exports_rebound;
+                alias = if fresh {
+                    module_replaced && exports_rebound
+                } else {
+                    alias || exports_rebound
+                };
                 continue;
             }
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
@@ -418,7 +423,15 @@ fn property_reference_chain<'ast, 'src>(
         references.push(reference);
         match assignment.right.get_inner_expression() {
             Expression::AssignmentExpression(next) => assignment = next,
-            value if has_property && has_slot && fresh_value(value) => {
+            value
+                if has_property
+                    && has_slot
+                    && (fresh_value(value)
+                        || (native_module
+                            && whole_value(value, semantic, &mut chain_accounted))
+                        || (alias
+                            && wrapper(value, "exports", semantic, &mut chain_accounted))) =>
+            {
                 accounted.extend(chain_accounted);
                 return Some((references, value));
             }
