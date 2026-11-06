@@ -1745,6 +1745,7 @@ impl OfferLadder {
         let Some(media) = &rung.media else {
             return Ok(None);
         };
+        let external_worker = media.external_worker.clone();
         let mut bound = rung_request(rung, request);
         // A banked voice goes out in this rung's own binding of it, while
         // that is still current (FIX 1746).
@@ -1847,6 +1848,20 @@ impl OfferLadder {
             settle_failed(permit);
             return Err(CallDeadline::expiry());
         };
+        if let Some(worker) = &external_worker {
+            let usage = match &answered {
+                Ok(response) => &response.usage,
+                Err(stopped) => &stopped.progress.usage,
+            };
+            for receipt in usage.inference_calls() {
+                if receipt.worker.kind == worker.spec().kind
+                    && let Some(epoch) = receipt.worker.identity.backend_epoch.as_ref()
+                    && super::worker_host::is_current(worker)
+                {
+                    worker.note_external_epoch(epoch.as_str());
+                }
+            }
+        }
         let release_refused = |error: &LlmError| {
             matches!(
                 error,
