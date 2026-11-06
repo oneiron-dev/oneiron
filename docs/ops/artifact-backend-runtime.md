@@ -98,11 +98,20 @@ under a new body-size cap.
 
 These new routes exist only on the artifact-only listener. They are not API
 routes. Existing `/a/` URLs, static headers, method handling and CSP are unchanged.
-Configured cloud subdomain rewriting continues to serve its existing static
-paths. A cloud edge must explicitly forward this new backend route to the
-artifact listener with a local authority outside the configured artifact
-domains. The existing public/internal subdomain rewrite is static-only;
-automatic app-subdomain backend selection is not part of this slice.
+A configured app host (`<app>--<vault>.<domain>` or the managed
+`<app>.<vault_id>.artifact.invalid` authority) selects the same backend from
+its root URL. Redirects, cookie paths and CSP keep that browser-visible root,
+including the native token and selector, rather than the internal route alias.
+The hostname selects the vault and artifact; it grants no read or engine action.
+
+With no execution profile, app hosts keep their static behavior. With a profile
+but no admitted backend manifest, GET and HEAD fall back to the same static
+reader, redirect, tier, projection, ETag, cache and CSP handling before any guest
+starts or private headers are removed. Other methods remain unavailable on a
+static app. A malformed manifest or staging error remains an error, not a static
+fallback. Vault hosts (`<vault>.<domain>/<artifact>/…`), local `/a/` routes and
+the API listener keep their existing behavior. Local `/_apps/` remains
+backend-only; it does not become another static route.
 
 ## Authority and process lifetime
 
