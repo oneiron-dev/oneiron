@@ -99,6 +99,12 @@ pub(crate) fn ack_option_void_generation(
 pub struct TaskAskOptionLink {
     pub token: String,
     pub intended_recipient: EntityId,
+    /// The MACHINE id of the install that issued the link, which is the
+    /// ask's admitting node, read when the link was issued (FIX 20468).
+    /// It only locates the node that holds the link's rows. It grants
+    /// nothing, and the URL does not carry it. `None` on an install that
+    /// has not joined a vault.
+    pub admitting_machine: Option<EntityId>,
 }
 
 /// Generic, recipient-bound page data. IDs are the AskSpec's stable option IDs.
@@ -247,6 +253,10 @@ impl Memory<'_> {
             Ok(TaskAskOptionLink {
                 token,
                 intended_recipient: friend,
+                admitting_machine: crate::store::install_identity::read_machine_id_in_txn(
+                    self.vault(),
+                    txn,
+                )?,
             })
         })
     }
