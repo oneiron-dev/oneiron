@@ -38,6 +38,14 @@ pub(crate) struct WakeOwedCall {
     pub(crate) at: u64,
 }
 
+/// A known terminal step contribution and its original retained owed row.
+pub(crate) struct OwedCallUsage {
+    pub(crate) step_hash: [u8; 32],
+    pub(crate) call: WakeOwedCall,
+    pub(crate) terminal_claim: Option<crate::EntityId>,
+    pub(crate) step_units: u64,
+}
+
 /// Owed paid calls. Key: id16(attempt) + hash32(step).
 const OWED: SideTable<(AttemptId, [u8; 32]), WakeOwedCall, Raw> =
     SideTable::new(&side_table::DREAMER_WAKE_OWED_CALL);
@@ -192,10 +200,11 @@ fn settle_owed_calls_in_txn(
     let store = DreamerRunnerStore::new(vault);
     let mut charged = 0u64;
     let mut dropped = 0u64;
+    let mut sources = BTreeMap::<(AttemptId, String), Vec<OwedCallUsage>>::new();
     for ((attempt, step_hash), row) in calls {
-        if let Some(claim_id) =
-            crate::llm::model_step::step_terminal_claim_in_txn(vault, &*wtxn, attempt, &step_hash)?
-        {
+        let terminal_claim =
+            crate::llm::model_step::step_terminal_claim_in_txn(vault, &*wtxn, attempt, &step_hash)?;
+        if let Some(claim_id) = terminal_claim {
             let receipt = crate::model_step_context::StepReceipt {
                 attempt_id: attempt,
                 step_hash,
@@ -211,8 +220,15 @@ fn settle_owed_calls_in_txn(
         match usage {
             Some(usage) => {
                 let units = crate::dreamer_consolidation::step_charge::usage_units(&usage);
-                let sum = sums.entry((attempt, row.line)).or_insert(0);
+                let key = (attempt, row.line.clone());
+                let sum = sums.entry(key.clone()).or_insert(0);
                 *sum = sum.saturating_add(units);
+                sources.entry(key).or_default().push(OwedCallUsage {
+                    step_hash,
+                    call: row,
+                    terminal_claim,
+                    step_units: units,
+                });
                 charged += 1;
             }
             None => {
@@ -238,7 +254,7 @@ fn settle_owed_calls_in_txn(
                 now,
             },
         )?;
-        match outcome {
+        match &outcome {
             DreamerBudgetSettlementOutcome::Settled(_) => {}
             DreamerBudgetSettlementOutcome::NoReservation => {
                 if sum > 0 {
@@ -247,6 +263,11 @@ fn settle_owed_calls_in_txn(
                 }
                 delete_attempt_owed_calls_in_txn(vault, wtxn, attempt)?;
             }
+        }
+        if let Some(sources) = sources.remove(&(attempt, line.clone())) {
+            store.record_native_owed_reconciliation_in_txn(
+                wtxn, attempt, &line, sum, &outcome, &sources, now,
+            );
         }
     }
     Ok((charged, dropped))
