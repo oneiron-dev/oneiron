@@ -10,9 +10,10 @@
 //! A value custody came to know after the blob was stored is masked at the
 //! read too (FIX 8966): the read checks the blob, its own bytes and every
 //! member, against the values custody knows now, with the leaf selection
-//! the lift sweep uses, and the rebuilt copy is checked against them again.
-//! Nothing is written: a Git-only blob the sweep never walks reads masked
-//! all the same.
+//! the lift sweep uses, and the rebuilt copy is checked against them again,
+//! each raw container buffer included. A value no place can cover (a ZIP
+//! entry's name) leaves the blob opaque. Nothing is written: a Git-only
+//! blob the sweep never walks reads masked all the same.
 
 use heed::RoTxn;
 use zeroize::Zeroizing;
@@ -96,6 +97,37 @@ impl<'a> RepoKnownCheck<'a> {
             Err(Stop::Fail(error)) => Err(error),
         }
     }
+
+    /// Whether a known value reads anywhere in `bytes`: its own bytes and
+    /// every member, each raw container buffer included, as the release
+    /// rules read a copy. A value in a container's own bytes, such as a ZIP
+    /// entry's name, takes no place a copy can overwrite, so a blob it reads
+    /// in has no masked copy (FIX 8966).
+    ///
+    /// # Errors
+    /// A walk failure.
+    pub(crate) fn reads_known(&self, bytes: &[u8]) -> Result<bool> {
+        if self.owner_kept {
+            return Ok(false);
+        }
+        let keep = |value: &[u8]| self.keep(value);
+        if !self.known.spans_except(bytes, keep).is_empty() {
+            return Ok(true);
+        }
+        let mut hit = false;
+        let mut visit = |_: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
+            if self.known.spans_except(member, keep).is_empty() {
+                return Ok(());
+            }
+            hit = true;
+            Err(Stop::Refuse("known value"))
+        };
+        // A container no reader here reads shows a reader nothing more.
+        match walk_retained_repo_members(bytes, &mut visit) {
+            Ok(()) | Err(Stop::Refuse(_)) => Ok(hit),
+            Err(Stop::Fail(error)) => Err(error),
+        }
+    }
 }
 
 /// `places`, a blob's marked places, with each place a value `check` knows
@@ -167,9 +199,9 @@ pub(crate) fn project_marked_retained_repo_blob(
         Ok(Some(_)) | Err(_) => return None,
     }
     if let Some(check) = check {
-        match check.places(&copy) {
-            Ok(left) if left.is_empty() => {}
-            Ok(_) | Err(_) => return None,
+        match check.reads_known(&copy) {
+            Ok(false) => {}
+            Ok(true) | Err(_) => return None,
         }
     }
     Some(std::mem::take(&mut *copy))

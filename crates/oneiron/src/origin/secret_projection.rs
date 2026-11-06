@@ -214,13 +214,22 @@ pub(crate) fn project_repo_bytes_in_txn(
     if let Some(check) = &check {
         places = retained_repo_known_places(&bytes, check, &places)?;
     }
-    if places.is_empty() {
+    // A known value no place covers (a container's own bytes, such as a ZIP
+    // entry's name) leaves no copy to make: the blob is opaque.
+    let unplaced = match &check {
+        Some(check) if places.is_empty() => check.reads_known(&bytes)?,
+        _ => false,
+    };
+    if places.is_empty() && !unplaced {
         return Ok(RepoBodyProjection::Exact(bytes));
     }
     let source_blob = match marks.source_blob() {
         Some(source_blob) => source_blob.clone(),
         None => git_blob_oid(&bytes)?,
     };
+    if unplaced {
+        return Ok(RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }));
+    }
     Ok(
         match project_marked_retained_repo_blob(&bytes, &places, check.as_ref()) {
             Some(bytes) => RepoBodyProjection::Masked { bytes, source_blob },
