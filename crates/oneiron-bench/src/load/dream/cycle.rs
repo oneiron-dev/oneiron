@@ -34,9 +34,25 @@ pub(super) fn ms_between(origin: Instant, at: Instant) -> f64 {
 /// One `/v1/ai/*` call as `agent`: a body POSTs, none GETs. The JSON
 /// answer, or `<status> <code>`.
 fn ai(agent: &Agent, http: &Client, url: &str, body: Option<&Value>) -> Result<Value, String> {
+    ai_within(agent, http, url, body, None)
+}
+
+/// [`ai`] with its own request timeout, when `timeout` is set, in place of
+/// the client's.
+fn ai_within(
+    agent: &Agent,
+    http: &Client,
+    url: &str,
+    body: Option<&Value>,
+    timeout: Option<Duration>,
+) -> Result<Value, String> {
     let request = match body {
         Some(body) => http.post(url).json(body),
         None => http.get(url),
+    };
+    let request = match timeout {
+        Some(timeout) => request.timeout(timeout),
+        None => request,
     };
     let response = agent.authorized(request)?.send().map_err(|e| {
         if e.is_timeout() {
@@ -134,6 +150,30 @@ pub(super) fn status(agent: &Agent, http: &Client, base: &str) -> Result<Dreamer
     ai(agent, http, &format!("{base}/v1/ai/status"), None)
         .map(|answer| DreamerStatus::of(&answer))
         .map_err(|e| format!("ai status: {e}"))
+}
+
+/// [`status`], read within the time left before `deadline` (FIX 15055): a
+/// read that hangs ends at the wait's bound, so the wait never overruns it
+/// by the read's own length. Past the bound no read goes out.
+fn status_before(
+    agent: &Agent,
+    http: &Client,
+    base: &str,
+    deadline: Instant,
+) -> Result<DreamerStatus, String> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err("ai status: timeout".to_owned());
+    }
+    ai_within(
+        agent,
+        http,
+        &format!("{base}/v1/ai/status"),
+        None,
+        Some(left),
+    )
+    .map(|answer| DreamerStatus::of(&answer))
+    .map_err(|e| format!("ai status: {e}"))
 }
 
 /// The Dreamer's status once it runs (waiting or working), polled for up
@@ -250,7 +290,7 @@ pub(super) fn await_still(
 ) -> StillWait {
     let started = Instant::now();
     let mut seen_lines = scan.stages.len() + scan.passes.len();
-    let mut now_status = status(agent, http, base).ok();
+    let mut now_status = status_before(agent, http, base, deadline).ok();
     // The quiet starts after the first read: a slow read must not count
     // as quiet time it did not watch.
     let mut changed = Instant::now();
@@ -270,7 +310,7 @@ pub(super) fn await_still(
         std::thread::sleep(STEP.min(deadline.saturating_duration_since(Instant::now())));
         step += 1;
         if step.is_multiple_of(4) {
-            match status(agent, http, base) {
+            match status_before(agent, http, base, deadline) {
                 Ok(read) => {
                     if now_status.as_ref().is_none_or(|last| {
                         read.tallies() != last.tallies() || read.state != last.state
@@ -424,7 +464,7 @@ impl Wait<'_> {
             scan.read(tail, self.origin);
             if step.is_multiple_of(4) {
                 reads += 1;
-                match status(self.agent, self.http, self.base) {
+                match status_before(self.agent, self.http, self.base, t0 + self.bound) {
                     Ok(read) => {
                         if read.tallies() != now_status.tallies() || read.state != now_status.state
                         {

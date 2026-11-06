@@ -344,15 +344,24 @@ impl LocalCustody<'_> {
         )?;
         open_dir(&self.compartment()?, create == Create::All, kind)?;
         // FIX 11208: an erasable key's ref is filed before its directory.
+        // FIX 16230: a tombstoned key's directory is never made again.
         if create != Create::Nothing && subject.kind() == CustodyKind::ErasableKey {
+            if create == Create::All && self.erasable_tombstoned(subject)? {
+                return Err(subject.kind().corrupt());
+            }
             self.index_erasable(subject)?;
         }
         let file = open_dir(&dir, create != Create::Nothing, kind)?;
         Ok((dir, file))
     }
 
+    /// Whether a marker, or an erasable key's tombstone (FIX 16230),
+    /// retires `id`.
     pub(crate) fn retired(&self, id: &CustodyId) -> Result<bool> {
-        retired_in(&self.subject_dir(id.subject())?, id.generation(), id.kind())
+        Ok(
+            retired_in(&self.subject_dir(id.subject())?, id.generation(), id.kind())?
+                || (id.generation() == 0 && self.erasable_tombstoned(id.subject())?),
+        )
     }
 
     /// Whether an entry was published for `id` and is still there. No
@@ -568,6 +577,10 @@ impl LocalCustody<'_> {
     /// ([`crate::store::Store::finish_custody_retirements`]).
     pub(crate) fn retire_local(&self, id: &CustodyId) -> Result<()> {
         let kind = id.kind();
+        // FIX 16230: a tombstoned erasable key is retired already.
+        if id.generation() == 0 && self.erasable_tombstoned(id.subject())? {
+            return Ok(());
+        }
         let (dir, directory) = self.open_subject(id.subject(), Create::Subject)?;
         match safe_open(
             &dir.join(marker_name(id.generation())),
