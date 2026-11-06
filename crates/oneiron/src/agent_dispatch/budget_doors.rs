@@ -259,19 +259,17 @@ pub fn open_spend_lease_as_owner(
     });
     match input.funding_grant_ref {
         // FIX 7766: the owner's selected Grant proves itself in this writer,
-        // before the root is put.
-        Some(grant) => {
-            let funding = vault.selected_owner_agent_funding_grant_in_txn(&txn, owner, grant)?;
-            dispatcher.open_root_spend_scope_funded_in_txn(
-                &mut txn,
-                scope.clone(),
-                maximum,
-                shown,
-                None,
-                &funding,
-                crate::unix_seconds_now(),
-            )?
-        }
+        // immediately before the root is put.
+        Some(grant) => dispatcher.open_root_spend_scope_funded_in_txn(
+            &mut txn,
+            scope.clone(),
+            maximum,
+            shown,
+            None,
+            owner,
+            grant,
+            crate::unix_seconds_now(),
+        )?,
         None => dispatcher.open_root_spend_scope_in_txn(
             &mut txn,
             scope.clone(),

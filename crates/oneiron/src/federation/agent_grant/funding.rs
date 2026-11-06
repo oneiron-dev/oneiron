@@ -35,9 +35,10 @@ const FUNDING_REFUSED: &str = "the selected funding grant cannot fund this launc
 const FUNDING_STANDING_VERB: &str = "read";
 
 /// An owner's agent Grant the authenticated owner selected as a launch's
-/// funding, proved in the caller's transaction (FIX 7766). Built only by
-/// [`Vault::selected_owner_agent_funding_grant_in_txn`]; current only
-/// within that transaction.
+/// funding, proved in the caller's write transaction (FIX 7766). Built only
+/// by [`Vault::selected_owner_agent_funding_grant_in_txn`], on the writer
+/// that then writes its binding; current only within that writer, never
+/// cloned, stored or serialized.
 #[derive(Debug)]
 pub(crate) struct SelectedOwnerAgentFundingGrant {
     grant_ref: EntityId,
@@ -74,7 +75,8 @@ fn refused(why: &str) -> Error {
 
 impl Vault {
     /// The Grant `selected` as `owner` names it a launch's funding, proved in
-    /// `txn`, the root writer's view (FIX 7766): `owner` revalidated as the
+    /// `txn`, the root's own writer (FIX 7766), never a read snapshot whose
+    /// proof a later writer could replay: `owner` revalidated as the
     /// vault's live owner here; `selected` the exact live FEDERATION_GRANT of
     /// an owner's Access agent Grant (a Delegate, never Guest or GitPush),
     /// not known withdrawn, that names a wallet and stands now for its own
@@ -90,7 +92,7 @@ impl Vault {
     /// wallet.
     pub(crate) fn selected_owner_agent_funding_grant_in_txn(
         &self,
-        txn: &heed::RoTxn<'_>,
+        txn: &heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         selected: EntityId,
     ) -> Result<SelectedOwnerAgentFundingGrant> {
