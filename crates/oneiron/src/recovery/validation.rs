@@ -14,6 +14,13 @@ pub(super) use documents::DocumentRows;
 pub(super) use entity_documents::EntityDocumentRows;
 pub(super) use window_rows::WindowRows;
 
+/// Drain the NOTE-only validator for native document capture callers.
+pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    let mut validation = DocumentRows::default();
+    while !validation.advance(snapshot, usize::MAX)? {}
+    Ok(())
+}
+
 /// Drain the generic document validator for native document capture callers.
 pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
     let mut validation = EntityDocumentRows::default();
