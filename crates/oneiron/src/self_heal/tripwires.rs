@@ -109,6 +109,32 @@ point_detector!(
     Receipt
 );
 
+/// The served receipt window keeps the receipt as evidence and names its
+/// actual job only as a replay coordinate. The sweep still proves a stored,
+/// ended Dreamer attempt before proposing a retry.
+struct ConsolidationReceiptDetector<'a> {
+    receipts: &'a [ReceiptRecord],
+}
+
+impl DeterministicDetector for ConsolidationReceiptDetector<'_> {
+    fn detector_id(&self) -> &'static str {
+        ConsolidationErrorDetector.detector_id()
+    }
+
+    fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
+        let mut events = ConsolidationErrorDetector.detect(input);
+        for event in &mut events {
+            let receipt = event.evidence_refs.first().and_then(|source| {
+                self.receipts
+                    .iter()
+                    .find(|receipt| receipt_id(receipt) == Some(*source))
+            });
+            event.replay.run_ref = receipt.and_then(|receipt| receipt.job_ref.clone());
+        }
+        events
+    }
+}
+
 fn default_retrieval_regressions() -> u64 {
     32
 }
@@ -356,7 +382,7 @@ impl DiagnosticObservation {
     }
     pub fn from_consolidation_receipt(receipt: &ReceiptRecord) -> Option<Self> {
         if receipt.receipt_kind != ReceiptKind::Gate
-            || receipt.outcome != "denied"
+            || receipt.outcome != "deny"
             || receipt.fields.get("content_kind").map(String::as_str) != Some("claim")
             || !receipt
                 .policy_trace
@@ -544,7 +570,7 @@ impl Vault {
             scope,
             observations,
             &[
-                &ConsolidationErrorDetector,
+                &ConsolidationReceiptDetector { receipts },
                 &ConsentStormDetector {
                     bounds,
                     window_end: end,

@@ -23,7 +23,8 @@ use super::read::{read_learning_in_txn, stored_prior_from_read_in_txn};
 pub(crate) const PRIOR: SideTable<[u8; 32], StoredPrior, Named> =
     SideTable::new(&side_table::LEARNING_PRIOR);
 
-/// Stores the prior `cell` starts from and re-projects it.
+/// Stores the prior `cell` starts from and re-projects it. A hard-deleted
+/// subject is passed over without changing the prior or registering a cell.
 ///
 /// Callers are the operations the law names: a hub import (`provenance`), an
 /// executor swap (`carried`), a type split or project fork (`parent`), a
@@ -42,6 +43,13 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
     }
     prior.validate()?;
     vault.with_write_txn_grouped(|wtxn| {
+        if vault.local_hard_delete_marker_exists_in_txn(wtxn, &cell.subject)? {
+            tracing::warn!(
+                subject = %cell.subject.to_hex(),
+                "a learning prior was not stored: its subject was hard-deleted"
+            );
+            return Ok(());
+        }
         let digest = ensure_cell_in_txn(vault, wtxn, cell, prior.value.form())?;
         PRIOR.put(
             &vault.store,
@@ -59,7 +67,8 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
 /// evidence, so that evidence adds runs against the borrowed weight instead
 /// of replacing it ("Receipts then outweigh it, like any prior"). A cell with
 /// a stored prior or an own head keeps what it has; a cell that borrows
-/// nothing, or borrows in another form than `form`, stores nothing.
+/// nothing, borrows in another form than `form`, or has a hard-deleted subject,
+/// stores nothing.
 ///
 /// # Errors
 ///
@@ -71,6 +80,13 @@ pub(crate) fn capture_borrowed_prior_in_txn(
     type_parents: &[TypeRef],
     form: EstimateForm,
 ) -> Result<()> {
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &cell.subject)? {
+        tracing::warn!(
+            subject = %cell.subject.to_hex(),
+            "a borrowed learning prior was not captured: its subject was hard-deleted"
+        );
+        return Ok(());
+    }
     let digest = cell.digest();
     if PRIOR.contains(&vault.store, wtxn, &digest)? {
         return Ok(());

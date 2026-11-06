@@ -84,7 +84,10 @@ impl AttemptRecord {
                 artifact_id,
                 thread_id,
             }),
-            AttemptPause::Person | AttemptPause::Budget | AttemptPause::Fanout { .. } => None,
+            AttemptPause::Person
+            | AttemptPause::Budget
+            | AttemptPause::Fanout { .. }
+            | AttemptPause::Hook { .. } => None,
         }
     }
 }

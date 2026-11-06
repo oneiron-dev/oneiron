@@ -65,6 +65,7 @@ mod scheduling;
 mod segments;
 mod session;
 
+pub use budget::BudgetCheckpoint;
 pub use budget::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,

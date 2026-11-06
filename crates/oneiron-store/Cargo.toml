@@ -9,30 +9,54 @@ repository.workspace = true
 
 [dependencies]
 arc-swap = { workspace = true }
+base64 = "0.22"
 blake3 = { workspace = true, features = ["zeroize"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+flate2 = "1"
 getrandom = { version = "=0.4.3", features = ["sys_rng"] }
 half = "2"
 heed = { workspace = true }
+lopdf = { version = "=0.44.0", default-features = false }
+loro = "1.10"
+lzma-rust2 = { version = "=0.16.2", default-features = false, features = ["std", "xz", "encoder"] }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attribution" }
+oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
+rand = "0.8"
+rand_core = { workspace = true }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
+# FIX 11575: the secret scan opens 7z containers and rebuilds their masked
+# copies. Pure Rust (sevenz-rust2 and lzma-rust2 Apache-2.0, ppmd-rust CC0-1.0
+# OR MIT-0); copy, LZMA, LZMA2, PPMd and the BCJ and delta filters decode, and
+# no password is taken, so an encrypted 7z stays sealed like an encrypted ZIP.
+sevenz-rust2 = { version = "=0.24.2", default-features = false, features = ["compress", "ppmd"] }
 sha2 = "0.10"
+tar = { version = "=0.4.46", default-features = false }
+tempfile = "3"
 thiserror = { workspace = true }
+tokio = { version = "1", features = ["net", "sync", "time"] }
 tracing = { version = "0.1" }
+unicode-normalization = "0.1"
 uuid = { workspace = true }
 xxhash-rust = { workspace = true }
 zeroize = "1"
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
 rustix = { version = "1.1", features = ["fs", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -40,10 +64,14 @@ tempfile = "3"
 [features]
 # Forwarded by `oneiron/sync`: the overlay's sync-only string-range accessor.
 sync = []
-# Forwarded by `oneiron/test-support`: the session overlay's allocation
-# observer and its test-only snapshot reads, which core's tests call. Never
+# Forwarded by `oneiron/test-support`: the test-only seams core's tests call
+# (the session overlay's allocation observer and snapshot reads, and the
+# fault, race and raw-key hooks of the store modules moved out of core). Never
 # installs an allocator; each crate's own test binary registers one.
 test-support = []
+# Forwarded by `oneiron/test-hooks`: the retrieval deadline's still clock and
+# slow-stage seam, which core's test-hooks build names. No production effect.
+test-hooks = []
 
 [lints]
 workspace = true

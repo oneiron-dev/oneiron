@@ -583,8 +583,16 @@ impl Vault {
             sweep_queued_at: cfg!(feature = "sync").then_some(now),
         };
         let identity = crate::store::install_identity::ensure_device_identity_in_txn(self, wtxn)?;
-        let body =
-            encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)?;
+        let custody_retirements = self
+            .store
+            .erase_custody_retirements_in_txn(wtxn, &[*edit])?;
+        let body = encode_redaction_audit_receipt(
+            input,
+            custody_retirements,
+            Vec::new(),
+            &receipt_id,
+            &identity,
+        )?;
         self.put_redaction_audit_receipt_in_txn(wtxn, &receipt_id, now, &body)?;
         #[cfg(feature = "sync")]
         let sweep_key =
