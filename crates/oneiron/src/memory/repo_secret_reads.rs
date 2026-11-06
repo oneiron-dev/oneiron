@@ -21,13 +21,17 @@ use heed::RoTxn;
 
 use super::{Memory, MemoryResult};
 use crate::Vault;
+use crate::code_document::CodeDocumentFrontier;
 use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::secret_marks::{
     RepoMarkFacts, RepoSecretMarkLookup, repo_secret_marks_for_hash_in_txn,
 };
-use crate::origin::secret_projection::{RepoBodyProjection, project_repo_bytes_in_txn};
+use crate::origin::secret_projection::{
+    REPO_OPAQUE_FILE_BYTES, RepoBodyProjection, RepoOpaqueFile, project_repo_bytes_in_txn,
+    sourced_opaque_in_txn,
+};
 use crate::registry::ENTITY_TYPE_ASSET;
 
 mod reveal;
@@ -56,7 +60,10 @@ pub(crate) fn repo_asset_body_in_txn(
     if marks.is_empty() {
         return Ok(None);
     }
-    project_repo_bytes_in_txn(vault, txn, &marks, body.to_vec())
+    // In the caller's snapshot, which may be a writer's: the stored spans
+    // alone (FIX 8966 wires the known-value pass at the reads that own
+    // their snapshot).
+    project_repo_bytes_in_txn(vault, txn, &marks, body.to_vec(), None)
         .map(|projected| Some(projected.into_bytes()))
 }
 
@@ -98,9 +105,66 @@ pub(crate) fn masked_asset_body(
 /// # Errors
 /// A store failure, or a mark that does not decode.
 pub(crate) fn project_repo_file(vault: &Vault, bytes: Vec<u8>) -> Result<RepoBodyProjection> {
+    vault.with_known_values(|known| {
+        let txn = vault.store.env.read_txn()?;
+        let marks =
+            repo_secret_marks_for_hash_in_txn(vault, &txn, blake3::hash(&bytes).as_bytes())?;
+        project_repo_bytes_in_txn(vault, &txn, &marks, bytes, known)
+    })
+}
+
+/// The placeholder a masked reader reads for `bytes`, a code view's file
+/// at `tested` (FIX 8967), when that document state grew from a marked
+/// blob it no longer is; `None` when its own bytes decide, as before.
+///
+/// # Errors
+/// A store failure, a mark that does not decode, or a stored document
+/// state that does not check.
+pub(crate) fn document_file_sourced_opaque(
+    vault: &Vault,
+    tested: &CodeDocumentFrontier,
+    bytes: &[u8],
+) -> Result<Option<RepoOpaqueFile>> {
     let txn = vault.store.env.read_txn()?;
-    let marks = repo_secret_marks_for_hash_in_txn(vault, &txn, blake3::hash(&bytes).as_bytes())?;
-    project_repo_bytes_in_txn(vault, &txn, &marks, bytes)
+    let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
+    sourced_opaque_in_txn(vault, &txn, &facts, bytes, || {
+        vault.code_document_source_hashes_in_txn(&txn, tested)
+    })
+}
+
+/// One code text as a view serves it (FIX 8967): the stored text, or a
+/// projection a masked reader reads in its place.
+pub(crate) struct ServedText {
+    pub(crate) text: String,
+    /// Whether `text` is a projection, not the stored text: what is shown
+    /// of it is then never attributed to the operations that wrote it.
+    pub(crate) projected: bool,
+}
+
+impl ServedText {
+    fn stored(text: String) -> Self {
+        Self {
+            text,
+            projected: false,
+        }
+    }
+
+    fn projection(body: RepoBodyProjection) -> Self {
+        let text = match body {
+            RepoBodyProjection::Exact(bytes) => {
+                return Self::stored(String::from_utf8(bytes).unwrap_or_else(|error| {
+                    String::from_utf8_lossy(error.as_bytes()).into_owned()
+                }));
+            }
+            RepoBodyProjection::Masked { bytes, .. } => String::from_utf8(bytes).ok(),
+            RepoBodyProjection::Opaque(_) => None,
+        };
+        Self {
+            text: text
+                .unwrap_or_else(|| String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned()),
+            projected: true,
+        }
+    }
 }
 
 /// The repo marks one view's masked reader reads its file texts under,
@@ -110,6 +174,71 @@ pub(crate) struct RepoReadMasks {
 }
 
 impl RepoReadMasks {
+    /// Whether this view's reader reads anything masked: a masked reader
+    /// in a vault some readable mark is in.
+    pub(crate) fn active(&self) -> bool {
+        self.facts.as_ref().is_some_and(|facts| !facts.is_empty())
+    }
+
+    /// `text`, the stored text of the code document state `tested`, as this
+    /// view's reader reads it (FIX 8967): a state that grew from a marked
+    /// blob it no longer is reads as the placeholder; a state whose own
+    /// bytes a mark covers reads as that blob's projection; any other, and
+    /// every state for a reader of stored bytes, as stored.
+    ///
+    /// # Errors
+    /// A store failure, or a stored document state that does not check.
+    pub(crate) fn document(
+        &self,
+        vault: &Vault,
+        tested: &CodeDocumentFrontier,
+        text: String,
+    ) -> Result<ServedText> {
+        let Some(facts) = self.facts.as_ref().filter(|facts| !facts.is_empty()) else {
+            return Ok(ServedText::stored(text));
+        };
+        let txn = vault.store.env.read_txn()?;
+        if let Some(opaque) = sourced_opaque_in_txn(vault, &txn, facts, text.as_bytes(), || {
+            vault.code_document_source_hashes_in_txn(&txn, tested)
+        })? {
+            return Ok(ServedText::projection(RepoBodyProjection::Opaque(opaque)));
+        }
+        let marks = facts.for_hash(blake3::hash(text.as_bytes()).as_bytes());
+        if marks.is_empty() {
+            return Ok(ServedText::stored(text));
+        }
+        drop(txn);
+        vault
+            .with_known_values(|known| {
+                let txn = vault.store.env.read_txn()?;
+                project_repo_bytes_in_txn(vault, &txn, &marks, text.into_bytes(), known)
+            })
+            .map(ServedText::projection)
+    }
+
+    /// `bytes`, a text made from the repo bytes whose BLAKE3 are `sources`
+    /// (a proposal's candidate from the file at its base), as this view's
+    /// reader reads it (FIX 8967): the placeholder when it grew from a
+    /// marked blob it no longer is, else as [`Self::bytes`] reads it.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn sourced_bytes<'b>(
+        &self,
+        vault: &Vault,
+        bytes: &'b [u8],
+        sources: &[[u8; 32]],
+    ) -> Result<Cow<'b, [u8]>> {
+        if let Some(facts) = self.facts.as_ref() {
+            let txn = vault.store.env.read_txn()?;
+            if sourced_opaque_in_txn(vault, &txn, facts, bytes, || Ok(sources.to_vec()))?.is_some()
+            {
+                return Ok(Cow::Borrowed(REPO_OPAQUE_FILE_BYTES));
+            }
+        }
+        self.bytes(vault, bytes)
+    }
+
     /// `bytes`, one file's stored bytes, as this view's reader reads them:
     /// as they are when no mark covers them.
     ///
@@ -123,8 +252,11 @@ impl RepoReadMasks {
         if marks.is_empty() {
             return Ok(Cow::Borrowed(bytes));
         }
-        let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, &marks, bytes.to_vec())
+        vault
+            .with_known_values(|known| {
+                let txn = vault.store.env.read_txn()?;
+                project_repo_bytes_in_txn(vault, &txn, &marks, bytes.to_vec(), known)
+            })
             .map(|projected| Cow::Owned(projected.into_bytes()))
     }
 }

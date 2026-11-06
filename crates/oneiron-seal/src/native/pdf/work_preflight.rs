@@ -1,8 +1,8 @@
 //! Exact xref framing and lossless object-stream expansion before rewriting (FIX 7980/8157).
 //!
 //! Port of the engine's `render/preflight` (with its `dictionary` child
-//! inlined below): each stream decodes admitted, nothing is refused past a
-//! per-stream codec bound, and the call's operation ledger admits every
+//! inlined below): each stream decodes admitted, retaining an inspection
+//! caller's per-stream codec bound, and the operation ledger admits every
 //! table, decode and snapshot before it is allocated. Behavior-identical
 //! except admission and bounds: `&Stage` becomes `&WorkLimits`, nested
 //! scopes become ledger takes released when the scope ends, and engine
@@ -45,7 +45,9 @@ impl<'a> Scope<'a> {
     /// Admits `bytes` about to be allocated under this scope.
     fn take(&self, bytes: usize) -> Result<(), WorkError> {
         let wide = u64::try_from(bytes).unwrap_or(u64::MAX);
-        self.ledger.admit_transient(bytes).map_err(WorkError::Memory)?;
+        self.ledger
+            .admit_transient(bytes)
+            .map_err(WorkError::Memory)?;
         self.taken.fetch_add(wide, Ordering::Relaxed);
         Ok(())
     }
@@ -202,7 +204,7 @@ fn load_objects(
                 Some((id, Object::Null))
             }),
             // organ: admitted, not refused (FIX 7980)
-            max_decompressed_size: None,
+            max_decompressed_size: limits.stream_decode_bytes,
             decode_admission: Some(admission),
             ..Default::default()
         },

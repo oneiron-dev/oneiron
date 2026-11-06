@@ -27,6 +27,18 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::INGEST_DOCS_DEEP_RECEIPT, CONTENT),
     (&t::INGEST_DOCS_EXTRACTION, CONTENT),
     (&t::INGEST_DOCS_MEMBERSHIP, CONTENT),
+    // FIX 12569: the drafter's pointers, evaluations, events, policy and
+    // versions stand as the live vault holds them: no image brings back an
+    // erased version, an older pointer or a policy the owner changed since.
+    // FIX 15128: nor an erased or swept training example.
+    (&t::DRAFTER_BINDING, LIVE),
+    (&t::DRAFTER_EVALUATION, LIVE),
+    (&t::DRAFTER_EVENT, LIVE),
+    (&t::DRAFTER_EXAMPLE, LIVE),
+    (&t::DRAFTER_EXAMPLE_BODY, LIVE),
+    (&t::DRAFTER_EXAMPLE_SOURCE, LIVE),
+    (&t::DRAFTER_POLICY, LIVE),
+    (&t::DRAFTER_VERSION, LIVE),
     (&t::DREAMER_DETACHED_STEP, CONTENT),
     (&t::DREAMER_AUTHORITY_ACTOR, MACHINE_IDENTITIES),
     (&t::DREAMER_AUTHORITY_ATTEMPT, CONTENT),
@@ -219,6 +231,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::FEDERATION_ACTOR_CONTENT_INFLIGHT, CONTENT),
     (&t::FEDERATION_GUEST_REVOKE, LIVE),
     (&t::FEDERATION_PEER_CONFIDENCE, CONTENT),
+    (&t::FEDERATION_RULING_WITNESS, CONTENT),
     (&t::FEEDBACK_INBOX, CONTENT),
     (&t::FEEDBACK_PREVIEW, LIVE),
     (&t::FEEDBACK_QUEUE, CONTENT),
@@ -283,6 +296,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_INTENT, LIVE),
     (&t::HOOKS_LINEAGE, CONTENT),
     (&t::HOOKS_MEMO, CONTENT),
+    (&t::HOOKS_PACED_VERB, LIVE),
+    (&t::HOOKS_PACED_VERB_LINE, LIVE),
+    (&t::HOOKS_PACED_VERB_WITNESS, LIVE),
     (&t::HOOKS_RECEIPT, CONTENT),
     (&t::HOOKS_REGEN, LIVE),
     (&t::HOOKS_RUN_INDEX, CONTENT),

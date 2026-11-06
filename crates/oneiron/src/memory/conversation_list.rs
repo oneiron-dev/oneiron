@@ -577,6 +577,17 @@ impl Memory<'_> {
                 continue;
             }
             if let Some(text) = latest.text().or(own) {
+                let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+                let text = if self.reads_lifted_keys_masked_in_txn(&txn)? {
+                    let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+                        &self.vault.store,
+                        &txn,
+                        [text.as_str()],
+                    )?;
+                    keys.masked(&text).unwrap_or(text)
+                } else {
+                    text
+                };
                 return Ok(Some(snippet(&text)));
             }
         }

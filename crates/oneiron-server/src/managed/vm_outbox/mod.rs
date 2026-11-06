@@ -17,7 +17,11 @@
 //! the member's file ([`scan`]); a session sends the difference and takes the
 //! other end's ([`transfer`]). A receiver publishes into its own tree through
 //! held directories, never through a link ([`local`]), syncs, records and only
-//! then acks. A put whose bytes did not hash to its digest on arrival goes
+//! then acks. It journals each set before the set's first change and
+//! publishes it whole, or finishes it from its journal before anything else
+//! of its kind runs, a crash included; while a set of more than one change
+//! is not whole, its kind's root holds a mark its readers wait on
+//! ([`journal`]). A put whose bytes did not hash to its digest on arrival goes
 //! again at its set's pacing, its file read again first, and a file damaged
 //! at its source waits, typed, until it changes ([`source_check`]). A copy
 //! of a member the carrier never agreed on, kept as the member's origin
@@ -36,6 +40,7 @@ mod endpoint;
 mod guest;
 mod host;
 mod host_status;
+mod journal;
 mod link;
 mod local;
 mod scan;
@@ -56,7 +61,7 @@ pub(crate) use self::store::DivergedAnswer;
 use self::local::Owner;
 use self::store::{MemberRecord, Store};
 use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxOutcome, VmOutboxSide};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -120,6 +125,13 @@ struct Carrier {
     /// kept-aside copies, sent first in its next turn (FIX 11985, FIX 12010);
     /// empty on the guest.
     aside_answers: Vec<oneiron_vault_contract::vm_outbox::VmOutboxFrame>,
+    /// Each kind's set the other end sent that this end has not yet
+    /// published whole, as journaled in its store; its kind waits on it
+    /// until a turn finishes it ([`journal`], FIX 7543).
+    unfinished: BTreeMap<VmOutboxKind, journal::SetJournal>,
+    /// Each kind whose set journal did not read: it waits, its set mark
+    /// standing, and each turn reads the journal again (FIX 7543).
+    unread_journals: BTreeSet<VmOutboxKind>,
 }
 
 /// Why a kind waits on this end's carrier records, and when its next scan
@@ -146,7 +158,7 @@ impl Carrier {
         store: Store,
         gate: Arc<Gate>,
     ) -> Self {
-        Self {
+        let mut carrier = Self {
             side,
             owner,
             roots,
@@ -158,7 +170,11 @@ impl Carrier {
             record_wait: HashMap::new(),
             board: None,
             aside_answers: Vec::new(),
-        }
+            unfinished: BTreeMap::new(),
+            unread_journals: BTreeSet::new(),
+        };
+        carrier.load_unfinished_sets();
+        carrier
     }
 
     /// Says `what` of `kind`'s `member` once, until something else is said
@@ -278,8 +294,12 @@ impl Carrier {
     /// [`Self::received_failed`], under the gate as a local commit, so a
     /// parked end waits first: `true` once none is kept. One that does not
     /// write again stays kept with every one not yet tried, and the kind
-    /// waits one more step. A draining end writes none.
+    /// waits one more step. A draining end writes none. A set of the kind
+    /// left unfinished is finished first (FIX 7543).
     fn retry_received_records(&mut self, kind: VmOutboxKind) -> bool {
+        if !self.finish_unfinished_set(kind) {
+            return false;
+        }
         let Some(wait) = self.record_wait.get_mut(&kind) else {
             return true;
         };

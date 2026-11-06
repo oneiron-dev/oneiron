@@ -1,7 +1,7 @@
-# Decision model-call evidence
+# Decision and chat model-call evidence
 
-This page describes the current decision capture sites. It does not claim that
-every model call in the engine is recorded.
+This page describes the current decision and chat capture sites. It does not
+claim that every model call in the engine is recorded.
 
 ## Captured decision calls
 
@@ -27,7 +27,37 @@ The caller context is one thread-local scope on the blocking decision thread.
 It restores the entire previous context on return or panic. It is not authority,
 a payer, or an async context propagated to another thread.
 
-## Recording and privacy
+## Captured chat calls
+
+Whole and streamed chat replies, including queued Continue and Retry, keep
+best-effort evidence from the independent answer producer's actual terminal.
+The answering leg forwards its admitted request, sourced run and actual ladder
+binding before yielding `Done`. A captured-prefix attempt that fails before it
+speaks leaves no terminal record; today's fallback carries its own context.
+Quota fallbacks retain the binding of the rung that actually answered.
+
+The row's actor is the authenticated request's actual principal or native host
+actor, or the queued action's verified requester. It is not inferred from the
+answering agent or the payer. The existing turn credential continues to own
+liveness. Caller attribution is added to an evidence-only run clone after the
+provider terminal. The live run keeps its original initiator, resident-share
+admission and charging; the evidence clone grants no authority.
+
+The native evidence NoRecord check uses that same caller and the request's
+authenticated session, before generation and again at the terminal. The actual
+resolved room and the answer's container are checked before generation and
+at the terminal too. Either retention exception suppresses the optional base
+write. Unknown session bindings keep the native helper's existing behavior;
+no raw session key or response-bus id becomes proof. Capture never adds an
+execution refusal or changes settlement, cancellation or delivery.
+
+Full terminal parts reach the existing writer, including signed reasoning and
+its whole-part custody handling below. These are inline call-record parts,
+not references to MESSAGE parts that the text-only chat sink did not retain.
+Missing issuing-login and provider fields remain unknown. This does not enable
+HTTP off-record assistant storage, reasoning replay or new MESSAGE persistence.
+
+## Decision recording and privacy
 
 For a bound session, the existing NoRecord/off-record check runs both before the
 provider call and at its terminal response. Either check suppresses the evidence

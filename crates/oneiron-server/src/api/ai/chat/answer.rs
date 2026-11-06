@@ -4,12 +4,13 @@
 
 use oneiron::llm::{WorkClass, WorkContext};
 
+use super::drafter_example::{ReplyCall, ReplyEnd, keep_reply_example, reply_example};
 use super::{
     AgentWakeSignals, AiHandle, Answer, AnswerOpen, AnswerOutcome, AnswerRefused, Answering, Arc,
     AssistantMessage, BTreeMap, BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose,
     EntityId, LlmEventBus, LlmMessage, LlmRequest, MessageStreamError, ModelTierRef, Mutex,
     Producer, ReplyCraft, ResponseFormat, Seat, SessionHint, StreamCancelReason, TierPrecedence,
-    Vault, WakeTurnSubject, answer_memory, compaction, produce,
+    Vault, WakeTurnSubject, answer_memory, compaction, model_call, produce,
 };
 
 /// Opens the reply's stream, admits its run and starts the model call, then
@@ -49,6 +50,9 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         funding,
         budget_units,
         credential,
+        model_call_caller,
+        model_call_room,
+        model_call_no_record_at_arrival,
         keepalive,
         mark,
         breakpoint,
@@ -56,6 +60,14 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         craft,
         assertions,
     } = answer;
+    // FIX 15128: who asked and what the captured call was read from, for
+    // the reply's drafter example.
+    let example_call = ReplyCall {
+        agent,
+        requester: model_call_caller,
+        sources: sources.clone(),
+        today_sources: today_sources.clone(),
+    };
     // The exact request the reply's craft rides in, read before it is sent.
     let craft = craft.and_then(|entries| {
         let digest = admitted.request.canonical_hash_hex().ok()?;
@@ -89,6 +101,8 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         Err(error) => return Err(AnswerRefused::Engine(error.to_string())),
     };
     let container = answer_container(&vault, &open);
+    let model_call_no_record_at_arrival = model_call_no_record_at_arrival
+        || container.is_some_and(|container| vault.room_has_unrecorded_stretch(container));
     let wakes = container.map(|_| vault.subscribe_task_updates());
     // FIX 4465 D: a self agent's breakpoint, right before the answer's
     // stream: its live fork is this answer's own admitted call.
@@ -111,6 +125,12 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     // per turn, billed to its funding. Each rung the call reaches is admitted
     // on its own permit and settles itself; the first is admitted here, so a
     // turn the line cannot hold is refused before any model is called.
+    let (recorder, model_call) = model_call::channel(
+        model_call_caller,
+        model_call_room,
+        model_call_no_record_at_arrival,
+    );
+    let answered = model_call.answered();
     let started = vault
         .policy_budget_guard(
             format!("chat:{}", handle.message_id().to_hex()),
@@ -138,6 +158,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 admitted,
                 today,
                 pending.as_ref(),
+                &recorder,
             )
             .map_err(|error| format!("chat budget: {error:?}"))
         });
@@ -174,6 +195,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     let ai = ai.clone();
     let landed = (Arc::clone(&vault), agent);
     let turn = ai.enter_turn();
+    let message = handle.message_id();
     let producer = Producer {
         bus,
         stream,
@@ -190,6 +212,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         container,
         wakes,
         assertions,
+        model_call,
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
@@ -228,12 +251,26 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 },
             );
         }
+        let example = reply_example(
+            &answered,
+            &ReplyEnd {
+                message,
+                result: &result,
+                saved: saved.as_ref(),
+                fell_back,
+            },
+            example_call,
+        );
         let _ = finished.send(AnswerOutcome {
             result,
             saved,
             text,
             fell_back,
         });
+        // FIX 15128: the drafter's example, once the outcome is handed on.
+        if let Some(example) = example {
+            keep_reply_example(&landed.0, example);
+        }
     });
     Ok(Answering {
         handle,

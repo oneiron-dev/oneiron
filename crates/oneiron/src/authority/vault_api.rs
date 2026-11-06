@@ -205,6 +205,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_AUTHORITY_LOG,
                 occurred: *occurred,
                 learned_at: *learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -476,6 +477,26 @@ impl Vault {
             .in_host_custody(key))
     }
 
+    /// The federation pacts this install holds inactive for a
+    /// `scope_commitment_mismatch` (FIX 11730): each one's folded scope does
+    /// not match its signed commitment under the live opening key this
+    /// install holds for it, by pact id, ascending. Every other machine's
+    /// fold of the same log is unchanged; a fresh dual-signed re-pact heals
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Storage and fold errors.
+    pub fn federation_scope_commitment_mismatches(&self) -> Result<Vec<[u8; 32]>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .authority_view_readonly_in_txn(&rtxn)?
+            .scope_commitment_mismatches()
+            .iter()
+            .copied()
+            .collect())
+    }
+
     /// This vault's authority id, as the shared verified fold of the current
     /// snapshot names it; `None` until the vault is rooted. It only reads:
     /// unlike [`Self::authority_fold`] it moves no first-seen clock, so a
@@ -489,11 +510,23 @@ impl Vault {
         Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
     }
 
-    /// This vault's authority-row generation: it moves on every commit to
-    /// the authority log, a grant's revoke among them, and on nothing
-    /// outside it (a scope or world setting held elsewhere leaves it). A
-    /// kept inference snapshot restores only at the generation its read was
-    /// admitted at (V2-R3). It only reads.
+    /// Moves the authority head for a revoke stored outside the authority log
+    /// (FIX 11810), such as a legacy token's sync-state marker. The caller
+    /// writes the marker in this same transaction; aborting discards both.
+    /// Existing head pollers then judge their credential again after commit.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors or an exhausted generation counter.
+    pub fn note_non_authority_revoke_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        advance_authority_cache_generation(&self.store, txn)
+    }
+
+    /// This vault's authority generation: it moves on every commit to the
+    /// authority log, a grant's revoke among them, and on a legacy token
+    /// revoke's marker. A scope or world setting held elsewhere leaves it.
+    /// A kept inference snapshot restores only at the generation its read
+    /// was admitted at (V2-R3). It only reads.
     ///
     /// # Errors
     ///

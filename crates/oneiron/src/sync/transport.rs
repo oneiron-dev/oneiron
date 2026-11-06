@@ -28,10 +28,10 @@ pub use asset_bodies::{
 mod codec;
 mod leaf_keys;
 pub use codec::{
-    CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
-    MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket, codec_ids,
-    decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
-    process_link_bytes,
+    CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, DECODED_FRAME_KIND_IDS, LinkBytes,
+    MAX_CODEC_INNER_BYTES, MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket,
+    codec_ids, decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame,
+    encode_http_body, frame_kind_ids, process_link_bytes,
 };
 pub use leaf_keys::{
     LEAF_KEY_RETRY, TAG_LEAF_KEY_ANSWER, TAG_LEAF_KEY_FAILURE, TAG_LEAF_KEY_REQUEST,
@@ -42,10 +42,21 @@ mod unsplit_frame;
 pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
 pub use window_pads::{
-    WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
-    WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadReadiness, WindowPadReceipt,
-    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member, window_pad_frame_id,
-    window_pad_frame_payload, window_pad_part_id, window_pad_refs_digest,
+    ReceivedWindowPadEnvelope, WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly,
+    WindowPadBinding, WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadPayload,
+    WindowPadReadiness, WindowPadReceipt, WindowPadSidecar, decode_window_pad_envelope,
+    validate_window_pad_member, window_pad_frame_id, window_pad_frame_payload, window_pad_part_id,
+    window_pad_refs_digest,
+};
+mod sealed_updates;
+pub use sealed_updates::{
+    SEALED_UPDATE_EPOCH_LEN, SEALED_UPDATE_FRAME_ID_LEN, SealedUpdateFrame, TAG_SEALED_UPDATE,
+    decode_sealed_update_frame, encode_sealed_update_frame, sealed_update_sub_tags,
+};
+mod document_parts;
+pub use document_parts::{
+    DocumentAssembly, DocumentPartFrames, JoinedDocument, decode_unsplit_document,
+    encode_unsplit_document,
 };
 mod documents;
 pub use documents::{

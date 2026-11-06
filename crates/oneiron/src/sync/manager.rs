@@ -54,6 +54,9 @@ mod recovery_commits;
 mod replacement;
 
 pub(crate) use self::live_mirror::import_scope;
+// FIX 14534: a world eviction waits for, or on the owner's word discards, the
+// rows a local write still owes a window.
+pub(crate) use self::pending_mirror::{discard_window_mirrors_in_txn, window_owes_mirror_in_txn};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -394,6 +397,19 @@ impl WindowManager {
             next = key.previous_month();
         }
         Ok(opened)
+    }
+
+    /// Captures only an already registered window's weak identity. The caller
+    /// already holds its import handle, so this never waits for a transition
+    /// that may itself be waiting for that handle to drop.
+    pub(in crate::sync) fn weak_window_if_same(
+        &self,
+        window: &LoadedWindow,
+    ) -> Option<Weak<LoadedWindow>> {
+        self.lock_registry()
+            .get(&window.key)
+            .filter(|current| std::ptr::eq(window, current.as_ref()))
+            .map(Arc::downgrade)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,
