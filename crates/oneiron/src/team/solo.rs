@@ -13,7 +13,7 @@
 //! ran. Anywhere else it is a truthful no-op: team members, wrappers,
 //! non-agent kinds and never-ran leaves write nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -28,10 +28,6 @@ use crate::self_heal::audit::ObjectiveConfession;
 
 use super::pattern::{TeamAxis, TeamPattern};
 use super::receipt::{DecidedBy, TeamReceipt, TeamShape, record_team_receipt, team_receipt_in_txn};
-
-/// How far back the retry chain is walked for the run's first try
-/// (precedent: `TOTAL_HOPS_PER_CALL` in `autoreason_campaign::authoring`).
-const RETRY_CHAIN_LIMIT: usize = 256;
 
 /// Records the solo run's team receipt once. Returns whether it wrote one
 /// now (FIX 11532). Never fails a close: storage errors propagate to the
@@ -167,8 +163,8 @@ pub fn record_solo_receipt(vault: &Vault, attempt: AttemptId, now: u64) -> Resul
 }
 
 /// The run's first try: `record`'s `created_at`, back along the tries it
-/// retries, at most `RETRY_CHAIN_LIMIT` hops. A missing row ends the walk;
-/// the minimum over the tries seen is kept.
+/// retries. A missing row or a repeated try ends the walk; the minimum over
+/// the tries seen is kept.
 fn earliest_try_created_at(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -177,10 +173,11 @@ fn earliest_try_created_at(
     let queue = AttemptQueue::new(vault);
     let mut earliest = record.created_at;
     let mut next = record.retry_of;
-    for _ in 0..RETRY_CHAIN_LIMIT {
-        let Some(id) = next else {
+    let mut seen = BTreeSet::new();
+    while let Some(id) = next {
+        if !seen.insert(id) {
             break;
-        };
+        }
         let Some(prior) = queue.get_in_txn(txn, id)? else {
             break;
         };
