@@ -15,9 +15,15 @@ impl ScopedRead<'_> {
         host_filter: Option<&crate::store::retrieval_values::CandidateFilter<'_>>,
         requested: Option<&RetrievalFilter>,
     ) -> Result<LoopSearch> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        // The plan ranks the key's own rows and those its own live Grants
+        // add (FIX 7528); each candidate takes the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
         let excluded = self.request_exclusions(&policy, requested)?;
-        let lane_admits = self.plan_admits(&filter, &policy, &excluded);
+        let lane_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(host_filter.map_or(Ok(true), |host| host(store, txn, id))?
@@ -26,7 +32,7 @@ impl ScopedRead<'_> {
         let limit = plan.result_limit();
         let output = plan
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .run_for_pack()?;
@@ -113,7 +119,7 @@ impl ScopedRead<'_> {
                 let mut suppressed = 0;
                 let mut seen = HashSet::new();
                 // One relationship authority for every peer (FIX 11648).
-                let retrievable = self.recall_candidates_in(txn, &policy, &filter);
+                let retrievable = self.recall_candidates_in(txn, &policy, &filter, Some(requested));
                 let floor_held = super::access_gate::HeldAuthority::for_request(None);
                 for edge in edges {
                     let edge = edge?;
@@ -130,7 +136,8 @@ impl ScopedRead<'_> {
                         target,
                         edge,
                         || Ok(super::admission::ReadAdmission::Visible(())),
-                        || self.admit_entity_in(txn, &policy, &filter, &peer),
+                        // The peer under the loop's request, A included (FIX 7528).
+                        || self.admit_in(txn, &peer, || Ok(retrievable(&peer)?.then_some(()))),
                     )?;
                     if admitted.suppression() > 0
                         && self
@@ -154,11 +161,9 @@ impl ScopedRead<'_> {
                     let Some(row) = self.entity_record_in(txn, &peer)? else {
                         continue;
                     };
+                    // Relevance floors and authority both applied to every
+                    // grain in the peer's admission above.
                     if row.entity_type != target_type {
-                        continue;
-                    }
-                    // Relevance floors and authority both apply to every grain.
-                    if !retrievable(&peer)? {
                         continue;
                     }
                     handles.push(RetrievalHandle {
@@ -192,7 +197,7 @@ impl ScopedRead<'_> {
         let store = self.store_read();
         let mut frontier = HashSet::new();
         // One relationship authority for every anchor and peer (FIX 11648).
-        let retrievable = self.recall_candidates_in(&txn, &policy, &filter);
+        let retrievable = self.recall_candidates_in(&txn, &policy, &filter, Some(requested));
         for anchor in observed {
             if !retrievable(anchor)? {
                 continue;
@@ -219,9 +224,10 @@ impl ScopedRead<'_> {
                         target,
                         edge,
                         || Ok(super::admission::ReadAdmission::Visible(())),
-                        || self.admit_entity_in(&txn, &policy, &filter, &peer),
+                        // The peer under the loop's request, A included (FIX 7528).
+                        || self.admit_in(&txn, &peer, || Ok(retrievable(&peer)?.then_some(()))),
                     )?;
-                    if admitted.visible() && retrievable(&peer)? {
+                    if admitted.visible() {
                         frontier.insert(peer);
                     }
                 }
