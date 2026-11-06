@@ -264,8 +264,8 @@ impl LiveArchives {
     /// its rows and opened payload have landed: each kept archive's
     /// descriptor and holder stand as the live vault holds them, and every
     /// other descriptor of an archive owner this restore settles is
-    /// released, its
-    /// file queued for the collector when nothing else holds its digest.
+    /// released, its file queued for the collector when nothing else holds
+    /// its digest.
     /// What an erase owed or retired is the Live state's, carried already.
     ///
     /// # Errors
