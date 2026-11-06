@@ -634,9 +634,10 @@ impl Vault {
 /// What a pin that differs from `prior`, the one held here, does where the
 /// two are twins and one is of the history a canonical restore's successor
 /// replaced here (FIX 3464): a copy of the replaced history is held, as its
-/// twin on the successor is here; the successor's twin, which quotes this
-/// vault's document, takes the replaced one's place, keeping an erase the
-/// replaced one carried. Any other stands as a conflict.
+/// twin on the successor is here, and an erase it carries reaches that twin;
+/// the successor's twin, which quotes this vault's document, takes the
+/// replaced one's place, keeping an erase the replaced one carried. Any
+/// other stands as a conflict.
 #[cfg(feature = "sync")]
 fn superseded_twin_in_txn(
     vault: &Vault,
@@ -653,6 +654,12 @@ fn superseded_twin_in_txn(
         return Ok(PinMerge::Conflict);
     }
     match (prior.within(&replaced), pin.within(&replaced)) {
+        (false, true) if pin.actor == DocActor::Erased && prior.actor != DocActor::Erased => {
+            let mut erased = prior.clone();
+            erased.actor = DocActor::Erased;
+            ENTITY_DOC_PIN.put(&vault.store, txn, key, &erased)?;
+            Ok(PinMerge::Written)
+        }
         (false, true) => Ok(PinMerge::Held),
         (true, false) if quotes_document(vault, txn, message, pin) => {
             let mut twin = pin.clone();
