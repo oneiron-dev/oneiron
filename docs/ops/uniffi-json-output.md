@@ -288,3 +288,24 @@ cursors and all finite usage counters retain the original record codec.
 keeps its existing conversion. Native query reads, filters, evaluators,
 authority, public records, inputs, client calls and hooks are unchanged. These
 are selected output conversions, not end-to-end depth, heap or runtime proof.
+
+
+`ai.ask_image` consumes the provider JSON in its optional spend receipt before
+converting finite image-answer and decision metadata. Missing usage stays
+missing. Present usage keeps a required provider JSON value, including null;
+it does not use the optional media-usage omission rule. Image answers,
+confidence, presence, evidence, provider pins, finish reasons and all finite
+receipt fields retain the original whole-record codec.
+
+`vault.models.trials.nominate`, `get`, `approve`, `run`, `resend_arm` and
+`complete` consume both usage-bound JSON values in the echoed trial request.
+`vault.models.bindings.propose`, `get`, `accept` and `deny` do the same inside
+their trial view. Both bound values are consumed before either conversion
+error can return. These are owner-supplied cost bounds, not provider spend
+receipts. Required null values stay present. The original whole-record codec
+keeps all policy fields, backend pins, held-out and unknown-arm order,
+optional evidence and receipts, costs, counts, binding routes and settlement
+state. `vault.models.bindings.read` has no opaque usage JSON and is unchanged.
+Native calls, admission, inputs, public records, clients and hooks are
+unchanged. This is selected output conversion, not end-to-end depth, heap
+or runtime closure.
