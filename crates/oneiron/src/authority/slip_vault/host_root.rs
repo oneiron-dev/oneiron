@@ -9,8 +9,8 @@ use oneiron_authority::federation::Scope;
 use super::{HostSlipIssuer, next_entry, random_slip_id, require_host};
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, CapabilitySlip, GenesisRecoveryStep, SlipClaims, SlipMintAction, VerifiedSlip,
-    invalid_authority,
+    AuthorityOp, CapabilitySlip, GenesisRecoveryStep, HostActionIdentity, SlipClaims,
+    SlipMintAction, VerifiedSlip, invalid_authority,
 };
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
@@ -21,6 +21,14 @@ const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 /// Cached minted host-root capability-slip token for one host signing key. Key: `:` + hex64.
 const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
     SideTable::new(&side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE);
+
+/// The challenge the retained host secret signs to prove its own root.
+const LOCAL_HOST_ROOT_CHALLENGE: &[u8] = b"local-host-root";
+
+/// The cache key of the root `issuer` holds: `:` + hex64 of its binding key.
+fn host_root_cache_key(issuer: &HostSlipIssuer) -> String {
+    format!(":{}", blake3::hash(&issuer.binding_key()).to_hex())
+}
 
 impl Vault {
     /// Bootstrap Genesis + host root slip atomically, and only on a truly empty
@@ -42,7 +50,7 @@ impl Vault {
         if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
             return Err(invalid_authority());
         }
-        let cache_key = format!(":{}", blake3::hash(&issuer.binding_key()).to_hex());
+        let cache_key = host_root_cache_key(issuer);
         let now = self.instant_in_txn(txn)?.secs();
         let mut fold = self.authority_fold_readonly_in_txn(txn)?;
         let mut pending = Vec::new();
@@ -138,13 +146,56 @@ impl Vault {
     pub fn verified_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<VerifiedSlip> {
         let slip = self.ensure_host_root_slip(issuer)?;
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.prove_retained_host_root_in_txn(&txn, issuer, &slip)
+    }
+
+    /// The root `issuer` retains, verified read-only as the very root a
+    /// recorded host action names (FIX 4744). In one snapshot, `recorded`
+    /// still acts as its owner under its root, and the root this host
+    /// retains for `issuer` is that same slip, vault and binding key, proved
+    /// with the retained secret. It opens no writer, and it never
+    /// bootstraps, mints or renews a root. `None`: this host retains no root
+    /// for `issuer`.
+    ///
+    /// # Errors
+    ///
+    /// The recorded action's own refusals ([`HostActionIdentity::holds_in`]);
+    /// an authority error when the retained root is another root or does not
+    /// verify; storage errors as they occur.
+    pub fn verified_recorded_host_root_slip(
+        &self,
+        issuer: &HostSlipIssuer,
+        recorded: &HostActionIdentity,
+    ) -> Result<Option<VerifiedSlip>> {
+        let txn = self.store.env.read_txn()?;
+        recorded.holds_in(self, &txn)?;
+        let key = host_root_cache_key(issuer);
+        let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, &txn, &key)? else {
+            return Ok(None);
+        };
+        let slip = CapabilitySlip::from_token(&token)?;
+        if !recorded.names_root(&slip.claims) {
+            return Err(invalid_authority());
+        }
+        self.prove_retained_host_root_in_txn(&txn, issuer, &slip)
+            .map(Some)
+    }
+
+    /// `slip`, the root this host retains for `issuer`, verified in `txn`
+    /// under the issuer's key with the retained secret's holder proof.
+    fn prove_retained_host_root_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        issuer: &HostSlipIssuer,
+        slip: &CapabilitySlip,
+    ) -> Result<VerifiedSlip> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         slip.verify(
             &issuer.public_key(),
             &fold,
-            self.instant_in_txn(&txn)?.secs(),
-            b"local-host-root",
-            &issuer.binding_proof(&slip, b"local-host-root")?,
+            self.instant_in_txn(txn)?.secs(),
+            LOCAL_HOST_ROOT_CHALLENGE,
+            &issuer.binding_proof(slip, LOCAL_HOST_ROOT_CHALLENGE)?,
         )
     }
 }
