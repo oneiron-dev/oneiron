@@ -140,6 +140,70 @@ where
         self
     }
 
+    /// Reserve the current tag name's UTF-8 String before growth.
+    /// The callback owns its admission and is dropped after the live String.
+    /// Interned LocalName values have separate, unadmitted backing.
+    pub fn with_tag_name_reservation<G>(mut self, reservation: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&mut String, usize) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .set_tag_name_reservation(Box::new(move |text, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match reservation(text, additional) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
+    /// Reserve the current attribute name's UTF-8 String before growth.
+    /// The callback owns its admission and is dropped after the live String.
+    /// Interned LocalName values have separate, unadmitted backing.
+    pub fn with_attribute_name_reservation<G>(mut self, reservation: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&mut String, usize) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer
+            .set_attribute_name_reservation(Box::new(move |text, additional| {
+                if error
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some()
+                {
+                    return false;
+                }
+                match reservation(text, additional) {
+                    Ok(()) => true,
+                    Err(refusal) => {
+                        error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get_or_insert(refusal);
+                        false
+                    }
+                }
+            }));
+        self
+    }
+
     /// Parse borrowed UTF-8 without copying the whole input into a heap tendril.
     /// Each input tendril contains one Unicode scalar and fits in tendril's
     /// inline storage. Tokenizer and sink allocations remain separate.
