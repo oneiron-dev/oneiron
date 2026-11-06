@@ -99,6 +99,36 @@ admitted producer material before the reservation returns. The callback must
 use only the supplied transaction and must not acquire another writer. It must
 not call a void receipt sink and treat that as durability.
 
+The required producer freeze argument includes `AllocationCallContext`: the
+original run name, revision and admission clock, plus the permit's native unit,
+unit cost, wide native reservation, ordered run-line conversion rates and
+metered flag. The native producer keeps this context in the same canonical
+admitted row and transaction, alongside its already frozen facts and financial
+price snapshot. Ordinary admissions carry no context and retain their existing
+serialized shape. Run-line rates remain distinct from the durable hold's
+allocation conversion rates.
+
+`NativeUsageProducer::continuation_in_write_txn` reads the original key from that
+same selected producer and caller-owned transaction. It returns the current
+stored, scrubbed facts and their original context without looking up new prices,
+owners or wallets. This is only a material read port: it restores no guard or
+lease, changes no kept-job terminal behavior, and enables no server recovery
+caller. Genuine original-line restoration and media continuation remain open.
+
+A caller can attach an `AllocationCallIntent` to one cloned admission handle
+with `RunAdmission::with_allocation_intent`. For a native host-paid call, its
+callback runs in the same reserve writer as the original admitted producer.
+It receives that original receipt and hold, so it can retain the call key
+without copying balances, rates or producer facts. Failure aborts both writes.
+Ordinary, free and memory-work admissions do not invoke the callback.
+`RunPermit::allocation_call_key` exposes only the committed original key.
+
+`Vault::media_job_put_in_write_txn` uses the existing media key and erase fences
+in the caller's supplied writer. It opens no writer and commits nothing by
+itself. The ordinary media put and update wrappers are unchanged. These are
+integration ports, not a restored media permit or an automatic media recovery
+path; native continuation and its original pending hold still need to be wired.
+
 The physical dispatch adapter must commit `begin_dispatch` before releasing
 request bytes. A hold from another acquisition cannot start under the new
 serving fence; it remains pending for original-terminal reconciliation. Admission,

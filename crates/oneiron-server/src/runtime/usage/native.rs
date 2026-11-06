@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex};
 use crate::usage::{UsageError, UsageLedger, UsageServiceCost};
 use oneiron::EntityId;
 use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
-use oneiron::llm::run_admission::{AllocationProducer, AllocationStoreError, RunEvent, RunReceipt};
+use oneiron::llm::run_admission::{
+    AllocationCallContext, AllocationCallKey, AllocationProducer, AllocationStoreError,
+    PermitFacts, RunEvent, RunReceipt,
+};
 
 use super::{AdmittedCall, VaultUsage, settlement::settlement_event};
 
@@ -17,6 +20,13 @@ pub(crate) struct NativeUsageProducer {
     usage: Arc<VaultUsage>,
     vault: Arc<oneiron::Vault>,
     service_costs: Mutex<BTreeMap<(EntityId, String), UsageServiceCost>>,
+}
+
+/// Read from the same original admission row; prices and money stay with the
+/// canonical producer and hold rather than being copied into a job record.
+pub(crate) struct NativeUsageContinuation {
+    pub facts: PermitFacts,
+    pub context: AllocationCallContext,
 }
 
 impl VaultUsage {
@@ -69,6 +79,23 @@ impl NativeUsageProducer {
         Ok(rmp_serde::from_slice(&raw)?)
     }
 
+    /// Uses the caller's original source transaction and selected backend.
+    /// Missing context remains unknown; this never reprices or admits a call.
+    pub(crate) fn continuation_in_write_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        call_key: &AllocationCallKey,
+    ) -> Result<Option<NativeUsageContinuation>, UsageError> {
+        let call = self.read(txn, &key(call_key.instance, &call_key.lease))?;
+        if call.facts.lease != call_key.lease {
+            return Err(invalid("the original lease differs"));
+        }
+        Ok(call.context.map(|context| NativeUsageContinuation {
+            facts: call.facts,
+            context,
+        }))
+    }
+
     fn write(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -112,7 +139,12 @@ impl NativeUsageProducer {
         })
     }
 
-    fn freeze(&self, txn: &mut heed::RwTxn<'_>, admitted: &RunReceipt) -> Result<(), UsageError> {
+    fn freeze(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        admitted: &RunReceipt,
+        context: &AllocationCallContext,
+    ) -> Result<(), UsageError> {
         let RunEvent::Admitted(facts) = &admitted.event else {
             return Err(invalid("freeze requires the original admission"));
         };
@@ -120,7 +152,8 @@ impl NativeUsageProducer {
         if self.vault.sync_state_get_in_write_txn(txn, &key)?.is_some() {
             return Err(UsageError::IdempotencyConflict);
         }
-        let call = self.usage.admitted_call(facts);
+        let mut call = self.usage.admitted_call(facts);
+        call.context = Some(context.clone());
         self.write(txn, &key, &call)
     }
 
@@ -175,8 +208,9 @@ impl AllocationProducer for NativeUsageProducer {
         &self,
         txn: &mut heed::RwTxn<'_>,
         admitted: &RunReceipt,
+        context: &AllocationCallContext,
     ) -> Result<(), AllocationStoreError> {
-        self.freeze(txn, admitted).map_err(producer_error)
+        self.freeze(txn, admitted, context).map_err(producer_error)
     }
 
     fn settle_in_write_txn(
