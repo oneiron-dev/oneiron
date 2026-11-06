@@ -146,6 +146,27 @@ impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
         })
     }
 
+    /// [`EmbeddedEngine::retain_shared_env`] on this engine's own config
+    /// file: the path is cloned under the running guard, the guard is
+    /// released, and only then the file is read, modified, validated and
+    /// atomically replaced under its sibling lock. The running serve is
+    /// unchanged; the entry stands from the next start. Refused once
+    /// closed, from an async task, or without a config file.
+    pub fn retain_shared_env(&self, entry: &SharedEnvConfig) -> anyhow::Result<()> {
+        let config_path =
+            self.with_running(|running| Ok(running.engine.config().config_path.clone()))?;
+        let Some(path) = config_path else {
+            return Err(failure(
+                EngineErrorKind::Config,
+                "the engine started without a config file; nothing to retain",
+            ));
+        };
+        crate::config::shared_env::retain::retain_shared_env(&path, entry).context(cause(
+            EngineErrorKind::Config,
+            "the shared-env entry was not retained",
+        ))
+    }
+
     /// [`EmbeddedEngine::request`].
     pub fn request(&self, request: EmbeddedRequest) -> anyhow::Result<EmbeddedReply> {
         self.with_running(|running| running.runtime.block_on(running.engine.request(request)))

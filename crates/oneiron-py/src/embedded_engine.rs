@@ -273,6 +273,18 @@ impl NativeEngine {
             committed,
         })
     }
+
+    /// Retains one shared-env membership in this engine's own config file
+    /// for its next start: upserts `entry_json` by `(vault_id, member)`
+    /// under that file's sibling lock. The running registry is unchanged.
+    /// Refused without a config file; a managed engine's supervisor stays
+    /// the writer.
+    fn retain_shared_env(&self, py: Python<'_>, entry_json: &str) -> PyResult<()> {
+        let entry: oneiron_server::config::SharedEnvConfig =
+            crate::decode(entry_json, "shared env entry")?;
+        py.detach(|| self.engine.retain_shared_env(&entry))
+            .map_err(|error| raise(engine_memory_error(&error)))
+    }
 }
 
 /// The native import result and committed flag, retained independently.

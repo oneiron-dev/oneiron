@@ -239,6 +239,17 @@ class EmbeddedEngine:
             )
         )
 
+    def retain_shared_env(self, entry: dict[str, Any]) -> None:
+        """Retains one shared-env membership in this engine's own config file for its next start.
+
+        ``entry`` is the explicit shared-env entry as the native ``SharedEnvConfig`` reads it:
+        ``{"path", "vault_id", "member", "home_url", "credential_file"}``,
+        upserted by ``(vault_id, member)`` under that file's sibling lock.
+        The running registry is unchanged. Raises ``ENGINE_CONFIG`` without
+        a config file; a managed engine's supervisor stays the writer.
+        """
+        _translate(lambda: self._engine.retain_shared_env(json.dumps(entry)))
+
     def __enter__(self) -> "EmbeddedEngine":
         return self
 

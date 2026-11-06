@@ -326,12 +326,41 @@ and `retry_shared_invitation_https` return `oneiron.shared_env.SharedAcceptance`
 `request`, `reply` and `member_client` use the original native acceptance. With the `engine`
 feature, `oneiron.engine.EmbeddedEngine.bootstrap_shared_env` takes that object and an
 explicit shared-env entry dict (`path`, `vault_id`, `member`, `home_url`, `credential_file`),
-plus the dedicated target's dimensions and config file. Here the entry's `vault_id` is a
-JSON number, as in native `SharedEnvConfig`; the invitation request's `vault_id` stays a
-decimal string. The returned `SharedEnvBootstrapOutcome.committed` property and
+plus the dedicated target's dimensions and config file. The entry's `vault_id` accepts a
+JSON number or a decimal string, as in native `SharedEnvConfig`; the invitation request's
+`vault_id` stays a decimal string. The returned `SharedEnvBootstrapOutcome.committed` property and
 `vault_path()` method preserve the same separate publication and import outcomes. Both
 setup failures and retained inner errors raise the existing `OneironError` with their
 native error details. Other language bindings remain unimplemented.
+
+### Explicit retention for restart
+
+Rust `EmbeddedEngine` and `BlockingEngine`, UniFFI `EmbeddedEngine`, and Python
+`EmbeddedEngine` expose a separate `retain_shared_env(entry)` act. It updates the host's
+original config file for its next start; it does not import a target, change the running
+registry, or run automatically after bootstrap. An engine started without a config file
+raises `ENGINE_CONFIG`, so a managed host's supervisor remains its config writer. No
+binding keeps a second config path or membership registry.
+
+Retention upserts the native membership key, the vault id and trimmed lowercase member.
+It replaces the first matching entry and removes only additional entries for that same
+key. Other memberships and settings keep their values. A single matching entry already
+equal to the caller's entry leaves the file unchanged. New retained entries write the
+vault id as a decimal string, which covers the full native `u64`; current numeric inputs
+remain accepted. Path and credential-file values must be UTF-8, as the config writer's
+other paths must be.
+
+Cooperating retain calls hold the sibling `<config>.lock` across the read, update,
+validation and existing owner-only atomic replacement. The lock file is not deleted:
+waiters may hold its inode. The blocking engine releases its running guard before file
+I/O, and no async state lock is held. Existing init writers and external editors do not
+acquire this advisory lock, so retention does not claim to serialize those writers.
+
+Malformed files and entries leave the original file unchanged and report the existing
+safe config error without quoting config values. The current whole-table writer also
+cannot rewrite a file that already contains a raw numeric value above `i64::MAX`, even
+when the direct typed serve parser accepts it. That limitation does not narrow native
+vault ids or change how existing files are served.
 
 ## How it fits
 

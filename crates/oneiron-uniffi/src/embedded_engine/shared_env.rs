@@ -130,6 +130,17 @@ impl SharedEnvBootstrapOutcome {
     }
 }
 
+/// One [`SharedEnvEntry`] as the native config reads it.
+fn shared_env_config(entry: SharedEnvEntry) -> SharedEnvConfig {
+    SharedEnvConfig {
+        path: PathBuf::from(entry.path),
+        vault_id: entry.vault_id,
+        member: entry.member,
+        home_url: entry.home_url,
+        credential_file: PathBuf::from(entry.credential_file),
+    }
+}
+
 #[uniffi::export]
 impl EmbeddedEngine {
     /// Imports the original acceptance into entry.path and opens that same
@@ -149,13 +160,7 @@ impl EmbeddedEngine {
         config_file: Option<String>,
     ) -> Result<Arc<SharedEnvBootstrapOutcome>, OneironError> {
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
-        let entry = SharedEnvConfig {
-            path: PathBuf::from(entry.path),
-            vault_id: entry.vault_id,
-            member: entry.member,
-            home_url: entry.home_url,
-            credential_file: PathBuf::from(entry.credential_file),
-        };
+        let entry = shared_env_config(entry);
         let target = embedded_serve_config(
             &entry.path,
             dimensions,
@@ -170,5 +175,16 @@ impl EmbeddedEngine {
             imported,
             committed,
         }))
+    }
+
+    /// Retains one shared-env membership in this engine's own config file
+    /// for its next start: upserts `entry` by `(vault_id, member)` under
+    /// that file's sibling lock. The running registry is unchanged. Refused
+    /// without a config file; a managed engine's supervisor stays the writer.
+    pub fn retain_shared_env(&self, entry: SharedEnvEntry) -> Result<(), OneironError> {
+        let entry = shared_env_config(entry);
+        self.engine
+            .retain_shared_env(&entry)
+            .map_err(engine_failure)
     }
 }
