@@ -73,21 +73,27 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                     .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
             ),
         ]),
-        SelfDispatchOutcome::Denied(result) => request_map(vec![
-            ("kind", Value::from("denied")),
-            ("effect", Value::from(result.effect.as_str())),
-            ("outcome", Value::from(result.outcome.as_str())),
-            (
-                "reason_codes",
-                Value::Array(
-                    result
-                        .reason_codes
-                        .iter()
-                        .map(|reason| Value::from(reason.as_str()))
-                        .collect(),
+        SelfDispatchOutcome::Denied(result) => {
+            let mut entries = vec![
+                ("kind", Value::from("denied")),
+                ("effect", Value::from(result.effect.as_str())),
+                ("outcome", Value::from(result.outcome.as_str())),
+                (
+                    "reason_codes",
+                    Value::Array(
+                        result
+                            .reason_codes
+                            .iter()
+                            .map(|reason| Value::from(reason.as_str()))
+                            .collect(),
+                    ),
                 ),
-            ),
-        ]),
+            ];
+            if let Some(notice) = &result.hook_notice {
+                entries.push(("hook_notice", Value::from(notice.to_string())));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::AgentVerb(answer) => {
             let mut entries = vec![
                 ("kind", Value::from("agent_verb")),
@@ -308,6 +314,13 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
             outcome: str_value(map_get(entries, "outcome")?)?.to_owned(),
             reason_codes: str_array(map_get(entries, "reason_codes")?)?,
+            hook_notice: map_get(entries, "hook_notice")
+                .ok()
+                .map(|notice| {
+                    serde_json::from_str(str_value(notice)?)
+                        .map_err(|_| invalid_code_run_replay("invalid denied hook notice"))
+                })
+                .transpose()?,
         })),
         "agent_verb" => Ok(SelfDispatchOutcome::AgentVerb(super::AgentVerbAnswer {
             output: serde_json::from_str(str_value(map_get(entries, "output")?)?)

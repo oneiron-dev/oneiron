@@ -471,6 +471,7 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
             outcome,
             reason_codes,
         }) => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect: call.effect(),
             outcome: (*outcome).to_owned(),
             reason_codes: reason_codes

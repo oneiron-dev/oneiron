@@ -69,6 +69,7 @@ impl SessionReadRefusal {
 
     fn denied(self, effect: SelfEffect) -> SelfDispatchOutcome {
         SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect,
             outcome: self.code(),
             reason_codes: Vec::new(),

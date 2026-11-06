@@ -152,6 +152,8 @@ pub struct SelfDeniedResult {
     pub effect: SelfEffect,
     pub outcome: String,
     pub reason_codes: Vec<String>,
+    /// A supplied hook notice beside the refusal, never authority to run it.
+    pub hook_notice: Option<serde_json::Value>,
 }
 
 /// Measured facts from a native proposal-spool disk-floor failure.
