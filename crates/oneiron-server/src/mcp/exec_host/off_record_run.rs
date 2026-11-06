@@ -3,20 +3,25 @@
 
 use std::sync::Arc;
 
-use oneiron::agent_def::AgentModel;
+use oneiron::agent_def::{AgentModel, ensure_inherited_model_list};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, GatedActorWrite,
     RunCall, SelfAgentVerbCall, SelfEffect, SessionWriteAdmission, SessionWriteCeiling,
 };
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
+use oneiron::llm::seat::ModelSeat;
 use oneiron::memory::HostWriteOrigin;
 use oneiron::off_record::OffRecordCreator;
+use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::AgentVerb;
-use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, LlmBackend, Vault, WriteActor};
 
-use super::{McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
+use super::{
+    McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost, engine_seat_task,
+    run_read_worlds,
+};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::ReaderSeats;
@@ -198,7 +203,11 @@ impl McpEngineNativeCodeHost {
     /// all. It waits behind an earlier entry of the same run still running,
     /// in arrival order, then its turn with `execute_code`'s runs, under
     /// `actor`'s own key, so it never enters one run twice at once (FIX
-    /// 9505). It takes no model seat and runs its configured model. Its
+    /// 9505). It takes its model seat on the session's route, as an
+    /// `execute_code` run takes its own on base (FIX 7639): the picker
+    /// chooses among the models its agent lists, and a seatless run's
+    /// configured model is held to that list. A seat that is not born, or a
+    /// model off the list, refuses the run (`code_run_binding_failed`). Its
     /// `self.spawn` queues reader children in the room, under the seat this
     /// host's reader seats lend it, as an `execute_code` run's does (FIX
     /// 7507).
@@ -254,10 +263,14 @@ impl McpEngineNativeCodeHost {
 /// then the paired session constructors, the gated write and the executor,
 /// as a session's reader child pairs them. The gated write is bound to the
 /// run before its config is read, so the config reads the run's first start
-/// from the room's record. With `reader_seats`, the run's `self.spawn`
-/// queues reader children in the room under a seat lent under its own id:
-/// no attempt and no scope, its children on the host's meter, held to its
-/// agent's list when `actor` is an agent (`parent_model_list`).
+/// from the room's record. The run's model seat is then born or resumed on
+/// that route (`run_seat_on`, FIX 7639), its pin in the room, never base:
+/// the seat binds its model, locality and effort into the config and the
+/// session executor alike, and the run and its seat are held to its agent's
+/// list when `actor` is an agent (`parent_model_list`). With
+/// `reader_seats`, the run's `self.spawn` queues reader children in the
+/// room under a seat lent under its own id: no attempt and no scope, its
+/// children on the host's meter, held to the same list.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the session run's host binding"
@@ -292,24 +305,20 @@ fn run_in_off_record_session(
     .map_err(binding)?
     .with_agent_verb_door(door)
     .with_bound_run(run_id);
+    // One read of the actor's list: the run's own seat and its spawn loan
+    // are held to it. A definition that does not read refuses the run.
+    let listed = parent_model_list(vault, actor).map_err(binding)?;
     if let Some(seats) = reader_seats {
-        match parent_model_list(vault, actor) {
-            Ok(listed) => {
-                let mut seat = seats.seat(
-                    run_id,
-                    None,
-                    target.caller.destination(),
-                    provider.reader_window_tokens(),
-                );
-                seat.listed = listed;
-                gated_write = gated_write.with_reader_spawn(seat);
-            }
-            Err(error) => {
-                tracing::warn!(%error, run = %run_id.to_hex(), "a session run's agent definition did not read; its self.spawn stays unbound");
-            }
-        }
+        let mut seat = seats.seat(
+            run_id,
+            None,
+            target.caller.destination(),
+            provider.reader_window_tokens(),
+        );
+        seat.listed = listed.clone();
+        gated_write = gated_write.with_reader_spawn(seat);
     }
-    let config = provider
+    let mut config = provider
         .executor_config_on(vault, &gated_write, run_id, task)
         .map_err(binding)?;
     if config.run_id != run_id {
@@ -317,6 +326,41 @@ fn run_in_off_record_session(
             "provider changed the session run's identity".into(),
         ));
     }
+    // The run's seat (FIX 7639), born on the session's route under the read
+    // scope its caller's slip proved (FIX 11768), with no model override:
+    // the picker chooses among the listed eligible models.
+    let worlds = run_read_worlds(vault, target.caller.verified_slip(), None)
+        .map_err(McpCodeExecutionError::RunBinding)?;
+    let seat = provider
+        .run_seat_on(vault, &gated_write, run_id, None, worlds, |facet| {
+            engine_seat_task(
+                &config,
+                facet,
+                format!("off-record-execute:{}", run_id.to_hex()),
+                None,
+                listed.clone(),
+            )
+        })
+        .map_err(McpCodeExecutionError::RunBinding)?;
+    // The seat's model, or a seatless run's configured one, is on the list.
+    let model = seat.as_ref().map_or(&config.model, ModelSeat::model);
+    ensure_inherited_model_list(&listed, model).map_err(binding)?;
+    if let Some(seat) = &seat {
+        config.model = seat.model().clone();
+        config.model_locality = seat.locality();
+        config.seat_effort = Some(seat.effort());
+    }
+    // A listed run's calls go through the provider's list-bound backend
+    // when it has one, as an unscoped canonical entry's do.
+    let listed_backend = if listed.is_empty() {
+        None
+    } else {
+        provider.backend_with_model_list(listed)
+    };
+    let backend: &dyn LlmBackend = match &listed_backend {
+        Some(backend) => backend.as_ref(),
+        None => provider.backend(),
+    };
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -325,12 +369,15 @@ fn run_in_off_record_session(
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let mut executor = EngineNativeExecutor::for_off_record_session(
         &session,
-        provider.backend(),
+        backend,
         provider.lease(),
         runtime,
         &gated_write,
     )
     .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
+    if let Some(seat) = &seat {
+        executor = executor.with_model_seat(seat);
+    }
     // The host's one type-feedback service (FIX 8277): the session's steps
     // keep their feedback with their run.
     if let Some(feedback) = provider.code_check() {
@@ -341,17 +388,24 @@ fn run_in_off_record_session(
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
 }
 
-/// The model list a session run's reader children are held to (FIX 4539):
-/// its agent's own, read from its stored definition now, when the run's
-/// authenticated actor is an agent; none for the owner or any other actor,
-/// or for an agent with no stored definition. The children's parent row
-/// freezes it at the run's first spawn. `Err` when an agent's definition
-/// does not read: its run then lends no spawn seat, as before.
+/// The model list a session run and its reader children are held to (FIX
+/// 4539, FIX 7639): its agent's own, read from its stored definition now,
+/// when the run's authenticated actor is an agent; none for the owner or
+/// any other actor. An agent whose id holds no entity, or an entity of
+/// another type (a person-backed agent, FIX 7640), has no definition: its
+/// list is empty, its run takes any eligible model and lends its spawn
+/// seat. The children's parent row freezes the list at the run's first
+/// spawn. `Err` when the entity's type does not read or its AGENT_DEF body
+/// does not decode: the run is refused, never run on an empty list.
 fn parent_model_list(vault: &Vault, actor: WriteActor) -> oneiron::Result<Vec<AgentModel>> {
     if actor.actor_class() != EdgeActorClass::Agent {
         return Ok(Vec::new());
     }
+    let id = actor.entity_ref();
+    if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_AGENT_DEF) {
+        return Ok(Vec::new());
+    }
     Ok(vault
-        .get_agent_definition(&actor.entity_ref())?
+        .get_agent_definition(&id)?
         .map_or_else(Vec::new, |definition| definition.models))
 }
