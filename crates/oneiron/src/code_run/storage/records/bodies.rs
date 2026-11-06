@@ -613,6 +613,27 @@ pub(crate) fn code_run_body_held_in_txn(
         .is_some_and(|row| row_held(&row)))
 }
 
+/// Whether the result body row of `digest` stores its body in a file
+/// (FIX 7364). A descriptor names where its bytes were when it was
+/// published; the same bytes put again after an inline-to-file switch sit
+/// in a file while an older descriptor still says inline. The last
+/// holder's release reads this, so the file is queued whichever descriptor
+/// goes last. `false` with no row.
+///
+/// # Errors
+///
+/// Storage errors, and a row that does not decode.
+pub(crate) fn code_run_body_in_file_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<bool> {
+    Ok(matches!(
+        RAW_OUTPUTS.get(dbs, txn, &body_handle(digest))?,
+        Some(StoredBody::File { .. })
+    ))
+}
+
 /// An erase's lift of the hold the result body row of `digest` keeps on
 /// its file, in the erase's transaction: no hold of its own outlasts an
 /// erase, so the file is queued for the collector, which takes it with its

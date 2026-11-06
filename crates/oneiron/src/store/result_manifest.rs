@@ -147,29 +147,21 @@ impl ResultOccurrence {
     }
 
     /// The raw hold of the bytes `digest` names that run `owner` put at
-    /// `path` and stored at `location`, where its owner/path occurrence
-    /// cannot take them (FIX 7364, FIX 7430). It is a descriptor id, so an
-    /// erase of the owner reaches the bytes. The same owner, path, bytes
-    /// and location give the same hold; other bytes give another. So do
-    /// the same bytes stored again at the other location: the hold names
-    /// where its bytes are, and its release reaches that copy.
+    /// `path` where its owner/path occurrence cannot take them (FIX 7364,
+    /// FIX 7430). It is a descriptor id, so an erase of the owner reaches
+    /// the bytes. The same owner, path and bytes give the same hold; other
+    /// bytes give another.
     pub(crate) fn raw(
         owner: EntityId,
         path: &str,
         digest: &[u8; CODE_RUN_REPLAY_HASH_LEN],
-        location: crate::store::body_descriptor::BodyLocation,
     ) -> Result<Self> {
-        let location: &[u8] = match location {
-            crate::store::body_descriptor::BodyLocation::Inline => b"inline",
-            crate::store::body_descriptor::BodyLocation::File => b"file",
-        };
         Ok(Self(EntityId::derive(
             b"oneiron:code-run-output-raw-hold:v1",
             &[
                 owner.as_bytes().as_slice(),
                 path.as_bytes(),
                 digest.as_slice(),
-                location,
             ],
         )?))
     }
