@@ -13,6 +13,7 @@ use crate::sync::types::parse_window_key_str;
 
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
+use crate::sync::upkeep_jobs::spawn_upkeep_blocking;
 
 use super::server_close::ServerClose;
 use super::session::{
@@ -109,13 +110,8 @@ impl SyncConnection {
                 }
                 return exit;
             }
-            self.run_machine_history(
-                &mut upkeep.machine_history,
-                &machine_history_due,
-                event_tx,
-                &mut gate,
-            )
-            .await;
+            self.run_machine_history(upkeep, &machine_history_due, event_tx, &mut gate)
+                .await;
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -348,8 +344,9 @@ impl SyncConnection {
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
-                        let jobs = upkeep.blocking_jobs();
-                        upkeep.sealed = Some(tokio::spawn(async move {
+                        // Its blocking jobs, deeper ones included, hold the
+                        // run's mark, so the run's end waits for them.
+                        upkeep.sealed = Some(tokio::spawn(upkeep.jobs().scope(async move {
                             let _batch = sealed_batch;
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -392,7 +389,7 @@ impl SyncConnection {
                             // The owner work those rows name this machine to
                             // do (a world's key work) runs once they are in.
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match jobs.run(move || vault.run_pending_owner_work(|| true)).await {
+                            match spawn_upkeep_blocking(move || vault.run_pending_owner_work(|| true)).await {
                                 Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
@@ -408,7 +405,7 @@ impl SyncConnection {
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match jobs.run(move || vault.reseal_custody_for_roster()).await {
+                            match spawn_upkeep_blocking(move || vault.reseal_custody_for_roster()).await {
                                 Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
@@ -464,7 +461,7 @@ impl SyncConnection {
                                     "Custody relay failed: {error}"
                                 )));
                             }
-                        }));
+                        })));
                     }
                 }
 
@@ -591,17 +588,18 @@ impl SyncConnection {
     /// a task is free (FIX 3820). Own residence only: the home answers it, a
     /// federation peer does not. A round that lands rows asks for another,
     /// since a row it released may owe more. Each round holds the host's
-    /// admission until it ends; a paused host leaves it due (FIX 12036).
+    /// admission until it ends; a paused host leaves it due (FIX 12036). Its
+    /// blocking jobs hold the run's mark (FIX 12785).
     async fn run_machine_history(
         &self,
-        tasks: &mut Vec<tokio::task::JoinHandle<()>>,
+        upkeep: &mut UpkeepTasks,
         due: &std::sync::Arc<AtomicBool>,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         gate: &mut super::batch_admission::BatchGate<'_>,
     ) {
-        tasks.retain(|task| !task.is_finished());
+        upkeep.machine_history.retain(|task| !task.is_finished());
         if self.config.client_config.federation_peer.is_some()
-            || tasks.len() >= MACHINE_HISTORY_FETCH_TASKS
+            || upkeep.machine_history.len() >= MACHINE_HISTORY_FETCH_TASKS
             || !due.swap(false, Ordering::Relaxed)
         {
             return;
@@ -614,7 +612,7 @@ impl SyncConnection {
         let config = self.client_config();
         let events = event_tx.clone();
         let due = std::sync::Arc::clone(due);
-        tasks.push(tokio::spawn(async move {
+        let round = upkeep.jobs().scope(async move {
             let _batch = batch;
             match crate::sync::client::fetch_owed_machine_history(&manager, &config).await {
                 Ok(0) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
@@ -625,6 +623,7 @@ impl SyncConnection {
                     )));
                 }
             }
-        }));
+        });
+        upkeep.machine_history.push(tokio::spawn(round));
     }
 }

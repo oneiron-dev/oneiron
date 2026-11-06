@@ -205,7 +205,7 @@ async fn publish_one(
         None => (false, LatestRead::NoneKept),
         Some((bundle, pads)) => {
             let reading = Arc::clone(manager);
-            let (read, bundle, pads) = tokio::task::spawn_blocking(move || {
+            let (read, bundle, pads) = crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
                 let read = reading
                     .vault()
                     .read_latest_for_request(&bundle, &pads, holder, request);
@@ -338,9 +338,11 @@ async fn enact(
     request: AuthorityEntryHash,
 ) -> Result<(), TransportError> {
     let vault = Arc::clone(manager.vault());
-    tokio::task::spawn_blocking(move || vault.enact_bundle_publication(request))
-        .await
-        .map_err(stopped)?
-        .map_err(storage)?;
+    crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
+        vault.enact_bundle_publication(request)
+    })
+    .await
+    .map_err(stopped)?
+    .map_err(storage)?;
     Ok(())
 }

@@ -37,7 +37,7 @@ pub(super) async fn renewing_turn<T: Send + 'static>(
     rpc: &mut ResidenceRpc,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, TransportError> {
-    let mut work = tokio::task::spawn_blocking(work);
+    let mut work = crate::sync::upkeep_jobs::spawn_upkeep_blocking(work);
     let mut renewing = true;
     loop {
         tokio::select! {

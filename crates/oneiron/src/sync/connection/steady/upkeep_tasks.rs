@@ -3,11 +3,13 @@
 //! Each connection fills its own slots. The next connection starts with free
 //! slots, and the tasks still running move to the run's earlier lists: a
 //! reconnect cancels none of them. The run's end aborts the async rounds,
-//! then waits for every task and for each blocking job a round started, so
-//! no upkeep write lands after the run (a reap's export waits on this).
+//! then waits for every task and for each blocking job a round started
+//! ([`crate::sync::upkeep_jobs`]), so no upkeep write lands after the run (a
+//! reap's export waits on this).
 
-use tokio::sync::mpsc;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
+
+use crate::sync::upkeep_jobs::{UpkeepJobs, UpkeepJobsEnded};
 
 /// The upkeep tasks a sync run owns across its reconnects.
 pub(in crate::sync::connection) struct UpkeepTasks {
@@ -25,22 +27,22 @@ pub(in crate::sync::connection) struct UpkeepTasks {
     earlier_rounds: Vec<JoinHandle<()>>,
     /// The blocking jobs of earlier connections still running.
     earlier_blocking: Vec<JoinHandle<()>>,
-    /// Each blocking job a round starts holds a clone until it returns.
-    jobs_running: mpsc::Sender<()>,
-    /// Closes once the last clone of `jobs_running` is dropped.
-    jobs_ended: mpsc::Receiver<()>,
+    /// The mark each blocking job a round starts holds until it returns.
+    jobs: UpkeepJobs,
+    /// Closes once no job holds the mark.
+    jobs_ended: UpkeepJobsEnded,
 }
 
 impl Default for UpkeepTasks {
     fn default() -> Self {
-        let (jobs_running, jobs_ended) = mpsc::channel(1);
+        let (jobs, jobs_ended) = UpkeepJobs::for_run();
         Self {
             sealed: None,
             tombstone: None,
             machine_history: Vec::new(),
             earlier_rounds: Vec::new(),
             earlier_blocking: Vec::new(),
-            jobs_running,
+            jobs,
             jobs_ended,
         }
     }
@@ -57,9 +59,10 @@ impl UpkeepTasks {
         self.earlier_blocking.retain(|task| !task.is_finished());
     }
 
-    /// The handle an async round starts its blocking jobs with.
-    pub(super) fn blocking_jobs(&self) -> BlockingJobs {
-        BlockingJobs(self.jobs_running.clone())
+    /// The mark an async round runs its blocking jobs under
+    /// ([`UpkeepJobs::scope`]).
+    pub(super) fn jobs(&self) -> UpkeepJobs {
+        self.jobs.clone()
     }
 
     /// Ends the run's upkeep: aborts every async round, then waits for every
@@ -69,8 +72,8 @@ impl UpkeepTasks {
         let Self {
             earlier_rounds,
             earlier_blocking,
-            jobs_running,
-            mut jobs_ended,
+            jobs,
+            jobs_ended,
             ..
         } = self;
         for round in &earlier_rounds {
@@ -79,28 +82,7 @@ impl UpkeepTasks {
         for task in earlier_rounds.into_iter().chain(earlier_blocking) {
             let _ = task.await;
         }
-        drop(jobs_running);
-        // Nothing is sent: `recv` returns `None` once no job holds a clone.
-        while jobs_ended.recv().await.is_some() {}
-    }
-}
-
-/// Starts an async upkeep round's blocking jobs. An aborted round does not
-/// stop a job that has started, so the run's end waits for it.
-#[derive(Clone)]
-pub(super) struct BlockingJobs(mpsc::Sender<()>);
-
-impl BlockingJobs {
-    /// Runs `job` on the blocking pool and waits for its result.
-    pub(super) async fn run<T: Send + 'static>(
-        &self,
-        job: impl FnOnce() -> T + Send + 'static,
-    ) -> Result<T, JoinError> {
-        let running = self.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let _running = running;
-            job()
-        })
-        .await
+        drop(jobs);
+        jobs_ended.wait().await;
     }
 }

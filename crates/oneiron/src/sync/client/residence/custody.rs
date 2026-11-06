@@ -98,7 +98,7 @@ fn pending(code: PendingCode, detail: &str) -> TargetPending {
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> crate::Result<T> + Send + 'static,
 ) -> Result<T, TransportError> {
-    tokio::task::spawn_blocking(work)
+    crate::sync::upkeep_jobs::spawn_upkeep_blocking(work)
         .await
         .map_err(|_| stopped())?
         .map_err(storage)
@@ -310,7 +310,7 @@ async fn upload(
         let why = "the residence home holds a newer custody position: another writer moved it";
         return Ok(Err(pending(PendingCode::Moved, why)));
     }
-    let (batch, frames) = tokio::task::spawn_blocking(move || {
+    let (batch, frames) = crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || {
         let frames = batch.frames_after(after);
         (batch, frames)
     })

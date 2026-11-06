@@ -188,7 +188,7 @@ async fn release_targets(
     targets: Vec<(EntityId, bool)>,
 ) -> Result<Vec<EntityId>, TransportError> {
     let manager = Arc::clone(manager);
-    tokio::task::spawn_blocking(move || release(&manager, &targets))
+    crate::sync::upkeep_jobs::spawn_upkeep_blocking(move || release(&manager, &targets))
         .await
         .map_err(|error| TransportError::Storage(error.to_string()))?
         .map_err(storage)
