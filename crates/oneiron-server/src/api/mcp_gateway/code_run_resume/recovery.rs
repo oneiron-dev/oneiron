@@ -39,7 +39,9 @@ use oneiron::code_run::{
 use oneiron::runtime_hooks::verb::{VerbAskDoor, VerbAskRefusal};
 
 use super::super::McpCallContext;
-use super::super::actor_dispatch::{admitted_context, mcp_execute_code_gate, registry_actor};
+use super::super::actor_dispatch::{
+    RegistryRefusal, admitted_context, mcp_execute_code_gate, registry_actor_reading_ceiling,
+};
 use super::super::owner_call::owner_code_run_context;
 use super::super::verb_hooks::mcp_adapter_ceiling;
 use super::{
@@ -260,7 +262,7 @@ fn paired_caller(
         .capability_slip_now()
         .map_err(|_| VerbAskRefusal::CredentialUnavailable)?;
     let mut registry = server.mcp_registry.blocking_lock();
-    let resolved = registry_actor(&mut registry, server, &credential, &auth, now);
+    let resolved = registry_actor_reading_ceiling(&mut registry, server, &credential, &auth, now);
     drop(registry);
     let actor = resolved.map_err(registration_refusal)?;
     if actor.stream_connection.0 != connection {
@@ -314,9 +316,14 @@ fn owner_caller(
 /// Why a caller's registration does not stand now. One this process does
 /// not hold, and does not record again from the caller's own slip, as a
 /// custom registration a restart lost, is unavailable: it is never made
-/// again from a saved copy.
-const fn registration_refusal(error: McpConnectorActorResolutionError) -> VerbAskRefusal {
-    match error {
+/// again from a saved copy. A ceiling the store could not read is
+/// unavailable too, so a later pass tries again; only a ceiling read as
+/// absent refuses the scope for good (FIX 4606).
+const fn registration_refusal(refused: RegistryRefusal) -> VerbAskRefusal {
+    if refused.ceiling_unread {
+        return VerbAskRefusal::CredentialUnavailable;
+    }
+    match refused.error {
         McpConnectorActorResolutionError::UnknownCredential => {
             VerbAskRefusal::CredentialUnavailable
         }
