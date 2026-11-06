@@ -170,7 +170,11 @@ impl PageBuilder {
     pub(super) fn finish(mut self, mut next_cursor: Option<String>) -> GraphFsPage {
         if let Some(cursor) = next_cursor.clone() {
             let mut more = GraphFsEntry::cursor(cursor);
-            while self.byte_count + more.byte_cost() > self.byte_cap {
+            // The first entry always stays: dropping it would hand out a
+            // cursor past an entry no page shows. When it and the cursor
+            // together pass the cap, the page goes without its `_more` line
+            // and still hands its cursor out.
+            while self.byte_count + more.byte_cost() > self.byte_cap && self.entries.len() > 1 {
                 let Some(removed) = self.entries.pop() else {
                     break;
                 };
