@@ -37,6 +37,16 @@
 //! The old executor needs nothing from here: slice 5's fence stands it down
 //! at its next step commit or effect, and its settlement ends its local try
 //! with `agent_run_executor_moved` and leaves the run TASK as it is.
+//!
+//! Handover moves roots only (REVIEW-6638). Only a root run has a run TASK:
+//! a child its run spawned runs under its root's, fenced at the root's
+//! generation (`super::run_task`). So the reaper sees roots only: the root
+//! reruns on the taker from its frozen payload and spawns its children
+//! there, under new ids. Every child on the old machine stands down at its
+//! root's fence with the root's own try. A child that outlived its root is a
+//! root of its own, with its own run TASK, and moves as a root does; the
+//! taker holds no row of its settled parent and runs it without one
+//! (`super::agent_run`).
 //! Entry: `Vault::reap_agent_run_leases`.
 
 use std::collections::BTreeMap;
@@ -548,8 +558,11 @@ fn world_readable_here_in(vault: &Vault, txn: &heed::RoTxn<'_>, world: &str) -> 
     }
 }
 
-/// The run TASKs with a try still pending in this machine's queue, read in
-/// `txn`, each with its newest such try's id and state.
+/// The run TASKs with a try of their own still pending in this machine's
+/// queue (a root's, or a child's that outlived its root), read in `txn`,
+/// each with its newest such try's id and state. A pending child under a
+/// run's TASK is no try of it here (REVIEW-6638): the take never keeps it as
+/// the run's try, and it renews nothing.
 fn local_agent_run_tries_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -560,8 +573,10 @@ fn local_agent_run_tries_in(
         .into_iter()
         .filter(|row| row.state.is_pending())
     {
-        if let Some(task_ref) = agent_run_task_ref_in(vault, txn, &row)? {
-            local.insert(task_ref, (row.id, row.state));
+        if let Some(link) = agent_run_task_ref_in(vault, txn, &row)?
+            && !link.child
+        {
+            local.insert(link.task_ref, (row.id, row.state));
         }
     }
     Ok(local)
