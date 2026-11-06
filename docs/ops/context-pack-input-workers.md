@@ -219,3 +219,13 @@ This removes a deep request copy on the retained exact path. It does not admit
 provider JSON or wire allocations, shifted prompt/manifest storage, request-vector
 reallocation or other independent response memory. General fallback and streaming
 copies remain. It is not a full memory-accounting or runtime proof.
+
+When that gate carries a caller release, borrowed generation keeps it too.
+Its released entry has the same entry-only default as the owned API; that
+default is not proof that every transport rechecks before every physical send.
+The OpenAI adapter forwards the actual release through its existing released
+transport operation. Both the managed native transport and native-only local
+transport carry it through shared shaping into the existing native wait,
+session, plain-resend and send checks. The native-only path never gains an HTTP
+fallback. Unrecorded capture and settlement behavior from the shared caller
+remain intact. Other transport-wide release coverage is not claimed here.
