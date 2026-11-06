@@ -378,17 +378,19 @@ pub(in crate::sync) fn forget_peer_origin(
 /// holds with the bytes that origin names: a local path removed the carrier,
 /// or left only a deleted row's shell (FIX 4550). An origin names a peer's
 /// exact bytes, so one whose row holds other bytes is as stale as one whose
-/// row is gone. Returns whether any went; the caller commits.
+/// row is gone. A MESSAGE writer's proof names exact bytes too and goes the
+/// same way (FIX 12113). Returns whether any went; the caller commits.
 pub(crate) fn forget_stale_peer_origins(
     doc: &LoroDoc,
     ids: impl IntoIterator<Item = EntityId>,
 ) -> Result<bool> {
+    let ids = ids.into_iter().collect::<Vec<_>>();
+    let mut dropped = super::message_writer::forget_stale_writer_proofs(doc, &ids)?;
     if !carries_origins(doc) {
-        return Ok(false);
+        return Ok(dropped);
     }
     let carried = doc.get_map(PEER_ORIGIN_MAP);
     let entities = doc.get_map("entities");
-    let mut dropped = false;
     for id in ids {
         let key = id.to_hex();
         if carried.get(&key).is_none() {
