@@ -3,12 +3,14 @@
 use super::{id, invalid, strict, validate_document_metadata, validate_summary_meta};
 use crate::error::Result;
 use crate::recovery::canonical::{CanonicalEntityDocument, CanonicalForkStatus};
+use crate::store::canonical_document::CanonicalDocumentTexts;
 
 #[derive(Default)]
 pub(super) struct HistoryValidation {
     stage: Stage,
     next: usize,
     texts: Vec<String>,
+    text_builder: Option<CanonicalDocumentTexts>,
     reached: Vec<bool>,
 }
 
@@ -16,6 +18,8 @@ pub(super) struct HistoryValidation {
 enum Stage {
     #[default]
     Header,
+    Texts,
+    Head,
     Versions,
     PinOrder,
     Pins,
@@ -63,7 +67,29 @@ impl HistoryValidation {
                     if !history.purges.is_empty() && !history.shallow {
                         return Err(invalid("entity document purge without a purge floor"));
                     }
-                    self.texts = history.texts()?;
+                    self.text_builder = Some(CanonicalDocumentTexts::new(history));
+                    self.stage = Stage::Texts;
+                    return Ok(false);
+                }
+                Stage::Texts => {
+                    let history = history();
+                    let builder = self
+                        .text_builder
+                        .as_mut()
+                        .expect("text reconstruction was started");
+                    if !builder.advance_row(history)? {
+                        return Ok(false);
+                    }
+                    self.texts = self
+                        .text_builder
+                        .take()
+                        .expect("completed text reconstruction")
+                        .into_texts();
+                    self.stage = Stage::Head;
+                    continue;
+                }
+                Stage::Head => {
+                    let history = history();
                     let head = self
                         .texts
                         .len()
