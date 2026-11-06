@@ -126,8 +126,10 @@ pub struct TopologyAuditIntent {
     pub disposition: EntityId,
     pub scope: TopologyAuditScope,
     pub decided_by: TopologyAuditDecider,
-    /// Every record the decision names: its participants, then its evidence
-    /// refs, each once. An erase of any of them drops the candidate.
+    /// Every record the decision names, each once (`decision_records`):
+    /// its participants, the claims and edge endpoints its reassignment map
+    /// routes, a facet's forks, then its evidence refs. The review reads every
+    /// one, and an erase of any of them drops the candidate.
     pub subjects: Vec<EntityId>,
     /// The agent-dispatch attempt whose run made the decision, when its
     /// writer was bound to one.
@@ -299,22 +301,64 @@ fn audit_id(event: &EntityId, core_digest: &[u8; 32]) -> [u8; 32] {
         .as_bytes()
 }
 
-/// The participants of a merge, split or facet, in the record's order.
-fn participants(action: &StoredIdentityOpAction) -> Vec<EntityId> {
-    match action {
+/// Every record the decision `record` (read whole) of `event` names, each
+/// once, in this order: its participants (a merge's sources and survivor, a
+/// split's entity and heads, a facet's entity and masks); each claim its
+/// reassignment map routes, or an edge item's two endpoints; each fork a
+/// facet birthed; then its evidence refs. A review reads all of them, or
+/// judges nothing.
+///
+/// # Errors
+///
+/// Never in practice: a fork id derives from a fixed domain.
+fn decision_records(event: &EntityId, record: &StoredIdentityOpEvent) -> Result<Vec<EntityId>> {
+    let mut records = Vec::new();
+    match &record.action {
         StoredIdentityOpAction::Merge { sources, survivor } => {
-            let mut ids = sources.clone();
-            ids.push(*survivor);
-            ids
+            records.extend(sources.iter().copied());
+            records.push(*survivor);
         }
-        StoredIdentityOpAction::Split { entity, heads, .. } => std::iter::once(*entity)
-            .chain(heads.iter().copied())
-            .collect(),
-        StoredIdentityOpAction::Facet { entity, facets, .. } => std::iter::once(*entity)
-            .chain(facets.iter().copied())
-            .collect(),
-        _ => Vec::new(),
+        StoredIdentityOpAction::Split {
+            entity,
+            heads,
+            reassignment,
+            ..
+        } => {
+            records.push(*entity);
+            records.extend(heads.iter().copied());
+            records.extend(reassigned(reassignment));
+        }
+        StoredIdentityOpAction::Facet {
+            entity,
+            facets,
+            reassignment,
+            forked,
+            ..
+        } => {
+            records.push(*entity);
+            records.extend(facets.iter().copied());
+            records.extend(reassigned(reassignment));
+            for origin in forked {
+                records.push(super::op_apply::facet_fork_id(event, origin)?);
+            }
+        }
+        _ => {}
     }
+    if let Some(evidence) = &record.evidence {
+        records.extend(evidence.refs.iter().copied());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    records.retain(|id| seen.insert(*id));
+    Ok(records)
+}
+
+/// The records a reassignment map routes: each claim item, and each edge
+/// item's two endpoints.
+fn reassigned(map: &super::ReassignmentMap) -> impl Iterator<Item = EntityId> + '_ {
+    map.entries.iter().flat_map(|entry| match entry.item {
+        crate::claim::ClaimSubject::Entity(id) => vec![id],
+        crate::claim::ClaimSubject::Edge { source, target, .. } => vec![source, target],
+    })
 }
 
 /// The primary target of a merge (its survivor), split or facet (its entity).
@@ -358,12 +402,7 @@ pub(super) fn declare_topology_audit_in_txn(
         txn,
         declaration.actor.map(WriteActor::entity_ref),
     )?;
-    let mut subjects = participants(action);
-    if let Some(evidence) = &declaration.record.evidence {
-        subjects.extend(evidence.refs.iter().copied());
-    }
-    let mut seen = std::collections::BTreeSet::new();
-    subjects.retain(|id| seen.insert(*id));
+    let subjects = decision_records(&declaration.event, declaration.record)?;
     let intent = TopologyAuditIntent {
         schema_version: TOPOLOGY_AUDIT_SCHEMA_VERSION,
         audit_id,

@@ -11,15 +11,15 @@ use super::{
     TopologyAuditEvidence, TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditResult,
     TopologyAuditScope, TopologyAuditSelection,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_runner::maintenance::coach::COACH_TOPOLOGY_AUDIT_FACET;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::identity_topology::{
     EngineCause, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyAction,
-    IdentityTopologyRejection, StoredIdentityOpAction, StoredIdentityOpEvent, TopologySeal,
-    fold_identity_topology_log,
+    IdentityTopologyRejection, ReassignmentMap, ReassignmentTarget, StoredIdentityOpAction,
+    StoredIdentityOpEvent, TopologySeal, fold_identity_topology_log,
 };
 use crate::vault::Vault;
 
@@ -345,7 +345,11 @@ impl Vault {
         else {
             return Ok(Step::Deferred);
         };
-        let result = self.record_topology_audit_result(intent, &selection, reviewed, job)?;
+        // A candidate an erase took while it was reviewed keeps nothing.
+        let Some(result) = self.record_topology_audit_result(intent, &selection, reviewed, job)?
+        else {
+            return Ok(Step::Done);
+        };
         match result.outcome {
             TopologyAuditOutcome::Pass => report.passed += 1,
             TopologyAuditOutcome::Concern => {
@@ -549,15 +553,20 @@ impl Vault {
             &intent.event,
         )?;
         let (scope_history, _) = history.of(intent);
+        // The whole decision, and every record it names to be read under
+        // the Coach's scoped read: one the read cannot give refuses the
+        // question, so no review judges part of a decision.
+        let decision = decision_state(intent, &record)?;
+        let evidence = super::decision_records(&intent.event, &record)?;
         Ok(Read::Ready {
             case: TopologyAuditCase {
                 audit_id: intent.audit_id,
                 event: intent.event,
                 scope: intent.scope.clone(),
                 decided_by: intent.decided_by,
-                evidence: intent.subjects.clone(),
+                evidence,
                 state: json!({
-                    "decision": decision_state(intent, &record),
+                    "decision": decision,
                     "scope_history": scope_history,
                 }),
             },
@@ -567,14 +576,18 @@ impl Vault {
 
     /// Keeps one candidate's result, and on a concern the Coach's
     /// correction, in one writer. A result another job kept first stands,
-    /// and so does its correction: none is made twice.
+    /// and so does its correction: none is made twice. The writer first
+    /// requires the candidate and the selection the review ran under to be
+    /// the kept ones still: a candidate an erase took, or one whose kept
+    /// rows differ, gets no correction and no result (`None`), so no undo
+    /// ever lands without the result that receipts it.
     fn record_topology_audit_result(
         &self,
         intent: &TopologyAuditIntent,
         selection: &TopologyAuditSelection,
         (outcome, reason, evidence, read): Reviewed,
         job: Job,
-    ) -> Result<TopologyAuditResult> {
+    ) -> Result<Option<TopologyAuditResult>> {
         let selection_digest = selection.digest()?;
         let (reviewer, evidence_refs, revision, decision_receipt) = match read {
             Some((case, revision, decision_receipt)) => (
@@ -587,7 +600,15 @@ impl Vault {
         };
         self.with_write_txn_grouped(move |txn| {
             if let Some(held) = RESULTS.get(&self.store, &*txn, &intent.audit_id)? {
-                return Ok(held);
+                return Ok(Some(held));
+            }
+            if INTENTS.get(&self.store, &*txn, &intent.audit_id)?.as_ref() != Some(intent)
+                || SELECTIONS
+                    .get(&self.store, &*txn, &intent.audit_id)?
+                    .as_ref()
+                    != Some(selection)
+            {
+                return Ok(None);
             }
             let correction = if outcome == TopologyAuditOutcome::Concern {
                 Some(self.correct_topology_in_txn(txn, intent, revision, job.now)?)
@@ -609,11 +630,8 @@ impl Vault {
                 correction,
                 completed_at: job.now,
             };
-            // An erased candidate keeps no result.
-            if INTENTS.contains(&self.store, &*txn, &intent.audit_id)? {
-                RESULTS.put(&self.store, txn, &intent.audit_id, &result)?;
-            }
-            Ok(result)
+            RESULTS.put(&self.store, txn, &intent.audit_id, &result)?;
+            Ok(Some(result))
         })
     }
 
@@ -684,9 +702,16 @@ fn undone_events(events: &[crate::identity_topology::IdentityTopologyEvent]) -> 
         .collect()
 }
 
-/// The decision as the recipe reads it: its scope, who decided, its source,
-/// confidence and rationale, and its action by ref and count.
-fn decision_state(intent: &TopologyAuditIntent, record: &StoredIdentityOpEvent) -> Value {
+/// The decision as the recipe reads it, whole: its scope, who decided, its
+/// source, confidence and rationale, and its complete action. A split's and
+/// a facet's every reassignment row names its item and where it went, and a
+/// facet names each fork it birthed beside its origin, so two decisions that
+/// route one claim differently never read alike.
+///
+/// # Errors
+///
+/// Never in practice: a fork id derives from a fixed domain.
+fn decision_state(intent: &TopologyAuditIntent, record: &StoredIdentityOpEvent) -> Result<Value> {
     let hexes = |ids: &[EntityId]| ids.iter().map(EntityId::to_hex).collect::<Vec<_>>();
     let action = match &record.action {
         StoredIdentityOpAction::Merge { sources, survivor } => json!({
@@ -696,32 +721,46 @@ fn decision_state(intent: &TopologyAuditIntent, record: &StoredIdentityOpEvent) 
         StoredIdentityOpAction::Split {
             entity,
             heads,
+            reassignment,
             applied_assigned,
             applied_residue,
-            ..
         } => json!({
             "entity": entity.to_hex(),
             "heads": hexes(heads),
+            "reassignment": reassignment_state(reassignment, &[]),
             "applied_assigned": applied_assigned,
             "applied_residue": applied_residue,
         }),
         StoredIdentityOpAction::Facet {
             entity,
             facets,
+            reassignment,
             applied_assigned,
             applied_residue,
             forked,
-            ..
-        } => json!({
-            "entity": entity.to_hex(),
-            "facets": hexes(facets),
-            "applied_assigned": applied_assigned,
-            "applied_residue": applied_residue,
-            "forked": forked.len(),
-        }),
+        } => {
+            let forks = forked
+                .iter()
+                .map(|origin| {
+                    Ok(json!({
+                        "origin": origin.to_hex(),
+                        "fork": super::super::op_apply::facet_fork_id(&intent.event, origin)?
+                            .to_hex(),
+                    }))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            json!({
+                "entity": entity.to_hex(),
+                "facets": hexes(facets),
+                "reassignment": reassignment_state(reassignment, facets),
+                "applied_assigned": applied_assigned,
+                "applied_residue": applied_residue,
+                "forks": forks,
+            })
+        }
         _ => Value::Null,
     };
-    json!({
+    Ok(json!({
         "op_kind": intent.scope.op_kind,
         "target_class": intent.scope.target_class,
         "decided_by": intent.decided_by,
@@ -729,7 +768,44 @@ fn decision_state(intent: &TopologyAuditIntent, record: &StoredIdentityOpEvent) 
         "confidence": record.confidence,
         "rationale": record.evidence.as_ref().map(|evidence| evidence.rationale.as_str()),
         "action": action,
-    })
+    }))
+}
+
+/// Every row of a reassignment map, in its canonical order: the item (a
+/// claim, or an edge by its endpoints and kind) and its destination (a
+/// split head, a facet mask by its minted id among `facets`, or residue).
+fn reassignment_state(map: &ReassignmentMap, facets: &[EntityId]) -> Value {
+    Value::Array(
+        map.entries
+            .iter()
+            .map(|entry| {
+                let item = match entry.item {
+                    ClaimSubject::Entity(id) => json!({ "claim": id.to_hex() }),
+                    ClaimSubject::Edge {
+                        source,
+                        kind,
+                        target,
+                    } => json!({ "edge": {
+                        "source": source.to_hex(),
+                        "kind": kind.name(),
+                        "target": target.to_hex(),
+                    }}),
+                };
+                let to = match entry.target {
+                    ReassignmentTarget::Head(head) => json!({ "head": head.to_hex() }),
+                    ReassignmentTarget::Facet { index } => json!({
+                        "facet": usize::try_from(index)
+                            .ok()
+                            .and_then(|index| facets.get(index))
+                            .map(EntityId::to_hex),
+                        "index": index,
+                    }),
+                    ReassignmentTarget::Residue => json!("residue"),
+                };
+                json!({ "item": item, "to": to })
+            })
+            .collect(),
+    )
 }
 
 /// The stable code of an undo door refusal.
