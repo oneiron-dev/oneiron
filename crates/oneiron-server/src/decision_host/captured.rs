@@ -176,29 +176,40 @@ impl SystemOneRung {
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
         let asked = if pack.run.is_some() {
-            Ok(super::run_native_read(&run, || match run.send_guard() {
-                Some(guard) => {
-                    let release = || {
-                        if guard() {
-                            Ok(())
-                        } else {
-                            Err(oneiron::llm::FatalLlmError::Auth.into())
-                        }
-                    };
-                    self.runtime.block_on(self.ask_pack_request(
-                        request,
-                        permit.lease(),
-                        pack.deadline.decision_time_left(),
-                        Some(&release),
-                    ))
-                }
-                None => self.runtime.block_on(self.ask_pack_request(
-                    request,
-                    permit.lease(),
-                    pack.deadline.decision_time_left(),
-                    None,
-                )),
-            }))
+            super::run_native_read(&run, || {
+                self.runtime.block_on(async {
+                    let cancel = pack.deadline.work_cancel();
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                        read = async {
+                            match run.send_guard() {
+                                Some(guard) => {
+                                    let release = || {
+                                        if guard() {
+                                            Ok(())
+                                        } else {
+                                            Err(oneiron::llm::FatalLlmError::Auth.into())
+                                        }
+                                    };
+                                    self.ask_pack_request(
+                                        request,
+                                        permit.lease(),
+                                        pack.deadline.decision_time_left(),
+                                        Some(&release),
+                                    ).await
+                                }
+                                None => self.ask_pack_request(
+                                    request,
+                                    permit.lease(),
+                                    pack.deadline.decision_time_left(),
+                                    None,
+                                ).await,
+                            }
+                        } => Ok(read),
+                    }
+                })
+            })
         } else {
             self.runtime.block_on(async {
                 let cancel = pack.deadline.work_cancel();
@@ -517,50 +528,71 @@ impl SystemOneRung {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
-        let asked = match prepared {
-            Some(prepared) => super::run_native_read(&run, || match run.send_guard() {
-                Some(guard) => {
-                    let release = || {
-                        if guard() {
-                            Ok(())
-                        } else {
-                            Err(oneiron::llm::FatalLlmError::Auth.into())
+        let asked = super::run_native_read(&run, || {
+            self.runtime.block_on(async {
+                let cancel = call.deadline.work_cancel();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                    read = async {
+                        match prepared {
+                            Some(prepared) => match run.send_guard() {
+                                Some(guard) => {
+                                    let release = || {
+                                        if guard() {
+                                            Ok(())
+                                        } else {
+                                            Err(oneiron::llm::FatalLlmError::Auth.into())
+                                        }
+                                    };
+                                    prepared.ask_recorded(
+                                        permit.lease(),
+                                        call.deadline.decision_time_left(),
+                                        Some(&release),
+                                    ).await
+                                }
+                                None => prepared.ask_recorded(
+                                    permit.lease(),
+                                    call.deadline.decision_time_left(),
+                                    None,
+                                ).await,
+                            },
+                            None => match run.send_guard() {
+                                Some(guard) => {
+                                    let release = || {
+                                        if guard() {
+                                            Ok(())
+                                        } else {
+                                            Err(oneiron::llm::FatalLlmError::Auth.into())
+                                        }
+                                    };
+                                    self.seat.ask_recorded_released(
+                                        request,
+                                        permit.lease(),
+                                        call.deadline.decision_time_left(),
+                                        &release,
+                                    ).await
+                                }
+                                None => self.seat.ask_recorded(
+                                    request,
+                                    permit.lease(),
+                                    call.deadline.decision_time_left(),
+                                ).await,
+                            },
                         }
-                    };
-                    self.runtime.block_on(prepared.ask_recorded(
-                        permit.lease(),
-                        call.deadline.decision_time_left(),
-                        Some(&release),
-                    ))
+                    } => Ok(read),
                 }
-                None => self.runtime.block_on(prepared.ask_recorded(
-                    permit.lease(),
-                    call.deadline.decision_time_left(),
-                    None,
-                )),
-            }),
-            None => super::run_native_read(&run, || match run.send_guard() {
-                Some(guard) => {
-                    let release = || {
-                        if guard() {
-                            Ok(())
-                        } else {
-                            Err(oneiron::llm::FatalLlmError::Auth.into())
-                        }
-                    };
-                    self.runtime.block_on(self.seat.ask_recorded_released(
-                        request,
-                        permit.lease(),
-                        call.deadline.decision_time_left(),
-                        &release,
-                    ))
-                }
-                None => self.runtime.block_on(self.seat.ask_recorded(
-                    request,
-                    permit.lease(),
-                    call.deadline.decision_time_left(),
-                )),
-            }),
+            })
+        });
+        let asked = match asked {
+            Ok(read) => read,
+            Err(error) => {
+                // The seat may still bill a failed or cancelled call.
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+                return Err(error);
+            }
         };
         // Observe only after the original settlement attempt. Its failure
         // still wins over the provider result exactly as before.
