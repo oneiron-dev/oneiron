@@ -20248,7 +20248,7 @@
       "host": {
         "host_door_precheck": false,
         "input": "crate::code_run::fold_api::FoldMarkRequest",
-        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles.",
+        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console.",
         "host_door_caller": true,
         "host_door_session": false,
         "host_door_lists": true
