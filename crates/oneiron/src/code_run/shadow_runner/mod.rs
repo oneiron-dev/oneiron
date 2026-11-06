@@ -35,7 +35,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use self::admit::admit_published_inline;
-pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
+pub(crate) use self::bridge::{ArmCallableLoad, ArmCallables, ArmReads, ShadowBridgeHost};
 pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
 pub use self::source::{
     PreparedShadowStep, prepare_shadow_step_source, shadow_route_prompt, shadow_source_gone,

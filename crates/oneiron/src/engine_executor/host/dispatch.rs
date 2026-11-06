@@ -356,7 +356,7 @@ impl RecordingJsHost<'_, '_> {
                 nested_end: self.next_seq,
                 skill: skill.skill,
                 selected,
-                args: skill.args.clone(),
+                args: skill.args,
             };
             self.context_capture.callables.push(callable);
         }

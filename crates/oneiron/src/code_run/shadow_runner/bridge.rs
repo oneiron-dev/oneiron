@@ -9,6 +9,9 @@
 //! a run of its own (a callable skill, a reader child, a summary) recorded
 //! its subtree after its own row, which one row cannot replay; it is
 //! unavailable too, as is a revealed secret's answer, which no capture keeps.
+//! A callable branch's arm (FIX 3608, [`callable`]) answers a callable call
+//! from the callable the step's replay context froze for it instead: run
+//! again against its own recorded calls, or left absent.
 //!
 //! A matched call is answered as the live guest read it (FIX 6351): the
 //! recorded outcome with the response the step's replay context kept for its
@@ -49,9 +52,11 @@ use crate::{EntityId, Error, Result};
 /// The taint a result reads under: its state and the secret scan's reason.
 type Taint = (ArtifactTaintState, Option<String>);
 
+mod callable;
 mod results;
 mod streams;
 mod taint;
+pub(crate) use self::callable::{ArmCallableLoad, ArmCallables};
 use self::streams::ArmStreams;
 
 /// Where the arm's program reads its run's bodies back by path, as the
@@ -117,6 +122,9 @@ pub(crate) struct ShadowBridgeHost<'a> {
     pub(crate) declined: bool,
     /// Why the arm stopped, once it did.
     pub(crate) stopped: Option<ShadowUnavailable>,
+    /// A callable branch's treatment of the step's recorded callables
+    /// (FIX 3608); `None` for any other arm, which runs no callable.
+    callables: Option<&'a ArmCallables>,
 }
 
 impl<'a> ShadowBridgeHost<'a> {
@@ -164,7 +172,15 @@ impl<'a> ShadowBridgeHost<'a> {
             hard_failure: false,
             declined: false,
             stopped: None,
+            callables: None,
         })
+    }
+
+    /// The bridge of a callable branch's arm (FIX 3608): each callable call
+    /// answered by `callables`.
+    pub(crate) fn with_callables(mut self, callables: &'a ArmCallables) -> Self {
+        self.callables = Some(callables);
+        self
     }
 
     /// How far into the run's bridge log the arm matched.
@@ -298,6 +314,39 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
     }
 
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
+        self.dispatch(call, None)
+    }
+
+    fn dispatch_self_nested(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchResponse> {
+        self.dispatch(call, Some((runtime, &StepCancellation::never())))
+    }
+
+    fn dispatch_self_nested_cancellable(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        cancel: &StepCancellation,
+    ) -> Result<SelfDispatchResponse> {
+        cancel.check()?;
+        let answered = self.dispatch(call, Some((runtime, cancel)));
+        cancel.check()?;
+        answered
+    }
+}
+
+impl ShadowBridgeHost<'_> {
+    /// One `self.*` call of the arm's program, `nested` the sibling runtime
+    /// and the caller's token a call that runs a step of its own runs on,
+    /// when its runtime lent one.
+    fn dispatch(
+        &mut self,
+        call: SelfCall,
+        nested: Option<(&mut dyn JsCodeModeRuntime, &StepCancellation)>,
+    ) -> Result<SelfDispatchResponse> {
         if let Some(stopped) = self.stopped.clone() {
             return Err(self.stop(stopped));
         }
@@ -315,6 +364,12 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
             request: encoded(&self_call_request_value(&call)?)?,
             outcome: None,
         });
+        let callables = self
+            .callables
+            .filter(|_| matches!(call, SelfCall::SkillsCall(_)));
+        if let Some(callables) = callables {
+            return self.dispatch_callable(call, callables, nested);
+        }
         if let Some(unreplayable) = unreplayable(&call) {
             return Err(self.stop(unreplayable));
         }
@@ -420,26 +475,6 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
             budget: response.budget,
             view: response.view.clone(),
         })
-    }
-
-    fn dispatch_self_nested(
-        &mut self,
-        call: SelfCall,
-        _runtime: &mut dyn JsCodeModeRuntime,
-    ) -> Result<SelfDispatchResponse> {
-        self.dispatch_self(call)
-    }
-
-    fn dispatch_self_nested_cancellable(
-        &mut self,
-        call: SelfCall,
-        _runtime: &mut dyn JsCodeModeRuntime,
-        cancel: &StepCancellation,
-    ) -> Result<SelfDispatchResponse> {
-        cancel.check()?;
-        let answered = self.dispatch_self(call);
-        cancel.check()?;
-        answered
     }
 }
 

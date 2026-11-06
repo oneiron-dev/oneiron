@@ -18,6 +18,10 @@
 //! the arm's run and is read later under the arm's lease alone, never as its
 //! source run's step. Nothing waits on the check; its status is never the
 //! arm's.
+//!
+//! A callable branch's arm (FIX 3608, [`run_shadow_callable_branch`]) runs
+//! the step's own recorded program, not a model's answer, and answers each
+//! callable call it makes as the branch treats the step's recorded callables.
 
 use std::sync::Arc;
 
@@ -32,7 +36,7 @@ use super::store::{
 use super::types::{JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome};
 use super::wire::heal_executor_reply;
 use crate::code_run::shadow_runner::{
-    ArmReads, PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowBridgeHost,
+    ArmCallables, ArmReads, PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowBridgeHost,
     ShadowBridgeWindow, ShadowStatus, ShadowStepRun, ShadowTraceEntry, ShadowTraceKind,
     ShadowUnavailable, ShadowUnavailableReason,
 };
@@ -112,11 +116,54 @@ pub fn run_shadow_step(
         return finish_run(store, seq, status, outputs, &[], &[], bridge);
     };
     let speech = healed.trailing_speak.as_deref();
+    let program = ArmProgram {
+        code: &healed.code,
+        trailing_speak: speech,
+        callables: None,
+    };
+    run_program(
+        prepared, &program, outputs, runtime, store, cancel, feedback,
+    )
+}
+
+/// Runs `program`, the step's own program as its run recorded it, in a
+/// callable branch's arm (FIX 3608) whose bodies are in `store`, on a fresh
+/// `runtime` under `cancel`: each callable call it makes answered as
+/// `callables` treats the step's recorded callables, every other call
+/// matched as in any arm. Its program is checked on `feedback`.
+///
+/// # Errors
+///
+/// The arm's store failing, and a step the executor cannot set up.
+pub(crate) fn run_shadow_callable_branch(
+    prepared: &PreparedShadowStep,
+    program: &str,
+    callables: &ArmCallables,
+    runtime: &mut dyn JsCodeModeRuntime,
+    store: &ShadowBodyStore,
+    cancel: &StepCancellation,
+    feedback: &ArmTypeFeedback<'_>,
+) -> Result<ShadowStepRun> {
+    let seq = prepared.step().step;
+    let (start, end) = prepared.bridge_window();
+    if let Some(withheld) = store.source_withheld() {
+        let bridge = ShadowBridgeWindow {
+            start,
+            end,
+            consumed: start,
+        };
+        return withheld_run(store, seq, withheld, bridge);
+    }
+    seed_store(prepared, store)?;
+    let program = ArmProgram {
+        code: program,
+        trailing_speak: None,
+        callables: Some(callables),
+    };
     run_program(
         prepared,
-        &healed.code,
-        speech,
-        outputs,
+        &program,
+        Vec::new(),
         runtime,
         store,
         cancel,
@@ -124,23 +171,26 @@ pub fn run_shadow_step(
     )
 }
 
-/// Runs `code`, the step's program, in the arm whose bodies are in `store`
-/// and which already holds `outputs`, its speech after the program
-/// `trailing_speak`.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the arm lends its frozen step, program, bodies, runtime, store, token and checker"
-)]
+/// The program an arm runs: its code, the speech its reply carried after
+/// it, and a callable branch's treatment of the step's callables.
+struct ArmProgram<'p> {
+    code: &'p str,
+    trailing_speak: Option<&'p str>,
+    callables: Option<&'p ArmCallables>,
+}
+
+/// Runs `program` in the arm whose bodies are in `store` and which already
+/// holds `outputs`.
 fn run_program(
     prepared: &PreparedShadowStep,
-    code: &str,
-    trailing_speak: Option<&str>,
+    program: &ArmProgram<'_>,
     mut outputs: Vec<ShadowBodyRef>,
     runtime: &mut dyn JsCodeModeRuntime,
     store: &ShadowBodyStore,
     cancel: &StepCancellation,
     feedback: &ArmTypeFeedback<'_>,
 ) -> Result<ShadowStepRun> {
+    let (code, trailing_speak) = (program.code, program.trailing_speak);
     let seq = prepared.step().step;
     let (start, end) = prepared.bridge_window();
     // Prepared once, as a run's step is (FIX 8276): a TypeScript program's
@@ -161,6 +211,9 @@ fn run_program(
     let boundary = executor_boundary_contract()
         .map_err(|_| Error::InvariantViolation("executor sandbox contract"))?;
     let mut host = ShadowBridgeHost::new(prepared, store, arm_reads(prepared))?;
+    if let Some(callables) = program.callables {
+        host = host.with_callables(callables);
+    }
     let step = JsCodeModeStep {
         run_id: prepared.step().run,
         seq,
