@@ -304,8 +304,23 @@ engine's state lock before awaiting import or insertion; stopped, stopping or en
 start a join through this entry. Each wake publishes its own server, and the access slot holds
 only a weak reference, so it never keeps a stopped run alive.
 
-This adds no CLI or language-binding entry and no second durable registry. Retaining the entry
-in explicit host configuration is still required to reopen it after restart.
+With the UniFFI `engine` feature, a connected HTTPS `Oneiron` handle exposes
+`accept_shared_invitation_https` and its pending-ask retry. They return an opaque
+`SharedInvitationAcceptance` holding that original native value, not a reconstructed receipt.
+Its `request` and `reply` expose the original request and complete acceptance reply, and
+`member_client` binds the accepted member on the same HTTPS home and wire.
+
+UniFFI `EmbeddedEngine.bootstrap_shared_env` takes that object, an explicit `SharedEnvEntry`,
+and the dedicated target's options and config file. It resolves that config at the entry's
+path and calls the native blocking engine. An outer setup/task error raises from the call;
+otherwise `SharedEnvBootstrapOutcome.committed` reports the native publication flag and
+`vault_path` returns the real registry-held path or raises the retained inner error. In
+particular, a committed publication followed by an error is not a successful path. The
+acceptance's complete reply remains available independently.
+
+There is no CLI entry or second durable registry. Retaining the entry in explicit host
+configuration is still required to reopen it after restart. Other language bindings remain
+unimplemented.
 
 ## How it fits
 

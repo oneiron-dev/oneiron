@@ -73,7 +73,7 @@ pub use dto::{
 #[cfg(feature = "engine")]
 pub use embedded_engine::{
     AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply,
-    EngineRequest,
+    EngineRequest, SharedEnvBootstrapOutcome, SharedEnvEntry, SharedInvitationAcceptance,
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;
