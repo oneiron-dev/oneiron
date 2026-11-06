@@ -60,6 +60,8 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) import_folder_notes: Option<u64>,
     pub(in crate::config) import_decoded_messages: Option<u64>,
     pub(in crate::config) import_decoded_bytes: Option<u64>,
+    pub(in crate::config) witness_metadata_nodes: Option<u64>,
+    pub(in crate::config) witness_metadata_bytes: Option<u64>,
     pub(in crate::config) signature_decode_bytes: Option<u64>,
     pub(in crate::config) pptx_comment_patches: Option<u64>,
     pub(in crate::config) import_xlsx_live_cells: Option<u64>,

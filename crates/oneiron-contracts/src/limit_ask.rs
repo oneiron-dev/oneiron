@@ -112,6 +112,16 @@ pub enum EngineLimit {
     /// Bytes those decoded messages hold, ids and titles included. Past it
     /// the import lands whole.
     ImportDecodedBytes,
+    /// Metadata nodes one MESSAGE carries, keys and values together, counted
+    /// apart for each of its three metadata parts (an import's provenance and
+    /// the source row's own carried apart from the rest). Measured at every
+    /// put of the row, local or replicated; past it the metadata is kept
+    /// whole.
+    WitnessMetadataNodes,
+    /// Canonical MessagePack bytes of one MESSAGE's metadata, each of its
+    /// three parts counted apart. Measured at every put of the row; past it
+    /// the metadata is kept whole.
+    WitnessMetadataBytes,
     /// Bytes one signature image decode (`POST /sign/image`) may allocate,
     /// its decoded raster included: the decoder's own alloc bound is set from
     /// it. An image whose header declares a raster past it asks whether
