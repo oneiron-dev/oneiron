@@ -117,7 +117,9 @@ pub(super) fn render(
     // The source's zone heads the resource again, so its all-day events keep
     // their days through a write-back and its reading back (fix list row
     // 17868).
-    if let Some(zone) = source.and_then(crate::calendar::ics::ics_calendar_timezone) {
+    if let Some(zone) =
+        source.and_then(|source| crate::calendar::ics::ics_calendar_timezone(source, uid))
+    {
         out.push_str("X-WR-TIMEZONE:");
         out.push_str(&zone);
         out.push_str("\r\n");
