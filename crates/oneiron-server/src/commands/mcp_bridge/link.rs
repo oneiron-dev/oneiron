@@ -250,7 +250,9 @@ impl HttpLink {
                             return Err(Cut::TooLarge);
                         }
                         received += chunk.len();
-                        chunks.push(chunk);
+                        if !chunk.is_empty() {
+                            chunks.push(chunk);
+                        }
                     }
                 }
             }
