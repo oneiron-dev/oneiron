@@ -170,7 +170,14 @@ impl MediaRuntime {
                 let mut entry = RungStatus::new(model, provider);
                 match backends.get(&model.provider).and_then(|backend| {
                     media_rung(
-                        provider, backend, model, position, *operation, &seat.caps, budgets,
+                        provider,
+                        backend,
+                        model,
+                        position,
+                        *operation,
+                        &seat.caps,
+                        budgets,
+                        &config.workers,
                     )
                 }) {
                     Some(rung) => {

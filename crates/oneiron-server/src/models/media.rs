@@ -90,6 +90,7 @@ pub(super) struct MediaRung {
     pub(super) backend: Arc<dyn MediaBackend>,
     pub(super) row: LlmCatalogEntry,
     pub(super) caps: MediaCaps,
+    pub(super) external_worker: Option<oneiron_driver::InferenceWorker>,
 }
 
 /// What a media call down a ladder came to: an answer, or a job the
@@ -731,6 +732,7 @@ fn media_rung(
     operation: AiOperation,
     caps: &MediaCaps,
     budgets: &ModelHostBudgets,
+    workers: &[crate::config::models::WorkerConfig],
 ) -> Option<LadderRung> {
     let row = catalog_entry(model, provider).ok()?.with_media(caps);
     let binding = match media_offer(provider, row.model.clone(), operation) {
@@ -757,6 +759,16 @@ fn media_rung(
             backend: Arc::new(booked::BookedReplies(Arc::clone(backend), budgets.clone())),
             row,
             caps: caps.clone(),
+            external_worker: (operation == AiOperation::Transcribe)
+                .then(|| {
+                    super::worker_host::external_asr_worker(
+                        &model.provider,
+                        provider,
+                        workers,
+                        &model.model,
+                    )
+                })
+                .flatten(),
         }),
     })
 }

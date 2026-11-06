@@ -102,3 +102,20 @@ gets no on-device offer, because on device its paid calls would turn free.
 The reranker keeps its HTTP route, so the device-only reranking guard still
 sends it a device-only row empty. Other Unix targets retain their existing
 transport semantics: no PID check, no on-device offer.
+
+## External ASR serving epochs
+
+A direct transcription rung captures its configured external ASR supervisor
+when the media runtime is built. The full worker row and provider must still
+match the hosted instance, and the wire model and endpoint must match the
+rung. Each call keeps that captured worker; it never looks up a replacement
+from a returned receipt.
+
+A successful answer, or the completed usage of an interrupted call, can report
+a serving epoch. If the receipt's kind matches the captured worker and that
+worker is still current, the epoch is a beacon for the existing real probe.
+Only the probe can publish readiness. The answer is settled and returned by
+the original path; its receipt is not a health or authority proof.
+
+This adds no periodic probe or retry. Brokered calls, live voice, other media
+workers, unbound rungs and calls without an epoch keep their existing behavior.
