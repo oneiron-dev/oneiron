@@ -133,6 +133,7 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     // origin for it (FIX 4550), and its binding with each policy no other
     // binding reaches (Engine A).
     crate::sync::row_birth::remove_birth_carrier(doc, id)?;
+    crate::sync::origin_positions::remove_carrier(doc, id)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, [*id])?;
     crate::sync::source_audiences::remove_record(doc, id)?;
     // FIX 7608 (KEY STORE = A, FIX 10799): a masked copy row a peer sent
@@ -144,6 +145,7 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     {
         map_delete(&entities, &copy.to_hex())?;
         crate::sync::row_birth::remove_birth_carrier(doc, &copy)?;
+        crate::sync::origin_positions::remove_carrier(doc, &copy)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, [copy])?;
     }
     // A copy's binding goes whether or not its row was carried.
