@@ -50,8 +50,23 @@ pub(crate) fn manifest(value: &[u8]) -> Option<Parts> {
     if offer_parts::is_manifest(value) {
         return Some(OfferManifest::parse(value)?.parts());
     }
+    generic_manifest(value)
+}
+
+/// The generic manifest `value` holds, in its one spelling, as [`write_row`]
+/// writes a row past its bound that is no offer: never an offer's typed one.
+/// A checkpoint re-parts a turn row it carries joined against it (FIX 12153).
+pub(crate) fn generic_manifest(value: &[u8]) -> Option<Parts> {
+    if offer_parts::is_manifest(value) {
+        return None;
+    }
     let parts: Parts = rmp_serde::from_slice(value.strip_prefix(MANIFEST)?).ok()?;
     (parts.well_formed() && encode_manifest(&parts).ok()? == value).then_some(parts)
+}
+
+/// The generic manifest value of `parts`, as [`write_row`] writes it.
+pub(crate) fn generic_manifest_bytes(parts: &Parts) -> Result<Vec<u8>> {
+    encode_manifest(parts)
 }
 
 /// The row `value`, a row key's value in `map`, carries: itself, or the join
@@ -67,8 +82,9 @@ fn joined(map: &LoroMap, value: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 /// Admits one insert into a room row map that is a part, or the manifest of
-/// a row past `max`: `Ok(true)` once admitted, `Ok(false)` for a value the
-/// map's own row admission judges.
+/// a row past `max` (a typed Offer admits on its canonical parse alone):
+/// `Ok(true)` once admitted, `Ok(false)` for a value the map's own row
+/// admission judges.
 pub(crate) fn admit(map_key: &str, value: &LoroValue, max: usize) -> Result<bool> {
     if is_part_key(map_key) {
         admit_part(map_key, value)?;
@@ -77,7 +93,14 @@ pub(crate) fn admit(map_key: &str, value: &LoroValue, max: usize) -> Result<bool
     let LoroValue::Binary(bytes) = value else {
         return Ok(false);
     };
-    if !bytes.starts_with(MANIFEST) && !offer_parts::is_manifest(bytes) {
+    if offer_parts::is_manifest(bytes) {
+        // A typed Offer admits on its canonical parse alone, with no length
+        // gate: a native header erase may shrink its logical row below the
+        // bound while its wording parts are still missing.
+        manifest(bytes).ok_or_else(|| refused("not a manifest"))?;
+        return Ok(true);
+    }
+    if !bytes.starts_with(MANIFEST) {
         return Ok(false);
     }
     let parts = manifest(bytes).ok_or_else(|| refused("not a manifest"))?;

@@ -37,7 +37,7 @@ static DECISION_KEYED: &[&SideTableDecl] = &[
 /// The gate-decision rows a leave keeps.
 #[derive(Default)]
 pub(in crate::store) struct HeldGateRows {
-    /// The partitions a standing hold names.
+    /// The partitions a standing customer hold names.
     partitions: HashSet<Partition>,
     /// The decisions kept: a held partition's, a bundle's that cites a held
     /// claim, and one whose row shows no partition (keeping is safe).
@@ -94,8 +94,10 @@ impl Store {
     /// Storage errors.
     pub(in crate::store) fn held_gate_rows_in_txn(&self, txn: &RoTxn<'_>) -> Result<HeldGateRows> {
         let mut held = HeldGateRows::default();
+        // Only a hold that keeps vault data (a standing customer hold) keeps
+        // gate rows through a leave; a host order's clone is the host's.
         for hold in legal_hold::holds_in_txn(self, txn)? {
-            if hold.stands() {
+            if hold.keeps_vault_data() {
                 held.partitions.extend(
                     hold.targets
                         .iter()
