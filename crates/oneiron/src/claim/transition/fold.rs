@@ -52,8 +52,49 @@ pub(crate) struct ClaimTransitionProjection {
 }
 
 impl ClaimTransitionProjection {
+    /// Whether the signed history has ended, so no further transition applies.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.lifecycle != ClaimLifecycleStatus::Active
+            || self.approval == ClaimApprovalStatus::Rejected
+    }
+
+    /// Whether a same-id successor row by `author` owns the live claim: its
+    /// author ended this history with a signed `SupersedeClose`. A retracted
+    /// or rejected history never becomes an ordinary claim.
+    pub(crate) fn admits_successor_by(&self, author: Option<EntityId>) -> bool {
+        self.lifecycle == ClaimLifecycleStatus::Superseded
+            && author.is_some()
+            && self.superseded_by == author
+    }
+}
+
+#[derive(Clone)]
+struct ClaimTransitionState<'birth> {
+    birth: &'birth ClaimBody,
+    approval: ClaimApprovalStatus,
+    lifecycle: ClaimLifecycleStatus,
+    confidence: f32,
+    claim_of_weight: Option<f32>,
+    demotion_rung: Option<ClaimDemotionRung>,
+    valid_to: Option<u64>,
+    stale: bool,
+    scope_band_floor: Option<u8>,
+    /// The actor whose signed `SupersedeClose` ended the history.
+    superseded_by: Option<EntityId>,
+    frontier: Vec<TransitionEventHash>,
+    /// The approval grants the history holds, by the `Approve` event that
+    /// made each (`None`: the birth's own), with the status each grants.
+    grants: BTreeMap<Option<TransitionEventHash>, ClaimApprovalStatus>,
+    /// The grants a later event on the same branch saw and ended: a
+    /// `ConfirmLapse`, a `Reject`, or an owner's `Approve` over `Auto`.
+    ended_grants: BTreeSet<Option<TransitionEventHash>>,
+    /// Whether a `Reject` holds on some branch.
+    rejected: bool,
+}
+
+impl<'birth> ClaimTransitionState<'birth> {
     fn initial(
-        body: Cow<'_, ClaimBody>,
+        body: &'birth ClaimBody,
         initial_claim_of_weight: Option<f32>,
     ) -> Result<Self, TransitionFoldError> {
         if initial_claim_of_weight
@@ -75,7 +116,7 @@ impl ClaimTransitionProjection {
         // A weakening successor is born carrying its rung (ARCH-0003: a
         // confidence change supersedes), so its history continues from that
         // rung. A birth can never carry the stale rung: it is born fresh.
-        let demotion_rung = crate::claim::claim_demotion_rung(&body)
+        let demotion_rung = crate::claim::claim_demotion_rung(body)
             .map_err(|_| TransitionFoldError::InvalidBirth)?;
         if demotion_rung == Some(ClaimDemotionRung::Stale) {
             return Err(TransitionFoldError::InvalidBirth);
@@ -99,23 +140,8 @@ impl ClaimTransitionProjection {
             },
             ended_grants: BTreeSet::new(),
             rejected: false,
-            birth: body.into_owned(),
+            birth: body,
         })
-    }
-
-    /// Whether the signed history has ended, so no further transition applies.
-    pub(crate) fn is_closed(&self) -> bool {
-        self.lifecycle != ClaimLifecycleStatus::Active
-            || self.approval == ClaimApprovalStatus::Rejected
-    }
-
-    /// Whether a same-id successor row by `author` owns the live claim: its
-    /// author ended this history with a signed `SupersedeClose`. A retracted
-    /// or rejected history never becomes an ordinary claim.
-    pub(crate) fn admits_successor_by(&self, author: Option<EntityId>) -> bool {
-        self.lifecycle == ClaimLifecycleStatus::Superseded
-            && author.is_some()
-            && self.superseded_by == author
     }
 
     /// This state joined with every state in `branches`, its approval read
@@ -124,7 +150,10 @@ impl ClaimTransitionProjection {
     fn joined<'a>(
         mut self,
         branches: impl IntoIterator<Item = &'a Self> + 'a,
-    ) -> Result<Self, TransitionFoldError> {
+    ) -> Result<Self, TransitionFoldError>
+    where
+        'birth: 'a,
+    {
         for branch in branches {
             self.join(branch)?;
         }
@@ -319,6 +348,41 @@ impl ClaimTransitionProjection {
         }
         Ok(())
     }
+
+    fn into_projection(self) -> impl FnOnce(ClaimBody) -> ClaimTransitionProjection + use<> {
+        let Self {
+            birth: _,
+            approval,
+            lifecycle,
+            confidence,
+            claim_of_weight,
+            demotion_rung,
+            valid_to,
+            stale,
+            scope_band_floor,
+            superseded_by,
+            frontier,
+            grants,
+            ended_grants,
+            rejected,
+        } = self;
+        move |birth| ClaimTransitionProjection {
+            birth,
+            approval,
+            lifecycle,
+            confidence,
+            claim_of_weight,
+            demotion_rung,
+            valid_to,
+            stale,
+            scope_band_floor,
+            superseded_by,
+            frontier,
+            grants,
+            ended_grants,
+            rejected,
+        }
+    }
 }
 
 /// Folds an exact pinned closure of transition events. The caller must bind
@@ -397,7 +461,7 @@ fn fold_machine_claim_transitions_with_birth(
     pinned_frontier: &[TransitionEventHash],
     mut authorized: impl FnMut(&SignedClaimTransitionEvent) -> bool,
 ) -> Result<ClaimTransitionProjection, TransitionFoldError> {
-    let base = ClaimTransitionProjection::initial(birth, initial_claim_of_weight)?;
+    let base = ClaimTransitionState::initial(&birth, initial_claim_of_weight)?;
     if *vault_id == [0; 32]
         || *birth_digest == [0; 32]
         || pinned_frontier.windows(2).any(|pair| pair[0] >= pair[1])
@@ -435,7 +499,7 @@ fn fold_machine_claim_transitions_with_birth(
     if tips.iter().copied().collect::<Vec<_>>() != pinned_frontier {
         return Err(TransitionFoldError::FrontierMismatch);
     }
-    let mut states: BTreeMap<TransitionEventHash, ClaimTransitionProjection> = BTreeMap::new();
+    let mut states: BTreeMap<TransitionEventHash, ClaimTransitionState<'_>> = BTreeMap::new();
     while !pending.is_empty() {
         let Some(hash) = pending
             .iter()
@@ -460,5 +524,7 @@ fn fold_machine_claim_transitions_with_birth(
     }
     let mut result = base.joined(tips.iter().map(|tip| &states[tip]))?;
     result.frontier = tips.into_iter().collect();
-    Ok(result)
+    let project = result.into_projection();
+    drop(states);
+    Ok(project(birth.into_owned()))
 }
