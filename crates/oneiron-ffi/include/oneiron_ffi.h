@@ -28,7 +28,12 @@
  * EngineError leaves its stable OneironEngineErrorCode and words for
  * oneiron_engine_last_error. Engine calls block: make them from app threads,
  * never from a callback. The library exports these only when built with the
- * `engine` cargo feature.
+ * `engine` cargo feature. Shared invitation calls keep the original native
+ * acceptance in an opaque handle. oneiron_shared_last_error_json preserves a
+ * failed shared call's complete native MemoryError on this thread; the outcome
+ * error reader preserves an import error independently of its committed bit.
+ * JSON/text outputs use oneiron_buffer_free; opaque handles use their paired
+ * free functions. Bootstrap never implicitly retains host configuration.
  */
 
 
@@ -170,9 +175,34 @@ typedef struct OneironEngine OneironEngine;
 typedef struct OneironEngineConnection OneironEngineConnection;
 
 /**
+ * A connected SDK handle over one shared home, returned by
+ * `oneiron_remote_connect` or `oneiron_shared_acceptance_member_client`.
+ *
+ * Release the handle with `oneiron_remote_free` exactly once.
+ */
+typedef struct OneironRemote OneironRemote;
+
+/**
  * Where a `keychain` callback answers, through `oneiron_secret_sink_write`.
  */
 typedef struct OneironSecretSink OneironSecretSink;
+
+/**
+ * One original HTTPS acceptance, returned by `oneiron_remote_accept_https`
+ * or `oneiron_remote_retry_https`: the native value, never a decoded
+ * receipt.
+ *
+ * Release the handle with `oneiron_shared_acceptance_free` exactly once.
+ */
+typedef struct OneironSharedAcceptance OneironSharedAcceptance;
+
+/**
+ * One bootstrap's native import result and committed flag, kept
+ * independently, returned by `oneiron_engine_bootstrap_shared_env`.
+ *
+ * Release the handle with `oneiron_shared_outcome_free` exactly once.
+ */
+typedef struct OneironSharedOutcome OneironSharedOutcome;
 
 /**
  * Opaque vault handle returned by `oneiron_vault_open`,
@@ -737,33 +767,6 @@ enum OneironStatus oneiron_vault_health_json(struct OneironVault *vault,
                                              struct OneironBuffer *out_buffer);
 
 /**
- * The latest engine-limit questions this raw-opened vault asked, as UTF-8 JSON.
- *
- * `out_available` is the collector fact: 1 when this handle opened its vault
- * raw and carries its questions, 0 on a bound handle or an engine-shared
- * handle, which carry none. `out_json` is the exact UTF-8 JSON array on a
- * carrying handle, `[]` when no row has been crossed yet, and the empty
- * buffer otherwise; a non-empty buffer is released with
- * `oneiron_buffer_free`. Each element is exactly
- * `{"row": <EngineLimit::key>, "bound": <u64>, "measured": <u64>}` in
- * `EngineLimit::ALL` order, with full `u64` digits (never narrowed
- * through a float). The read does not clear. The caller's JSON parser
- * chooses its own number precision; this side promises the digits only.
- *
- * Both out pointers are initialized before anything is read or allocated.
- * A null `vault` with both outs writable is `NullArg`.
- *
- * # Safety
- *
- * `vault` is null or a live handle from `oneiron_vault_open`,
- * `oneiron_engine_vault` or `oneiron_vault_bind`, not freed during the
- * call. Each non-null out pointer is writable for the whole call.
- */
-enum OneironStatus oneiron_vault_native_limit_questions(const struct OneironVault *vault,
-                                                        uint8_t *out_available,
-                                                        struct OneironBuffer *out_json);
-
-/**
  * Store an entity blob. A bound handle stores it as its caller
  * (`oneiron_vault_bind`).
  *
@@ -890,6 +893,33 @@ enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
                                                      uint8_t initialize_root,
                                                      struct OneironVault **out_vault,
                                                      uint8_t *out_wrong_host_root);
+
+/**
+ * The latest engine-limit questions this raw-opened vault asked, as UTF-8 JSON.
+ *
+ * `out_available` is the collector fact: 1 when this handle opened its vault
+ * raw and carries its questions, 0 on a bound handle or an engine-shared
+ * handle, which carry none. `out_json` is the exact UTF-8 JSON array on a
+ * carrying handle, `[]` when no row has been crossed yet, and the empty
+ * buffer otherwise; a non-empty buffer is released with
+ * `oneiron_buffer_free`. Each element is exactly
+ * `{"row": <EngineLimit::key>, "bound": <u64>, "measured": <u64>}` in
+ * [`EngineLimit::ALL`] order, with full `u64` digits (never narrowed
+ * through a float). The read does not clear. The caller's JSON parser
+ * chooses its own number precision; this side promises the digits only.
+ *
+ * Both out pointers are initialized before anything is read or allocated.
+ * A null `vault` with both outs writable is `NullArg`.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`,
+ * `oneiron_engine_vault` or `oneiron_vault_bind`, not freed during the
+ * call. Each non-null out pointer is writable for the whole call.
+ */
+enum OneironStatus oneiron_vault_native_limit_questions(const struct OneironVault *vault,
+                                                        uint8_t *out_available,
+                                                        struct OneironBuffer *out_json);
 
 /**
  * Store a directed edge between two entities. A bound handle stores it as
@@ -1159,6 +1189,311 @@ enum OneironStatus oneiron_vault_would_create_cycle(struct OneironVault *vault,
                                                     const uint8_t *target_ptr,
                                                     size_t target_len,
                                                     uint8_t *out_would_cycle);
+
+/**
+ * Connects to the shared home at `url` with the invitee's invitation
+ * credential `key`: the SDK's connected HTTPS root, making no request.
+ *
+ * Both inputs are required UTF-8. On success `out_client` receives a
+ * handle to release with `oneiron_remote_free` exactly once. A native
+ * refusal fails `EngineError` and keeps its complete `MemoryError` JSON
+ * for `oneiron_shared_last_error_json`.
+ *
+ * # Safety
+ *
+ * `url_ptr` covers `url_len` readable bytes and `key_ptr` covers
+ * `key_len`. A non-null `out_client` is writable.
+ */
+enum OneironStatus oneiron_remote_connect(const uint8_t *url_ptr,
+                                          size_t url_len,
+                                          const uint8_t *key_ptr,
+                                          size_t key_len,
+                                          struct OneironRemote **out_client);
+
+/**
+ * Frees a handle from `oneiron_remote_connect` or
+ * `oneiron_shared_acceptance_member_client`.
+ *
+ * # Safety
+ *
+ * `client` is null or a live handle from those functions that no other
+ * call is using and that is never used again.
+ */
+enum OneironStatus oneiron_remote_free(struct OneironRemote *client);
+
+/**
+ * Accepts the invitee's invitation through this connected handle with its
+ * own holder key, keeping the successful call's original HTTPS value.
+ *
+ * `request_json` is the `vault.members.accept_with_credential` input as
+ * UTF-8 JSON: `vault_id` as a decimal string, `invitation`, and the
+ * required credential `expires_at`. Another shape is `InvalidArg`, never
+ * `EngineError`. Only a connected HTTPS home accepts; any other handle or
+ * admission refusal fails `EngineError` and keeps its complete
+ * `MemoryError` JSON for `oneiron_shared_last_error_json`. On success
+ * `out_acceptance` receives a handle to release with
+ * `oneiron_shared_acceptance_free` exactly once. Keep it for bootstrap: a
+ * decoded receipt is no substitute.
+ *
+ * # Safety
+ *
+ * `client` is null or a live handle from `oneiron_remote_connect` or
+ * `oneiron_shared_acceptance_member_client`, not freed during the call.
+ * `request_json_ptr` covers `request_json_len` readable bytes. A non-null
+ * `out_acceptance` is writable.
+ */
+enum OneironStatus oneiron_remote_accept_https(struct OneironRemote *client,
+                                               const uint8_t *request_json_ptr,
+                                               size_t request_json_len,
+                                               struct OneironSharedAcceptance **out_acceptance);
+
+/**
+ * Retries a pending HTTPS acceptance under its original invocation: the
+ * same request with the refusal's pending payload, not a decoded generic
+ * retry reply.
+ *
+ * `pending_json` is the pending refusal's `MemoryError` JSON and
+ * `request_json` is the same acceptance input `oneiron_remote_accept_https`
+ * takes. Either of another shape is `InvalidArg`. Only the native HTTPS
+ * call produces the handle; a refusal fails `EngineError` and keeps its
+ * complete `MemoryError` JSON for `oneiron_shared_last_error_json`. On
+ * success `out_acceptance` receives a handle to release with
+ * `oneiron_shared_acceptance_free` exactly once.
+ *
+ * # Safety
+ *
+ * `client` is null or a live handle from `oneiron_remote_connect` or
+ * `oneiron_shared_acceptance_member_client`, not freed during the call.
+ * Each JSON pointer covers its length in readable bytes. A non-null
+ * `out_acceptance` is writable.
+ */
+enum OneironStatus oneiron_remote_retry_https(struct OneironRemote *client,
+                                              const uint8_t *pending_json_ptr,
+                                              size_t pending_json_len,
+                                              const uint8_t *request_json_ptr,
+                                              size_t request_json_len,
+                                              struct OneironSharedAcceptance **out_acceptance);
+
+/**
+ * The normalized HTTPS home the acceptance selected, as UTF-8 bytes.
+ * Release a non-empty buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `acceptance` is null or a live handle from `oneiron_remote_accept_https`
+ * or `oneiron_remote_retry_https`, not freed during the call. A non-null
+ * `out_url` is writable.
+ */
+enum OneironStatus oneiron_shared_acceptance_home_url(struct OneironSharedAcceptance *acceptance,
+                                                      struct OneironBuffer *out_url);
+
+/**
+ * The exact facade URL the original acceptance used, as UTF-8 bytes.
+ * Release a non-empty buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `acceptance` is null or a live handle from `oneiron_remote_accept_https`
+ * or `oneiron_remote_retry_https`, not freed during the call. A non-null
+ * `out_url` is writable.
+ */
+enum OneironStatus oneiron_shared_acceptance_url(struct OneironSharedAcceptance *acceptance,
+                                                 struct OneironBuffer *out_url);
+
+/**
+ * The original acceptance request as UTF-8 JSON; reading it creates no new
+ * acceptance. Release a non-empty buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `acceptance` is null or a live handle from `oneiron_remote_accept_https`
+ * or `oneiron_remote_retry_https`, not freed during the call. A non-null
+ * `out_json` is writable.
+ */
+enum OneironStatus oneiron_shared_acceptance_request_json(struct OneironSharedAcceptance *acceptance,
+                                                          struct OneironBuffer *out_json);
+
+/**
+ * The complete original receipt and member credential as UTF-8 JSON,
+ * available even after member-client creation or native bootstrap fails.
+ * Release a non-empty buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `acceptance` is null or a live handle from `oneiron_remote_accept_https`
+ * or `oneiron_remote_retry_https`, not freed during the call. A non-null
+ * `out_json` is writable.
+ */
+enum OneironStatus oneiron_shared_acceptance_reply_json(struct OneironSharedAcceptance *acceptance,
+                                                        struct OneironBuffer *out_json);
+
+/**
+ * A remote member handle on the acceptance's HTTPS home and original HTTP
+ * wire, under its returned member credential. Each request still passes
+ * the home's ordinary admission checks.
+ *
+ * A malformed returned credential fails `EngineError` and keeps its
+ * complete `MemoryError` JSON for `oneiron_shared_last_error_json`; the
+ * acceptance and its complete reply stay available. On success
+ * `out_client` receives a handle to release with `oneiron_remote_free`
+ * exactly once.
+ *
+ * # Safety
+ *
+ * `acceptance` is null or a live handle from `oneiron_remote_accept_https`
+ * or `oneiron_remote_retry_https`, not freed during the call. A non-null
+ * `out_client` is writable.
+ */
+enum OneironStatus oneiron_shared_acceptance_member_client(struct OneironSharedAcceptance *acceptance,
+                                                           struct OneironRemote **out_client);
+
+/**
+ * Frees a handle from `oneiron_remote_accept_https` or
+ * `oneiron_remote_retry_https`.
+ *
+ * # Safety
+ *
+ * `acceptance` is null or a live handle from those functions that no other
+ * call is using and that is never used again.
+ */
+enum OneironStatus oneiron_shared_acceptance_free(struct OneironSharedAcceptance *acceptance);
+
+/**
+ * Imports the original acceptance into the selected target and opens that
+ * same target in this engine's current shared-env registry.
+ *
+ * `entry_json` is one native `SharedEnvConfig` entry as UTF-8 JSON: `path`,
+ * `vault_id` as a number or a decimal string, `member`, `home_url`, and
+ * `credential_file`. Another shape is `InvalidArg`. The target config
+ * resolves as `oneiron_engine_start` does for the entry's path, with
+ * `dimensions` when it is not 0 and `config_file` (null with length 0 for
+ * none), never from the personal vault. The credential file must already
+ * hold the accepting invitee's key.
+ *
+ * An outer setup or task failure fails `EngineError`, keeps a native
+ * `MemoryError`'s complete JSON for `oneiron_shared_last_error_json` when
+ * that is what failed, and returns no outcome. Once import answers, its
+ * native result and committed flag stay separate on the returned outcome:
+ * read them with `oneiron_shared_outcome_committed`,
+ * `oneiron_shared_outcome_vault_path` and
+ * `oneiron_shared_outcome_error_json`. This call never persists the entry
+ * in host configuration. It blocks its caller on the engine's own runtime:
+ * call it from an app thread, never from an `OneironAppHost` callback,
+ * where it fails `EngineError`.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call. `acceptance` is null or a live handle from
+ * `oneiron_remote_accept_https` or `oneiron_remote_retry_https`, not freed
+ * during the call. `entry_json_ptr` covers `entry_json_len` readable bytes
+ * and a non-null `config_file_ptr` covers `config_file_len`. A non-null
+ * `out_outcome` is writable.
+ */
+enum OneironStatus oneiron_engine_bootstrap_shared_env(struct OneironEngine *engine,
+                                                       struct OneironSharedAcceptance *acceptance,
+                                                       const uint8_t *entry_json_ptr,
+                                                       size_t entry_json_len,
+                                                       size_t dimensions,
+                                                       const uint8_t *config_file_ptr,
+                                                       size_t config_file_len,
+                                                       struct OneironSharedOutcome **out_outcome);
+
+/**
+ * The outcome's native publication flag: 1 when the import committed, else
+ * 0, including when a later step failed.
+ *
+ * # Safety
+ *
+ * `outcome` is null or a live handle from
+ * `oneiron_engine_bootstrap_shared_env`, not freed during the call. A
+ * non-null `out_committed` is writable.
+ */
+enum OneironStatus oneiron_shared_outcome_committed(struct OneironSharedOutcome *outcome,
+                                                    uint8_t *out_committed);
+
+/**
+ * The actual registry-held vault's path on success, as UTF-8 bytes. A
+ * failed import, credential update or insertion fails `EngineError`: a
+ * native `MemoryError` keeps its complete JSON for
+ * `oneiron_shared_last_error_json` beside the engine words, any other
+ * failure clears it. It never returns an empty or fabricated successful
+ * path. Release a non-empty buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `outcome` is null or a live handle from
+ * `oneiron_engine_bootstrap_shared_env`, not freed during the call. A
+ * non-null `out_path` is writable.
+ */
+enum OneironStatus oneiron_shared_outcome_vault_path(struct OneironSharedOutcome *outcome,
+                                                     struct OneironBuffer *out_path);
+
+/**
+ * The outcome's inner native `MemoryError` as its complete serialized JSON,
+ * read without consuming the outcome: empty when the import succeeded or
+ * failed with another error. The identity is the exact downcast, never
+ * read from the words.
+ *
+ * A value that does not serialize fails `EngineError` through the existing
+ * engine channel instead; the outcome itself is unchanged either way. This
+ * reader never changes this thread's shared-env error. Release a non-empty
+ * buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `outcome` is null or a live handle from
+ * `oneiron_engine_bootstrap_shared_env`, not freed during the call. A
+ * non-null `out_json` is writable.
+ */
+enum OneironStatus oneiron_shared_outcome_error_json(struct OneironSharedOutcome *outcome,
+                                                     struct OneironBuffer *out_json);
+
+/**
+ * Frees a handle from `oneiron_engine_bootstrap_shared_env`.
+ *
+ * # Safety
+ *
+ * `outcome` is null or a live handle from that function that no other call
+ * is using and that is never used again.
+ */
+enum OneironStatus oneiron_shared_outcome_free(struct OneironSharedOutcome *outcome);
+
+/**
+ * Retains one shared-env membership in this engine's own config file for
+ * its next start: upserts `entry_json` by `(vault_id, member)` under that
+ * file's sibling lock. The running registry is unchanged. Refused without
+ * a config file; a managed engine's supervisor stays the writer.
+ *
+ * `entry_json` is one native `SharedEnvConfig` entry as UTF-8 JSON, the
+ * same shape `oneiron_engine_bootstrap_shared_env` takes. Another shape is
+ * `InvalidArg`. A native failure fails `EngineError` and keeps a native
+ * `MemoryError`'s complete JSON for `oneiron_shared_last_error_json` when
+ * that is what failed. It blocks its caller: call it from an app thread,
+ * never from an `OneironAppHost` callback.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call. `entry_json_ptr` covers `entry_json_len` readable
+ * bytes.
+ */
+enum OneironStatus oneiron_engine_retain_shared_env(struct OneironEngine *engine,
+                                                    const uint8_t *entry_json_ptr,
+                                                    size_t entry_json_len);
+
+/**
+ * Reads this thread's last shared-env `MemoryError` as its complete
+ * serialized JSON: empty when no shared-env call on this thread has failed
+ * with one. A later shared-env call replaces it; a call that succeeds or
+ * fails with another status clears it. This reader never changes it.
+ * Release a non-empty buffer with `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * A non-null `out_json` is writable.
+ */
+enum OneironStatus oneiron_shared_last_error_json(struct OneironBuffer *out_json);
 
 #ifdef __cplusplus
 }  // extern "C"

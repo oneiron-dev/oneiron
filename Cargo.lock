@@ -8343,6 +8343,7 @@ dependencies = [
  "anyhow",
  "cbindgen",
  "oneiron",
+ "oneiron-remote",
  "oneiron-server",
  "oneiron-vault-contract",
  "serde_json",
