@@ -9,11 +9,15 @@ identity checks. Native receipt authority is never imported.
 Before this function admits any new source ASSET, it validates every source,
 resolves duplicates, binds each archive to the holder body, computes its
 canonical archive id, and checks any existing row under that id. Canonical
-encoding is written into one shared native temporary body, rather than
+encoding is written once into one shared native temporary body, rather than
 retaining all encoded archives in memory until the puts begin. Each source
-keeps only its id, range and digest in the preparation vector. The canonical
-serializer first counts the same owned data tree for its id's length frame;
-it does not reopen archive-file inputs. One descriptor serves every source,
+keeps only its pending id, range and digest in the preparation vector. After
+all sources are encoded and the shared body is frozen and verified, identities
+are computed from its actual bytes in source order, followed by existing-row
+comparisons. No length-counting encoding or salted re-encoding is needed.
+This puts source validation before the identity/existing-row phase: if both
+phases would fail, the source-validation error now wins. Both phases still
+finish before the first admitted put. One descriptor serves every source,
 so the number of sources does not require more open files.
 
 The temporary body is never published. On a sealed vault, it uses an
@@ -24,7 +28,9 @@ preparation removes its temporary name too. The existing writer-open debris
 sweep handles a process crash during construction.
 
 The archive id uses the same domain, salt, length framing and canonical bytes
-as the slice-based id. The frozen shared bytes are checked against their
+as the slice-based id. Bounded seekable ranges read the same open body file,
+including for an existing row's canonical comparison; they do not reopen an
+archive input or mint a new body instance. The frozen shared bytes are checked against their
 encoded digest before any put. Each final staged body's length and digest are checked
 again before its put. Puts keep their original order and use the ordinary ASSET
 batch admission path. An error still requires the caller's write transaction
@@ -57,8 +63,9 @@ and open across the decode, comparison and identity reads.
 validation. It no longer serializes and decodes that same admitted body a
 second time. Credential nulling, attempt identity and body validation still run.
 
-These reader seams do not enable archive manifests. Current custody continues
-to read inline rows. A real file-backed path still needs the original batch
+The restore path uses these readers on its frozen temporary file for identity
+and existing-row comparison. These reader seams do not enable archive
+manifests. Current persisted custody continues to read inline rows. A real file-backed path still needs the original batch
 file-admission facts, file-aware custody and retirement readers, checked file
 lifetimes and the real importer's pre-writer reservation. Neither a manifest's
 bytes nor an unminted temporary body supplies those facts.
