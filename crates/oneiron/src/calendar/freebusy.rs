@@ -14,10 +14,12 @@
 //! conversion fails typed only when the interval actually emitted has no
 //! half-open representation.
 //!
-//! A floating or all-day EVENT names civil time, not an instant: it occupies
-//! the span its civil start and exclusive end cover in some zone
-//! (`CalendarEventRow::wall_span`), so an all-day EVENT keeps its whole day
-//! busy wherever its owner reads it (FIX 7844).
+//! A floating or all-day EVENT names civil time, not an instant
+//! (`CalendarEventRow::wall_span`). An all-day EVENT in a zone this engine
+//! resolves (`calendar.tz`) occupies its days in that zone (fix list row
+//! 17868). Any other occupies the span its civil start and exclusive end
+//! cover in some zone, so an all-day EVENT keeps its whole day busy wherever
+//! its owner reads it (FIX 7844).
 //!
 //! Series masters expand inside the query range before busy intervals are
 //! merged. Recurrence projection failures propagate; they never silently

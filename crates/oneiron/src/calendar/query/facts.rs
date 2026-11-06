@@ -4,9 +4,10 @@ use crate::batch::EntityMetadataHeader;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarOrigin, CalendarStatus, CalendarTimeKindValue,
     CalendarWallTimeValue, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_WALL_TIME,
-    decode_passport_value, decode_status_value, decode_time_kind_value, decode_wall_time_end,
-    decode_wall_time_value, is_calendar_claim_predicate,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_TZ,
+    PREDICATE_CALENDAR_WALL_TIME, decode_passport_value, decode_status_value,
+    decode_time_kind_value, decode_wall_time_end, decode_wall_time_value,
+    is_calendar_claim_predicate,
 };
 use crate::claim::{
     ClaimBody, ScopedRead, ScopedReadReceipt, ScopedReadResult, claim_surfaceable,
@@ -258,12 +259,53 @@ pub(in crate::calendar) fn civil_envelope(start: u64, length: u64) -> TimeRange 
 pub(in crate::calendar) const CIVIL_REACH_SECS: (u64, u64) =
     (EASTERNMOST_OFFSET_SECS, WESTERNMOST_OFFSET_SECS);
 
+/// How a floating or all-day EVENT's civil time lands on the UTC clock
+/// (fix list row 17868), read once per EVENT and applied to each of its
+/// occurrences.
+pub(in crate::calendar) enum CivilProjector {
+    /// An all-day EVENT in a zone this engine resolves: each of its days
+    /// runs from its own midnight in that zone to the next.
+    Zoned(crate::calendar::tz::ResolvedTimeZone),
+    /// A floating EVENT, or an all-day one in no zone or in one this engine
+    /// does not resolve: wherever its civil time falls in some zone.
+    Envelope,
+    /// An all-day EVENT whose deciding zone this lane may not read: it
+    /// spans nothing here, never the wider envelope.
+    Withheld,
+}
+
+impl CivilProjector {
+    /// The inclusive UTC span of a civil occurrence starting at `start` (a
+    /// key on the UTC carrier) and `length` seconds of civil time long, as
+    /// [`CalendarEventFacts::civil_extent`] measures it: its last second, so
+    /// its exclusive end is one second later. Each bound is read in the zone
+    /// on its own day, so a day a clock change shortens or lengthens spans
+    /// its true hours. `None` when it spans nothing this lane may place, or
+    /// a day the zone skips whole.
+    pub(in crate::calendar) fn span(&self, start: u64, length: u64) -> Option<TimeRange> {
+        match self {
+            Self::Envelope => Some(civil_envelope(start, length)),
+            Self::Withheld => None,
+            Self::Zoned(zone) => {
+                let first = zone.carrier_to_utc(start)?;
+                let end = zone.carrier_to_utc(start.checked_add(length)?.checked_add(1)?)?;
+                (end > first).then(|| TimeRange {
+                    start: first,
+                    end: end - 1,
+                })
+            }
+        }
+    }
+}
+
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::calendar) struct CalendarEventFacts {
     origin: LaneFact<CalendarOrigin>,
     time_kind: LaneFact<CalendarTimeKindValue>,
     wall_time: LaneFact<WallTimeFact>,
+    /// The `calendar.tz` zone, which places an all-day EVENT's days.
+    zone: LaneFact<String>,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
     uids: Vec<String>,
@@ -306,36 +348,34 @@ impl CalendarEventFacts {
     }
 
     /// Where a floating or all-day EVENT can fall (FIX 7844). Such an EVENT
-    /// names civil time and no instant, so it covers every instant its civil
-    /// start and exclusive end span in some zone: from its start where that
-    /// comes first (UTC+14) to its end where that comes last (UTC−12). A
-    /// window that meets its day in any zone finds it, and free/busy keeps
-    /// all of it busy. An all-day EVENT thus covers its whole day span; an
-    /// EVENT with no stored end covers its start alone. `None` for an
-    /// anchored EVENT, or one whose wall time this lane cannot read.
+    /// names civil time and no instant. An all-day EVENT in a zone this
+    /// engine resolves covers its days in that zone, each from its own
+    /// midnight to the next (fix list row 17868). Otherwise it covers every
+    /// instant its civil start and exclusive end span in some zone: from its
+    /// start where that comes first (UTC+14) to its end where that comes
+    /// last (UTC−12). A window that meets its day finds it, and free/busy
+    /// keeps all of it busy. An EVENT with no stored end covers its start
+    /// alone. `None` for an anchored EVENT, or one whose wall time or zone
+    /// this lane cannot read.
     fn wall_span(&self) -> Option<TimeRange> {
-        let LaneFact::Read(kind) = self.time_kind else {
-            return None;
-        };
-        if !matches!(
-            kind.kind,
-            crate::calendar::claims::CalendarTimeKind::Floating
-                | crate::calendar::claims::CalendarTimeKind::AllDay
-        ) {
-            return None;
+        let (start, length) = self.civil_extent()?;
+        self.civil_projector().span(start, length)
+    }
+
+    /// How this EVENT's civil time lands on the UTC clock: its days in its
+    /// `calendar.tz` zone for an all-day EVENT in a zone this engine
+    /// resolves (fix list row 17868), else the all-zone envelope. A zone the
+    /// lane may not read places nothing.
+    pub(in crate::calendar) fn civil_projector(&self) -> CivilProjector {
+        if !self.civil_all_day() {
+            return CivilProjector::Envelope;
         }
-        let LaneFact::Read((start, end)) = self.wall_time else {
-            return None;
-        };
-        let start = civil_seconds(start)?;
-        let last = match end {
-            Some(end) => civil_seconds(end)?.saturating_sub(1).max(start),
-            None => start,
-        };
-        Some(TimeRange {
-            start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
-            end: last.saturating_add(WESTERNMOST_OFFSET_SECS),
-        })
+        match &self.zone {
+            LaneFact::Read(name) => crate::calendar::tz::ResolvedTimeZone::new(name)
+                .map_or(CivilProjector::Envelope, CivilProjector::Zoned),
+            LaneFact::Absent => CivilProjector::Envelope,
+            LaneFact::Withheld => CivilProjector::Withheld,
+        }
     }
 
     /// The civil start (a key on the UTC carrier) and civil length of a
@@ -437,7 +477,8 @@ pub(crate) struct CalendarEventRow {
     /// the interval `[0, 0]` and starts occupying Unix second zero in both
     /// range search and the busy union.
     pub(crate) occurred: Option<TimeRange>,
-    /// Inclusive UTC span a floating or all-day EVENT covers in some zone
+    /// Inclusive UTC span a floating or all-day EVENT covers: an all-day
+    /// one's days in its zone, else wherever it falls in some zone
     /// (`CalendarEventFacts::wall_span`), which range search and free/busy
     /// read where `occurred` is `None`; `None` for an anchored EVENT.
     pub(in crate::calendar) wall_span: Option<TimeRange>,
@@ -460,6 +501,7 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     let mut origin: Option<(EntityId, LaneFact<CalendarOrigin>)> = None;
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
     let mut wall_time: Option<(EntityId, LaneFact<WallTimeFact>)> = None;
+    let mut zone: Option<(EntityId, LaneFact<String>)> = None;
     let mut status: Option<(EntityId, LaneFact<CalendarStatus>)> = None;
     let mut systems = Vec::new();
     let mut uids = Vec::new();
@@ -486,6 +528,9 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
                 }
                 Some(PREDICATE_CALENDAR_WALL_TIME) => {
                     replace_when_lower(&mut wall_time, claim_id, LaneFact::Withheld);
+                }
+                Some(PREDICATE_CALENDAR_TZ) => {
+                    replace_when_lower(&mut zone, claim_id, LaneFact::Withheld);
                 }
                 Some(PREDICATE_CALENDAR_STATUS) => {
                     replace_when_lower(&mut status, claim_id, LaneFact::Withheld);
@@ -518,6 +563,12 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
                     PREDICATE_CALENDAR_WALL_TIME => {
                         let value = wall_time_fact(&body.value)?;
                         replace_when_lower(&mut wall_time, claim_id, LaneFact::Read(value));
+                    }
+                    // A zone narrows an all-day day from every zone's reach
+                    // to its own, freeing the rest: held, the day keeps the
+                    // envelope.
+                    PREDICATE_CALENDAR_TZ => {
+                        replace_when_lower(&mut zone, claim_id, LaneFact::Absent);
                     }
                     PREDICATE_CALENDAR_STATUS => {
                         replace_when_lower(&mut status, claim_id, LaneFact::Absent);
@@ -552,6 +603,13 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
             PREDICATE_CALENDAR_WALL_TIME => {
                 let value = wall_time_fact(&body.value)?;
                 replace_when_lower(&mut wall_time, claim_id, LaneFact::Read(value));
+            }
+            PREDICATE_CALENDAR_TZ => {
+                let value = body
+                    .value
+                    .as_str()
+                    .ok_or(crate::Error::InvalidClaimBody("calendar tz value"))?;
+                replace_when_lower(&mut zone, claim_id, LaneFact::Read(value.to_owned()));
             }
             PREDICATE_CALENDAR_STATUS => {
                 let value = decode_status_value(&body.value)?;
@@ -591,6 +649,7 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
         origin: origin.map_or(LaneFact::Absent, |(_, fact)| fact),
         time_kind: time_kind.map_or(LaneFact::Absent, |(_, fact)| fact),
         wall_time: wall_time.map_or(LaneFact::Absent, |(_, fact)| fact),
+        zone: zone.map_or(LaneFact::Absent, |(_, fact)| fact),
         status: status.map_or(LaneFact::Absent, |(_, fact)| fact),
         systems,
         uids,
