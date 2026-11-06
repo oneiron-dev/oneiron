@@ -84,6 +84,38 @@ function byReceiptId(rows: Facade.MemoryReceipt[]): Facade.MemoryReceipt[] {
   return [...rows].sort((a, b) => a.receipt_ref.localeCompare(b.receipt_ref));
 }
 
+async function readHookReceipts(
+  read: (input: FacadeInput<"vault.receipts">) => Promise<FacadeResult<"vault.receipts">>,
+  limit: number,
+): Promise<Facade.MemoryReceipt[]> {
+  const rows: Facade.MemoryReceipt[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const page = await read({ kinds: ["hook"], limit, ...(after === undefined ? {} : { after }) });
+    expect(page.undecodable).toBe(0);
+    rows.push(...page.receipts);
+    if (page.next_after == null) return rows;
+    after = page.next_after;
+  }
+}
+async function readHookReplay(
+  read: (input: FacadeInput<"vault.hooks.replay">) => Promise<FacadeResult<"vault.hooks.replay">>,
+  binding: string, since: string, limit: number,
+): Promise<Facade.HookReplayRow[]> {
+  const rows: Facade.HookReplayRow[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await read(cursor === undefined ? { binding, since, limit } : { binding, cursor, limit });
+    rows.push(...page.rows);
+    if (page.done) {
+      expect(page.next_cursor == null).toBe(true);
+      return rows;
+    }
+    if (page.next_cursor == null) throw new Error("Incomplete hook replay lacks its next cursor");
+    cursor = page.next_cursor;
+  }
+}
+
 /* HOOKS-01 — Fact hook commit and restart catchup should work. OF-579.
  * Canon: ARCH-0080 #fact-inputs/#fact-sources/#crash-safety/#hook-grant.
  * Install: vault.packs.put({files:[{path,text}]}) -> PackPutReceipt.
@@ -126,7 +158,7 @@ suite.test(test, "HOOKS-02", "Hook replay lands nothing should work", async () =
     return byClaimId(reply.value);
   };
   const hookReceipts = async () => {
-    const rows = await call("vault.receipts", { kinds: ["hook"], limit: data.pageBound });
+    const rows = await readHookReceipts(input => call("vault.receipts", input), data.pageBound);
     expect(rows.length).toBeLessThan(data.pageBound);
     return rows.filter(row => row.fields?.hook === `local/${spec.hookName}`);
   };
@@ -207,7 +239,7 @@ suite.test(test, "HOOKS-02", "Hook replay lands nothing should work", async () =
 
   // Repeat the actual dry run. Returned Propose is data, not permission to land.
   for (let replay = 0; replay < 2; replay += 1) {
-    const rows = await call("vault.hooks.replay", { binding, since, limit: data.pageBound });
+    const rows = await readHookReplay(input => call("vault.hooks.replay", input), binding, since, data.pageBound);
     expect(rows).toHaveLength(2);
     const original = rows.find(row => row.case.on === "fact" && row.case.entity === spec.originalId);
     expect(original).toBeDefined();
@@ -294,7 +326,7 @@ suite.test(test, "HOOKS-04", "After-hook redaction is monotone should work", asy
   expect(rawAfter.value).toEqual(rawBefore.value);
   expect(rawAfter.value[0]!.value).toEqual(spec.value);
 
-  const rows = await engine.client.call("vault.receipts", { kinds: ["hook"], limit: data.pageBound });
+  const rows = await readHookReceipts(input => engine.client.call("vault.receipts", input), data.pageBound);
   expect(rows.length).toBeLessThan(data.pageBound);
   const chain = rows.filter(row => row.fields?.verb === "vault.claims.list");
   expect(chain).toHaveLength(2);
