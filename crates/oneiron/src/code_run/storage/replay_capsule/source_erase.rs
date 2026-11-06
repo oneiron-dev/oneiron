@@ -102,7 +102,10 @@ pub(in crate::code_run::storage) fn retire_source_step_starts_in_txn(
 
 /// Every kept step start `txn` holds whose rest owners name `source`: each
 /// output of its prefix whose input rows name it among them. Each start is
-/// read from its own prefix, never from its run's live row.
+/// read from its own prefix, never from its run's live row. A start whose
+/// own actor or run is `source` is left to that erase's existing route
+/// (the actor's capsule scrub, the run's owner release), under the cause
+/// it already records.
 fn owned_starts_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -110,6 +113,9 @@ fn owned_starts_in_txn(
 ) -> Result<Vec<KeptStart>> {
     let mut owned = Vec::new();
     for kept in kept_step_starts_in_txn(store, txn)? {
+        if kept.actor == *source || kept.run == *source {
+            continue;
+        }
         if step_start_owners_in_txn(store, txn, &kept)?.contains(source) {
             owned.push(kept);
         }
