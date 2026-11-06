@@ -40,7 +40,10 @@
 //! An Owner's whole-vault export asks the same walk which source each row
 //! came from ([`ExportJudge`], fix list row 15416): a row whose lineage
 //! reaches a source the export leaves out stays home, and so does a row a
-//! source landed whose source this vault cannot name.
+//! source landed with no binding here. A source no connection here names
+//! goes as the exporter reads it. The export reuses each verdict across its
+//! whole pass, so a verdict reached through a row still being judged stands
+//! only until that row settles: a denial takes it back.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -371,11 +374,15 @@ pub(crate) struct ExportAudience {
     /// The person the copy is for.
     pub(crate) exporter: EntityId,
     /// Each source policy a source this vault holds was born under, and
-    /// whether the copy carries its rows. A source policy no source here was
-    /// born under is carried when it stands open or its own readers name the
-    /// exporter ([`super::names_reader_in`]); a policy that does not resolve
-    /// to a source is not.
+    /// whether the copy carries its rows. The rows of a source policy no
+    /// source here was born under go as the exporter reads them
+    /// ([`super::actor_reads_in`]: the source's readers, a thread shared
+    /// with the exporter, a source that stands open); a policy that does not
+    /// resolve carries nothing.
     pub(crate) sources: BTreeMap<EntityId, bool>,
+    /// The source policies of [`Self::sources`] that are other members'
+    /// personal mailboxes the copy carries.
+    pub(crate) carried_members: BTreeSet<EntityId>,
 }
 
 /// What an export's judge met while it judged a pass (fix list row 15416).
@@ -384,15 +391,19 @@ pub(crate) struct ExportMet {
     /// Each source policy of [`ExportAudience::sources`] some row it judged
     /// was bound under, its own or through a thread of it.
     pub(crate) sources: BTreeSet<EntityId>,
+    /// Each of [`ExportAudience::carried_members`] the admitted lineage of a
+    /// row the copy ships reached ([`ExportJudge::ships`]).
+    pub(crate) carried: BTreeSet<EntityId>,
     /// Whether it left out a row whose source this vault cannot name: a row
-    /// a source landed with no binding here, a row held back here, or a row
-    /// bound under a policy that resolves to no source the copy carries.
+    /// a source landed with no binding here, a row held back here, a row
+    /// bound under a policy that does not resolve, or a row of a source no
+    /// connection here names that the exporter does not read.
     pub(crate) unidentified: bool,
 }
 
 /// One Owner's whole-vault export pass over the source audiences (fix list
-/// row 15416): each row's verdict and each policy's, memoised across the
-/// whole pass, so the rows a lineage shares are judged once.
+/// row 15416): each row's settled verdict and each policy's, memoised across
+/// the whole pass, so the rows a lineage shares are judged once.
 pub(crate) struct ExportJudge<'a, 's, 't> {
     judge: Judge<'a, 's, 't>,
     /// No policy and no held row here: a row's own stamp alone decides, as
@@ -440,6 +451,20 @@ impl<'a, 's, 't> ExportJudge<'a, 's, 't> {
         Ok(!marked)
     }
 
+    /// The row `id`, which [`Self::carries`], goes into the copy: each other
+    /// member's mailbox the copy carries that the row's admitted lineage
+    /// reached is carried ([`ExportMet::carried`]).
+    pub(crate) fn ships(&mut self, id: EntityId) {
+        if let Some(reached) = self
+            .judge
+            .lineage
+            .as_ref()
+            .and_then(|lineage| lineage.reached.get(&id))
+        {
+            self.judge.met.carried.extend(reached.iter().copied());
+        }
+    }
+
     /// What the pass met.
     pub(crate) fn met(self) -> ExportMet {
         self.judge.met
@@ -456,6 +481,37 @@ struct Judge<'a, 's, 't> {
     rows: BTreeMap<EntityId, bool>,
     /// What an export's judge met; nothing for any other ask.
     met: ExportMet,
+    /// An export's judge's settlement of its verdicts ([`ExportLineage`]);
+    /// `None` for a read's or a replication's judge, which answers one row
+    /// and is dropped.
+    lineage: Option<ExportLineage>,
+}
+
+/// How an export's judge, whose verdicts its whole pass reuses, settles a
+/// verdict reached through a row still being judged (fix list row 15416),
+/// and what each admitted row's lineage reached. Such a verdict stands only
+/// until that row settles. A denial is final at once and takes back every
+/// verdict reached through a row in progress since the denied row opened, so
+/// it reaches every row of its cycle before any is reused; a row that heads
+/// its cycle settles every verdict reached through it, and each of them
+/// reaches the members' mailboxes the head reaches. Each row opened is
+/// numbered in the order it opens.
+#[derive(Default)]
+struct ExportLineage {
+    /// The number the next row opened takes.
+    next: u64,
+    /// Each row being judged, or judged through a row still being judged, by
+    /// its number.
+    open: BTreeMap<EntityId, u64>,
+    /// The rows judged through a row still being judged, in the order they
+    /// were judged.
+    unsettled: Vec<EntityId>,
+    /// The carried members' mailboxes ([`ExportAudience::carried_members`])
+    /// each admitted row's lineage reached: only rows that reached one.
+    reached: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// Each policy whose rows are a carried member's mailbox's, and that
+    /// mailbox's source policy.
+    members: BTreeMap<EntityId, EntityId>,
 }
 
 impl<'a, 's, 't> Judge<'a, 's, 't> {
@@ -473,6 +529,7 @@ impl<'a, 's, 't> Judge<'a, 's, 't> {
             policies: BTreeMap::new(),
             rows: BTreeMap::new(),
             met: ExportMet::default(),
+            lineage: matches!(ask, Ask::Export(_)).then(ExportLineage::default),
         }
     }
 }
@@ -495,6 +552,24 @@ struct Frame {
     /// Whether the row last visited was a support.
     visiting_support: bool,
     decided: Option<bool>,
+    /// An export's judge alone ([`ExportLineage`]): the row's number, the
+    /// lowest number of a row still being judged its verdict leaned on (its
+    /// own while it leaned on none), where [`ExportLineage::unsettled`]
+    /// stood when it opened, and the carried members' mailboxes its admitted
+    /// lineage reached.
+    index: u64,
+    low: u64,
+    mark: usize,
+    reached: BTreeSet<EntityId>,
+}
+
+/// A verdict a frame takes on a row it visited.
+struct Visited {
+    id: EntityId,
+    readable: bool,
+    /// An export's judge alone: the number of the row still being judged the
+    /// verdict leaned on, when it leaned on one.
+    leans_on: Option<u64>,
 }
 
 /// What a frame asks next.
@@ -504,7 +579,12 @@ enum Step {
 }
 
 impl Frame {
-    const fn new(id: EntityId, every: Vec<EntityId>, supports: Vec<EntityId>) -> Self {
+    const fn new(
+        id: EntityId,
+        every: Vec<EntityId>,
+        supports: Vec<EntityId>,
+        reached: BTreeSet<EntityId>,
+    ) -> Self {
         Self {
             id,
             every,
@@ -513,6 +593,10 @@ impl Frame {
             next_support: 0,
             visiting_support: false,
             decided: None,
+            index: 0,
+            low: 0,
+            mark: 0,
+            reached,
         }
     }
 
@@ -559,7 +643,8 @@ impl Judge<'_, '_, '_> {
     /// The verdict on `id`, its ancestry judged on a heap stack of frames, so
     /// a chain of any length is read without growing the call stack (FIX
     /// 12559 follow-up). A row in progress reads as `true` to a cycle back
-    /// to it: a cycle adds no restriction.
+    /// to it: a cycle adds no restriction. An export's judge settles each
+    /// verdict before its pass reuses it ([`ExportLineage`]).
     fn row_readable(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
         if let Some(known) = self.rows.get(&id) {
             return Ok(*known);
@@ -569,34 +654,47 @@ impl Judge<'_, '_, '_> {
                 self.rows.insert(id, verdict);
                 return Ok(verdict);
             }
-            Opened::Waiting(frame) => {
+            Opened::Waiting(mut frame) => {
+                self.enter(&mut frame);
                 self.rows.insert(id, true);
                 vec![frame]
             }
         };
-        let mut finished: Option<bool> = None;
+        let mut finished: Option<Visited> = None;
         while let Some(frame) = stack.last_mut() {
-            if let Some(readable) = finished.take() {
-                frame.take(readable);
+            if let Some(visited) = finished.take() {
+                frame.take(visited.readable);
+                self.lean(frame, &visited);
             }
             match frame.next() {
                 Step::Done(verdict) => {
-                    let done = frame.id;
-                    stack.pop();
-                    self.rows.insert(done, verdict);
-                    finished = Some(verdict);
+                    if let Some(done) = stack.pop() {
+                        finished = Some(self.finish(done, verdict));
+                    }
                 }
                 Step::Visit(source) => {
-                    if let Some(known) = self.rows.get(&source) {
-                        finished = Some(*known);
+                    if let Some(known) = self.rows.get(&source).copied() {
+                        finished = Some(Visited {
+                            id: source,
+                            readable: known,
+                            leans_on: self
+                                .lineage
+                                .as_ref()
+                                .and_then(|lineage| lineage.open.get(&source).copied()),
+                        });
                         continue;
                     }
                     match self.open(source, None)? {
                         Opened::Decided(verdict) => {
                             self.rows.insert(source, verdict);
-                            finished = Some(verdict);
+                            finished = Some(Visited {
+                                id: source,
+                                readable: verdict,
+                                leans_on: None,
+                            });
                         }
-                        Opened::Waiting(frame) => {
+                        Opened::Waiting(mut frame) => {
+                            self.enter(&mut frame);
                             self.rows.insert(source, true);
                             stack.push(frame);
                         }
@@ -604,7 +702,98 @@ impl Judge<'_, '_, '_> {
                 }
             }
         }
-        Ok(finished.unwrap_or(true))
+        Ok(finished.is_none_or(|visited| visited.readable))
+    }
+
+    /// Numbers the row `frame` opens, for an export's judge.
+    fn enter(&mut self, frame: &mut Frame) {
+        if let Some(lineage) = self.lineage.as_mut() {
+            frame.index = lineage.next;
+            frame.low = lineage.next;
+            frame.mark = lineage.unsettled.len();
+            lineage.next += 1;
+            lineage.open.insert(frame.id, frame.index);
+        }
+    }
+
+    /// What an export's judge's `frame` takes beside the verdict `visited`
+    /// that it read: the row still being judged it leaned on, and the
+    /// carried members' mailboxes its lineage reached.
+    fn lean(&self, frame: &mut Frame, visited: &Visited) {
+        let Some(lineage) = self.lineage.as_ref() else {
+            return;
+        };
+        if !visited.readable {
+            return;
+        }
+        if let Some(index) = visited.leans_on {
+            frame.low = frame.low.min(index);
+        }
+        if let Some(reached) = lineage.reached.get(&visited.id) {
+            frame.reached.extend(reached.iter().copied());
+        }
+    }
+
+    /// Keeps the verdict on the row `frame` judged, and settles it on an
+    /// export's judge ([`ExportLineage`]). Answers what the frame below takes.
+    fn finish(&mut self, frame: Frame, verdict: bool) -> Visited {
+        let id = frame.id;
+        self.rows.insert(id, verdict);
+        let Some(lineage) = self.lineage.as_mut() else {
+            return Visited {
+                id,
+                readable: verdict,
+                leans_on: None,
+            };
+        };
+        if !verdict {
+            // A denial is final, whatever it leaned on: each verdict reached
+            // through a row in progress since this row opened is judged again
+            // when it is next asked.
+            lineage.open.remove(&id);
+            for row in lineage.unsettled.drain(frame.mark..) {
+                self.rows.remove(&row);
+                lineage.open.remove(&row);
+                lineage.reached.remove(&row);
+            }
+            return Visited {
+                id,
+                readable: false,
+                leans_on: None,
+            };
+        }
+        if frame.low < frame.index {
+            // Reached through a row still being judged: it stands until that
+            // row settles.
+            if !frame.reached.is_empty() {
+                lineage.reached.insert(id, frame.reached);
+            }
+            lineage.unsettled.push(id);
+            return Visited {
+                id,
+                readable: true,
+                leans_on: Some(frame.low),
+            };
+        }
+        // This row heads its cycle: each verdict reached through it settles
+        // with it, and reaches what it reaches.
+        lineage.open.remove(&id);
+        for row in lineage.unsettled.drain(frame.mark..) {
+            lineage.open.remove(&row);
+            if frame.reached.is_empty() {
+                lineage.reached.remove(&row);
+            } else {
+                lineage.reached.insert(row, frame.reached.clone());
+            }
+        }
+        if !frame.reached.is_empty() {
+            lineage.reached.insert(id, frame.reached);
+        }
+        Visited {
+            id,
+            readable: true,
+            leans_on: None,
+        }
     }
 
     /// What the row `id` needs: its own binding's verdict, its own bytes
@@ -618,6 +807,9 @@ impl Judge<'_, '_, '_> {
             self.met.unidentified |= matches!(self.ask, Ask::Export(_));
             return Ok(Opened::Decided(false));
         }
+        // The carried members' mailboxes the row's own policies are of, for
+        // an export's judge.
+        let mut reached = BTreeSet::new();
         // The policies a full-window carrier brought for a derived row (fix
         // list row 17207): every one of them reads, whatever the row's own
         // lineage here says, before anything else; an unknown one reads to
@@ -637,6 +829,7 @@ impl Judge<'_, '_, '_> {
                         if !self.export_carries(policy, audience)? {
                             return Ok(Opened::Decided(false));
                         }
+                        reached.extend(self.member_mailbox_of(policy));
                     }
                 }
                 Ask::Travel { .. } => return Ok(Opened::Decided(false)),
@@ -652,6 +845,7 @@ impl Judge<'_, '_, '_> {
             if !admitted {
                 return Ok(Opened::Decided(false));
             }
+            reached.extend(self.member_mailbox_of(policy));
         }
         let bytes = match raw {
             Some(raw) => raw.to_vec(),
@@ -659,8 +853,17 @@ impl Judge<'_, '_, '_> {
                 match crate::ports::EntityStoreRead::port_entity_raw(self.dbs, self.txn, &id)? {
                     Some(bytes) => bytes,
                     // A row gone from this view carries no words to judge; its
-                    // own binding, read above, still stands.
-                    None => return Ok(Opened::Decided(true)),
+                    // own binding, read above, still stands, and so does the
+                    // mailbox it is of.
+                    None if reached.is_empty() => return Ok(Opened::Decided(true)),
+                    None => {
+                        return Ok(Opened::Waiting(Frame::new(
+                            id,
+                            Vec::new(),
+                            Vec::new(),
+                            reached,
+                        )));
+                    }
                 }
             }
         };
@@ -679,7 +882,13 @@ impl Judge<'_, '_, '_> {
         ) {
             every.append(&mut supports);
         }
-        Ok(Opened::Waiting(Frame::new(id, every, supports)))
+        Ok(Opened::Waiting(Frame::new(id, every, supports, reached)))
+    }
+
+    /// The carried member's mailbox the rows bound under `policy` are of,
+    /// as an export's judge found it.
+    fn member_mailbox_of(&self, policy: EntityId) -> Option<EntityId> {
+        self.lineage.as_ref()?.members.get(&policy).copied()
     }
 
     fn policy_readable(&mut self, policy: EntityId, viewers: &[EntityId]) -> Result<bool> {
@@ -705,9 +914,12 @@ impl Judge<'_, '_, '_> {
     }
 
     /// Whether an export for `audience` carries the rows bound under
-    /// `policy`: a thread's by its source, a source by the audience's map, a
-    /// source no source here was born under when it stands open or its own
-    /// readers name the exporter. A policy that does not resolve carries
+    /// `policy`: a thread's by its source, a source by the audience's map.
+    /// A source no connection here names (a replica's group address, whose
+    /// connection never travels) is not known to be another person's
+    /// mailbox: its rows go as the exporter reads them, by the source's
+    /// readers, a share of the thread or a source that stands open
+    /// ([`super::actor_reads_in`]). A policy that does not resolve carries
     /// nothing.
     fn export_carries(&mut self, policy: EntityId, audience: &ExportAudience) -> Result<bool> {
         if let Some(known) = self.policies.get(&policy) {
@@ -719,13 +931,20 @@ impl Judge<'_, '_, '_> {
             None => None,
         };
         let verdict = match source {
-            Some(source) => match audience.sources.get(&source) {
+            Some(source) => match audience.sources.get(&source).copied() {
                 Some(carried) => {
                     self.met.sources.insert(source);
-                    *carried
+                    if carried
+                        && audience.carried_members.contains(&source)
+                        && let Some(lineage) = self.lineage.as_mut()
+                    {
+                        lineage.members.insert(policy, source);
+                    }
+                    carried
                 }
                 None => {
-                    let carried = self.unnamed_source_carried(source, audience.exporter)?;
+                    let carried =
+                        super::actor_reads_in(self.vault, self.txn, &policy, audience.exporter)?;
                     self.met.unidentified |= !carried;
                     carried
                 }
@@ -737,20 +956,5 @@ impl Judge<'_, '_, '_> {
         };
         self.policies.insert(policy, verdict);
         Ok(verdict)
-    }
-
-    /// Whether an export for `exporter` carries the rows of the source
-    /// policy `source`, which no source this vault holds was born under:
-    /// when it stands open, or its own readers name the exporter.
-    fn unnamed_source_carried(&self, source: EntityId, exporter: EntityId) -> Result<bool> {
-        Ok(
-            match super::policy_in(self.vault, self.txn, &source)?.map(|row| row.kind) {
-                Some(super::SourceAudienceKind::Source { open: true, .. }) => true,
-                Some(super::SourceAudienceKind::Source { readers, .. }) => {
-                    super::names_reader_in(self.vault, self.txn, &readers, exporter)?
-                }
-                _ => false,
-            },
-        )
     }
 }

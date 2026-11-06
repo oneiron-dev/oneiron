@@ -221,8 +221,10 @@ impl Vault {
     /// embedding setup. The whole vault's copy is the owner's, in its export
     /// audit (FIX 6427). One that carries another member's personal mailbox
     /// leaves only once its audit row and each mailbox's person's notice are
-    /// written, in one write (fix list row 15416); when that write fails, the
-    /// copy is made again without those mailboxes, each named in it.
+    /// written, in one write (fix list row 15416); when that write does not
+    /// commit, the copy is made again without those mailboxes, each named in
+    /// it. Once it commits, the copy leaves as it was recorded, under its one
+    /// export id, even when a step after the commit fails.
     fn entity_bundle_json(&self, ids: &[EntityId], scope: ExportScope) -> Result<Vec<u8>> {
         let bundle = self.entity_bundle_pass(ids, scope, false)?;
         if scope != ExportScope::WholeVault {
@@ -239,6 +241,8 @@ impl Vault {
             &member_mail,
         ) {
             Ok(()) => Ok(bundle.json),
+            // The write did not commit: no audit row and no notice of it
+            // stands.
             Err(error) => {
                 tracing::warn!(
                     %error,
@@ -360,6 +364,11 @@ impl Vault {
                 nulled = true;
             }
             thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, bytes));
+            // The copy carries a member's mailbox only through a row it ships
+            // (fix list row 15416).
+            if let Some(judge) = judge.as_mut() {
+                judge.ships(*id);
+            }
             records.push((
                 *id,
                 serde_json::json!({

@@ -214,6 +214,7 @@ impl MemberMailboxPlan {
         };
         let setting = owners_export_member_mail_in(vault, txn)?;
         let mut sources = BTreeMap::new();
+        let mut carried_members = BTreeSet::new();
         let mut members = BTreeMap::new();
         for row in SOURCES.iter_from(&vault.store, txn, &[])? {
             let (source, row) = row?;
@@ -241,7 +242,11 @@ impl MemberMailboxPlan {
                     Placement::LeftOut(MailboxLeftOutReason::PersonNotTold)
                 }
             };
-            sources.insert(row.audience, matches!(placement, Placement::Carried { .. }));
+            let carried = matches!(placement, Placement::Carried { .. });
+            sources.insert(row.audience, carried);
+            if carried {
+                carried_members.insert(row.audience);
+            }
             members.insert(
                 row.audience,
                 MemberMailbox {
@@ -253,7 +258,11 @@ impl MemberMailboxPlan {
         }
         Ok(Some(Self {
             exporter,
-            audience: ExportAudience { exporter, sources },
+            audience: ExportAudience {
+                exporter,
+                sources,
+                carried_members,
+            },
             members,
         }))
     }
@@ -275,8 +284,11 @@ impl MemberMailboxPlan {
     /// What the pass left out and carried, from what its judge `met`: one
     /// notice for each member's mailbox it left out whose rows the pass met,
     /// one for the rows of a source this vault cannot name, and the
-    /// members' mailboxes it carries, each to be told before the copy leaves
-    /// (`None` when it carries none).
+    /// members' mailboxes the copy carries, each to be told before the copy
+    /// leaves (`None` when it carries none). A mailbox is carried only when a
+    /// row the copy ships, or a row that row's admitted lineage came from, is
+    /// of it ([`ExportMet::carried`]): one whose every row another gate kept
+    /// home is neither counted nor told.
     pub(crate) fn outcome(
         self,
         met: &ExportMet,
@@ -284,20 +296,22 @@ impl MemberMailboxPlan {
         let mut notices = Vec::new();
         let mut carried = Vec::new();
         for (audience, member) in self.members {
-            if !met.sources.contains(&audience) {
-                continue;
-            }
             match member.placement {
-                Placement::Carried { person } => carried.push(CarriedMailbox {
-                    source: member.source,
-                    audience,
-                    person,
-                }),
-                Placement::LeftOut(reason) => notices.push(MailboxExportNotice {
-                    source_ref: Some(member.source.to_hex()),
-                    address: Some(member.address),
-                    reason,
-                }),
+                Placement::Carried { person } if met.carried.contains(&audience) => {
+                    carried.push(CarriedMailbox {
+                        source: member.source,
+                        audience,
+                        person,
+                    });
+                }
+                Placement::LeftOut(reason) if met.sources.contains(&audience) => {
+                    notices.push(MailboxExportNotice {
+                        source_ref: Some(member.source.to_hex()),
+                        address: Some(member.address),
+                        reason,
+                    });
+                }
+                Placement::Carried { .. } | Placement::LeftOut(_) => {}
             }
         }
         if met.unidentified {

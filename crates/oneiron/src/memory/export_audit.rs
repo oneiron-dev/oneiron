@@ -22,8 +22,8 @@
 //! The one exception is a copy that carries another member's personal
 //! mailbox (fix list row 15416, [`crate::mail_pack`]): its row, which counts
 //! those mailboxes, and each mailbox's person's notice are written in one
-//! write before the copy leaves, and a write that fails leaves those
-//! mailboxes out of the copy.
+//! write before the copy leaves, and a write that does not commit leaves
+//! those mailboxes out of the copy.
 
 use serde::{Deserialize, Serialize};
 
@@ -379,14 +379,18 @@ pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: ExportTh
 /// before a byte of it leaves: under one export id, its audit row with its
 /// length, digest and how many such mailboxes it carries, and each
 /// mailbox's person's notice ([`crate::mail_pack::tell_member_mailboxes_in_txn`]),
-/// in one write. Nothing here is best effort: whatever this meets fails the
-/// write and nothing of it stands, and the door then leaves those mailboxes
-/// out of the copy. Each private thread it carries, `roots`, is told as
+/// in one write. Nothing here is best effort: whatever this meets before the
+/// commit fails the write and nothing of it stands, and the door then leaves
+/// those mailboxes out of the copy. Once the write commits, its row and
+/// notices stand and this answers `Ok`: a step the write door runs after the
+/// commit that fails is logged, never read as a rollback, so the copy keeps
+/// its one export id. Each private thread it carries, `roots`, is told as
 /// [`record_export`] tells it.
 ///
 /// # Errors
 ///
-/// A mailbox no longer goes with the copy; storage failures.
+/// The write did not commit: a mailbox no longer goes with the copy, or a
+/// storage failure.
 pub(crate) fn record_member_mail_json_export(
     vault: &Vault,
     json: &[u8],
@@ -395,31 +399,50 @@ pub(crate) fn record_member_mail_json_export(
 ) -> crate::Result<()> {
     let exporter = mailboxes.exporter();
     let export = vault.new_entity_id()?;
-    vault.with_write_txn(|txn| {
-        // The id's allocation floor is kept with the row that names it.
-        let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-        let told =
-            crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
-        let receipt = ExportReceipt {
-            export,
-            scope: ExportAuditScope::WholeVault,
-            exporter,
-            at,
-            format: EXPORT_FORMAT_JSON.to_owned(),
-            bytes: u64::try_from(json.len()).ok(),
-            digest: Some(blake3::hash(json).to_hex().to_string()),
-            by: exporter.to_hex(),
-            diary_reads: Vec::new(),
-            act: None,
-            holder_requests: Vec::new(),
-            member_mailboxes: Some(told),
-        };
-        append_in_txn(vault, txn, &receipt)?;
-        crate::workspace_roster::notify_exported_threads_in_txn(
-            vault, txn, roots, exporter, export,
-        );
-        Ok(())
-    })
+    // Set once the write is durable, before the steps the door runs after it.
+    let mut committed = false;
+    let written = vault.write_txn_door_after_commit(
+        crate::store::Callback::Opaque,
+        |txn| -> crate::Result<()> {
+            // The id's allocation floor is kept with the row that names it.
+            let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+            let told =
+                crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
+            let receipt = ExportReceipt {
+                export,
+                scope: ExportAuditScope::WholeVault,
+                exporter,
+                at,
+                format: EXPORT_FORMAT_JSON.to_owned(),
+                bytes: u64::try_from(json.len()).ok(),
+                digest: Some(blake3::hash(json).to_hex().to_string()),
+                by: exporter.to_hex(),
+                diary_reads: Vec::new(),
+                act: None,
+                holder_requests: Vec::new(),
+                member_mailboxes: Some(told),
+            };
+            append_in_txn(vault, txn, &receipt)?;
+            crate::workspace_roster::notify_exported_threads_in_txn(
+                vault, txn, roots, exporter, export,
+            );
+            Ok(())
+        },
+        |()| {
+            committed = true;
+            Ok(())
+        },
+    );
+    match written {
+        Err(error) if committed => {
+            tracing::warn!(
+                %error,
+                "JSON export: its audit row and notices are written; a step after the write failed"
+            );
+            Ok(())
+        }
+        written => written,
+    }
 }
 
 /// Whether `person`, who takes a copy of an off-record room's talk, owns
