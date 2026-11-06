@@ -31,8 +31,12 @@ impl Vault {
         digest: &[u8; 32],
         len: u64,
         key: Option<&BodyKeyRow>,
+        imported_digests: &mut Vec<[u8; 32]>,
     ) -> Result<ResultBodyPin> {
         let held = self.pin_result_body(*digest);
+        if !imported_digests.contains(digest) {
+            imported_digests.push(*digest);
+        }
         let target = self.store.body_dir()?;
         let source = match self.store.session_body_dir(session_ref, false)? {
             Some(dir) => dir.open_reader(digest, len, key)?,
@@ -72,6 +76,7 @@ impl Vault {
         session_ref: &str,
         room: &impl SideTableDbs,
         attachment: &MessageResultAttachment,
+        imported_digests: &mut Vec<[u8; 32]>,
     ) -> Result<ResultBodyPin> {
         let output = attachment.output()?;
         let key = {
@@ -85,13 +90,18 @@ impl Vault {
             None => false,
         };
         if !spilled {
-            return Ok(self.pin_result_body(output.raw_blake3));
+            let held = self.pin_result_body(output.raw_blake3);
+            if !imported_digests.contains(&output.raw_blake3) {
+                imported_digests.push(output.raw_blake3);
+            }
+            return Ok(held);
         }
         self.promote_off_record_result_body(
             session_ref,
             &output.raw_blake3,
             output.raw_len,
             key.as_ref(),
+            imported_digests,
         )
     }
 }

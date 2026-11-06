@@ -118,15 +118,13 @@ impl FloorWrites<'_> {
         let room = self.store.session_view(self.room()?)?;
         let mut imported = Vec::with_capacity(results.len());
         for (_, attachment) in &results {
-            match vault.promote_off_record_message_result_body(session_ref, &room, attachment) {
-                Ok(pin) => {
-                    if let Some(digest) = pin.digest()
-                        && !imported_digests.contains(&digest)
-                    {
-                        imported_digests.push(digest);
-                    }
-                    imported.push(pin);
-                }
+            match vault.promote_off_record_message_result_body(
+                session_ref,
+                &room,
+                attachment,
+                imported_digests,
+            ) {
+                Ok(pin) => imported.push(pin),
                 Err(error) => {
                     vault.discard_unnamed_promoted_bodies(imported);
                     return Err(error);
