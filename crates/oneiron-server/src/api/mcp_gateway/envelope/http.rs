@@ -289,13 +289,24 @@ pub(super) async fn mcp_endpoint(
                     let waiter = match waiter {
                         Ok(waiter) => waiter,
                         Err(error) => {
-                            return mcp_connection_refusal(
+                            // An OAuth token that no longer resolves is told
+                            // to sign in again (FIX 4902 slice C).
+                            let challenge = super::super::oauth_call::auth_challenge(
                                 &server,
                                 &headers,
-                                &request.method,
-                                &body,
-                                id,
-                                error,
+                                &connection,
+                                &error,
+                            );
+                            return super::super::oauth_call::challenged(
+                                mcp_connection_refusal(
+                                    &server,
+                                    &headers,
+                                    &request.method,
+                                    &body,
+                                    id,
+                                    error,
+                                ),
+                                challenge,
                             );
                         }
                     };
@@ -410,6 +421,11 @@ pub(super) async fn mcp_endpoint(
     let stamp =
         (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
     let failed = result.is_err();
+    // An anonymous request no cohort admitted, or an OAuth token that does
+    // not resolve, answers 401 with its challenge (FIX 4902 slice C).
+    let challenge = result.as_ref().err().and_then(|error| {
+        super::super::oauth_call::auth_challenge(&server, &headers, &connection, error)
+    });
     let reply = mcp_envelope(id, result);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
@@ -429,7 +445,7 @@ pub(super) async fn mcp_endpoint(
             claim.finish(outcome);
         }
     }
-    mcp_http_reply(reply, stamp.as_ref())
+    super::super::oauth_call::challenged(mcp_http_reply(reply, stamp.as_ref()), challenge)
 }
 
 /// The invocation a `tools/call` names in `_meta`, when it names a valid

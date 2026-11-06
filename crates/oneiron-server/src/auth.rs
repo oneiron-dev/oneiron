@@ -26,6 +26,7 @@ mod locality;
 mod machine_proof;
 mod managed_person;
 mod managed_request;
+mod oauth_access;
 mod operator_credential;
 mod seat_credential_helper;
 mod seat_model_door;
@@ -44,6 +45,7 @@ pub(crate) use managed_request::{
     attested_owner, caller_slip_too_narrow, carries_caller_slip, forward_caller_credentials,
     owner_attestation_refused, request_path,
 };
+pub(crate) use oauth_access::OAuthAccessInstrument;
 pub(crate) use operator_credential::{
     OPERATOR_HOLDER, OperatorCredential, operator_slip_claims, verified_operator,
 };
@@ -364,6 +366,10 @@ pub(crate) struct CoreAuth {
     /// 1302); `None` for every other request
     /// ([`Self::for_attested_person`]).
     managed_person: Option<oneiron::EntityId>,
+    /// The OAuth access token a stock client's `/mcp` call presented, as its instrument (FIX
+    /// 4902 slice C, [`Self::for_oauth_access`]): the token family it names, which its
+    /// liveness is read by. `None` for every other caller.
+    oauth_access: Option<OAuthAccessInstrument>,
 }
 
 impl CoreAuth {
@@ -405,6 +411,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            oauth_access: None,
         }
     }
 
@@ -485,6 +492,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            oauth_access: None,
         })
     }
 
@@ -507,6 +515,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: None,
+            oauth_access: None,
         }
     }
 
@@ -917,6 +926,7 @@ fn core_auth_for_live_claims(
         off_record_session: None,
         managed_owner: None,
         managed_person: None,
+        oauth_access: None,
     })
 }
 
