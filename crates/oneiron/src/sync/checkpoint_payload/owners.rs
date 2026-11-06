@@ -32,6 +32,7 @@ use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
+use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
@@ -43,13 +44,14 @@ use crate::sync::withdrawn_cutoffs::{
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 21] = [
+pub(super) const WINDOW_ROOTS: [&str; 22] = [
     "entities",
     "edges",
     "tombstones",
     HELD_EDIT_CAUSALITY_MAP,
     "retained_claim_worlds",
     ROW_BIRTHS_MAP,
+    ORIGIN_POSITIONS_MAP,
     PEER_ORIGIN_MAP,
     WITHDRAWN_CUTOFFS_MAP,
     "documents",
@@ -69,8 +71,11 @@ pub(super) const WINDOW_ROOTS: [&str; 21] = [
 
 /// Whether a key holding a digest of what it carries (a pin's, a part's, a
 /// protected input's) may stand plaintext in a skeleton. A digest commits to
-/// its value and would outlive the value's erase, so it does not, and its
-/// window stays under the vault-wide seal. Call, behind this one constant.
+/// its value and would outlive the value's erase, so it does not: the key is
+/// withheld in an atom of its own under its rightful holders
+/// ([`withheld_key`], [`withheld_part_key`], [`withheld_client_key`]; FIX
+/// 10278), and only a window whose digest key no holder claims stays under
+/// the vault-wide seal. Call, behind this one constant.
 const DIGEST_KEYS_ARE_PLAIN: bool = false;
 
 /// An `authored_by` edge, whose key names its actor.
@@ -126,6 +131,7 @@ pub(crate) fn root_entry(
             _ => undecodable(),
         },
         ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::entry(key, value),
+        ORIGIN_POSITIONS_MAP => crate::sync::origin_positions::checkpoint_entry(key, value),
         PEER_ORIGIN_MAP => match (entity, admit_peer_origin_carrier(key, &binary(value))) {
             (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
@@ -217,6 +223,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         | "retained_claim_worlds"
         | "entity_documents"
         | ROW_BIRTHS_MAP
+        | ORIGIN_POSITIONS_MAP
         | PEER_ORIGIN_MAP
         | ROOM_TURNS_MAP
         | ASSET_BODY_REFS_MAP => id_key(key),
@@ -266,7 +273,8 @@ pub(super) struct WithheldKey {
 /// the edge with it, goes with that actor; a whole document pin's key, the
 /// digest of the pin naming no one, is its citer's, held while the message
 /// it quotes is, as the pin is. `None` for every other key: a part's digest
-/// is withheld under its manifests' holders ([`withheld_part_key`]), and any
+/// is withheld under its manifests' holders ([`withheld_part_key`]), a
+/// custody digest beside its client's copy ([`withheld_client_key`]), and any
 /// other keeps its window whole as [`key_refusal`] names.
 pub(super) fn withheld_key(root: &str, key: &str) -> Option<WithheldKey> {
     match root {
@@ -315,6 +323,19 @@ pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
                 | MESSAGE_DOCS_MAP
                 | REPO_MANIFESTS_MAP
         )
+}
+
+/// The client the skeleton withholds `key` of `root` for, beside that
+/// client's copy of its value (FIX 10278): a protected input, a witness part
+/// or a sealed copy in the custody map is filed under a digest of it, and the
+/// credential client's copy holds both. `None` for every other key.
+pub(super) fn withheld_client_key(root: &str, key: &str) -> Option<OtherClient> {
+    (root == CUSTODY_MAP
+        && matches!(
+            crate::sync::custody::checkpoint::key_class(key),
+            KeyClass::Digest
+        ))
+    .then_some(OtherClient::Credential)
 }
 
 /// The key `no_one`, a split of a withheld key of `root`, with each of

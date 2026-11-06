@@ -26,7 +26,7 @@ use super::types::{
     AgentVerbRefusalWords, SelfCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFailedResult,
     SelfMemoryEdgeWriteResult, SelfMemoryWriteResult, SelfSandboxProposalDiskFloor,
-    SelfSpeechResult,
+    SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind,
 };
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
@@ -100,6 +100,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 ));
             }
             observations::keep_observations(&mut entries, &answer.observations)?;
+            session_hooks::keep_hooks(&mut entries, &answer.hooks)?;
             request_map(entries)
         }
         SelfDispatchOutcome::Failed(result) => request_map(vec![
@@ -179,6 +180,19 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
         ]),
         SelfDispatchOutcome::Team(answer) => json_outcome("team", answer)?,
         SelfDispatchOutcome::TeamSubmitted(answer) => json_outcome("team_submitted", answer)?,
+        SelfDispatchOutcome::StoredReply(stored) => {
+            let source_kind = match stored.kind {
+                SelfStoredReplyKind::InferenceDefaults => "inference_defaults",
+                SelfStoredReplyKind::TaskAskSettled => "task_ask_settled",
+                SelfStoredReplyKind::TaskAskWorldPrivacy => "task_ask_world_privacy",
+                SelfStoredReplyKind::TeamStartReceipt => "team_start_receipt",
+            };
+            request_map(vec![
+                ("kind", Value::from("stored_reply")),
+                ("source_kind", Value::from(source_kind)),
+                ("output", Value::from(stored.output.to_string())),
+            ])
+        }
     })
 }
 
@@ -316,6 +330,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .map(|rows| decode_array(rows, entity_value))
                 .transpose()?,
             observations: observations::decode_observations(entries)?,
+            hooks: session_hooks::decode_hooks(entries)?,
         })),
         "failed" => {
             let code = match map_get(entries, "code")? {
@@ -396,6 +411,22 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             spec: serde_json::from_str(str_value(map_get(entries, "spec")?)?)
                 .map_err(|_| invalid_code_run_replay("context spec does not decode"))?,
         })),
+        "stored_reply" => {
+            let kind = match str_value(map_get(entries, "source_kind")?)? {
+                "inference_defaults" => SelfStoredReplyKind::InferenceDefaults,
+                "task_ask_settled" => SelfStoredReplyKind::TaskAskSettled,
+                "task_ask_world_privacy" => SelfStoredReplyKind::TaskAskWorldPrivacy,
+                "team_start_receipt" => SelfStoredReplyKind::TeamStartReceipt,
+                _ => {
+                    return Err(invalid_code_run_replay("unknown stored reply source kind"));
+                }
+            };
+            Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
+                kind,
+                output: serde_json::from_str(str_value(map_get(entries, "output")?)?)
+                    .map_err(|_| invalid_code_run_replay("invalid stored reply output"))?,
+            }))
+        }
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
 }

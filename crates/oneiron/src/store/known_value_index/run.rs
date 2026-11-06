@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{Keys, KnownSource, KnownValues, MatchedSpan, ValueOrigin, replace_spans};
 use crate::entity_id::EntityId;
@@ -80,6 +80,62 @@ impl Vault {
 }
 
 impl RunKnownSource {
+    /// Substitutes typed Text PERSON spans and custody spans on the same
+    /// original reply. Custody wins overlaps; no surviving PERSON hit keeps
+    /// the caller's ordinary custody-sweeping path. Encodes only when the same
+    /// snapshot contains PERSON prints for this run.
+    pub(crate) fn replace_reply_person_texts<'text>(
+        &self,
+        encode: impl FnOnce() -> Result<(
+            Zeroizing<Vec<u8>>,
+            Vec<(&'text str, std::ops::Range<usize>)>,
+        )>,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        self.pass(|custody, person| {
+            let Some(person) = person else {
+                return Ok(None);
+            };
+            let (reply, texts) = encode()?;
+            let mut persons = Vec::new();
+            for (text, encoded_text) in &texts {
+                let view = super::forms::json_view(&reply[encoded_text.clone()]);
+                for hit in person.matched_spans_except(text.as_bytes(), |_| false) {
+                    // The decoded scalar includes its enclosing quotes.
+                    let quoted = (hit.span.start + 1)..(hit.span.end + 1);
+                    let scalar_span = match &view {
+                        Some(view) => view
+                            .source_mapped(quoted)
+                            .expect("serialized text maps every source byte"),
+                        None => quoted,
+                    };
+                    persons.push(MatchedSpan {
+                        span: (encoded_text.start + scalar_span.start)
+                            ..(encoded_text.start + scalar_span.end),
+                        ..hit
+                    });
+                }
+            }
+            if persons.is_empty() {
+                return Ok(None);
+            }
+            let mut spans = custody
+                .map(|known| known.matched_spans_except(&reply, |_| false))
+                .unwrap_or_default();
+            persons.retain(|hit| {
+                !spans
+                    .iter()
+                    .any(|held| hit.span.start < held.span.end && held.span.start < hit.span.end)
+            });
+            if persons.is_empty() {
+                return Ok(None);
+            }
+            spans.extend(persons);
+            spans.sort_by_key(|hit| hit.span.start);
+            let (bytes, _) = replace_spans(&reply, reply.len(), spans);
+            Ok(Some(Zeroizing::new(bytes)))
+        })?
+    }
+
     pub(super) fn pass<T>(
         &self,
         use_pass: impl FnOnce(Option<&KnownValues>, Option<&KnownValues>) -> T,
@@ -150,13 +206,21 @@ pub(super) fn replaced_until(
     let mut spans = custody
         .map(|known| known.matched_spans_except(data, |_| false))
         .unwrap_or_default();
-    let mut persons = person.matched_spans_except(data, |_| false);
-    persons.retain(|hit| {
-        !spans
-            .iter()
-            .any(|custody| hit.span.start < custody.span.end && custody.span.start < hit.span.end)
-    });
-    spans.extend(persons);
+    spans.extend(person_spans(person, data, &spans));
     spans.sort_by_key(|hit: &MatchedSpan<'_>| hit.span.start);
     replace_spans(data, limit, spans)
+}
+
+fn person_spans<'k>(
+    person: &'k KnownValues,
+    data: &[u8],
+    custody: &[MatchedSpan<'_>],
+) -> Vec<MatchedSpan<'k>> {
+    let mut persons = person.matched_spans_except(data, |_| false);
+    persons.retain(|hit| {
+        !custody
+            .iter()
+            .any(|held| hit.span.start < held.span.end && held.span.start < hit.span.end)
+    });
+    persons
 }

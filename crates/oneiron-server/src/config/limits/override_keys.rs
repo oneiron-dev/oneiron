@@ -33,6 +33,9 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) media_reply_bytes: Option<u64>,
     pub(in crate::config) chat_reply_bytes: Option<u64>,
     pub(in crate::config) feedback_inbox_bytes: Option<u64>,
+    pub(in crate::config) pairing_redeem_free_failures: Option<u32>,
+    pub(in crate::config) pairing_redeem_wait_ceiling_ms: Option<u64>,
+    pub(in crate::config) pairing_redeem_quiet_ms: Option<u64>,
     pub(in crate::config) keyed_filter_json_bytes: Option<u64>,
     pub(in crate::config) code_result_inline_bytes: Option<u64>,
     pub(in crate::config) code_result_disk_floor_bytes: Option<u64>,
@@ -174,4 +177,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) shared_merge_evidence_rows: Option<u64>,
     pub(in crate::config) memory_reason_evidence_rows: Option<u64>,
     pub(in crate::config) memory_reason_tokens: Option<u64>,
+    pub(in crate::config) context_edge_hops: Option<u64>,
+    pub(in crate::config) context_neighbors: Option<u64>,
+    pub(in crate::config) context_selected_edges: Option<u64>,
 }
