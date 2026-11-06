@@ -962,6 +962,10 @@ pub struct WakeEnvelope {
         skip_serializing_if = "Option::is_none"
     )]
     pub review_ref: Option<String>,
+    #[serde(rename = "room_ref", default, skip_serializing_if = "Option::is_none")]
+    pub room_ref: Option<String>,
+    #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
+    pub turn_ref: Option<String>,
 }
 
 /// `oneiron::verbs::BoardWakeReply`.
@@ -970,6 +974,8 @@ pub struct WakeEnvelope {
 pub struct BoardWakeReply {
     #[serde(rename = "wakes")]
     pub wakes: Vec<WakeEnvelope>,
+    #[serde(rename = "opener", default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<String>,
 }
 
 /// `oneiron::verbs::scratchpad::ScratchpadRecallRequest`.
@@ -74612,6 +74618,8 @@ pub enum SubscriptionScope {
     Counts,
     #[serde(rename = "diary_reviews")]
     DiaryReviews,
+    #[serde(rename = "room_turns")]
+    RoomTurns,
 }
 
 /// `oneiron::verbs::BoardSubscriptionRequest`.
