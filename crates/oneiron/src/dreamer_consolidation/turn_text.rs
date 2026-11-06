@@ -438,7 +438,12 @@ fn collect_with(
         authors.sort_unstable();
         // An imported row names its source's speaker in metadata and has no
         // `AuthoredBy` edge: the importer did not write it.
-        let bylines = usize::from(message.author != WITNESS_AUTHOR_SYSTEM && !facts.imported);
+        let bylines = usize::from(
+            !matches!(
+                message.author.as_str(),
+                WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
+            ) && !facts.imported,
+        );
         if entity_type != ENTITY_TYPE_MESSAGE
             || out(EdgeKind::PartOf)? != [*turn]
             || out(EdgeKind::BelongsTo)? != [*conversation]
