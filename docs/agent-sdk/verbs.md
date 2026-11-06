@@ -350,6 +350,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
+- `vault.members.invitation_code`
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
@@ -592,6 +593,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.code_run_lifts`
+- `vault.secrets.code_run_room_lifts`
 - `vault.secrets.lift_history`
 - `vault.secrets.register`
 - `vault.secrets.rotate`

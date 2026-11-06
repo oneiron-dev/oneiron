@@ -5444,10 +5444,10 @@
     },
     {
       "name": "vault.members.add",
-      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
+      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
-      "output": "crate::task_verb::sdk::SharedMemberInvited",
-      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -5458,10 +5458,24 @@
     },
     {
       "name": "vault.members.invitation_slip",
-      "description": "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost.",
+      "description": "The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound.",
       "input": "crate::task_verb::sdk::InvitationSlipRequest",
       "output": "crate::task_verb::sdk::InvitationSlip",
       "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.members.invitation_code",
+      "description": "The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key.",
+      "input": "crate::task_verb::sdk::InvitationCodeRequest",
+      "output": "crate::task_verb::sdk::InvitationCode",
+      "call": "crate::task_verb::sdk::issue_invitation_code_embedded(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -9054,6 +9068,21 @@
       "host_door_precheck": true,
       "host_door_lists": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.code_run_room_lifts",
+      "description": "The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned.",
+      "input": "crate::code_run::CodeRunRoomSecretLiftRequest",
+      "output": "Vec<crate::code_run::CodeRunSecretLiftProposalView>",
+      "call": "memory.vault().code_run_room_secret_lifts_as_owner(&memory.embedded_owner(\"vault.secrets.code_run_room_lifts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
