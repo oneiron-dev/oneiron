@@ -35389,7 +35389,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint.rs",
@@ -52099,7 +52099,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/checkpoint.rs",
@@ -62144,6 +62144,16 @@
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/validation/window_rows.rs",
+     "purpose": "Window row validation with owned indexes and a cursor between admitted turns",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -91735,7 +91745,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92234,7 +92244,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6488,
+   "source_files": 6489,
    "test_files": 895
   },
   "oneiron-android": {
