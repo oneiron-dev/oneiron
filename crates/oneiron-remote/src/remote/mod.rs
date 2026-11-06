@@ -41,6 +41,7 @@ mod origin;
 mod pairing;
 // FIX 3377: a paired owner device renews its own credential.
 mod renewal;
+mod request;
 mod response;
 // OF-237: the network or an in-process server under one signing path.
 mod wire;
@@ -310,21 +311,32 @@ impl RemoteClient {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
-        let body = serialize_whole(request)?;
-        // A sealed custody change past the ceiling goes to the owner route
-        // that spools it whole, whatever its length (FIX 11454).
-        if verb == custody_submit::CUSTODY_SUBMIT_VERB && body.len() > MAX_REMOTE_REQUEST_BYTES {
-            return self.custody_submit_spooled(body);
-        }
+        let body = if verb == custody_submit::CUSTODY_SUBMIT_VERB {
+            let body = serialize_whole(request)?;
+            // The owner route spools sealed custody changes past the ceiling.
+            if body.len() > MAX_REMOTE_REQUEST_BYTES {
+                return self.custody_submit_spooled(body);
+            }
+            request::RequestBody::Bytes(body)
+        } else if self.off_record_session.is_some()
+            || verb.split('.').any(|part| part == "off_record")
+            || verb == "ai.anonymous_chat"
+            || matches!(self.wire, Wire::InProcess(_))
+        {
+            // Ephemeral inputs and in-process exchanges keep their RAM-only body.
+            request::RequestBody::Bytes(serialize_whole(request)?)
+        } else {
+            request::RequestBody::serialize(request)?
+        };
         let url = self.verb_url(verb)?;
-        let body = within_ceiling(body)?;
+        let body = body.within_ceiling()?;
         let mut headers = self.turn_headers()?;
         headers.insert(
             INVOCATION_HEADER,
             HeaderValue::from_str(&invocation.to_hex())
                 .map_err(|_| transport_error("could not name the invocation"))?,
         );
-        let body = encode_request(body, &mut headers);
+        let body = body.encode(&mut headers)?;
         accept_json(&mut headers);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let reply = self.send(Method::POST, url, headers, Some(body), long_running(verb))?;
@@ -374,7 +386,7 @@ impl RemoteClient {
         let mut headers = self.turn_headers()?;
         accept_json(&mut headers);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let reply = self.send(Method::POST, url, headers, Some(body), false)?;
+        let reply = self.send(Method::POST, url, headers, Some(body.into()), false)?;
         self.note_reply_receipt(&reply.headers);
         let status = reply.status;
         // A model round trip answers 202 with its queued callback. Any other
