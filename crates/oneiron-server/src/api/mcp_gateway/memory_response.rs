@@ -6,8 +6,8 @@ use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
     CoreContextPackRequest, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
-    CoreQueryRequest, EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient,
-    VaultReadError, VaultReadMethod, View,
+    CoreQueryRequest, DeferredServedForms, EmbeddedMediaSeed, InProcessVaultReadAdapter,
+    VaultReadClient, VaultReadError, VaultReadMethod, View,
 };
 use oneiron::context_board::CapabilityHit;
 use serde_json::{Value, json};
@@ -15,6 +15,9 @@ use std::sync::Arc;
 
 /// All observations are staged from typed, post-limit results. No failed
 /// adapter call, encoding failure, or partial batch commits a read-set event.
+/// The read's served forms commit only once the observation staged, and the
+/// observation publishes after them, as the HTTP hydrate orders it (FIX 26):
+/// a failed answer leaves no served-form receipt.
 /// Beside the output it returns every row the read derived it from, the ones
 /// a query counts past its page among them (DEC-0005).
 pub(super) async fn execute(
@@ -43,8 +46,11 @@ pub(super) async fn execute(
             )
         }),
     );
-    let mut produced = execute_read(server, args, actor, media.as_deref())?;
-    if !produced.served.is_empty() {
+    let forms = DeferredServedForms::default();
+    let mut produced = execute_read(server, args, actor, media.as_deref(), &forms)?;
+    if produced.served.is_empty() {
+        commit_served_forms(&mcp_scoped_read(&server.vault, actor)?, &forms)?;
+    } else {
         let mut target = super::board_observations::read_set(server, actor).await;
         let reader = mcp_scoped_read(&server.vault, actor)?;
         let mut staged = target.as_deref().cloned().unwrap_or_default();
@@ -82,11 +88,27 @@ pub(super) async fn execute(
         if let Some(observed) = &observed {
             fold_observation_receipt(&mut produced.output, observed)?;
         }
+        commit_served_forms(&reader, &forms)?;
         if let Some(target) = target.as_deref_mut() {
             *target = staged;
         }
     }
     Ok((produced.output, produced.capabilities, produced.producers))
+}
+
+/// Commits the forms the read served, held until nothing left can fail the
+/// answer (FIX 26).
+fn commit_served_forms(
+    reader: &oneiron::claim::ScopedRead<'_>,
+    forms: &DeferredServedForms,
+) -> Result<(), McpGatewayError> {
+    let served = forms.take();
+    if served.is_empty() {
+        return Ok(());
+    }
+    reader
+        .commit_served_forms(&served)
+        .map_err(|error| mcp_engine_error("mcp served-form record failed", error))
 }
 
 /// The observation reads answer to the same actor as the served read, so
@@ -141,6 +163,7 @@ fn execute_read(
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
     media: Option<&[EmbeddedMediaSeed]>,
+    forms: &DeferredServedForms,
 ) -> Result<MemoryRead, McpGatewayError> {
     let Some(method) = args.tool.memory_method() else {
         return Err(super::mcp_verb_family_error(args));
@@ -154,7 +177,8 @@ fn execute_read(
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
         .with_media_query_memory(&server.memory)
-        .listing_producers(&producers);
+        .listing_producers(&producers)
+        .deferring_served_forms(forms);
     let adapter = match media {
         Some(seeds) => adapter.with_media_seeds(seeds),
         None => adapter,
