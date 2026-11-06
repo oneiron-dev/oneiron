@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::pack::require_pack_active_in;
 use super::source::SOURCES;
-use super::state::OCCURRENCES;
+use super::state::{MailPresence, OCCURRENCES, occurrence_key};
 use super::wire::{MailAttachmentRef, MailProviderWire, MailSyncSource};
 use crate::entity_id::derived_domains::MAIL_ATTACHMENT;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -160,26 +160,60 @@ impl Memory<'_> {
         };
         let key = attachment_key(source, &provider_id, &attachment.part_id);
         let at = crate::unix_seconds_now();
-        let row = vault.with_write_txn_grouped(|txn| {
-            if let Some(row) = ATTACHMENTS.get(&vault.store, txn, &key)? {
-                return Ok(row);
-            }
-            let row = MailAttachmentRow {
-                provider_id: provider_id.clone(),
-                attachment: attachment.clone(),
-                thread,
-                state: MailAttachmentState::Waiting,
-                artifact: None,
-                version: None,
-                reason: None,
-                opened_at: at,
-                updated_at: at,
-            };
-            ATTACHMENTS.put(&vault.store, txn, &key, &row)?;
-            Ok(row)
-        })?;
+        let row = vault
+            .with_write_txn_grouped(|txn| {
+                if let Some(row) = ATTACHMENTS.get(&vault.store, txn, &key)? {
+                    return Ok(Some(row));
+                }
+                // A message erased since the read above queues nothing.
+                if !attachment_described_in(
+                    &vault.store,
+                    txn,
+                    source,
+                    &provider_id,
+                    &attachment.part_id,
+                )? {
+                    return Ok(None);
+                }
+                let row = MailAttachmentRow {
+                    provider_id: provider_id.clone(),
+                    attachment: attachment.clone(),
+                    thread,
+                    state: MailAttachmentState::Waiting,
+                    artifact: None,
+                    version: None,
+                    reason: None,
+                    opened_at: at,
+                    updated_at: at,
+                };
+                ATTACHMENTS.put(&vault.store, txn, &key, &row)?;
+                Ok(Some(row))
+            })?
+            .ok_or_else(unknown)?;
         Ok(view(&row))
     }
+}
+
+/// Whether `source`'s message `provider_id` still stands, not forgotten,
+/// and still describes the attachment `part_id`. An erase scrubs the
+/// message's occurrence, so nothing of its attachments is queued or stored
+/// after it, whatever a reader or a fetch read before (REVIEW-6005).
+fn attachment_described_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    provider_id: &str,
+    part_id: &str,
+) -> Result<bool> {
+    Ok(OCCURRENCES
+        .get(store, txn, &occurrence_key(source, provider_id))?
+        .is_some_and(|occurrence| {
+            !matches!(occurrence.presence, MailPresence::Forgotten { .. })
+                && occurrence
+                    .attachments
+                    .iter()
+                    .any(|attachment| attachment.part_id == part_id)
+        }))
 }
 
 /// The artifacts the opened attachments of one message were stored in.
@@ -394,6 +428,13 @@ fn link_attachment_artifact(
         if live.state != MailAttachmentState::Waiting
             || live.provider_id != row.provider_id
             || live.attachment.part_id != row.attachment.part_id
+            || !attachment_described_in(
+                &vault.store,
+                txn,
+                source,
+                &row.provider_id,
+                &row.attachment.part_id,
+            )?
         {
             return Ok(None);
         }
