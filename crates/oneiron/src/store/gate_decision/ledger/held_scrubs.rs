@@ -181,7 +181,9 @@ impl Store {
     /// history. Local only: nothing is owed, and no tray, obligation, key or
     /// other reader's saved weave digest is touched. A decision a hold keeps,
     /// a bundle that names a claim that stays, and a batch preflight's future
-    /// receipt keep their bytes. The number made skeletons.
+    /// receipt keep their bytes, and so does a claim-bound decision whose
+    /// reasons a saved weave period copies: shared content, which a later
+    /// erase still finds and scrubs with it. The number made skeletons.
     pub(crate) fn discard_claim_gate_payload_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -207,6 +209,11 @@ impl Store {
                     redact.insert(record.decision_id.bytes, record);
                 }
             }
+        }
+        if redact.values().any(|record| record.claim_id.is_some()) {
+            let quoted = crate::claim::saved_weave_loop_reason_decisions_in_txn(self, &*wtxn)?;
+            redact
+                .retain(|decision, record| record.claim_id.is_none() || !quoted.contains(decision));
         }
         let count = redact.len();
         for record in redact.into_values() {
