@@ -338,7 +338,15 @@ fn tear_members(
     }
     for id in &removal.order {
         let released = members.released.contains(id);
-        remove_member(store, txn, &edges, id, released, keep.keep_birth_facets, report)?;
+        remove_member(
+            store,
+            txn,
+            &edges,
+            id,
+            released,
+            keep.keep_birth_facets,
+            report,
+        )?;
         if released {
             release_local_work(store, txn, window, id)?;
         }
