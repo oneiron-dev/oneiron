@@ -10,11 +10,14 @@
 //! the record stays (Engine R2).
 //!
 //! A live document is its slot's group: its full snapshot, then its pending
-//! updates. A proposal document is a group of its own; one whose fork no one
-//! decided stays under the vault-wide seal, as its fork record goes when its
-//! opener does not open (Engine and lead pick), and so does one that is no
-//! value-only proposal (a switched-away head kept by a run review). A
-//! shallow or state-only snapshot stays there too (Engine R3).
+//! updates. A proposal document is a group of its own, pins and authorship
+//! records included, as a NOTE slot's document splits (a native proposal, or
+//! a switched-away head a run review kept; FIX 6523). The quote a pin of an
+//! erased record carries leaves it on restore, as it leaves the live
+//! document (FIX 18270). One whose fork no one decided stays under the
+//! vault-wide seal unless its fork record split beside it, as that record
+//! goes when its opener does not open (Engine and lead pick). A shallow or
+//! state-only snapshot stays there too (Engine R3).
 
 use ::loro::{
     ContainerID, ContainerType, EncodedBlobMode, JsonMapOp, JsonOp, JsonOpContent, JsonTextOp,
@@ -79,8 +82,6 @@ const OUTSIDE_SCHEMA: &str = "a NOTE document operation outside its schema";
 /// A proposal whose fork no one decided, and whose fork record did not
 /// split beside it: their restore could not drop the two together.
 const PENDING_PROPOSAL: &str = "a NOTE proposal no one decided, whose fork record is not beside it";
-/// A proposal document that holds pins or authorship: no value-only one.
-const NOT_VALUE_ONLY: &str = "a NOTE proposal document that is no value-only proposal";
 
 /// A NOTE document's actor carriers.
 struct NoteActors;
@@ -322,14 +323,14 @@ fn full_snapshot(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// One NOTE proposal document, under its NOTE: a full value-only proposal
-/// splits as a group of its own. A decided or unforked one is kept exactly
-/// as stored when its history names no one. An undecided fork's always goes
-/// through its join, which drops it with its fork record when the opener did
-/// not open (FIX 6523), so it splits only when `undecided` says that record
-/// split beside it. A shallow one, one that is no value-only proposal and an
-/// undecided one whose record is not beside it stay under the vault-wide
-/// seal, named with the NOTE.
+/// One NOTE proposal document, under its NOTE: a full proposal splits as a
+/// group of its own, its pins and authorship records included (FIX 6523).
+/// A decided or unforked one is kept exactly as stored when its history
+/// names no one. An undecided fork's always goes through its join, which
+/// drops it with its fork record when the opener did not open (FIX 6523), so
+/// it splits only when `undecided` says that record split beside it. A
+/// shallow one and an undecided one whose record is not beside it stay under
+/// the vault-wide seal, named with the NOTE.
 pub(super) fn capture_proposal(
     out: &mut Captured,
     note: EntityId,
@@ -352,9 +353,8 @@ pub(super) fn capture_proposal(
 }
 
 /// Whether a proposal document is one a split takes: a full history, not an
-/// undecided fork's whose record is not beside it (`apart`), `note`'s
-/// document, and value-only (no pins, no authorship), as a proposal's
-/// contract holds it.
+/// undecided fork's whose record is not beside it (`apart`), and `note`'s
+/// document, which reads as one, its pins and authorship records included.
 fn proposal_shape(
     note: EntityId,
     apart: bool,
@@ -371,10 +371,7 @@ fn proposal_shape(
         return Err(Unresolved::SharedOwners);
     }
     let doc = NoteDocument::from_loro(note, doc).map_err(|_| Unresolved::Undecodable)?;
-    let view = doc.view().map_err(|_| Unresolved::Undecodable)?;
-    if !view.pins.is_empty() || !view.authorship.is_empty() {
-        return Err(Unresolved::ActorSplit(NOT_VALUE_ONLY));
-    }
+    doc.view().map_err(|_| Unresolved::Undecodable)?;
     Ok(())
 }
 
@@ -387,15 +384,15 @@ fn proposal_note(at: &RowLocator) -> Result<EntityId> {
     Ok(key.0.0)
 }
 
-/// Refuses a proposal row unless it is a full value-only document of the
-/// NOTE its key leads with.
+/// Refuses a proposal row unless it is a full document of the NOTE its key
+/// leads with.
 pub(super) fn check_proposal(at: &RowLocator, bytes: &[u8]) -> Result<()> {
     full_snapshot(bytes)?;
     proposal_shape(proposal_note(at)?, false, bytes).map_err(|_| rows::bad_part())
 }
 
 /// A proposal document rebuilt from its content and the actors that
-/// opened: a full value-only document of the NOTE its key leads with.
+/// opened: a full document of the NOTE its key leads with.
 pub(super) fn join_proposal(
     at: &RowLocator,
     content: &[u8],

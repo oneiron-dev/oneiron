@@ -138,7 +138,8 @@ use support::{
     version_key, writer,
 };
 pub(crate) use support::{
-    erase_in_txn, fork_waits, live_edit_granted, live_edit_refused, live_edit_waits,
+    discard_export_payload_in_txn, erase_in_txn, fork_waits, live_edit_granted, live_edit_refused,
+    live_edit_waits,
 };
 
 fn invalid(message: &str) -> Error {
