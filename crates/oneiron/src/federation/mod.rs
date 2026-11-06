@@ -13,6 +13,8 @@ mod agent_grant;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
 };
+// The self brief's GRANT producer (FIX 17594).
+mod agent_grant_brief;
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
