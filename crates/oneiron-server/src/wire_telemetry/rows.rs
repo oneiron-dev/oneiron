@@ -106,6 +106,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::BookingIntakeAnswers),
         Self::Engine(EngineLimit::BookingIntakeValueBytes),
         Self::Engine(EngineLimit::BookingLocalTimeWindows),
+        Self::Engine(EngineLimit::ClaimInputJsonBytes),
         Self::Engine(EngineLimit::CodeResultInlineBytes),
         Self::Engine(EngineLimit::CodeResultDiskFloorBytes),
         Self::Engine(EngineLimit::CodeResultScanBytes),

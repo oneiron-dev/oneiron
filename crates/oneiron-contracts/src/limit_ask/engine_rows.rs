@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 154] = [
+    pub const ALL: [Self; 155] = [
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -14,6 +14,7 @@ impl EngineLimit {
         Self::BookingIntakeAnswers,
         Self::BookingIntakeValueBytes,
         Self::BookingLocalTimeWindows,
+        Self::ClaimInputJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -173,6 +174,7 @@ impl EngineLimit {
             Self::BookingIntakeAnswers => "limits.booking_intake_answers",
             Self::BookingIntakeValueBytes => "limits.booking_intake_value_bytes",
             Self::BookingLocalTimeWindows => "limits.booking_local_time_windows",
+            Self::ClaimInputJsonBytes => "limits.claim_input_json_bytes",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -333,6 +335,7 @@ impl EngineLimit {
             Self::BookingIntakeAnswers => 65_536,
             Self::BookingIntakeValueBytes => 67_108_864,
             Self::BookingLocalTimeWindows => 65_536,
+            Self::ClaimInputJsonBytes => 67_108_864,
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,

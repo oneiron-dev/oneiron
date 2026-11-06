@@ -49,6 +49,10 @@ pub enum EngineLimit {
     /// Distinct local time windows one booking constraint carries once
     /// canonical (sorted, duplicates gone). Past it every window is solved.
     BookingLocalTimeWindows,
+    /// Serialized JSON bytes of one claim input as it reaches the vault's
+    /// claim door, scope and refs included. Past it the claim is written
+    /// whole.
+    ClaimInputJsonBytes,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.

@@ -306,6 +306,7 @@ impl LimitsConfig {
             booking_intake_answers,
             booking_intake_value_bytes,
             booking_local_time_windows,
+            claim_input_json_bytes,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
             code_result_scan_bytes,
@@ -506,6 +507,7 @@ impl LimitsConfig {
             (EngineLimit::BookingIntakeAnswers, booking_intake_answers),
             (EngineLimit::BookingIntakeValueBytes, booking_intake_value_bytes),
             (EngineLimit::BookingLocalTimeWindows, booking_local_time_windows),
+            (EngineLimit::ClaimInputJsonBytes, claim_input_json_bytes),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,

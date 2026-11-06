@@ -45,6 +45,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) booking_intake_answers: Option<u64>,
     pub(in crate::config) booking_intake_value_bytes: Option<u64>,
     pub(in crate::config) booking_local_time_windows: Option<u64>,
+    pub(in crate::config) claim_input_json_bytes: Option<u64>,
     pub(in crate::config) code_result_inline_bytes: Option<u64>,
     pub(in crate::config) code_result_disk_floor_bytes: Option<u64>,
     pub(in crate::config) code_result_scan_bytes: Option<u64>,

@@ -288,6 +288,7 @@ booking_email_bytes = 1048576     # booker email bytes one authenticated booking
 booking_intake_answers = 65536    # intake answers one authenticated booking confirm carries; past it every answer is kept and the row asks
 booking_intake_value_bytes = 67108864 # largest intake answer value one authenticated confirm carries; past it the answer is kept whole and the row asks
 booking_local_time_windows = 65536 # distinct local time windows one booking constraint carries; past it every window is solved and the row asks
+claim_input_json_bytes = 67108864 # serialized JSON bytes of one claim input at the vault's claim door; past it the claim is written whole and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
 code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
 code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor

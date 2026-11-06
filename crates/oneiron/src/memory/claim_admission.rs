@@ -182,7 +182,11 @@ impl Memory<'_> {
             salience: input.salience,
             confidence_details: None,
         };
-        super::caps::check_claim_input(&claim)?;
+        // ABC row 22: the claim is measured whole, never refused for size.
+        let bytes = super::caps::claim_input_json_bytes(&claim)?;
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let evidence = lane
             .read(
