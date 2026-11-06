@@ -97,6 +97,11 @@ returned by that same settlement, including its original birth (or genuine
 unknown), reserved and owed units. It keeps the snapshot bounds, aggregate and
 settled units, and each token's raw state and first-settlement range. It never
 replaces Included or the original call meter; later inclusion remains possible.
+The record also keeps the exact `StepReceipt` keys newly pinned by this writer:
+the distinct, previously unmarked subset in ordinary settlement, and the input
+keys only after strict checkpoint settlement succeeds. An empty list records no
+new marker keys, not zero expense. These keys are correlation data, not per-step
+amounts, execution authority or permission to pay a native invoice.
 Each successful consumed reservation appends separately, even when its raw data
 equals an earlier observation. Replay without a reservation adds nothing. These
 records do not provide a global aggregate or guard id, establish exclusion from
