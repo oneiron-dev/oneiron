@@ -45,8 +45,8 @@ pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
 pub use queue_review::{
-    ContractReviewEvidence, ContractReviewRequest, QueueReviewAdmission, RepoProposalCritique,
-    RepoProposalReview,
+    ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
+    RepoProposalCritique, RepoProposalReview,
 };
 pub(super) use submit::ProposalBase;
 
