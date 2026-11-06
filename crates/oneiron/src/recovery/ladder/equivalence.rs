@@ -1,12 +1,41 @@
-//! Pure row equality of one owned recapture after native pad normalization.
+//! Pure equality of one owned recapture after native pad normalization.
+//! Payload bytes, titles and fields resume one byte per existing work unit.
 
 use crate::error::Result;
-use crate::recovery::canonical::{CanonicalSnapshot, invalid};
+use crate::note::{NoteFork, NoteReviewBundle};
+use crate::recovery::canonical::{
+    CanonicalEntity, CanonicalEntityDocument, CanonicalSnapshot, invalid,
+};
+use crate::recovery::{CanonicalDocument, CanonicalHeadMove};
 
 pub(in crate::recovery) struct CanonicalComparison {
     actual: CanonicalSnapshot,
     group: Group,
     next: usize,
+    byte: usize,
+    payload: PayloadPart,
+    bundle: BundleComparison,
+}
+
+#[derive(PartialEq, Eq)]
+enum PayloadPart {
+    First,
+    Second,
+    Third,
+}
+
+#[derive(Default)]
+struct BundleComparison {
+    part: BundlePart,
+    member: usize,
+}
+
+#[derive(Default)]
+enum BundlePart {
+    #[default]
+    Waiting,
+    Landed,
+    Explainer,
 }
 
 enum Group {
@@ -41,6 +70,9 @@ impl CanonicalComparison {
             actual,
             group: Group::Window,
             next: 0,
+            byte: 0,
+            payload: PayloadPart::First,
+            bundle: BundleComparison::default(),
         }
     }
 
@@ -85,7 +117,12 @@ impl CanonicalComparison {
                 (true, Group::EntityBlobs)
             }
             Group::EntityBlobs => (
-                compare_rows(entity_blobs, &wanted.entity_blobs, &mut self.next)?,
+                compare_entities(
+                    entity_blobs,
+                    &wanted.entity_blobs,
+                    &mut self.next,
+                    &mut self.byte,
+                )?,
                 Group::RetainedClaimWorlds,
             ),
             Group::RetainedClaimWorlds => (
@@ -105,11 +142,23 @@ impl CanonicalComparison {
                 Group::DocSnapshots,
             ),
             Group::DocSnapshots => (
-                compare_rows(doc_snapshots, &wanted.doc_snapshots, &mut self.next)?,
+                compare_documents(
+                    doc_snapshots,
+                    &wanted.doc_snapshots,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                )?,
                 Group::EntityDocuments,
             ),
             Group::EntityDocuments => (
-                compare_rows(entity_documents, &wanted.entity_documents, &mut self.next)?,
+                compare_entity_documents(
+                    entity_documents,
+                    &wanted.entity_documents,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                )?,
                 Group::DocumentHeads,
             ),
             Group::DocumentHeads => (
@@ -117,19 +166,33 @@ impl CanonicalComparison {
                 Group::HeadMoveReceipts,
             ),
             Group::HeadMoveReceipts => (
-                compare_rows(
+                compare_head_receipts(
                     head_move_receipts,
                     &wanted.head_move_receipts,
                     &mut self.next,
+                    &mut self.byte,
                 )?,
                 Group::NoteForks,
             ),
             Group::NoteForks => (
-                compare_rows(note_forks, &wanted.note_forks, &mut self.next)?,
+                compare_note_forks(
+                    note_forks,
+                    &wanted.note_forks,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                )?,
                 Group::NoteProposals,
             ),
             Group::NoteProposals => (
-                compare_rows(note_proposals, &wanted.note_proposals, &mut self.next)?,
+                compare_note_bundles(
+                    note_proposals,
+                    &wanted.note_proposals,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                    &mut self.bundle,
+                )?,
                 Group::ContainerManifests,
             ),
             Group::ContainerManifests => (
@@ -189,9 +252,331 @@ impl CanonicalComparison {
         if done {
             self.group = next_group;
             self.next = 0;
+            self.byte = 0;
+            self.payload = PayloadPart::First;
+            self.bundle = BundleComparison::default();
         }
         Ok(matches!(self.group, Group::Complete))
     }
+}
+
+fn compare_entities(
+    actual: &[CanonicalEntity],
+    wanted: &[CanonicalEntity],
+    next: &mut usize,
+    byte: &mut usize,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(CanonicalEntity { id, blob }) = actual.get(*next) else {
+        return Ok(true);
+    };
+    let CanonicalEntity {
+        id: expected_id,
+        blob: expected_blob,
+    } = &wanted[*next];
+    if *byte == 0 {
+        compare_value(id, expected_id)?;
+    }
+    if compare_bytes(blob, expected_blob, byte)? {
+        *next += 1;
+        *byte = 0;
+    }
+    Ok(false)
+}
+
+fn compare_documents(
+    actual: &[CanonicalDocument],
+    wanted: &[CanonicalDocument],
+    next: &mut usize,
+    byte: &mut usize,
+    payload: &mut PayloadPart,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(CanonicalDocument {
+        entity_id,
+        head,
+        text,
+        title,
+        birth_actor,
+        birth_at,
+        authorship,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let CanonicalDocument {
+        entity_id: expected_entity,
+        head: expected_head,
+        text: expected_text,
+        title: expected_title,
+        birth_actor: expected_birth_actor,
+        birth_at: expected_birth_at,
+        authorship: expected_authorship,
+    } = &wanted[*next];
+    if *payload == PayloadPart::First {
+        if *byte == 0 {
+            compare_value(entity_id, expected_entity)?;
+            compare_value(head, expected_head)?;
+        }
+        if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
+            *payload = PayloadPart::Second;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    if compare_optional_text(title, expected_title, byte)? {
+        compare_value(birth_actor, expected_birth_actor)?;
+        compare_value(birth_at, expected_birth_at)?;
+        compare_value(authorship, expected_authorship)?;
+        *next += 1;
+        *byte = 0;
+        *payload = PayloadPart::First;
+    }
+    Ok(false)
+}
+
+fn compare_entity_documents(
+    actual: &[CanonicalEntityDocument],
+    wanted: &[CanonicalEntityDocument],
+    next: &mut usize,
+    byte: &mut usize,
+    payload: &mut PayloadPart,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(CanonicalEntityDocument {
+        entity_id,
+        document_id,
+        field,
+        text,
+        metadata,
+        summary_meta,
+        record_fields,
+        birth_actor,
+        birth_at,
+        history,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let CanonicalEntityDocument {
+        entity_id: expected_entity,
+        document_id: expected_document,
+        field: expected_field,
+        text: expected_text,
+        metadata: expected_metadata,
+        summary_meta: expected_summary_meta,
+        record_fields: expected_record_fields,
+        birth_actor: expected_birth_actor,
+        birth_at: expected_birth_at,
+        history: expected_history,
+    } = &wanted[*next];
+    if *payload == PayloadPart::First {
+        if *byte == 0 {
+            compare_value(entity_id, expected_entity)?;
+            compare_value(document_id, expected_document)?;
+        }
+        if compare_optional_text(field, expected_field, byte)? {
+            *payload = PayloadPart::Second;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    if compare_bytes(text.as_bytes(), expected_text.as_bytes(), byte)? {
+        compare_value(metadata, expected_metadata)?;
+        compare_value(summary_meta, expected_summary_meta)?;
+        compare_value(record_fields, expected_record_fields)?;
+        compare_value(birth_actor, expected_birth_actor)?;
+        compare_value(birth_at, expected_birth_at)?;
+        compare_value(history, expected_history)?;
+        *next += 1;
+        *byte = 0;
+        *payload = PayloadPart::First;
+    }
+    Ok(false)
+}
+
+fn compare_note_bundles(
+    actual: &[NoteReviewBundle],
+    wanted: &[NoteReviewBundle],
+    next: &mut usize,
+    byte: &mut usize,
+    payload: &mut PayloadPart,
+    state: &mut BundleComparison,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(NoteReviewBundle {
+        id,
+        waiting,
+        landed,
+        explainer,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let NoteReviewBundle {
+        id: expected_id,
+        waiting: expected_waiting,
+        landed: expected_landed,
+        explainer: expected_explainer,
+    } = &wanted[*next];
+    match state.part {
+        BundlePart::Waiting => {
+            if state.member == 0 && *byte == 0 && *payload == PayloadPart::First {
+                compare_value(id, expected_id)?;
+            }
+            if compare_note_forks(waiting, expected_waiting, &mut state.member, byte, payload)? {
+                state.part = BundlePart::Landed;
+                state.member = 0;
+                *byte = 0;
+                *payload = PayloadPart::First;
+            }
+        }
+        BundlePart::Landed => {
+            if compare_rows(landed, expected_landed, &mut state.member)? {
+                state.part = BundlePart::Explainer;
+                state.member = 0;
+                *byte = 0;
+            }
+        }
+        BundlePart::Explainer => {
+            if compare_bytes(explainer.as_bytes(), expected_explainer.as_bytes(), byte)? {
+                *next += 1;
+                *byte = 0;
+                *payload = PayloadPart::First;
+                *state = BundleComparison::default();
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn compare_note_forks(
+    actual: &[NoteFork],
+    wanted: &[NoteFork],
+    next: &mut usize,
+    byte: &mut usize,
+    payload: &mut PayloadPart,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(NoteFork {
+        note,
+        fork,
+        parent,
+        frontier,
+        recovery_merge,
+        actor,
+        rewrite,
+        proposal,
+        decided,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let NoteFork {
+        note: expected_note,
+        fork: expected_fork,
+        parent: expected_parent,
+        frontier: expected_frontier,
+        recovery_merge: expected_recovery_merge,
+        actor: expected_actor,
+        rewrite: expected_rewrite,
+        proposal: expected_proposal,
+        decided: expected_decided,
+    } = &wanted[*next];
+    if *payload == PayloadPart::First {
+        if *byte == 0 {
+            compare_value(note, expected_note)?;
+            compare_value(fork, expected_fork)?;
+            compare_value(parent, expected_parent)?;
+        }
+        if compare_bytes(frontier, expected_frontier, byte)? {
+            *payload = PayloadPart::Second;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    match (recovery_merge, expected_recovery_merge) {
+        (Some((parent, merged)), Some((expected_parent, expected_merged))) => {
+            if *payload == PayloadPart::Second {
+                if compare_bytes(parent.as_bytes(), expected_parent.as_bytes(), byte)? {
+                    *payload = PayloadPart::Third;
+                    *byte = 0;
+                }
+                return Ok(false);
+            }
+            if !compare_bytes(merged.as_bytes(), expected_merged.as_bytes(), byte)? {
+                return Ok(false);
+            }
+        }
+        (None, None) => {}
+        _ => compare_value(
+            &recovery_merge.is_some(),
+            &expected_recovery_merge.is_some(),
+        )?,
+    }
+    compare_value(actor, expected_actor)?;
+    compare_value(rewrite, expected_rewrite)?;
+    compare_value(proposal, expected_proposal)?;
+    compare_value(decided, expected_decided)?;
+    *next += 1;
+    *byte = 0;
+    *payload = PayloadPart::First;
+    Ok(false)
+}
+
+fn compare_head_receipts(
+    actual: &[CanonicalHeadMove],
+    wanted: &[CanonicalHeadMove],
+    next: &mut usize,
+    byte: &mut usize,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(CanonicalHeadMove {
+        id,
+        entity_id,
+        receipt,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let CanonicalHeadMove {
+        id: expected_id,
+        entity_id: expected_entity,
+        receipt: expected_receipt,
+    } = &wanted[*next];
+    if *byte == 0 {
+        compare_value(id, expected_id)?;
+        compare_value(entity_id, expected_entity)?;
+    }
+    if compare_bytes(receipt, expected_receipt, byte)? {
+        *next += 1;
+        *byte = 0;
+    }
+    Ok(false)
+}
+
+fn compare_optional_text(
+    actual: &Option<String>,
+    wanted: &Option<String>,
+    next: &mut usize,
+) -> Result<bool> {
+    match (actual, wanted) {
+        (Some(actual), Some(wanted)) => compare_bytes(actual.as_bytes(), wanted.as_bytes(), next),
+        (None, None) => Ok(true),
+        _ => {
+            compare_value(&actual.is_some(), &wanted.is_some())?;
+            Ok(false)
+        }
+    }
+}
+
+fn compare_bytes(actual: &[u8], wanted: &[u8], next: &mut usize) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    if let Some(value) = actual.get(*next) {
+        compare_value(value, &wanted[*next])?;
+        *next += 1;
+    }
+    Ok(*next == actual.len())
 }
 
 fn compare_rows<T: PartialEq>(actual: &[T], wanted: &[T], next: &mut usize) -> Result<bool> {
