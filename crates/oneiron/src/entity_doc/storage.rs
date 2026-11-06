@@ -17,6 +17,8 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod body_admission;
+pub(crate) use body_admission::resolve_record_body_with_utf8_admission;
 mod history;
 mod repo_index;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
