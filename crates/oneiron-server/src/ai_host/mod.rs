@@ -84,6 +84,7 @@ mod turn_actions;
 pub(crate) use turn_actions::action_reader;
 mod turn_program;
 mod turn_program_host;
+mod turn_wake;
 mod turns;
 pub(crate) mod waves;
 mod weave_lens;
@@ -148,6 +149,9 @@ pub struct AiHandle {
     /// Dreamer's passes ask their typed questions through it, and the
     /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
+    /// Each vault's landed turns waiting for its turn-wake worker's next
+    /// round (FIX 14873).
+    turn_wakes: Arc<turn_wake::TurnWakes>,
     /// The installed Coach-heal worker's real publisher and served runtime.
     coach_heal_wake: Arc<OnceLock<coach_heal::WakeHost>>,
     /// The runtime recorded by the actual host Coach worker installation.
