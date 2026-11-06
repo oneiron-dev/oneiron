@@ -201,6 +201,7 @@ pub(super) fn scrub_local_only_carriers(
     }
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -336,6 +337,7 @@ pub(super) fn scrub_local_claim_carriers(
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, ids)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -439,6 +441,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         map_delete(&entities, raw_key)?;
     }
     crate::sync::row_birth::drop_orphan_births(doc)?;
+    crate::sync::origin_positions::drop_unbound(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
@@ -484,6 +487,7 @@ pub(super) fn scrub_redacted_attribution_carriers(
     }
     if !keys.is_empty() {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(!keys.is_empty())

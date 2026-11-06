@@ -25,6 +25,9 @@ pub(crate) struct OriginRow {
     pub(crate) kind: u8,
     pub(crate) facet: EntityId,
     pub(crate) logical_digest: [u8; 32],
+    /// The actual stored native birth, when known. None remains unknown;
+    /// the metadata header alone is not a universal incarnation proof.
+    pub(crate) birth_digest: Option<[u8; 32]>,
     pub(crate) file_reference: Option<Vec<u8>>,
 }
 
@@ -221,11 +224,19 @@ fn row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Opt
     } else {
         (*blake3::hash(&raw).as_bytes(), None)
     };
+    let birth_digest = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, id)?
+        .map(|birth| {
+            rmp_serde::to_vec_named(&birth)
+                .map(|bytes| *blake3::hash(&bytes).as_bytes())
+                .map_err(|_| Error::InvalidConfig("a row birth does not encode".into()))
+        })
+        .transpose()?;
     Ok(Some(OriginRow {
         id: *id,
         kind: header.entity_type,
         facet,
         logical_digest,
+        birth_digest,
         file_reference,
     }))
 }

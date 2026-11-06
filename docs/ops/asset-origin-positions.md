@@ -17,7 +17,10 @@ The facts bind the entity id, actual kind, birth facet, and BLAKE3 of the whole
 logical row, metadata header included. An ASSET on the file plane also binds
 the native descriptor-backed `AssetBodyRef`. Its complete logical body is
 streamed through the native checked body reader under the snapshot's body
-pin. A manifest or digest string alone is not the body proof.
+pin. A manifest or digest string alone is not the body proof. Each row also
+records the digest of its actual stored native birth when one exists. An
+absent birth stays unknown; the header alone is not a universal incarnation
+proof.
 
 An ASSET_TEXT captures its complete sorted, distinct native `DerivedFrom`
 source set. Every source must be a live ASSET under the same birth facet,
@@ -32,9 +35,18 @@ transaction. It does not install or replace a scope stamp.
 
 ## Not activated
 
+The optional `origin_positions` lifecycle helpers copy values only beside
+identical owner bytes and native file references in the existing own-machine
+projection. Foreign copies do not call them. Native owner-removal and egress
+scrub paths remove unbound values within their existing pin and bridge commit.
+Checkpoint capture registers the optional root and files each entire value as
+row-owned payload, with its actual source rows as dependencies. Hashes and
+scope fields are not plaintext skeleton structure. A facet id is a position,
+not necessarily a stored row, so it is not an invented restore dependency.
+
 The same-vault carrier still needs source publication into the real window,
-paired-row selection and erasure, checkpoint ownership, and an authenticated
-success hook. Its dedicated importer must bind the exact admitted update,
+canonical/birth-erasure refresh, and an authenticated success hook. Its
+dedicated importer must bind the exact admitted update,
 exclude native peer-origin rows, recheck the original proven machine key in
 its writer, and keep conflicting prior positions unchanged. A connection's
 own-device proof is not an origin writer or a read grant.
