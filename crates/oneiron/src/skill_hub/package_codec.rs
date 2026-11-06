@@ -115,6 +115,16 @@ impl Vault {
     ) -> Result<Option<HubPackage>> {
         runtime_skill_package_in_read(&self.store.read(), txn, entity, record)
     }
+    /// The PACKAGE-first read and the sources it actually consulted.
+    pub(crate) fn runtime_skill_package_sourced_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &crate::skill::SkillRecord,
+    ) -> Result<(Option<HubPackage>, Option<Vec<EntityId>>)> {
+        runtime_skill_package_sourced_in_read(&self.store.read(), txn, entity, record)
+    }
+
     /// The replicated carrier ASSET a runtime load of `entity`'s package read
     /// its bytes from, on the load's snapshot (FIX 7017): `None` while the
     /// local sidecar holds them, which [`Self::runtime_skill_package_in_txn`]
@@ -214,20 +224,20 @@ impl Vault {
 /// sidecar is absent after sync. Exact tree hash plus skill id, version
 /// and description must match the stored record; anything else fails
 /// closed instead of presenting near or foreign bytes as this skill.
-fn hub_package_from_carrier_in_read(
+fn hub_package_from_carrier_sourced_in_read(
     read: &crate::store::StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
     record: &crate::skill::SkillRecord,
-) -> Result<Option<HubPackage>> {
+) -> Result<(Option<HubPackage>, Option<Vec<EntityId>>)> {
     let Some(hash) = record.content_hash else {
-        return Ok(None);
+        return Ok((None, Some(Vec::new())));
     };
     let carrier = super::source_carrier::source_carrier_id(entity, &hash)?;
-    let Some((holder, package)) =
-        super::source_carrier::read_source_carrier_in_read(read, txn, &carrier)?
-    else {
-        return Ok(None);
+    let (carried, sources) =
+        super::source_carrier::read_source_carrier_sourced_in_read(read, txn, &carrier)?;
+    let Some((holder, package)) = carried else {
+        return Ok((None, sources));
     };
     if holder != *entity
         || package.content_hash()? != hash
@@ -239,7 +249,7 @@ fn hub_package_from_carrier_in_read(
     {
         return Err(invalid("replicated source differs from its native skill"));
     }
-    Ok(Some(package))
+    Ok((Some(package), sources))
 }
 
 /// Exact package content on one canonical or composed snapshot; not a read grant.
@@ -249,9 +259,19 @@ pub(crate) fn runtime_skill_package_in_read(
     entity: &EntityId,
     record: &crate::skill::SkillRecord,
 ) -> Result<Option<HubPackage>> {
+    Ok(runtime_skill_package_sourced_in_read(read, txn, entity, record)?.0)
+}
+
+/// The same read; a stored PACKAGE has no complete EntityId body source set.
+pub(crate) fn runtime_skill_package_sourced_in_read(
+    read: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    record: &crate::skill::SkillRecord,
+) -> Result<(Option<HubPackage>, Option<Vec<EntityId>>)> {
     let package = match PACKAGE.get(read, txn, entity)? {
         Some(package) => package,
-        None => return hub_package_from_carrier_in_read(read, txn, entity, record),
+        None => return hub_package_from_carrier_sourced_in_read(read, txn, entity, record),
     };
     super::source_custody::check_source_custody_in_read(
         read,
@@ -268,7 +288,7 @@ pub(crate) fn runtime_skill_package_in_read(
     {
         return Err(invalid("runtime package differs from the admitted skill"));
     }
-    Ok(Some(package))
+    Ok((Some(package), None))
 }
 
 /// Payload erasure shared by physical purge and shell-preserving SoftErase.
