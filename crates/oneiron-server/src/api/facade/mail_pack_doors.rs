@@ -1,4 +1,5 @@
-//! `vault.mail.pack.install`, `vault.mail.sources.sync` and `vault.mail.reply.approve` on a served vault
+//! `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and
+//! `vault.mail.reply.approve` on a served vault
 //! (FIX 12559): the owner installs the engine's own Mail & Calendar pack, and
 //! runs one import step of a source, under the proof `/v1/owner` takes from
 //! the request. The generated HTTP and MCP dispatchers both enter here; an
@@ -7,7 +8,8 @@
 use std::sync::Arc;
 
 use oneiron::mail_pack::{
-    MailReplyApproveRequest, MailReplyDraftView, MailSourceSyncRequest, MailSyncReport,
+    MailReplyApproveRequest, MailReplyDraftView, MailSearchReport, MailSourceSearchRequest,
+    MailSourceSyncRequest, MailSyncReport,
 };
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
@@ -48,6 +50,24 @@ pub(crate) async fn vault_mail_sources_sync(
     })
     .await
     .map_err(|_| internal("vault.mail.sources.sync"))?
+}
+
+/// `vault.mail.sources.search` (fix list row 15424): the owner searches a
+/// mailbox they read at its provider, under the proof `/v1/owner` takes
+/// from the request, on the blocking pool, as the provider wires are
+/// blocking HTTP.
+pub(crate) async fn vault_mail_sources_search(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MailSourceSearchRequest,
+) -> MemoryResult<MailSearchReport> {
+    let owner = owner_proof(auth, server, "vault.mail.sources.search")?;
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || -> MemoryResult<MailSearchReport> {
+        server.vault().mail_source_search(&owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.mail.sources.search"))?
 }
 
 /// `vault.mail.reply.approve` (FIX 15420): the owner approves one reviewed

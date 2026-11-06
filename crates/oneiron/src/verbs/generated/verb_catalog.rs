@@ -1253,6 +1253,7 @@ pub enum AgentVerb {
     VaultMailSourcesSyncStatus,
     VaultMailSourcesImportMbox,
     VaultMailSourcesSync,
+    VaultMailSourcesSearch,
     VaultMailInbox,
     VaultMailThreadsRead,
     VaultMailAttachmentsOpen,
@@ -2547,6 +2548,7 @@ impl AgentVerb {
         Self::VaultMailSourcesSyncStatus,
         Self::VaultMailSourcesImportMbox,
         Self::VaultMailSourcesSync,
+        Self::VaultMailSourcesSearch,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
         Self::VaultMailAttachmentsOpen,
@@ -3878,6 +3880,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
             Self::VaultMailSourcesImportMbox => "vault.mail.sources.import_mbox",
             Self::VaultMailSourcesSync => "vault.mail.sources.sync",
+            Self::VaultMailSourcesSearch => "vault.mail.sources.search",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailAttachmentsOpen => "vault.mail.attachments.open",
@@ -5152,6 +5155,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSyncStatus
                 | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
+                | Self::VaultMailSourcesSearch
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailAttachmentsOpen
@@ -6475,6 +6479,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSyncStatus
                 | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
+                | Self::VaultMailSourcesSearch
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailAttachmentsOpen
@@ -7892,6 +7897,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSyncStatus
                 | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
+                | Self::VaultMailSourcesSearch
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailAttachmentsOpen
@@ -8668,6 +8674,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
+                | Self::VaultMailSourcesSearch
                 | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::ConnectorAnswer
@@ -10000,6 +10007,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSyncStatus => &["spec"],
             Self::VaultMailSourcesImportMbox => &["spec"],
             Self::VaultMailSourcesSync => &["spec"],
+            Self::VaultMailSourcesSearch => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailAttachmentsOpen => &["spec"],
@@ -11295,6 +11303,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSyncStatus => &["spec"],
             Self::VaultMailSourcesImportMbox => &["spec"],
             Self::VaultMailSourcesSync => &["spec"],
+            Self::VaultMailSourcesSearch => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailAttachmentsOpen => &["spec"],
@@ -15004,6 +15013,9 @@ impl AgentVerb {
             }
             Self::VaultMailSourcesSync => {
                 "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."
+            }
+            Self::VaultMailSourcesSearch => {
+                "The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."
             }
             Self::VaultMailInbox => {
                 "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."

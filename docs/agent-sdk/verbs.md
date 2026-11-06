@@ -1233,6 +1233,7 @@ both bindings and their export-census tests in one change.
 - `vault.mail.sources.sync_status`
 - `vault.mail.sources.import_mbox`
 - `vault.mail.sources.sync`
+- `vault.mail.sources.search`
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
 - `vault.mail.attachments.open`

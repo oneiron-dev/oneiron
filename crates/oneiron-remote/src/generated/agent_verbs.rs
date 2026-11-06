@@ -3806,6 +3806,9 @@ impl OneironClient {
                 "vault.mail.sources.sync" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailSyncReport,
                 >(client, verb, &input),
+                "vault.mail.sources.search" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailSearchReport,
+                >(client, verb, &input),
                 "vault.mail.inbox" => {
                     remote_agent_verb_output::<oneiron::mail_pack::MailInboxPage>(
                         client, verb, &input,
@@ -19041,6 +19044,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mail.sources.sync", value)
+    }
+    pub fn vault_mail_sources_search(
+        &self,
+        input: &oneiron::mail_pack::MailSourceSearchRequest,
+    ) -> Result<oneiron::mail_pack::MailSearchReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.search", value)
     }
     pub fn vault_mail_inbox(
         &self,

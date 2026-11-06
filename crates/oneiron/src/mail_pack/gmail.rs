@@ -139,6 +139,36 @@ impl<'v> HttpGmailMailWire<'v> {
     }
 }
 
+impl HttpGmailMailWire<'_> {
+    /// One page of the ids `search` (Gmail's `q`) finds, at most `limit`.
+    fn listed_ids(
+        &self,
+        source: &MailSyncSource,
+        search: String,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        let mut params = vec![("maxResults", limit.to_string()), ("q", search)];
+        if let Some(page) = page {
+            params.push(("pageToken", page.to_owned()));
+        }
+        let listed = self
+            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
+            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
+        let mut messages = Vec::new();
+        for entry in array(&listed, "messages") {
+            messages.push(MailMessageRef {
+                provider_id: plain_id(entry.get("id"))?,
+                thread_id: text_of(entry.get("threadId")),
+            });
+        }
+        Ok(MailIdPage {
+            messages,
+            next_page: text_of(listed.get("nextPageToken")),
+        })
+    }
+}
+
 impl MailProviderWire for HttpGmailMailWire<'_> {
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
         self.profile(source)?
@@ -158,27 +188,19 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             Some(newer_than) => format!("-in:drafts after:{newer_than}"),
             None => "-in:drafts".to_owned(),
         };
-        let mut params = vec![
-            ("maxResults", GMAIL_LIST_PAGE_SIZE.to_string()),
-            ("q", search),
-        ];
-        if let Some(page) = page {
-            params.push(("pageToken", page.to_owned()));
-        }
-        let listed = self
-            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
-            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
-        let mut messages = Vec::new();
-        for entry in array(&listed, "messages") {
-            messages.push(MailMessageRef {
-                provider_id: plain_id(entry.get("id"))?,
-                thread_id: text_of(entry.get("threadId")),
-            });
-        }
-        Ok(MailIdPage {
-            messages,
-            next_page: text_of(listed.get("nextPageToken")),
-        })
+        self.listed_ids(source, search, GMAIL_LIST_PAGE_SIZE, page)
+    }
+
+    fn search_page(
+        &self,
+        source: &MailSyncSource,
+        query: &str,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        // The caller's own operators, grouped, beside the listing's: trash
+        // and spam are left out by Gmail's default, drafts by the query.
+        self.listed_ids(source, format!("-in:drafts ({query})"), limit, page)
     }
 
     fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
