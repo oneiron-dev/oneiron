@@ -2759,8 +2759,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.weave.lens": { description: "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.link.wrong": { description: "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.owner.link.wrong": { description: "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.weave.item.wrong": { description: "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.weave.owner.item.wrong": { description: "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.weave.item.wrong": { description: "A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.weave.owner.item.wrong": { description: "The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.enqueue": { description: "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.schedules.list": { description: "Lists every reader's daily or weekly weave digest schedule under the owner's proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.schedules.put": { description: "Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3234,7 +3234,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.proposal_settle": { description: "Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.proposal_settlement": { description: "Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.oplog": { description: "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "execute_code": { description: "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "execute_code": { description: "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.model_heal_count": { description: "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.type_diagnostics": { description: "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.resolve": { description: "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4399,7 +4399,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             wrong: (input: Facade.WeaveWrongLinkRequest, options?: O): FacadeReturns<"vault.weave.owner.link.wrong">[K] => invoke("vault.weave.owner.link.wrong", input, options, newInvocation()),
           },
           item: {
-            /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+            /** The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
             wrong: (input: Facade.WeaveWrongItemRequest, options?: O): FacadeReturns<"vault.weave.owner.item.wrong">[K] => invoke("vault.weave.owner.item.wrong", input, options, newInvocation()),
           },
           digest: {
@@ -4408,7 +4408,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           },
         },
         item: {
-          /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+          /** A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays. */
           wrong: (input: Facade.WeaveWrongItemRequest, options?: O): FacadeReturns<"vault.weave.item.wrong">[K] => invoke("vault.weave.item.wrong", input, options, newInvocation()),
         },
         /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
@@ -7099,7 +7099,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       /** Count lines, words and bytes of a visible file at the mounted reference. */
       wc: (input: Facade.GraphFsLinkRequest, options?: O): FacadeReturns<"graph_fs.wc">[K] => invoke("graph_fs.wc", input, options, newInvocation()),
     },
-    /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
+    /** Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
     execute_code: (input: Facade.ForeignCodeRunRequest, options?: O): FacadeReturns<"execute_code">[K] => invoke("execute_code", input, options, newInvocation()),
     /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
     can: (input: Facade.TaskCanAskRequest, options?: O): FacadeReturns<"can">[K] => invoke("can", input, options, newInvocation()),
