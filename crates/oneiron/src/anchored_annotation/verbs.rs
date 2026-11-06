@@ -106,7 +106,7 @@ impl Memory<'_> {
             .repo_ref
             .commit_hash()
             .ok_or(Error::InvariantViolation("a repo_ref names its commit"))?;
-        let sight = self.secret_sight()?;
+        let sight = self.code_file_sight()?;
         let units = match input.path.as_deref() {
             None => {
                 let mut units = Vec::new();
@@ -190,8 +190,8 @@ impl Memory<'_> {
     }
 
     /// The words of an exact code anchor, read from the file its hash names
-    /// through the caller's file sight (FIX 7905). A code artifact takes only
-    /// a code locator at [`CODE_ANCHOR_VERSION`].
+    /// through the caller's code file sight (FIX 7905). A code artifact takes
+    /// only a code locator at [`CODE_ANCHOR_VERSION`].
     fn code_anchor_view(&self, anchor: &Anchor) -> MemoryResult<AnnotationAnchorView> {
         require_code_anchor_version(Some(anchor.version))?;
         if !matches!(anchor.locator, Locator::Code { .. }) {
@@ -208,7 +208,7 @@ impl Memory<'_> {
                 self.vault(),
                 &anchor.artifact_id,
                 &anchor.locator,
-                self.secret_sight()?,
+                self.code_file_sight()?,
             )?
         } else {
             None
@@ -502,6 +502,18 @@ impl Memory<'_> {
 /// A code artifact's anchor version is [`CODE_ANCHOR_VERSION`]; a request
 /// may leave it out.
 impl Memory<'_> {
+    /// How the caller reads a code file's bytes, as the snapshot file face
+    /// reads them: the stored bytes only for the vault owner's key on a
+    /// handle whose repo reads are not masked; masked otherwise, a file a
+    /// repo mark covers as its masked copy (FIX 8964). An MCP tool call or a
+    /// code run on the owner's key reads masked.
+    fn code_file_sight(&self) -> MemoryResult<crate::secret_custody::SecretSight> {
+        if self.repo_reads_masked()? {
+            return Ok(crate::secret_custody::SecretSight::Masked);
+        }
+        self.secret_sight()
+    }
+
     /// Whether the caller's credential reads the ASSET row that holds a code
     /// file's bytes, as the code snapshot doors require of each file they
     /// read (`codebase_readable`, FIX 7905). Absent and withheld read alike.
@@ -512,7 +524,7 @@ impl Memory<'_> {
     }
 
     /// A code file's bytes by its hash, through the caller's row read and
-    /// file sight; `None` when the caller does not read its row or the
+    /// code file sight; `None` when the caller does not read its row or the
     /// ASSET is gone.
     fn code_file_bytes(
         &self,

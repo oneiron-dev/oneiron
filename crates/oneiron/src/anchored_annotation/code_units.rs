@@ -69,14 +69,27 @@ fn file_hash_bytes(hex: &str) -> Option<FileHash> {
 }
 
 /// The bytes of the snapshot ASSET `hash` names, as `sight` reads them, in
-/// the caller's `txn`. `None` when that ASSET is gone.
+/// the caller's `txn`, as the snapshot file face reads a file: the owner
+/// reads the stored bytes; any other sight reads a file a repo mark covers
+/// as its masked copy, before its bytes are read, and every other file
+/// masked as it is read (FIX 7608, FIX 8964). `None` when that ASSET is
+/// gone.
 fn file_bytes_by_hash_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     hash: &FileHash,
     sight: SecretSight,
 ) -> Result<Option<Vec<u8>>> {
-    match read_asset_blob_sighted_in_txn(vault, txn, hash, sight) {
+    let marked = if sight == SecretSight::Owner {
+        Ok(None)
+    } else {
+        vault.repo_marked_asset_copy_in_txn(txn, hash)
+    };
+    let read = marked.and_then(|marked| match marked {
+        Some(copy) => Ok(copy.into_bytes()),
+        None => read_asset_blob_sighted_in_txn(vault, txn, hash, sight),
+    });
+    match read {
         Ok(bytes) => Ok(Some(bytes)),
         Err(Error::EntityNotFound) => Ok(None),
         Err(error) => Err(error),

@@ -325,12 +325,12 @@ impl Vault {
             custody_report,
         )?;
         wtxn.commit()?;
-        // FIX 7905: annotation threads on this code artifact follow its new
-        // tree, in a grouped write of their own once the snapshot stands. A
-        // sweep that fails leaves them on the old commit, still reading
-        // their words by file hash, and the snapshot put stands.
+        // FIX 7905: annotation threads on this code artifact follow the tree
+        // that stands for it, read in a grouped write of their own once the
+        // snapshot commits. A sweep that fails leaves them on the old commit,
+        // still reading their words by file hash, and the snapshot put stands.
         if let Err(error) = self.with_write_txn_grouped(|wtxn| {
-            self.reanchor_code_threads_in_txn(wtxn, code_artifact_id, &filtered_snapshot)
+            self.reanchor_code_threads_in_txn(wtxn, code_artifact_id)
         }) {
             tracing::warn!(%error, "code annotation threads did not follow the new snapshot");
         }
