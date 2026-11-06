@@ -14,7 +14,7 @@
 //! the world on another machine (`sync::ingest::entity`). No tombstone,
 //! marker that travels or Loro operation is written.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use heed::{RoTxn, RwTxn};
 
@@ -22,7 +22,7 @@ use super::content_world::{ContentWorld, content_world_in};
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -110,6 +110,14 @@ fn discard_window_rows(
 ) -> Result<Vec<EntityId>> {
     let mut held = Vec::new();
     for batch in ids.chunks(BASE_ROW_BATCH) {
+        // A staged import's confirmation reads its receipt, then imports: a
+        // discard that may cancel that receipt waits for it, and holds no
+        // window while it waits (part E, E4 = A).
+        let _confirming = vault
+            .store
+            .staged_import_confirm_lock
+            .lock()
+            .map_err(|_| Error::InvariantViolation("staged import lock poisoned"))?;
         vault.unload_idle_window(window)?;
         let step = vault.while_window_closed(window, || {
             vault.with_write_txn_grouped(|txn| {
@@ -133,6 +141,21 @@ fn discard_window_rows(
                 )?;
                 for id in &step.removed {
                     mark_discarded_in_txn(&vault.store, txn, *id, world)?;
+                }
+                // The window's persisted copy still holds them: its
+                // projection is owed, and a Pending staged import that holds
+                // them goes, to be staged again (part E, E4 = A).
+                if !step.removed.is_empty() {
+                    // Every BASE window, not this one alone: their values
+                    // ride off their month too (a review bundle's member
+                    // rows beside each NOTE it holds).
+                    crate::sync::window::mark_base_windows_owed_in_txn(&vault.store, txn)?;
+                    let removed: BTreeSet<EntityId> = step.removed.iter().copied().collect();
+                    crate::batch::export::cancel_staged_imports_holding_in_txn(
+                        &vault.store,
+                        txn,
+                        &removed,
+                    )?;
                 }
                 Ok(Some(step))
             })
@@ -239,12 +262,25 @@ pub(crate) fn discarded_world_in(
         .and_then(|bytes| EntityId::from_bytes(bytes).ok()))
 }
 
-/// Forgets the discard's mark of `id`: its row may come back.
+/// Every BASE row the owner's discard took and still marks.
+pub(crate) fn discarded_rows_in(store: &Store, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityId>> {
+    Ok(DISCARDED_WORLD_ROW
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(HexId(id), _)| id)
+        .collect())
+}
+
+/// Forgets the discard's mark of `id`: its row may come back. A BASE window
+/// that a projection already rewrote holds deletes where the home holds the
+/// row's values, so each is fetched whole again (FIX 14534 part E).
 pub(crate) fn forget_discarded_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
-    DISCARDED_WORLD_ROW.delete(store, txn, &HexId(id))?;
+    if DISCARDED_WORLD_ROW.delete(store, txn, &HexId(id))? {
+        crate::sync::window::resync_projected_windows_in_txn(store, txn)?;
+    }
     Ok(())
 }

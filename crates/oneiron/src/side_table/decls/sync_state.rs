@@ -68,6 +68,11 @@ side_tables! {
     /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
     /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
     AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
+    /// A BASE window the owner's discard of a world copy took rows from (FIX 14534 part E): a
+    /// first byte of 1 while its persisted copy still waits for its projection, 0 once
+    /// installed, then the version vector the last projection kept, the floor below which no
+    /// send of the window goes to the home. Key: window key.
+    SYNC_BASE_WINDOW_DISCARD: SyncState b"bd:w:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
