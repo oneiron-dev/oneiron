@@ -110,6 +110,94 @@ pub(super) fn read_repair_task_in_txn(
     })
 }
 
+/// Source reconstruction and case admission after the caller's write authority
+/// has been checked in this same transaction. The lane grants source reads only.
+pub(super) fn record_repair_case_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    lane: &ScopedRead<'_>,
+    id: EntityId,
+    source_pin: &AgUiFileReadInput,
+    input: &EvalRepairCaseRequest,
+    now: u64,
+) -> Result<EvalRepairCaseRead> {
+    let source = &input.recipe.source;
+    let read = lane.read_projected_in_txn(txn, &[PointRead::id(id)], None, |snapshot, rows| {
+        project_ag_ui_file(vault, snapshot, id, source_pin, rows)
+    })?;
+    let Some((view, source_at)) = read.value else {
+        return Ok(EvalRepairCaseRead {
+            case: None,
+            receipt: read.receipt,
+        });
+    };
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
+        return Err(Error::InvalidClaimBody("Repair source was erased"));
+    }
+    let task = compile_repair_task(&view, source)?;
+    let recipe = EvalRepairCaseRecipe {
+        source: task.source.clone(),
+        task_hash: task.task_hash,
+    };
+    if recipe.task_hash != input.recipe.task_hash {
+        return Err(Error::InvalidClaimBody("Repair task digest changed"));
+    }
+    let root = task.family_root();
+    let family = assign_family_in_txn(
+        vault,
+        txn,
+        &task.source.seat,
+        &BTreeSet::from([root.clone()]),
+        input.purpose,
+        now,
+    )?;
+    for case in rows_in_txn::<EvalCase>(vault, txn, CASE_PREFIX)? {
+        if case.family == family.id
+            && case.seat == task.source.seat
+            && case.kind == DerivationKind::Repair
+            && case.repair_task.as_ref() == Some(&recipe)
+            && case.receipts.len() == 1
+            && case.receipts.first() == Some(&root)
+            && case.parents.is_empty()
+            && case.source_rows.as_deref() == Some(task.source_rows.as_slice())
+        {
+            return Ok(EvalRepairCaseRead {
+                case: Some(case),
+                receipt: read.receipt,
+            });
+        }
+    }
+    let mut case = record_case_in_txn(
+        vault,
+        txn,
+        &EvalCaseDraft {
+            seat: task.source.seat,
+            kind: DerivationKind::Repair,
+            receipts: vec![root],
+            parents: Vec::new(),
+            stratum: None,
+            draw_probability: None,
+            // The admitted claim's capture time, not an app event timestamp.
+            source_at,
+        },
+        Some(&task.source_rows),
+        now,
+    )?;
+    case.repair_task = Some(recipe.clone());
+    put_case_in_txn(vault, txn, &mut case)?;
+    if case.repair_task.as_ref() != Some(&recipe)
+        || case.source_rows.as_deref() != Some(task.source_rows.as_slice())
+    {
+        return Err(Error::InvalidClaimBody(
+            "Repair recipe changed during admission",
+        ));
+    }
+    Ok(EvalRepairCaseRead {
+        case: Some(case),
+        receipt: read.receipt,
+    })
+}
+
 impl Memory<'_> {
     /// Record an explicit owner-requested case from this handle's ordinary scoped
     /// read. Owner proof permits the eval write, never a broader source read.
@@ -132,81 +220,7 @@ impl Memory<'_> {
         let now = vault.now_recorded_at();
         Ok(vault.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(vault, txn)?;
-            let read =
-                lane.read_projected_in_txn(txn, &[PointRead::id(id)], None, |snapshot, rows| {
-                    project_ag_ui_file(vault, snapshot, id, &source_pin, rows)
-                })?;
-            let Some((view, source_at)) = read.value else {
-                return Ok(EvalRepairCaseRead {
-                    case: None,
-                    receipt: read.receipt,
-                });
-            };
-            if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
-                return Err(Error::InvalidClaimBody("Repair source was erased"));
-            }
-            let task = compile_repair_task(&view, source)?;
-            let recipe = EvalRepairCaseRecipe {
-                source: task.source.clone(),
-                task_hash: task.task_hash,
-            };
-            if recipe.task_hash != input.recipe.task_hash {
-                return Err(Error::InvalidClaimBody("Repair task digest changed"));
-            }
-            let root = task.family_root();
-            let family = assign_family_in_txn(
-                vault,
-                txn,
-                &task.source.seat,
-                &BTreeSet::from([root.clone()]),
-                input.purpose,
-                now,
-            )?;
-            for case in rows_in_txn::<EvalCase>(vault, txn, CASE_PREFIX)? {
-                if case.family == family.id
-                    && case.seat == task.source.seat
-                    && case.kind == DerivationKind::Repair
-                    && case.repair_task.as_ref() == Some(&recipe)
-                    && case.receipts.len() == 1
-                    && case.receipts.first() == Some(&root)
-                    && case.parents.is_empty()
-                    && case.source_rows.as_deref() == Some(task.source_rows.as_slice())
-                {
-                    return Ok(EvalRepairCaseRead {
-                        case: Some(case),
-                        receipt: read.receipt,
-                    });
-                }
-            }
-            let mut case = record_case_in_txn(
-                vault,
-                txn,
-                &EvalCaseDraft {
-                    seat: task.source.seat,
-                    kind: DerivationKind::Repair,
-                    receipts: vec![root],
-                    parents: Vec::new(),
-                    stratum: None,
-                    draw_probability: None,
-                    // The admitted claim's capture time, not an app event timestamp.
-                    source_at,
-                },
-                Some(&task.source_rows),
-                now,
-            )?;
-            case.repair_task = Some(recipe.clone());
-            put_case_in_txn(vault, txn, &mut case)?;
-            if case.repair_task.as_ref() != Some(&recipe)
-                || case.source_rows.as_deref() != Some(task.source_rows.as_slice())
-            {
-                return Err(Error::InvalidClaimBody(
-                    "Repair recipe changed during admission",
-                ));
-            }
-            Ok(EvalRepairCaseRead {
-                case: Some(case),
-                receipt: read.receipt,
-            })
+            record_repair_case_in_txn(vault, txn, &lane, id, &source_pin, input, now)
         })?)
     }
 }

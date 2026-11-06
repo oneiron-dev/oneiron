@@ -51,6 +51,7 @@ mod erase;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
 mod released_task;
+mod repair_authoring;
 mod repair_case;
 mod repair_nomination;
 mod repair_task;
@@ -90,6 +91,7 @@ pub use measurement::{
     eval_seat_canary,
 };
 pub use released_task::{EvalReleasedTask, EvalTaskRead};
+pub use repair_authoring::{COACH_EVAL_REPAIR_AUTHORING_FACET, EvalRepairAuthoringSource};
 pub use repair_case::{
     EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseReference,
     EvalRepairCaseRequest,
