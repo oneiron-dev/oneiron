@@ -407,6 +407,7 @@ impl Vault {
             &(),
         )?;
         put_scope_index_rows_for_snapshot(&self.store, wtxn, code_artifact_id, filtered_snapshot)?;
+        self.reanchor_code_threads_in_txn(wtxn, code_artifact_id, filtered_snapshot)?;
         Ok(())
     }
 

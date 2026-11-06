@@ -38415,6 +38415,8 @@ pub struct ArtifactUnitsRequest {
     pub artifact_ref: String,
     #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
+    #[serde(rename = "path", default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// `oneiron::anchored_annotation::wire::AnnotationLocator`.
@@ -38456,6 +38458,19 @@ pub enum AnnotationLocator {
     },
     #[serde(rename = "text")]
     Text {
+        #[serde(rename = "char_start")]
+        char_start: u64,
+        #[serde(rename = "char_end")]
+        char_end: u64,
+    },
+    #[serde(rename = "code")]
+    Code {
+        #[serde(rename = "commit")]
+        commit: String,
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "file_hash")]
+        file_hash: String,
         #[serde(rename = "char_start")]
         char_start: u64,
         #[serde(rename = "char_end")]
