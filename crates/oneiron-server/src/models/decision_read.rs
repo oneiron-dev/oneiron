@@ -82,6 +82,7 @@ const PROBABILITY_FLOOR: f64 = 1e-38;
 #[derive(Clone)]
 pub struct DecisionReadDoor {
     reader: Arc<dyn LabelReadModel>,
+    native: Option<Arc<DecisionReader>>,
     connector: PaidConnector,
     probe: Option<ProbeQuestions>,
     person_threshold: f64,
@@ -108,6 +109,7 @@ impl DecisionReadDoor {
     ) -> Self {
         Self {
             reader,
+            native: None,
             connector,
             probe,
             person_threshold,
@@ -169,6 +171,10 @@ impl DecisionReadDoor {
         Arc::clone(&self.reader)
     }
 
+    pub(crate) fn native_reader(&self) -> Option<Arc<DecisionReader>> {
+        self.native.clone()
+    }
+
     /// What each read is admitted as under a run.
     #[must_use]
     pub fn connector(&self) -> &PaidConnector {
@@ -226,7 +232,7 @@ pub(super) fn bind(
         .ok_or_else(|| anyhow::anyhow!("decision read: no local_reasoner provider"))?;
     let model = engine_model_id(&rung.model, provider)?;
     let host = HostSlot::default();
-    let reader = DecisionReader::new(
+    let reader = Arc::new(DecisionReader::new(
         &model,
         &rung.model.model,
         &rung.model.provider,
@@ -235,13 +241,14 @@ pub(super) fn bind(
         runtime,
         Arc::clone(identities),
         Arc::clone(&host),
-    )?;
+    )?);
     let mut door = DecisionReadDoor::new(
-        Arc::new(reader),
+        reader.clone(),
         connector(provider, model.as_str())?,
         settings.recipe.probe().cloned(),
         settings.person_threshold,
     );
+    door.native = Some(reader);
     door.think_threshold = Some(settings.think_threshold);
     door.recipe = Some(Arc::clone(&settings.recipe));
     door.permitted = settings.permitted;
@@ -282,7 +289,7 @@ struct TokenIds {
     eos: u64,
 }
 
-struct DecisionReader {
+pub(crate) struct DecisionReader {
     model: String,
     /// The engine id, as the vault's model registry keys it.
     engine: ModelId,
@@ -389,7 +396,7 @@ impl DecisionReader {
         special: bool,
         release: Option<ReadRelease<'_>>,
     ) -> LlmResult<u64> {
-        let body = json!({"content": text, "add_special": false, "parse_special": special});
+        let body = tokenize_body(text, special);
         let headers = BTreeMap::new();
         let sent = async {
             match release {
@@ -437,18 +444,8 @@ impl DecisionReader {
         n_probs: u64,
         release: Option<ReadRelease<'_>>,
     ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
-        let body = json!({
-            "prompt": prompt,
-            "n_predict": 1,
-            "temperature": 0.0,
-            "cache_prompt": true,
-            "id_slot": -1,
-            "stop": [],
-            "response_fields": RESPONSE_FIELDS,
-            "n_probs": n_probs,
-            "post_sampling_probs": false,
-            "logit_bias": [[eos, EOS_BIAS]],
-        });
+        let mut body = completion_fields(prompt, n_probs);
+        body["logit_bias"] = json!([[eos, EOS_BIAS]]);
         let execution = execution_mode(&body);
         let reply = match release {
             Some((release, lease)) => self
@@ -688,6 +685,25 @@ impl LabelReadModel for DecisionReader {
         };
         self.read_with_release(request, Some((&release, lease)))
     }
+}
+
+/// The request's fixed completion fields; the paid tokenizer supplies its end-token id.
+fn completion_fields(prompt: JsonValue, n_probs: u64) -> JsonValue {
+    json!({
+        "prompt": prompt,
+        "n_predict": 1,
+        "temperature": 0.0,
+        "cache_prompt": true,
+        "id_slot": -1,
+        "stop": [],
+        "response_fields": RESPONSE_FIELDS,
+        "n_probs": n_probs,
+        "post_sampling_probs": false,
+    })
+}
+
+fn tokenize_body(text: &str, special: bool) -> JsonValue {
+    json!({"content": text, "add_special": false, "parse_special": special})
 }
 
 /// What the recipe renders for one question of a pack over `state`. The

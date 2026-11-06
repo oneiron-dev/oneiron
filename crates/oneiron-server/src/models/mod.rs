@@ -101,6 +101,7 @@ pub(crate) use broker_context::BrokerContext;
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
+pub(crate) use decision_read::DecisionReader;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
