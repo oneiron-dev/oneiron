@@ -11,6 +11,11 @@ use super::*;
 use crate::dreamer_consolidation::PreparedWake;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 
+/// The stage of an attempt the wake's frozen preparation does not hold: it
+/// ran nothing this pass, so it settles as a backlog wait, never as a
+/// selection deferral.
+pub(super) const BACKLOG_DEFERRED_STAGE: &str = "backlog_deferred";
+
 /// What one admitted attempt dispatches with: its pass, the attempt, the
 /// pass's cancellation and whether it was raised at the checkpoint, the
 /// wake's frozen preparation, the attempt's run line and its meter, and the
@@ -99,7 +104,7 @@ impl DreamerWakeDriver<'_> {
             // a backlog larger than one wake prepares: never admit it to
             // this snapshot or fall back to a newer per-attempt read. Past
             // the head, the pass ends here and the next prepares the rest.
-            stage = Some("backlog_deferred");
+            stage = Some(BACKLOG_DEFERRED_STAGE);
             backlog_left = prepared_wake.left_for_later(attempt_id);
             Ok(DreamerAttemptExecution::Deferred {
                 completed_units: 0,

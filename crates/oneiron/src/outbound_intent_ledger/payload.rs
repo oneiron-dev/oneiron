@@ -402,3 +402,17 @@ fn erase_error(error: IntentLedgerError) -> crate::Error {
         _ => crate::Error::CorruptedIndex("outbound intent ledger record"),
     }
 }
+
+/// The actor the actual stored admission envelope names, before a read door
+/// opens its request. A bare row honestly names none; the charged key is not
+/// the actor. Callers read the same live ledger row in this transaction.
+pub(crate) fn admitting_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &super::types::IntentId,
+) -> IntentLedgerResult<Option<EntityId>> {
+    let stored = get_ledger_record(vault, txn, id)?.ok_or(IntentLedgerError::InvalidRecord(
+        "outbound approval target is missing",
+    ))?;
+    Ok(StoredPayload::parse(stored.payload())?.named().actor)
+}
