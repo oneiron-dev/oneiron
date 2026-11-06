@@ -107,6 +107,9 @@ pub(super) struct PageBuilder {
     byte_cap: usize,
     max_entries: usize,
     entries: Vec<GraphFsEntry>,
+    /// Per entry, the cursor of the page right after it
+    /// ([`Self::try_push_after`]); `None` for the `_more` entry.
+    entry_cursors: Vec<Option<String>>,
     byte_count: usize,
     last_temporal_cursor: Option<TemporalCursor>,
 }
@@ -119,12 +122,17 @@ impl PageBuilder {
             byte_cap: options.page_byte_cap,
             max_entries: options.max_entries,
             entries: Vec::new(),
+            entry_cursors: Vec::new(),
             byte_count: 0,
             last_temporal_cursor: None,
         }
     }
 
-    pub(super) fn try_push(&mut self, entry: GraphFsEntry) -> bool {
+    /// Pushes `entry` when it fits, with `after`, the cursor of the page that
+    /// starts right after it in the listing's own order: a walk resumes there
+    /// once it has finished the entry, so a write before it shifts nothing
+    /// (FIX 4885).
+    pub(super) fn try_push_after(&mut self, entry: GraphFsEntry, after: String) -> bool {
         if self.entries.len() >= self.max_entries {
             return false;
         }
@@ -139,6 +147,7 @@ impl PageBuilder {
         }
         self.byte_count += cost;
         self.entries.push(entry);
+        self.entry_cursors.push(Some(after));
         true
     }
 
@@ -158,19 +167,34 @@ impl PageBuilder {
         self.last_temporal_cursor
     }
 
-    pub(super) fn finish(mut self, next_cursor: Option<String>) -> GraphFsPage {
+    pub(super) fn finish(mut self, mut next_cursor: Option<String>) -> GraphFsPage {
         if let Some(cursor) = next_cursor.clone() {
-            let more = GraphFsEntry::cursor(cursor);
-            while self.byte_count + more.byte_cost() > self.byte_cap {
+            let mut more = GraphFsEntry::cursor(cursor);
+            // The first entry always stays: dropping it would hand out a
+            // cursor past an entry no page shows. When it and the cursor
+            // together pass the cap, the page goes without its `_more` line
+            // and still hands its cursor out.
+            while self.byte_count + more.byte_cost() > self.byte_cap && self.entries.len() > 1 {
                 let Some(removed) = self.entries.pop() else {
                     break;
                 };
+                self.entry_cursors.pop();
                 self.byte_count = self.byte_count.saturating_sub(removed.byte_cost());
+                // The page now ends at the entry before: it resumes after
+                // that one, when its listing says where that is.
+                if let Some(Some(after)) = self.entry_cursors.last() {
+                    next_cursor = Some(after.clone());
+                    more = GraphFsEntry::cursor(after.clone());
+                }
             }
             if self.byte_count + more.byte_cost() <= self.byte_cap {
                 self.byte_count += more.byte_cost();
                 self.entries.push(more);
+                self.entry_cursors.push(None);
             }
+        }
+        if self.entry_cursors.iter().all(Option::is_none) {
+            self.entry_cursors.clear();
         }
         GraphFsPage {
             path: self.path,
@@ -179,6 +203,7 @@ impl PageBuilder {
             next_cursor,
             byte_count: self.byte_count,
             read_receipt: None,
+            entry_cursors: self.entry_cursors,
         }
     }
 }

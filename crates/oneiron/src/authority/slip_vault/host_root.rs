@@ -112,6 +112,7 @@ impl Vault {
             AuthorityOp::SlipMint(SlipMintAction {
                 claims,
                 renews: None,
+                minting_member: None,
             }),
             now,
         )?;
