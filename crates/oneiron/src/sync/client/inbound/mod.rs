@@ -34,6 +34,10 @@ impl SyncClient {
                 "full-window bulk transfer on federation lane",
             ));
         }
+        // A peer serves none of the home's relays (FIX 4748).
+        if self.peer_session.is_some() && crate::sync::peer_route::peer_ignores_frame(tag) {
+            return Ok(Vec::new());
+        }
         let payload = &data[1..];
         let mut responses = Vec::new();
 

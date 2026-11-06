@@ -117,6 +117,11 @@ pub struct SyncClient {
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
     pub(crate) home_peer: crate::authority::PeerMachine,
+    /// The peer this connection syncs with while its home is down (FIX 4748),
+    /// set before each connect; `None` for a session with the home. A peer
+    /// session confirms nothing: no queue or document journal clears on its
+    /// answers, and it takes none of the home's relays or roles.
+    pub(crate) peer_session: Option<crate::EntityId>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -231,6 +236,7 @@ impl SyncClient {
             leaf_key_sends: Default::default(),
             sealed_updates: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
+            peer_session: None,
             status: SyncStatus::Disconnected,
             event_tx,
         };

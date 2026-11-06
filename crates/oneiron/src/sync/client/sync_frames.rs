@@ -127,7 +127,11 @@ impl SyncClient {
                 }
             }
         }];
-        if let Some(session) = &self.config.note_session {
+        // The NOTE admission authority is the home: a peer session binds
+        // none (FIX 4748).
+        if let Some(session) = &self.config.note_session
+            && self.peer_session.is_none()
+        {
             messages.push(super::note_session::bind_frame(session)?);
         }
         messages
