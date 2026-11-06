@@ -111,14 +111,16 @@ impl AgentDispatcher<'_> {
 
     /// Opens a root as [`Self::open_root_spend_scope_in_txn`] does, or for
     /// `payer` as [`Self::open_root_spend_scope_for_payer_in_txn`] does,
-    /// funded by the owner's agent Grant `funding` proved in this same writer
-    /// (FIX 7766, [`crate::federation::SelectedOwnerAgentFundingGrant`]): the
-    /// root freezes the binding it yields. Re-opening the same root with the
-    /// same cap, payer and binding returns it; nothing falls back to an
-    /// unbound root or a default wallet.
+    /// funded by the owner's agent Grant `selected`, as the authenticated
+    /// `owner` selected it (FIX 7766): the selection proves itself in this
+    /// writer, immediately before the root is put
+    /// ([`crate::federation::SelectedOwnerAgentFundingGrant`]), and the root
+    /// freezes the binding it yields. Re-opening the same root with the same
+    /// cap, payer and binding returns it; nothing falls back to an unbound
+    /// root or a default wallet.
     #[expect(
         clippy::too_many_arguments,
-        reason = "a funded root states its launch, cap, showing, payer, funding proof and time"
+        reason = "a funded root states its launch, cap, showing, payer, owner, Grant and time"
     )]
     pub(crate) fn open_root_spend_scope_funded_in_txn(
         &self,
@@ -127,7 +129,8 @@ impl AgentDispatcher<'_> {
         maximum: DeclaredMaximum,
         shown: Option<MaximumShown>,
         payer: Option<SpendPayer>,
-        funding: &crate::federation::SelectedOwnerAgentFundingGrant,
+        owner: &crate::consent::AuthenticatedOwner,
+        selected: EntityId,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
         if let Some(payer) = &payer
@@ -135,15 +138,12 @@ impl AgentDispatcher<'_> {
         {
             return Err(invalid("the payer's consent is not bound to the payer").into());
         }
-        self.open_root_in_txn(
-            txn,
-            launch,
-            maximum,
-            shown,
-            payer,
-            Some(GrantSpendBinding::from_proof(funding)),
-            now,
-        )
+        let funding = GrantSpendBinding::from_proof(
+            &self
+                .vault
+                .selected_owner_agent_funding_grant_in_txn(&*txn, owner, selected)?,
+        );
+        self.open_root_in_txn(txn, launch, maximum, shown, payer, Some(funding), now)
     }
 
     #[expect(

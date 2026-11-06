@@ -128,13 +128,15 @@ impl<'a> AgentDispatcher<'a> {
     }
 
     /// The owner's agent Grant a dispatch is funded by (FIX 7766, Engine
-    /// 19:59 W-B), resolved in the dispatch writer `txn`: a root's the owner
-    /// selected ([`Self::funded_by`]), proved here and granting the launched
-    /// agent `target`; else the one its parent's input carries, inherited.
-    /// Neither a child nor a metered root takes a selection.
+    /// 19:59 W-B), resolved in the dispatch writer `txn`, the one that then
+    /// writes the dispatch input: a root's the owner selected
+    /// ([`Self::funded_by`]), proved here and granting the launched agent
+    /// `target`, its proof used only for the binding it yields; else the one
+    /// its parent's input carries, inherited. Neither a child nor a metered
+    /// root takes a selection.
     fn dispatch_funding_in_txn(
         &self,
-        txn: &heed::RoTxn<'_>,
+        txn: &heed::RwTxn<'_>,
         spawn: &AgentSpawnContext,
         parent: Option<AttemptId>,
         target: EntityId,
