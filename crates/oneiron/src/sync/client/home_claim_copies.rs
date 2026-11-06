@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::base::SyncClient;
 use super::own_device::OwnDeviceImport;
-use crate::embed::home_vectors::copy_scope::with_copies;
+pub(super) use crate::embed::home_vectors::copy_scope::with_home_claim_copies;
 use crate::embed::home_vectors::retained::PreparedHomeClaimResponse;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
@@ -19,24 +19,6 @@ pub(crate) struct StagedWorldUpdate {
     pub(crate) bytes: Vec<u8>,
     pub(crate) from: crate::authority::PeerMachine,
     pub(crate) copies: Vec<Arc<PreparedHomeClaimResponse>>,
-}
-
-pub(super) fn with_home_claim_copies<T>(
-    vault: &Vault,
-    key: &WindowKey,
-    copies: &[Arc<PreparedHomeClaimResponse>],
-    land: impl FnOnce() -> T,
-) -> T {
-    let (landed, attempts) = with_copies(vault, key, copies, land);
-    for attempt in attempts {
-        tracing::debug!(
-            entity = %attempt.entity_id.to_hex(),
-            error = ?attempt.result.as_ref().err().map(|error| error.kind()),
-            writer_result = ?attempt.writer_result,
-            "derived home CLAIM copy attempt; not a durable receipt"
-        );
-    }
-    landed
 }
 
 impl SyncClient {
