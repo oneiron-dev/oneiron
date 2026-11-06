@@ -104,15 +104,14 @@
 use super::super::{
     EditError, EditNote, MaterializationMode, ParagraphContent, apply_segment_replace_paragraph,
     collect_anchor_inventory, extract_text_sections, find_block_index, has_structural_markers,
-    normalize_expect_punctuation, paragraph_visible_text, set_exact_replacement_marks,
-    validate_block_is_editable, validate_preserved_inlines,
+    normalize_expect_punctuation, paragraph_visible_text, reposition_segment_replacement_markers,
+    set_exact_replacement_marks, validate_block_is_editable, validate_preserved_inlines,
 };
 use crate::domain::{
     BlockNode, CanonDoc, CommentExtended, CommentStory, InlineNode, NodeId, OpaqueKind,
     ParagraphNode, RevisionInfo, TrackedBlock, TrackedSegment, TrackingStatus,
 };
 use crate::semantic_hash::check_block_guard;
-use crate::tracked_model::inject_structural_markers_at_offsets;
 
 /// A located comment span: TextNode run `[first..=last]` (contiguous in the
 /// segment) whose concatenated text contains the match at char range
@@ -875,27 +874,15 @@ pub(crate) fn apply_edit_runs(
     // is never itself part of a block insertion.
     apply_segment_replace_paragraph(para_mut, content, revision, None, rev_counter);
     set_exact_replacement_marks(para_mut, content);
-
-    if carry_markers
-        && let Some(pos) = para_mut
-            .segments
-            .iter()
-            .position(|seg| matches!(seg.status, TrackingStatus::Inserted(_)))
-    {
-        // Clone the original markers into the Inserted segment so the settled
-        // Normal reading keeps them. An empty replacement has no Inserted
-        // segment: its markers stay tombstone-only, the same full-deletion law
-        // the word-diff path applies when every token deletes.
-        let mut inserted = vec![para_mut.segments[pos].clone()];
-        inject_structural_markers_at_offsets(&mut inserted, &marker_source, None);
-        para_mut.segments[pos] = inserted.into_iter().next().expect("non-empty");
+    if carry_markers {
+        reposition_segment_replacement_markers(para_mut, &marker_source);
     }
 
     // Unconditional Normal settle in BOTH outer modes (see the landing note
     // above). The gate guaranteed all-Normal input and the builder with
-    // `enclosing_insertion=None` emits only a Deleted tombstone plus one
-    // Inserted segment, so this drops exactly our tombstone and flips exactly
-    // our Inserted — paragraph formatting/change metadata stays verbatim.
+    // `enclosing_insertion=None` emits fresh Deleted/Inserted text alongside
+    // the retained Normal structural markers. Settle only the text changes;
+    // paragraph formatting/change metadata stays verbatim.
     // `project_block_for_accept_reject` (preserve_formatting_change=false) would
     // silently accept unrelated `pPrChange`/run-level formatting; even the
     // preserve-true text-edit prep still clears paragraph-mark status, so the
@@ -910,7 +897,7 @@ pub(crate) fn apply_edit_runs(
                     settled.push(segment);
                 }
                 TrackingStatus::Deleted(_) => {
-                    // Drop our tombstone (pre-edit inlines plus their marker copies).
+                    // Drop the pre-edit text and preserved-inline tombstone.
                 }
                 _ => settled.push(segment),
             }
