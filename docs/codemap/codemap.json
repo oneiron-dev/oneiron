@@ -28157,13 +28157,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/sieve_attempt/typing_batch.rs",
+     "purpose": "A TURN's typing-only spans, read in packs (FIX 14711)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/sieve_decisions.rs",
      "purpose": "The sieve's typed questions (OF-498a)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -32337,7 +32347,7 @@
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -32361,6 +32371,16 @@
      "purpose": "Who carries a spent span (FIX 7498): the nightly child whose branch holds the span's TURN, never the nightly…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/recipes/typing_batch.rs",
+     "purpose": "Typing-only rungs read per TURN (FIX 14711)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -91051,7 +91071,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91093,7 +91113,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92152,7 +92172,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6480,
+   "source_files": 6482,
    "test_files": 895
   },
   "oneiron-android": {
