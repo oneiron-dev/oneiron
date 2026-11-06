@@ -136,6 +136,7 @@ pub(super) fn run_bound(
         continued_seat(
             vault,
             provider,
+            actor.entity_ref(),
             &config,
             type_ref,
             definition.models.clone(),
@@ -149,6 +150,7 @@ pub(super) fn run_bound(
         task_engine_run_seat(
             vault,
             provider,
+            actor.entity_ref(),
             &config,
             format!("agent-run:{}", run_id.to_hex()),
             type_ref,
@@ -453,10 +455,13 @@ fn continued_config(
 /// own run's receipt, bound to the model, locality and effort its source ran
 /// on, so the fork's config marker holds on every entry. That model must
 /// still be on the agent's list (`listed`, FIX 4472). It is stamped with
-/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5).
+/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5), and picked
+/// in the dispatched `agent`'s voice (FIX 4543).
+#[allow(clippy::too_many_arguments)]
 fn continued_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     config: &EngineExecutorConfig,
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
@@ -468,6 +473,7 @@ fn continued_seat(
     task_run_seat(
         vault,
         provider,
+        agent,
         config.run_id,
         type_ref,
         worlds,
