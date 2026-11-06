@@ -495,6 +495,49 @@ impl ProviderHttp {
         json_reply(status, headers, &bytes)
     }
 
+    /// [`Self::post_json`] with the caller's release before every physical send.
+    pub(super) async fn post_json_released(
+        &self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<JsonReply, HttpReleaseError> {
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let response = self
+            .send_body_released(path, || self.request(path, headers), plain, release, lease)
+            .await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (bytes, _held) = read_whole(response)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
+        json_reply(status, headers, &bytes).map_err(HttpReleaseError::Transport)
+    }
+
+    /// [`Self::post_json_within`] with the caller's release before every physical send.
+    pub(super) async fn post_json_within_released(
+        &self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        max_bytes: usize,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<JsonReply, HttpReleaseError> {
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let response = self
+            .send_body_released(path, || self.request(path, headers), plain, release, lease)
+            .await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let bytes = bounded_body(response, max_bytes)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
+        json_reply(status, headers, &bytes).map_err(HttpReleaseError::Transport)
+    }
+
     /// One media exchange at `path`, its reply body read whole, however
     /// large, on the media-reply line (FIX 8615). One request, as every
     /// exchange here; a JSON or octet body is compressed as
