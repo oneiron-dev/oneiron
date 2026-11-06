@@ -1885,7 +1885,12 @@ def outputs():
             # handle answers the host-only refusal, as other host rows do.
             core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
         else:
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
+            encoder = {
+                'vault.kv.get': 'key_value_output::get',
+                'vault.kv.put': 'key_value_output::put',
+                'vault.kv.search': 'key_value_output::search',
+            }.get(r['name'], 'encode')
+            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {encoder}({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.

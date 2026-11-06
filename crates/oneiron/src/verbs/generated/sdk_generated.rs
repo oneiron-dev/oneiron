@@ -24380,10 +24380,10 @@ pub fn invoke(
         "self.admission.receipts" => encode(self_admission_receipts(memory, decode(value)?)?),
         "vault.explain.memory" => encode(vault_explain_memory(memory, decode(value)?)?),
         "vault.explain.gate" => encode(vault_explain_gate(memory, decode(value)?)?),
-        "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
-        "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
+        "vault.kv.get" => key_value_output::get(vault_kv_get(memory, decode(value)?)?),
+        "vault.kv.put" => key_value_output::put(vault_kv_put(memory, decode(value)?)?),
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
-        "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
+        "vault.kv.search" => key_value_output::search(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.campaign.compliance.install" => {
             encode(vault_campaign_compliance_install(memory, decode(value)?)?)
