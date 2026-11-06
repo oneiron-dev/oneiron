@@ -104,7 +104,7 @@ fn stored_tree_unchecked_with_file_in_txn(
     let Some(file) = package
         .files
         .iter()
-        .find(|file| file.path == TASK_TYPE_TREE_FILE)
+        .find(|file| file.path == super::TASK_TYPE_TREE_FILE)
     else {
         return Ok(None);
     };

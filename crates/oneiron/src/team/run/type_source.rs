@@ -26,7 +26,7 @@ pub(crate) struct SelectedTeamType {
     pub placed_type: TaskTypeRef,
     pub file: Option<SelectedTeamTypeFile>,
     pub entity_rows: Option<Vec<EntityId>>,
-    pub root_lookup: Option<crate::skill_hub::HubRef>,
+    pub root_lookup_observed: bool,
 }
 
 /// `None` file = code seed with no byte witness: skip this optional
@@ -139,7 +139,7 @@ impl CapturedTeamType {
     /// Later Coach check under an independent key in the same snapshot:
     /// same ids, exact body+metadata equality, same full carrier/head/file
     /// check. Never trusts the original admitted key; no Memory/Owner/
-    /// System shortcut. `root_lookup: Some` is always unknown (`None`).
+    /// System shortcut. An observed root lookup always remains unknown (`None`).
     /// Returns only this canonical type-input contribution. Other receipt
     /// cohorts, including the inherited project, remain independently unknown.
     pub(crate) fn admitted_in_txn(
@@ -147,7 +147,7 @@ impl CapturedTeamType {
         reader: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
     ) -> Option<Vec<EntityId>> {
-        if self.selection.root_lookup.is_some() {
+        if self.selection.root_lookup_observed {
             return None;
         }
         let complete = self.selection.entity_rows.as_ref()?;

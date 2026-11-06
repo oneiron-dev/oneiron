@@ -105,7 +105,7 @@ impl AgentDispatcher<'_> {
                     file_hash: file.file_hash,
                 }),
                 entity_rows,
-                root_lookup,
+                root_lookup_observed: root_lookup.is_some(),
             });
         }
         Ok(type_ref)
