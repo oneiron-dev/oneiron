@@ -21,16 +21,15 @@ pub(crate) struct ModelPriceCapture {
 
 impl ModelPriceCapture {
     pub(crate) fn finish(self) -> Vec<Vec<u8>> {
+        self.detach();
         let rows = {
             let mut kept = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
             std::mem::take(&mut *kept)
         };
         rows
     }
-}
 
-impl Drop for ModelPriceCapture {
-    fn drop(&mut self) {
+    fn detach(&self) {
         let mut captures = self
             .meter
             .price_captures
@@ -42,6 +41,12 @@ impl Drop for ModelPriceCapture {
                 captures.remove(&self.instance);
             }
         }
+    }
+}
+
+impl Drop for ModelPriceCapture {
+    fn drop(&mut self) {
+        self.detach();
     }
 }
 
