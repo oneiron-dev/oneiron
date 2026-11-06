@@ -19,13 +19,13 @@ pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeE
 pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
 pub use chat_breakpoint::{
-    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, chat_breakpoint,
-    chat_breakpoint_stands, forget_chat_breakpoint, forget_superseded_chat_breakpoints,
-    keep_chat_breakpoint,
+    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, ChatBreakpointUserTurn,
+    chat_breakpoint, chat_breakpoint_stands, forget_chat_breakpoint,
+    forget_superseded_chat_breakpoints, keep_chat_breakpoint,
 };
 pub(crate) use chat_breakpoint::{
     erase_chat_breakpoints_in_txn, forget_chat_breakpoint_in_txn,
-    scrub_chat_breakpoint_actor_in_txn,
+    forget_withdrawn_summary_breakpoints_in_txn, scrub_chat_breakpoint_actor_in_txn,
 };
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{

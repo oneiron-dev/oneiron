@@ -627,6 +627,9 @@ fn mark_one_stale_in_txn(
     // sieve and projector rows of them go as an erasure's do, while the
     // MESSAGE still names its turn.
     crate::dreamer_wake::erase_in_txn(write, txn, id)?;
+    // A chat breakpoint whose request holds a withdrawn summary's words goes
+    // with them (FIX 5033).
+    crate::conversation::forget_withdrawn_summary_breakpoints_in_txn(write, txn, id)?;
     // A derived claim can retain erased upstream bytes while its own entity
     // body remains. Remove every saved digest that copied it in this txn;
     // clearing the stale bit on regeneration must never revive an old copy.

@@ -26,7 +26,9 @@ use oneiron::claim::CallerLocality;
 use oneiron::compaction::{
     ChatLog, ChatLogLine, ConversationCompactionUnavailable, read_chat_log, read_first_chat_log,
 };
-use oneiron::conversation::{ChatBreakpoint, TurnAction, TurnActionAttempt};
+use oneiron::conversation::{
+    ChatBreakpoint, ChatBreakpointUserTurn, TurnAction, TurnActionAttempt,
+};
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{Memory, MessageStreamHandle, WitnessAuthor, resolve_entity_ref};
 use oneiron::{EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault, WriteActor};
@@ -63,6 +65,19 @@ pub(crate) struct AnswerBreakpoint {
     /// The craft rows the host's snapshot read for the request (FIX 9439):
     /// a chat turn's seed keeps them beside its request.
     craft: Vec<ManifestEntry>,
+    /// The user turn the request answers, by the rows its witness wrote
+    /// (FIX 5033): a captured seed binds it apart from its log. `None`
+    /// keeps no seed.
+    user_turn: Option<ChatBreakpointUserTurn>,
+}
+
+impl AnswerBreakpoint {
+    /// The breakpoint, binding `user_turn`, the user turn its request
+    /// answers (FIX 5033). A reused prefix keeps its source's own.
+    pub(crate) fn with_user_turn(mut self, user_turn: Option<ChatBreakpointUserTurn>) -> Self {
+        self.user_turn = user_turn;
+        self
+    }
 }
 
 /// An ordinary turn compacts its log; an action only captures its exact
@@ -213,6 +228,7 @@ impl SelfChat {
             source: None,
             recalled,
             craft,
+            user_turn: None,
         }
     }
 }
@@ -251,6 +267,7 @@ pub(crate) fn action_breakpoint(
         source: None,
         recalled: false,
         craft,
+        user_turn: None,
     })
 }
 
@@ -292,6 +309,7 @@ pub(super) fn enter(
         source,
         recalled,
         craft,
+        user_turn,
     } = breakpoint;
     let seed = match source {
         Some(source) => Some(source),
@@ -303,6 +321,7 @@ pub(super) fn enter(
                 log.log(),
                 instructions_digest,
                 craft,
+                user_turn,
                 admitted,
             )
         }),

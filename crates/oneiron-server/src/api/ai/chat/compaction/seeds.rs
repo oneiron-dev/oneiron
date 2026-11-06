@@ -17,8 +17,8 @@ use futures_util::StreamExt;
 use oneiron::attempt_queue::ManifestEntry;
 use oneiron::compaction::ChatLog;
 use oneiron::conversation::{
-    ChatBreakpoint, ChatBreakpointRung, forget_chat_breakpoint, forget_superseded_chat_breakpoints,
-    keep_chat_breakpoint,
+    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointUserTurn, forget_chat_breakpoint,
+    forget_superseded_chat_breakpoints, keep_chat_breakpoint,
 };
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MessageStreamHandle, MessageStreamReceipt};
@@ -173,17 +173,20 @@ fn give_way(slot: Option<&SeedSlot>) -> bool {
 }
 
 /// The seed a chat turn's reply keeps: its request exactly as the rung its
-/// walk takes now sends it, the rung by ref, the log's sources, and the
-/// craft rows the host's snapshot read for it (FIX 9439). None for a log
-/// whose turns were not all pinned, or a call no rung takes now. A log read
-/// through a room's held projection keeps its seed too: a reuse checks it
-/// through that same lane (FIX 5031).
+/// walk takes now sends it, the rung by ref, the log's sources, the craft
+/// rows the host's snapshot read for it (FIX 9439), and `user_turn`, the
+/// user turn the request answers, by the rows the admission that put its
+/// words in witnessed (FIX 5033). The keep stores no seed that binds none.
+/// None for a log whose turns were not all pinned, or a call no rung takes
+/// now. A log read through a room's held projection keeps its seed too: a
+/// reuse checks it through that same lane (FIX 5031).
 pub(super) fn capture_seed(
     agent: EntityId,
     reader: WriteActor,
     log: &ChatLog,
     instructions_digest: Option<String>,
     craft: Vec<ManifestEntry>,
+    user_turn: Option<ChatBreakpointUserTurn>,
     admitted: &RoleCall,
 ) -> Option<ChatBreakpoint> {
     if !log.pinned {
@@ -209,6 +212,7 @@ pub(super) fn capture_seed(
         instructions_digest,
         sources: log.sources.clone(),
         summaries: log.summaries.clone(),
+        user_turn,
         craft_entries: craft,
     })
 }
