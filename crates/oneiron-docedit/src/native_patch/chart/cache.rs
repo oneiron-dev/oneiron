@@ -7,7 +7,7 @@
 
 use super::super::NativeRefusal;
 use super::super::workbook::number;
-use super::{C, Model, points};
+use super::{C, Model, point_values, points};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, Splice};
 use crate::ooxml::escape_text;
@@ -34,6 +34,29 @@ pub(super) fn patched(
     old: &[Cell],
     new: &[Cell],
 ) -> Result<Vec<Splice>, NativeRefusal> {
+    patched_points(model, cache, old, new, true)
+}
+
+/// A retained multi-level cache's `c:lvl` holds points but no point count.
+pub(super) fn patched_level(
+    model: &Model,
+    level: usize,
+    old: &[Cell],
+    new: &[Cell],
+) -> Result<Vec<Splice>, NativeRefusal> {
+    if old == new {
+        return Ok(Vec::new());
+    }
+    patched_points(model, level, old, new, false)
+}
+
+fn patched_points(
+    model: &Model,
+    cache: usize,
+    old: &[Cell],
+    new: &[Cell],
+    with_count: bool,
+) -> Result<Vec<Splice>, NativeRefusal> {
     let (tree, bytes) = (&model.tree, model.bytes.as_slice());
     let node = &tree.nodes[cache];
     let p = node
@@ -41,11 +64,12 @@ pub(super) fn patched(
         .rsplit_once(':')
         .map_or(String::new(), |(prefix, _)| format!("{prefix}:"));
     if node.empty {
-        return Ok(vec![xml::insert_end(
-            bytes,
-            node,
-            points(&p, new).as_bytes(),
-        )]);
+        let content = if with_count {
+            points(&p, new)
+        } else {
+            point_values(&p, new)
+        };
+        return Ok(vec![xml::insert_end(bytes, node, content.as_bytes())]);
     }
     let child = |name: &str| {
         tree.children(cache)
@@ -54,25 +78,29 @@ pub(super) fn patched(
     };
     let mut edits = Vec::new();
     let mut inserted: BTreeMap<usize, String> = BTreeMap::new();
-    let after_count = match child("ptCount") {
-        Some(at) => {
-            if old.len() != new.len() {
-                edits.push(xml::set_attribute(
-                    bytes,
-                    &tree.nodes[at],
-                    "val",
-                    &new.len().to_string(),
-                ));
+    let after_count = if !with_count {
+        node.open_end
+    } else {
+        match child("ptCount") {
+            Some(at) => {
+                if old.len() != new.len() {
+                    edits.push(xml::set_attribute(
+                        bytes,
+                        &tree.nodes[at],
+                        "val",
+                        &new.len().to_string(),
+                    ));
+                }
+                tree.nodes[at].span.end
             }
-            tree.nodes[at].span.end
-        }
-        None => {
-            let at = child("formatCode").map_or(node.open_end, |at| tree.nodes[at].span.end);
-            inserted
-                .entry(at)
-                .or_default()
-                .push_str(&format!(r#"<{p}ptCount val="{}"/>"#, new.len()));
-            at
+            None => {
+                let at = child("formatCode").map_or(node.open_end, |at| tree.nodes[at].span.end);
+                inserted
+                    .entry(at)
+                    .or_default()
+                    .push_str(&format!(r#"<{p}ptCount val="{}"/>"#, new.len()));
+                at
+            }
         }
     };
     let held: BTreeMap<usize, usize> = tree

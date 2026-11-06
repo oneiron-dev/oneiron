@@ -124,3 +124,14 @@ text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
+
+The multi-level native series change (2026-11-06, FIX 18217;
+FIX 9163 remainder) touches `src/native_patch/chart.rs` and `chart/cache.rs`.
+A direct category write uses the leaf-first, level-major cell order already
+returned by the native reader. Direct and overlapping writes splice the retained
+`c:lvl` point values without inserting a point count inside a level or rewriting
+the outer count, formulas, level order or unrelated XML. An unchanged level,
+including a self-closed one, retains its bytes. Single-level caches keep their
+existing count and point-splice path. Length, kind, date, workbook and fresh
+read-back checks remain unchanged. No native wire/schema version changes;
+source qualification is not a compiler, runtime or PowerPoint fidelity proof.
