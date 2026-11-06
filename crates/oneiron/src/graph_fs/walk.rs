@@ -7,7 +7,7 @@ use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::coreutils_text::{
-    LinePosition, copy_text_parts, join_graph_path_with_reader, page_grep_lines,
+    LinePosition, copy_text_parts, copy_utf8_field, join_graph_path_with_reader, page_grep_lines,
 };
 use super::model::{GRAPH_FS_MAX_SCAN_ROWS, GraphFsEntryKind, GraphFsPage, GraphFsResolver};
 use super::paging::{CommandOutputBuilder, SealedPosition};
@@ -51,7 +51,7 @@ struct WalkFrame {
     passed: usize,
 }
 
-impl SealedPosition for WalkPosition {
+impl WalkPosition {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![u8::from(self.root_done)];
         put_optional(
@@ -66,32 +66,58 @@ impl SealedPosition for WalkPosition {
         bytes
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    fn from_bytes(
+        bytes: &[u8],
+        reader: &crate::batch::secret_scan::ContainerReader,
+        scan_bytes: usize,
+    ) -> Result<Option<Self>> {
         let mut fields = Fields(bytes);
-        let root_done = match fields.take::<1>()? {
-            [0] => false,
-            [1] => true,
-            _ => return None,
+        let root_done = match fields.take::<1>() {
+            Some([0]) => false,
+            Some([1]) => true,
+            _ => return Ok(None),
         };
-        let lines = match fields.optional()? {
-            Some(lines) => Some(LinePosition::from_bytes(lines)?),
-            None => None,
+        let lines = match fields.optional() {
+            Some(Some(lines)) => {
+                let Some(lines) = LinePosition::from_bytes(lines) else {
+                    return Ok(None);
+                };
+                Some(lines)
+            }
+            Some(None) => None,
+            None => return Ok(None),
         };
         let mut frames = Vec::new();
         while !fields.0.is_empty() {
-            let name = String::from_utf8(fields.field()?.to_vec()).ok()?;
-            let page = match fields.optional()? {
-                Some(page) => Some(String::from_utf8(page.to_vec()).ok()?),
-                None => None,
+            let Some(name) = fields.field() else {
+                return Ok(None);
             };
-            let passed = usize::try_from(u64::from_be_bytes(fields.take::<8>()?)).ok()?;
+            let Some(name) = copy_utf8_field(name, reader, scan_bytes)? else {
+                return Ok(None);
+            };
+            let page = match fields.optional() {
+                Some(Some(page)) => {
+                    let Some(page) = copy_utf8_field(page, reader, scan_bytes)? else {
+                        return Ok(None);
+                    };
+                    Some(page)
+                }
+                Some(None) => None,
+                None => return Ok(None),
+            };
+            let Some(passed) = fields.take::<8>() else {
+                return Ok(None);
+            };
+            let Ok(passed) = usize::try_from(u64::from_be_bytes(passed)) else {
+                return Ok(None);
+            };
             frames.push(WalkFrame { name, page, passed });
         }
-        Some(Self {
+        Ok(Some(Self {
             root_done,
             frames,
             lines,
-        })
+        }))
     }
 }
 
@@ -200,7 +226,11 @@ impl GraphFsResolver<'_, '_> {
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<WalkOutput> {
         let scope = self.cursor_scope(listing);
-        let mut at: WalkPosition = scope.open(cursor)?.unwrap_or_default();
+        let mut at = scope
+            .open_with(cursor, |bytes| {
+                WalkPosition::from_bytes(bytes, reader, self.options.page_byte_cap)
+            })?
+            .unwrap_or_default();
         let mut walk = Walk {
             out: CommandOutputBuilder::new(self.options),
             total: 0,
@@ -209,7 +239,7 @@ impl GraphFsResolver<'_, '_> {
         let cut = self.walk_from(root, recursive, verb, &mut at, &mut walk, reader)?;
         Ok(WalkOutput {
             bytes: walk.out.into_bytes(),
-            next_cursor: cut.then(|| scope.seal(&at)),
+            next_cursor: cut.then(|| scope.seal_bytes(&at.to_bytes())),
             total: walk.total,
             receipt: walk.receipt,
         })

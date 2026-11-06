@@ -255,6 +255,37 @@ pub(super) fn copy_text_parts(
     Ok(path)
 }
 
+/// Validates and copies an authenticated cursor field in reader-paced UTF-8 windows.
+pub(super) fn copy_utf8_field(
+    mut bytes: &[u8],
+    reader: &ContainerReader,
+    scan_bytes: usize,
+) -> Result<Option<String>> {
+    let quantum = scan_bytes.max(char::MAX.len_utf8());
+    let mut text = String::new();
+    loop {
+        checkpoint(reader)?;
+        let end = quantum.min(bytes.len());
+        let chunk = match std::str::from_utf8(&bytes[..end]) {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                if error.error_len().is_some() || end == bytes.len() || error.valid_up_to() == 0 {
+                    return Ok(None);
+                }
+                let Ok(chunk) = std::str::from_utf8(&bytes[..error.valid_up_to()]) else {
+                    return Ok(None);
+                };
+                chunk
+            }
+        };
+        text.push_str(chunk);
+        bytes = &bytes[chunk.len()..];
+        if bytes.is_empty() {
+            return Ok(Some(text));
+        }
+    }
+}
+
 pub(super) fn join_graph_path_with_reader(
     parent: &str,
     name: &str,
