@@ -122,6 +122,7 @@ pub(super) fn mcp_pinned_memories(
     actor: &McpResolvedActor,
     hook_pins: &[oneiron::context_board::HookPin],
     room: Option<oneiron::EntityId>,
+    memories_storage: &mut crate::api::context_pack::output_memory::RetainedMemoriesOutput,
 ) -> Result<Option<crate::api::context_board::BoardPins>, McpGatewayError> {
     let pins = crate::api::context_board::BoardPinSources {
         refs: &[],
@@ -133,8 +134,15 @@ pub(super) fn mcp_pinned_memories(
         .auth
         .as_ref()
         .expect("a scoped read holds the connector's proof");
-    crate::api::context_board::board_pins_projection(&server.vault, auth, read, room, &pins)
-        .map_err(super::mcp_api_error)
+    crate::api::context_board::board_pins_projection(
+        &server.vault,
+        auth,
+        read,
+        room,
+        &pins,
+        memories_storage,
+    )
+    .map_err(super::mcp_api_error)
 }
 
 /// ROOM (FIX 1051): the room the caller's authenticated request binds, its
@@ -347,16 +355,24 @@ pub(super) fn mcp_board_sections(
             );
     let mut sections = vec![verb_section, worlds_section];
     let room = mcp_bound_room(server, actor);
-    if let Some(memories) =
-        mcp_pinned_memories(server, actor, pins, room.as_ref().map(|room| room.room))?
     {
-        hooks.memories = memories.section.hook_shares(pins);
-        served.extend_from_slice(memories.receipt.delivered());
-        sections.extend(
-            oneiron::context_board::assemble_memories_sections(&memories.section)
-                .map_err(mcp_board_frame_error)?,
-        );
-        hooks.receipt = Some(memories.receipt);
+        let mut memories_storage =
+            crate::api::context_pack::output_memory::RetainedMemoriesOutput::new(&server.memory);
+        if let Some(memories) = mcp_pinned_memories(
+            server,
+            actor,
+            pins,
+            room.as_ref().map(|room| room.room),
+            &mut memories_storage,
+        )? {
+            hooks.memories = memories.section.hook_shares(pins);
+            served.extend_from_slice(memories.receipt.delivered());
+            sections.extend(
+                oneiron::context_board::assemble_memories_sections(&memories.section)
+                    .map_err(mcp_board_frame_error)?,
+            );
+            hooks.receipt = Some(memories.receipt);
+        }
     }
     sections.push(tasks_section);
     if let Some(room) = &room {
