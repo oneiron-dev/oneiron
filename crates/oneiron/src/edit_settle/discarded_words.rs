@@ -2,7 +2,7 @@
 //! (FIX 14534 rule 4): its history, with the identifiers its words carried. The words go.
 
 use heed::RwTxn;
-use oneiron_docedit::edit::{DeckTransactionReport, Digest, IdMarks, PartChange};
+use oneiron_docedit::edit::{DeckTransactionReport, Effect};
 use serde::{Deserialize, Serialize};
 
 use super::carry::WITHDRAWALS;
@@ -31,27 +31,14 @@ pub struct DiscardedSettleWords {
 }
 
 /// A settled native deck transaction without its words: the handoff it bound, who made it and
-/// what it answered, its review renders, and its report's digests, part diff and id marks; the
-/// report's steps go.
+/// what it answered, its review renders, and its report (digests, part diff, each step's effects
+/// with the ids they mint, and id marks), a custom show's name emptied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscardedDeck {
     pub handoff: [u8; 32],
     pub context: DeckEditContext,
     /// `None` when the stored report did not read.
-    pub report: Option<DiscardedDeckReport>,
-}
-
-/// A deck transaction report's history: what it ran on and made, and part by part how they
-/// differ.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiscardedDeckReport {
-    pub schema: u32,
-    pub base: Digest,
-    pub candidate: Digest,
-    pub parts: Vec<PartChange>,
-    pub untouched: usize,
-    pub marks: IdMarks,
-    pub handoff: Digest,
+    pub report: Option<DeckTransactionReport>,
 }
 
 fn scrub_decision(decision: &mut TypedDecision) {
@@ -109,17 +96,16 @@ fn scrub_paragraph(judgment: &mut ParagraphJudgment) {
 
 impl DiscardedDeck {
     fn of(deck: crate::edit_roundtrip::DeckSettleEvidence) -> Self {
-        let report = serde_json::from_str::<DeckTransactionReport>(&deck.report)
-            .ok()
-            .map(|report| DiscardedDeckReport {
-                schema: report.schema,
-                base: report.base,
-                candidate: report.candidate,
-                parts: report.parts,
-                untouched: report.untouched,
-                marks: report.marks,
-                handoff: report.handoff,
-            });
+        let mut report = serde_json::from_str::<DeckTransactionReport>(&deck.report).ok();
+        for effect in report
+            .iter_mut()
+            .flat_map(|report| &mut report.steps)
+            .flat_map(|step| &mut step.effects)
+        {
+            if let Effect::NotInCustomShow { show } = effect {
+                show.clear();
+            }
+        }
         Self {
             handoff: deck.handoff,
             context: deck.context,
