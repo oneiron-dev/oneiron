@@ -6161,7 +6161,7 @@
      "path": "src/authority/world_refold.rs",
      "purpose": "A world edit, a world key record, a grant travel choice, or a root request, the owner's cancel of one or its…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -16437,7 +16437,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/codec.rs",
@@ -17370,7 +17370,7 @@
      "surface": {
       "const": 7,
       "crate-vis": 11,
-      "fn": 20,
+      "fn": 22,
       "re-export": 2,
       "struct": 9
      }
@@ -20504,19 +20504,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FoldKind",
-      "FoldedOutput"
+      "FoldedOutput",
+      "FoldedSpeech"
      ],
      "path": "src/compaction/fold_kinds.rs",
      "purpose": "Folds by kind (ARCH-0067 §2.2; owner 2026-11-03 20:33, ledger engine-20261103-log-fold-by-kind): the agent…",
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
-      "struct": 1
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -34823,7 +34824,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "enum": 1,
       "fn": 5,
       "struct": 2,
@@ -35175,7 +35176,7 @@
      "path": "src/engine_executor/store/script_context.rs",
      "purpose": "The model-only view of a stored program; execution always reads its original bytes",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -92139,7 +92140,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 167,
+   "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6479,
    "test_files": 895
@@ -142160,6 +142161,7 @@
       "FoldUnfoldRequest",
       "FoldUnfolded",
       "FoldedOutput",
+      "FoldedSpeech",
       "FolderItemInput",
       "FollowedStateInput",
       "ForceCancelGrounds",
@@ -145096,7 +145098,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1135,
-      "struct": 3435
+      "struct": 3436
      }
     },
     {

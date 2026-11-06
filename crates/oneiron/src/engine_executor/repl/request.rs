@@ -2,7 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
-use super::super::store::load_script_context;
+use super::super::store::{load_script_context, mask_known_text};
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -199,10 +199,15 @@ impl EngineNativeExecutor<'_> {
             let console = match folded {
                 // A fold by kind keeps the program and its say() messages;
                 // the console shows the fold's stub, which keeps the
-                // output's handles (ARCH-0067 §2.2, fold by kind).
-                Some(fold) => fold
-                    .output_stub(seq as u64, noted.insert(fold.fold))
-                    .unwrap_or_default(),
+                // output's handles (ARCH-0067 §2.2, fold by kind). Every
+                // literal it keeps is masked at each render, so a value
+                // custody learns after the fold lands is masked too.
+                Some(fold) => mask_known_text(
+                    &self.storage,
+                    &fold
+                        .output_stub(seq as u64, noted.insert(fold.fold))
+                        .unwrap_or_default(),
+                )?,
                 None => match view.tier {
                     OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
                         .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
@@ -213,15 +218,36 @@ impl EngineNativeExecutor<'_> {
                     }))?,
                 },
             };
-            let turn = CodeRunHistoryTurn {
-                code: load_script_context(
+            // A program fold keeps the console and its stub stands in the
+            // exec frame, as comment lines that keep what the step said.
+            let code = match epochs
+                .folds
+                .kind_covering(crate::compaction::FoldKind::Program, seq as u64)
+            {
+                // Each speech text is read from the run's record and
+                // masked before it is quoted, never kept in the fold; the
+                // whole stub (its ids and note too) is masked again at
+                // each render, so later custody values are masked as well.
+                Some(fold) => mask_known_text(
+                    &self.storage,
+                    &fold
+                        .program_stub(seq as u64, noted.insert(fold.fold), |speech| {
+                            let call = record
+                                .bridge_calls
+                                .get(usize::try_from(speech.call).ok()?)?;
+                            let text = super::compaction::speech_call_text(call)?;
+                            mask_known_text(&self.storage, text).ok()
+                        })
+                        .unwrap_or_default(),
+                )?,
+                None => load_script_context(
                     &self.storage,
                     record,
                     &script_output_path(seq as u64),
                     None,
                 )?,
-                console,
             };
+            let turn = CodeRunHistoryTurn { code, console };
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
