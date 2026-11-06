@@ -195,7 +195,11 @@ impl BranchResources<'_> {
                     "multiple admitted prior heads for one question",
                 ));
             }
+            // An observed want is its own claim beside the stated heads it
+            // matches, never an attachment to them (FIX 21842).
+            let observed = prior.is_none() && self.observed_beside_stated(&candidate, &matches)?;
             let attachment_head = match matches.as_slice() {
+                _ if observed => None,
                 [(id, true)] => Some(*id),
                 _ if matches.len() > 1
                     && evidence.meet() != ClaimSource::Imported

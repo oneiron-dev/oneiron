@@ -50,6 +50,7 @@ pub(crate) use admission::{
 mod corrections;
 mod imported_keep;
 mod observed;
+pub(crate) use observed::observed_preference_support_in_txn;
 mod resolved_outputs;
 mod scoped;
 mod settlement;
