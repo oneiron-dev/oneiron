@@ -114,7 +114,7 @@ pub use self::dispatcher::{
 pub(crate) use self::model_call::{
     erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
 };
-pub(crate) use self::payload::agent_verb_observations_of;
+pub(crate) use self::payload::{agent_verb_observations_of, push_fold_word, recorded_fold_words};
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
@@ -192,8 +192,8 @@ pub(crate) use self::storage::{
     session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, actor_gone_in_txn, capsule_context_body, capsule_request,
-    capsule_route_prompt, capsule_start_body, continuation_seed_body_in_txn,
+    StoredRunContinuation, actor_gone_in_txn, capsule_context_body, capsule_fold_words_withdrawn,
+    capsule_request, capsule_route_prompt, capsule_start_body, continuation_seed_body_in_txn,
     contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
     erase_contribution_forks_in_txn, publish_continuation_output_in_txn,
     put_run_continuation_row_in_txn, route_prompt_at, run_continuation_in_txn,

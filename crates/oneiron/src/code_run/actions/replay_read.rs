@@ -6,19 +6,36 @@
 //! and with their cached scores, and the answer carries that read's receipt.
 //! Nothing runs again (no search, rerank or refill), and the stored replay
 //! record is not rewritten.
-use super::super::SelfDispatchOutcome;
+//!
+//! A cached fold answer whose words a withdrawal took is tested again too
+//! (FIX 18924): it fails with `response_erased`, as its record's erased
+//! form does, and is never returned.
+use super::super::storage::{RESPONSE_ERASED, fold_answer_withdrawn};
+use super::super::{SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::{Result, Vault};
 
 /// `outcome` as `key` reads it now, beside the receipt it answers under: a
 /// replayed search keeps the hits `key` admits, under that read's receipt;
-/// any other outcome keeps `receipt` and is returned as it was.
+/// a fold answer whose words are withdrawn fails with `response_erased`
+/// (FIX 18924); any other outcome keeps `receipt` and is returned as it was.
 pub(super) fn rescoped(
     vault: &Vault,
     key: &ScopedReadActorKey,
     outcome: SelfDispatchOutcome,
     receipt: ScopedReadReceipt,
 ) -> Result<(SelfDispatchOutcome, ScopedReadReceipt)> {
+    if let SelfDispatchOutcome::Fold(answer) = &outcome
+        && fold_answer_withdrawn(vault, answer)?
+    {
+        let erased = SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect: SelfEffect::Fold,
+            error: RESPONSE_ERASED.to_owned(),
+            code: None,
+            disk_floor: None,
+        });
+        return Ok((erased, receipt));
+    }
     let SelfDispatchOutcome::MemorySearch(mut search) = outcome else {
         return Ok((outcome, receipt));
     };

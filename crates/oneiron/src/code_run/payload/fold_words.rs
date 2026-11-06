@@ -9,6 +9,7 @@
 
 use rmpv::Value;
 
+use super::super::replay::CodeRunBridgeCall;
 use super::super::support::{
     decode_array, entity_id_value, entity_value, expect_map, map_get, request_map, u64_value,
 };
@@ -73,6 +74,26 @@ pub(in crate::code_run) fn answer_fold_words(outcome: &Value) -> Option<Vec<Fold
         return None;
     }
     decode_fold_words(entries).ok()
+}
+
+/// The folds whose words the live fold answers among `calls` copy, each
+/// once, in call order (FIX 18924). An erased answer copies none, and an
+/// answer whose `words` entry does not decode names none here.
+pub(crate) fn recorded_fold_words(calls: &[CodeRunBridgeCall]) -> Vec<FoldWordRef> {
+    let mut words = Vec::new();
+    for call in calls {
+        for word in answer_fold_words(&call.outcome).unwrap_or_default() {
+            push_fold_word(&mut words, word);
+        }
+    }
+    words
+}
+
+/// Adds `word` to `words` unless they already name it (FIX 18924).
+pub(crate) fn push_fold_word(words: &mut Vec<FoldWordRef>, word: FoldWordRef) {
+    if !words.contains(&word) {
+        words.push(word);
+    }
 }
 
 /// Keeps `words`, the folds an answer a withdrawal took copied, on its
