@@ -109,20 +109,29 @@ impl RepoProjectionIngressProof {
 /// # Errors
 /// An evidence value that does not encode.
 fn authority_digest(stamp: &DoorAdmissionStamp) -> Result<[u8; 32]> {
+    authority_digest_values(
+        &stamp.principal_ref,
+        &GitPushStamp::evidence_value(stamp.push.as_ref()),
+        &OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
+    )
+}
+
+fn authority_digest_values(
+    principal: &str,
+    push: &rmpv::Value,
+    host: &rmpv::Value,
+) -> Result<[u8; 32]> {
     let mut packed = Vec::new();
-    for value in [
-        GitPushStamp::evidence_value(stamp.push.as_ref()),
-        OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
-    ] {
+    for value in [push, host] {
         let mut part = Vec::new();
-        rmpv::encode::write_value(&mut part, &value)
+        rmpv::encode::write_value(&mut part, value)
             .map_err(|_| Error::InvariantViolation("an ingress authority did not encode"))?;
         packed.push(part);
     }
     let mut hasher = blake3::Hasher::new();
     hasher.update(INGRESS_AUTHORITY_DOMAIN);
     for field in [
-        stamp.principal_ref.as_bytes(),
+        principal.as_bytes(),
         packed[0].as_slice(),
         packed[1].as_slice(),
     ] {
@@ -198,6 +207,83 @@ pub(crate) fn validate_projection_ingress_in_txn(
     Ok(proof.ingress.operation == stamp.operation_id
         && proof.ingress.authority == authority_digest(stamp)?
         && proof.claim.stands_in_txn(vault, txn)?)
+}
+
+/// Reopens the ingress from its producer-pinned admission after its completed
+/// receive intent was pruned. No missing push-stamp fields are reconstructed.
+pub(super) fn admitted_projection_ingress_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    root: &Path,
+    operation: EntityId,
+) -> Result<Option<(RepoProjectionIngressProof, Option<OriginAuthorityStamp>)>> {
+    use super::evidence::{
+        RECEIVE_PACK_ADMISSION_PREDICATE, receive_pack_field, receive_pack_provenance_refused,
+    };
+    use crate::edge::EdgeKind;
+    use crate::write_envelope::claim_body::ClaimSubject;
+
+    let admission =
+        vault.receive_pack_evidence_in_txn(txn, operation, RECEIVE_PACK_ADMISSION_PREDICATE)?;
+    let proof_id = admission
+        .value
+        .as_map()
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("ingress_proof"))
+        })
+        .and_then(|(_, value)| value.as_str());
+    let Some(proof_id) = proof_id else {
+        return Ok(None);
+    };
+    let proof_id = EntityId::from_hex(proof_id)?;
+    let principal = receive_pack_field(&admission, "actor_id")?
+        .as_str()
+        .ok_or_else(|| receive_pack_provenance_refused("invalid admission actor"))?;
+    let actor = EntityId::from_hex(principal)?;
+    if admission.subject
+        != (ClaimSubject::Edge {
+            source: operation,
+            kind: EdgeKind::PartOf,
+            target: actor,
+        })
+        || receive_pack_field(&admission, "operation_id")? != &rmpv::Value::from(operation.to_hex())
+        || receive_pack_field(&admission, "repo_root")?
+            != &rmpv::Value::from(super::serve_cmd::path_arg(&root.canonicalize()?)?)
+        || receive_pack_field(&admission, "operation")? != &rmpv::Value::from("git-receive-pack")
+    {
+        return Ok(None);
+    }
+    let push = receive_pack_field(&admission, "git_push")?;
+    if push.is_nil() {
+        return Ok(None);
+    }
+    let host = receive_pack_field(&admission, "origin_authority")?;
+    let Some(body) = vault.get_claim_in_txn(txn, &proof_id)? else {
+        return Ok(None);
+    };
+    let ClaimSubject::Entity(graph) = body.subject else {
+        return Ok(None);
+    };
+    let Some(ingress) = RepoProjectionClaim::load_ingress_in_txn(vault, txn, &graph, &operation)?
+    else {
+        return Ok(None);
+    };
+    let proof =
+        RepoProjectionIngressProof::reopen(RepoProjectionIngressRecovery { graph, ingress }, root);
+    if proof.id()? != proof_id
+        || proof.ingress.operation != operation
+        || proof.ingress.authority != authority_digest_values(principal, push, host)?
+        || proof.ingress_store()
+            != crate::git_wire::GitWire::new(vault)?
+                .repository_identity(root)?
+                .as_hex()
+        || !proof.claim.stands_in_txn(vault, txn)?
+    {
+        return Ok(None);
+    }
+    Ok(Some((proof, OriginAuthorityStamp::from_evidence(host)?)))
 }
 
 /// The writable invocation over `proof`'s private ingress: the canonical
