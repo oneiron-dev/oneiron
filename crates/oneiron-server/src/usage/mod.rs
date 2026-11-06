@@ -1,5 +1,6 @@
 //! Provider-list metering and host-pushed vault budget limits.
 mod codec;
+mod eval_price;
 mod keys;
 mod ledger;
 mod limit;

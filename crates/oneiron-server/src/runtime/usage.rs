@@ -24,6 +24,7 @@ use crate::usage::{
 };
 use crate::wire_telemetry::LimitQuestions;
 
+mod capture;
 mod pricing;
 mod redelivery;
 mod settlement;
@@ -40,6 +41,7 @@ pub struct VaultUsage {
     /// The trusted host's explicit overrides, keyed by the exact offer.
     provider_rates: RwLock<BTreeMap<String, UsageCostRates>>,
     calls: Mutex<BTreeMap<(EntityId, String), AdmittedCall>>,
+    price_captures: Mutex<capture::PriceCaptures>,
     retained: Arc<ByteLine>,
     questions: Arc<LimitQuestions>,
     pending_settlements: Mutex<PendingSettlements>,
@@ -106,6 +108,7 @@ impl VaultUsage {
             catalog: CatalogPrices::new(catalog),
             provider_rates: RwLock::default(),
             calls: Mutex::default(),
+            price_captures: Mutex::default(),
             retained,
             questions,
             pending_settlements,
