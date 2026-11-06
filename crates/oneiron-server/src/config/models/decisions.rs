@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use oneiron::llm::manifest::ModelRole;
+use oneiron::ModelId;
 use serde::Deserialize;
 
 /// A seat pick's anytime budget when the file names none.
@@ -125,6 +126,9 @@ struct SystemOneFile {
     key_secret: Option<String>,
     model: String,
     version: String,
+    /// Optional explicit catalog identity for this same native endpoint, as
+    /// `provider/name@revision`. No alias is synthesized.
+    catalog_model: Option<ModelId>,
     /// Owner opt-in for unit state to leave a non-hosted vault.
     remote_opt_in: Option<bool>,
     budget_units: Option<u64>,
@@ -240,6 +244,9 @@ pub struct SystemOneSettings {
     pub key_secret: Option<String>,
     pub model: String,
     pub version: String,
+    /// Optional explicit catalog identity for this same native endpoint.
+    /// None keeps old ordinary behavior.
+    pub catalog_model: Option<ModelId>,
     pub remote_opt_in: bool,
     /// The seat's own meter; the raw routes' units when unset.
     pub budget_units: Option<u64>,
@@ -301,6 +308,7 @@ impl DecisionsFile {
                     key_secret: seat.key_secret,
                     model: filled("system_one.model", seat.model)?,
                     version: filled("system_one.version", seat.version)?,
+                    catalog_model: seat.catalog_model,
                     remote_opt_in: seat.remote_opt_in.unwrap_or(false),
                     budget_units: seat.budget_units,
                 })
