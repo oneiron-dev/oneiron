@@ -250,7 +250,7 @@ pub(in crate::dreamer_consolidation) fn standing(
     Ok(fits.then_some(standing))
 }
 
-fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {
+pub(super) fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateKeys> {
     // Reuse the key derivation; this probe never enters candidate-id admission.
     let body = &prior.body;
     let mut candidate = crate::ClaimCandidate::new(
