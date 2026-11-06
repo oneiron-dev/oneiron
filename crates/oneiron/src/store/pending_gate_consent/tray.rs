@@ -178,9 +178,7 @@ impl Store {
                     &record.diff_handle,
                 )?;
             }
-            self.delete_pending_gate_consent_indexes_in_txn(wtxn, &record)?;
-            self.delete_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &record)?;
-            self.delete_pending_gate_consent_sequence_in_txn(wtxn, &record.claim_id)?;
+            self.delete_pending_gate_consent_rows_in_txn(wtxn, &record)?;
         }
         TRAY.delete(self, wtxn, claim_id.as_bytes())?;
         if removal == TrayRemoval::Unanswered {
@@ -190,6 +188,37 @@ impl Store {
         // FIX 12374: every gate write moves the sequence its fingerprints echo.
         crate::claim::history_seal::bump_gate_sequence_in_txn(self, wtxn)?;
         Ok(())
+    }
+
+    /// Drops `claim_id`'s tray row and its indexes for the owner's discard of
+    /// a world copy (FIX 14534, Engine 11-06 08:34 call 4 = A): its pending
+    /// diff and reasons go with the claim. Local only: no obligation opens,
+    /// no item shows and no receipt is appended, since nothing is left here
+    /// to answer.
+    pub(crate) fn discard_pending_gate_consent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<()> {
+        if let Some(record) = TRAY.get(self, &*wtxn, claim_id.as_bytes())? {
+            if record.claim_id != *claim_id.as_bytes() {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            self.delete_pending_gate_consent_rows_in_txn(wtxn, &record)?;
+        }
+        TRAY.delete(self, wtxn, claim_id.as_bytes())?;
+        Ok(())
+    }
+
+    /// The index, critical-confirm and sequence rows of tray row `record`.
+    fn delete_pending_gate_consent_rows_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &PendingGateConsentRecord,
+    ) -> Result<()> {
+        self.delete_pending_gate_consent_indexes_in_txn(wtxn, record)?;
+        self.delete_pending_gate_consent_critical_confirm_index_in_txn(wtxn, record)?;
+        self.delete_pending_gate_consent_sequence_in_txn(wtxn, &record.claim_id)
     }
 
     pub(crate) fn let_go_pending_gate_consent_in_txn(

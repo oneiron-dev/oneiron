@@ -110,28 +110,7 @@ impl std::io::Write for EncodedSize {
     }
 }
 
-/// One round's sealed resume state, until the call's row keeps it.
-pub(super) struct RoundResume {
-    generation: u64,
-    protocol: ConnectorResumeProtocol,
-    state: Zeroizing<Vec<u8>>,
-}
-
-impl RoundResume {
-    /// Keeps this state on the call `call_ref`'s row, beside its round of
-    /// the questions `handle` names; a write that fails is logged.
-    pub(super) fn keep(&self, vault: &Vault, handle: &str, call_ref: &EntityId) {
-        if let Err(error) = vault.keep_connector_input_resume(
-            call_ref,
-            handle,
-            self.generation,
-            self.protocol,
-            &self.state,
-        ) {
-            tracing::warn!(%error, "connector call resume state not kept");
-        }
-    }
-}
+pub(super) use oneiron::outbound_consent::ConnectorResumeState as RoundResume;
 
 impl Worker {
     /// This round's resume state, its questions as the caller sees them;

@@ -50,6 +50,18 @@ impl Vault {
             }
             let record = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
+            // The decision read whole (FIX 10188): a manifest's sources and
+            // heads ride its parts, and a part is no decision.
+            let Some(record) =
+                crate::identity_topology::logical_identity_topology_event_for_store_in_txn(
+                    &self.store,
+                    &*wtxn,
+                    &id,
+                    record,
+                )?
+            else {
+                continue;
+            };
             if identity_op_event_touches(&record.action, touched) {
                 targets.push(id);
             }
