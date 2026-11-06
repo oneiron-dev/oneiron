@@ -377,6 +377,8 @@ struct Frame {
     /// this frame took read as `true` (fix list row 16255 review): its own
     /// depth when none did.
     low: usize,
+    /// How many frames this judgement had pushed when it pushed this one.
+    pushed_at: usize,
 }
 
 /// What a frame asks next.
@@ -396,6 +398,7 @@ impl Frame {
             visiting_support: false,
             decided: None,
             low: usize::MAX,
+            pushed_at: 0,
         }
     }
 
@@ -449,7 +452,9 @@ impl Judge<'_, '_, '_> {
     /// Only a settled verdict is memoised. A `false` is settled at once: a
     /// row in progress read as `true` can only have made it more readable.
     /// A `true` that read a row still in progress waits, conditional, until
-    /// that row settles: kept if it reads, judged again if not (fix list row
+    /// every row it read has settled, and stands only if none of them was
+    /// denied: a denied row drops every conditional `true` reached while it
+    /// was being judged, which is judged again when next asked (fix list row
     /// 16255 review). So a cycle never lends a row a `true` its other words
     /// deny.
     fn row_readable(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
@@ -467,8 +472,10 @@ impl Judge<'_, '_, '_> {
         let mut stack = vec![root];
         // The rows in progress, by their depth on the stack.
         let mut in_progress = BTreeMap::from([(id, 0_usize)]);
-        // Each `true` not settled yet, by the lowest depth it read.
-        let mut conditional: BTreeMap<EntityId, usize> = BTreeMap::new();
+        // Each `true` not settled yet: the lowest depth it read, and how
+        // many frames had been pushed when it was reached.
+        let mut conditional: BTreeMap<EntityId, (usize, usize)> = BTreeMap::new();
+        let mut pushes = 0_usize;
         let mut finished: Option<(bool, usize)> = None;
         let mut verdict_of_root = true;
         while let Some(frame) = stack.last_mut() {
@@ -485,26 +492,27 @@ impl Judge<'_, '_, '_> {
                     if done.low < depth && verdict {
                         // It read a row below it still in progress: so does
                         // every `true` that read it.
-                        for low in conditional.values_mut() {
+                        for (low, _) in conditional.values_mut() {
                             if *low >= depth {
                                 *low = done.low;
                             }
                         }
-                        conditional.insert(done.id, done.low);
+                        conditional.insert(done.id, (done.low, pushes));
                         finished = Some((true, done.low));
                         continue;
                     }
                     self.rows.insert(done.id, verdict);
                     if !verdict {
-                        // A `true` that read it, or a row above it, in
-                        // progress is judged again when it is next asked.
-                        conditional.retain(|_, low| *low < depth);
+                        // Every `true` reached while it was being judged may
+                        // have read it in progress: each is judged again
+                        // when it is next asked.
+                        conditional.retain(|_, (_, reached)| *reached < done.pushed_at);
                     } else if done.low >= depth {
-                        // Every row it read has settled and reads: so does
-                        // each `true` that read it.
+                        // Every row it read has settled, none denied: so
+                        // does each `true` that read it.
                         let settled: Vec<EntityId> = conditional
                             .iter()
-                            .filter(|&(_, low)| *low >= depth)
+                            .filter(|&(_, (low, _))| *low >= depth)
                             .map(|(row, _)| *row)
                             .collect();
                         for row in settled {
@@ -526,7 +534,7 @@ impl Judge<'_, '_, '_> {
                         finished = Some((true, depth));
                         continue;
                     }
-                    if let Some(&low) = conditional.get(&source) {
+                    if let Some(&(low, _)) = conditional.get(&source) {
                         finished = Some((true, low));
                         continue;
                     }
@@ -537,7 +545,9 @@ impl Judge<'_, '_, '_> {
                         }
                         Opened::Waiting(mut frame) => {
                             let depth = stack.len();
+                            pushes += 1;
                             frame.low = depth;
+                            frame.pushed_at = pushes;
                             in_progress.insert(source, depth);
                             stack.push(frame);
                         }
