@@ -8,7 +8,8 @@ mod sealed;
 pub(crate) mod source;
 
 pub(crate) use sealed::{
-    HomeClaimDelivery, PreparedHomeClaimDelivery, SealedHomeClaimVector, SenderSignedHomeClaimVector,
+    HomeClaimDelivery, PreparedHomeClaimDelivery, PreparedHomeClaimSend, SealedHomeClaimVector,
+    SenderSignedHomeClaimVector,
 };
 
 use heed::RoTxn;

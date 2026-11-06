@@ -16,7 +16,7 @@ use crate::authority::PeerMachine;
 use crate::{EntityId, Error, Result, Vault};
 
 mod origin;
-pub(crate) use origin::SenderSignedHomeClaimVector;
+pub(crate) use origin::{PreparedHomeClaimSend, SenderSignedHomeClaimVector};
 
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
@@ -56,6 +56,13 @@ impl PreparedHomeClaimDelivery {
             Vec::new()
         }
     }
+}
+
+/// Native send evidence captured by the same read that selected the copy.
+struct PreparedSealedHomeClaimVector {
+    copy: SealedHomeClaimVector,
+    source: Vec<u8>,
+    recipient_encryption_key: Vec<u8>,
 }
 
 /// One machine's opaque copy. Knowing the recipient's public key does not
@@ -173,6 +180,18 @@ impl Vault {
         id: &EntityId,
         source: &[u8],
     ) -> Result<Option<SealedHomeClaimVector>> {
+        Ok(self
+            .seal_home_claim_vector_for_send(peer, delivery, id, source)?
+            .map(|prepared| prepared.copy))
+    }
+
+    fn seal_home_claim_vector_for_send(
+        &self,
+        peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        id: &EntityId,
+        source: &[u8],
+    ) -> Result<Option<PreparedSealedHomeClaimVector>> {
         let (mut copy, vector, key, vault_id) = {
             let _acceptance = self.device_only_acceptance();
             let txn = self.store.env.read_txn()?;
@@ -239,7 +258,11 @@ impl Vault {
         )
         .map_err(crypto_error)?
         .to_bytes();
-        Ok(Some(copy))
+        Ok(Some(PreparedSealedHomeClaimVector {
+            copy,
+            source: vector.source,
+            recipient_encryption_key: key.to_bytes().to_vec(),
+        }))
     }
 
     /// Opens a copy for this actual delivered payload and this authenticated

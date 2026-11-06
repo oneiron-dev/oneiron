@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{HomeClaimDelivery, PreparedHomeClaimDelivery, SealedHomeClaimVector};
 use crate::authority::PeerMachine;
-use crate::embed::home_vectors::{ReceivedHomeClaimVector, own_peer_in_txn};
+use crate::embed::home_vectors::{
+    ReceivedHomeClaimVector, own_peer_in_txn, vector_for_peer_in_txn,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 const COPY_ORIGIN_DOMAIN: &[u8] = b"oneiron/home-claim-copy-origin/v1\0";
@@ -27,6 +29,69 @@ impl SenderSignedHomeClaimVector {
     }
 }
 
+/// Holds the exact native source and recipient key used by the sealer until
+/// the actual send, not a serializable grant or a queued release certificate.
+pub(crate) struct PreparedHomeClaimSend {
+    vault: std::path::PathBuf,
+    vault_id: [u8; 32],
+    recipient: PeerMachine,
+    recipient_encryption_key: Vec<u8>,
+    source: Vec<u8>,
+    signed: SenderSignedHomeClaimVector,
+}
+
+impl PreparedHomeClaimSend {
+    pub(crate) fn release_rows(&self) -> &[EntityId] {
+        self.signed.release_rows()
+    }
+
+    /// Rechecks the actual source and original native keys at release. The
+    /// socket must also judge every release row for its real destination.
+    /// Do not queue the returned copy and treat this snapshot as a later grant.
+    pub(crate) fn into_copy_for(
+        self,
+        vault: &Vault,
+        recipient: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+    ) -> Result<Option<SenderSignedHomeClaimVector>> {
+        if self.vault != vault.store.env.path()
+            || self.recipient != recipient
+            || !self.signed.copy.matches_delivery(delivery)
+        {
+            return Ok(None);
+        }
+        let txn = vault.store.env.read_txn()?;
+        if vault.authority_view_readonly_in_txn(&txn)?.vault_id != Some(self.vault_id) {
+            return Ok(None);
+        }
+        let origin = PeerMachine::Proven {
+            machine: self.signed.copy.sender,
+            key: self.signed.copy.sender_key,
+        };
+        if !own_peer_in_txn(vault, &txn, origin)? || !own_peer_in_txn(vault, &txn, recipient)? {
+            return Ok(None);
+        }
+        let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+        let Some(key) =
+            crate::secret_custody::linked_machine_encryption_key(&fold, self.signed.copy.recipient)
+        else {
+            return Ok(None);
+        };
+        if key.to_bytes().as_slice() != self.recipient_encryption_key.as_slice() {
+            return Ok(None);
+        }
+        let Some(current) =
+            vector_for_peer_in_txn(vault, &txn, recipient, &self.signed.copy.entity_id)?
+        else {
+            return Ok(None);
+        };
+        if current.source != self.source || current.release_rows != self.signed.copy.release_rows {
+            return Ok(None);
+        }
+        Ok(Some(self.signed))
+    }
+}
+
 fn origin_transcript(vault_id: &[u8; 32], copy: &SealedHomeClaimVector) -> Result<Vec<u8>> {
     // The whole copy includes recipient, full ciphertext and every release owner.
     rmp_serde::to_vec(&(COPY_ORIGIN_DOMAIN, vault_id, copy))
@@ -36,16 +101,18 @@ fn origin_transcript(vault_id: &[u8; 32], copy: &SealedHomeClaimVector) -> Resul
 impl Vault {
     /// Seals as before, then signs the immutable result with this install's
     /// still-current original key. The final send must rejudge every source.
-    pub(crate) fn seal_relayed_home_claim_vector(
+    pub(crate) fn prepare_relayed_home_claim_send(
         &self,
         peer: PeerMachine,
         delivery: &HomeClaimDelivery<'_>,
         id: &EntityId,
         source: &[u8],
-    ) -> Result<Option<SenderSignedHomeClaimVector>> {
-        let Some(copy) = self.seal_home_claim_vector(peer, delivery, id, source)? else {
+    ) -> Result<Option<PreparedHomeClaimSend>> {
+        let Some(prepared) = self.seal_home_claim_vector_for_send(peer, delivery, id, source)?
+        else {
             return Ok(None);
         };
+        let copy = prepared.copy;
         let txn = self.store.env.read_txn()?;
         let key = self.door_signing_key_in_txn(&txn, copy.sender)?;
         if key.verifying_key().to_bytes() != copy.sender_key
@@ -67,7 +134,14 @@ impl Vault {
             .sign(&origin_transcript(&vault_id, &copy)?)
             .to_bytes()
             .to_vec();
-        Ok(Some(SenderSignedHomeClaimVector { copy, signature }))
+        Ok(Some(PreparedHomeClaimSend {
+            vault: self.store.env.path().to_path_buf(),
+            vault_id,
+            recipient: peer,
+            recipient_encryption_key: prepared.recipient_encryption_key,
+            source: prepared.source,
+            signed: SenderSignedHomeClaimVector { copy, signature },
+        }))
     }
 
     /// Verifies the copy's original sender separately from the relay. The
