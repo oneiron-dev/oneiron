@@ -7,6 +7,7 @@ use super::{EsignField, render};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod budget;
 mod html;
 mod layout;
 #[cfg(test)]
@@ -23,6 +24,8 @@ pub enum ContentTemplateError {
     Limit,
     #[error("missing or invalid repo merge field")]
     MergeField,
+    #[error("template work deadline elapsed")]
+    WorkDeadline,
     #[error("unsafe or unsupported HTML/CSS")]
     UnsupportedHtml,
     #[error("invalid page or field geography pack")]
@@ -107,6 +110,31 @@ pub fn render_html_template(
     template: &HtmlContentTemplate,
     values: &BTreeMap<String, String>,
 ) -> Result<Vec<u8>> {
+    render_html_template_in(template, values, budget::Budget::UNADMITTED)
+}
+
+/// Native HTML rendering with traversal-container backing admitted on `memory`
+/// and cooperative checks of the caller's absolute `work_deadline`.
+///
+/// This does not count the DOM, CSS/merge strings, layout/PDF payloads or
+/// external codec allocations. Individual parser/codec calls are not preempted.
+/// Admission refusals retain their native PDF error; an elapsed work deadline
+/// is [`ContentTemplateError::WorkDeadline`], not a fabricated memory refusal.
+pub fn render_html_template_admitted(
+    template: &HtmlContentTemplate,
+    values: &BTreeMap<String, String>,
+    memory: std::sync::Arc<dyn render::InspectionMemory>,
+    work_deadline: std::time::Instant,
+) -> Result<Vec<u8>> {
+    render_html_template_in(template, values, budget::Budget::new(memory, work_deadline))
+}
+
+fn render_html_template_in(
+    template: &HtmlContentTemplate,
+    values: &BTreeMap<String, String>,
+    budget: budget::Budget,
+) -> Result<Vec<u8>> {
+    budget.checkpoint()?;
     let p = template.page;
     if [p.width, p.height, p.margin].iter().any(|v| !v.is_finite())
         || p.width < 72.
@@ -118,8 +146,8 @@ pub fn render_html_template(
     {
         return Err(ContentTemplateError::Geometry);
     }
-    let document = html::parse(&template.html, values)?;
-    let mut flow = layout::Flow::new(p);
+    let document = html::parse(&template.html, values, &budget)?;
+    let mut flow = layout::Flow::with_budget(p, budget)?;
     html::render(&document, &mut flow)?;
     flow.finish()
 }
