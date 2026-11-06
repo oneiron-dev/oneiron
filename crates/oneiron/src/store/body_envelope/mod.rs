@@ -47,6 +47,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use oneiron_crypto::Kek;
 use zeroize::Zeroizing;
 
+pub(crate) use self::custody::BodyInstance;
 pub(crate) use self::custody::{
     BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
 };
@@ -61,7 +62,7 @@ pub(crate) use self::plan::{
 pub(crate) use self::reader::BodyFile;
 pub(crate) use self::response::owners::{
     bind_missing_response_owners_in_txn, bind_retained_response_owner_in_txn,
-    response_owners_bound_in_txn,
+    response_instance_owner_in_rows, response_instance_owner_in_txn, response_owners_bound_in_txn,
 };
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,

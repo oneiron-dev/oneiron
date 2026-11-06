@@ -38,7 +38,7 @@ pub(in crate::sync) use parent_retry::{
     submit as submit_parent_in_txn, wake_in_txn as wake_parent_retry_in_txn,
 };
 mod recovery;
-pub(crate) use recovery::preflight_validated_canonical_recovery;
+pub(crate) use recovery::preflight_validated_canonical_recovery_with_source;
 mod regenerates;
 pub(in crate::sync) use regenerates::{
     owe_regenerates, settle_regenerates, wake_regenerates_after_document,
@@ -49,7 +49,6 @@ mod tombstones;
 pub(in crate::sync) use tombstones::{TombstoneEffects, stage_tombstones_in_txn};
 
 // it resolves through this import, so the moved body stays byte-identical.
-
 #[cfg(test)]
 pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
 pub(crate) use self::companion_identity::ingest_replicated_identity_topology_event_in_txn;

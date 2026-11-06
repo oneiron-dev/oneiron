@@ -37,6 +37,10 @@ pub(super) struct Head {
     pub entity: String,
     pub incarnation: String,
     pub document: String,
+    /// Local physical storage when it differs from the logical document id.
+    pub storage_document: Option<String>,
+    /// Independent pre-existing sequence text, not the native record field.
+    pub sequence_document: Option<String>,
     pub field: TextField,
     pub generation: u64,
     pub pending: u64,
@@ -50,6 +54,83 @@ pub(super) struct Head {
 /// counters.
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
+
+/// Physical rows are local; pointer, fork and source identities are logical.
+pub(super) fn document_slot(head: &Head) -> Result<DocumentSlot> {
+    DocumentSlot::from_hex(head.storage_document.as_deref().unwrap_or(&head.document))
+}
+
+/// Keep an independent unheaded BODY on its original sync route. It never
+/// becomes the native field merely because a native head was installed.
+pub(super) fn has_sequence_text(head: &Head) -> Result<bool> {
+    match head.sequence_document.as_deref() {
+        None => Ok(false),
+        Some(slot) if slot == head.entity => {
+            if DocumentSlot::from_hex(slot)? == document_slot(head)? {
+                return Err(Error::CorruptedIndex(
+                    "independent document shares native slot",
+                ));
+            }
+            Ok(true)
+        }
+        Some(_) => Err(Error::CorruptedIndex("independent document sequence slot")),
+    }
+}
+
+/// The physical basis of the current sync text route, with no authority or
+/// source admission implied by its location. A missing head keeps the
+/// original entity slot, including an unborn document's captured rows.
+pub(crate) fn sync_document_slot_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<DocumentSlot> {
+    let Some(head) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
+        return Ok(DocumentSlot::of(*entity));
+    };
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("document head entity mismatch"));
+    }
+    if has_sequence_text(&head)? {
+        Ok(DocumentSlot::of(*entity))
+    } else {
+        document_slot(&head)
+    }
+}
+
+fn document_slot_occupied(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    slot: DocumentSlot,
+) -> Result<bool> {
+    if store.port_document_present(txn, slot)? {
+        return Ok(true);
+    }
+    for row in DocumentRow::ALL {
+        if store.port_document_row(txn, slot, row)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Select free local storage without adopting or replacing another slot's
+/// rows. This selects a location only; it grants no permission to write it.
+pub(super) fn free_document_storage(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    document: &str,
+) -> Result<Option<String>> {
+    if !document_slot_occupied(store, txn, DocumentSlot::from_hex(document)?)? {
+        return Ok(None);
+    }
+    loop {
+        let fresh = EntityId::now();
+        if !document_slot_occupied(store, txn, DocumentSlot::of(fresh))? {
+            return Ok(Some(fresh.to_hex()));
+        }
+    }
+}
 
 pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     let mut reader = std::io::Cursor::new(bytes);
@@ -96,7 +177,7 @@ pub(super) fn load(
     txn: &RoTxn<'_>,
     h: &Head,
 ) -> Result<EntityDoc> {
-    let slot = DocumentSlot::from_hex(&h.document)?;
+    let slot = document_slot(h)?;
     let bytes = store
         .port_document_row(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
@@ -174,6 +255,121 @@ pub(super) fn persist_scanned(
     before: Option<&loro::VersionVector>,
     scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
 ) -> Result<()> {
+    let native_tokens =
+        super::native_skill_state::reconcile_for_persist(vault, txn, entity, h, doc)?;
+    persist_scanned_inner(vault, txn, entity, h, doc, before, native_tokens, scan)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_native_skill(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    doc: &EntityDoc,
+    before: Option<&loro::VersionVector>,
+    admission: super::native_skill_state::LocalSkillStateAdmission<'_>,
+) -> Result<()> {
+    let vault = admission.vault();
+    let native_tokens = admission.require_document(txn, entity, doc)?;
+    persist_scanned_inner(vault, txn, entity, h, doc, before, native_tokens, door_scan)
+}
+
+/// Persist only the document owned by the actual source-bound canonical
+/// producer. Rebuilt operation identities are not inherited old operation ids.
+pub(super) fn persist_canonical_skill(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    rebuilt: &super::native_skill_state::CanonicalRebuiltDocument<'_>,
+) -> Result<()> {
+    let native_tokens = rebuilt.require_document(entity, h)?;
+    persist_scanned_inner(
+        vault,
+        txn,
+        entity,
+        h,
+        rebuilt.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
+/// Consume the authenticated owner's actual constrained history cut, not an
+/// arbitrary shallow snapshot offered as inherited native state.
+pub(super) fn persist_purged_document(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    purged: &super::pins::PurgedDocument<'_>,
+) -> Result<()> {
+    let native_tokens = purged.require_document(txn, entity, h)?;
+    persist_scanned_inner(
+        purged.vault(),
+        txn,
+        entity,
+        h,
+        purged.document(),
+        None,
+        native_tokens,
+        door_scan,
+    )
+}
+
+/// Publish an original authorized fork settlement's owned stored-source merge.
+/// MERGE keeps its original update base; SWITCH keeps its original pointer move.
+pub(super) fn persist_settled_document(
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    settled: &super::forks::SettledDocument<'_>,
+) -> Result<()> {
+    let native_tokens = settled.require_document(txn, entity, h)?;
+    persist_scanned_inner(
+        settled.vault(),
+        txn,
+        entity,
+        h,
+        settled.document(),
+        settled.before(),
+        native_tokens,
+        door_scan,
+    )
+}
+
+/// The selected own-device source passed the actual record phases in this
+/// writer. Its current text already ran the sync scan and remark before P1;
+/// this terminal cannot accept a caller's raw snapshot or a skip-scan flag.
+#[cfg(feature = "sync")]
+pub(super) fn persist_admitted_record_document(
+    txn: &mut RwTxn<'_>,
+    h: &mut Head,
+    admitted: &super::record_carried::AdmittedRecordDocument<'_>,
+) -> Result<()> {
+    let native_tokens = admitted.require_document(txn, h)?;
+    persist_scanned_inner(
+        admitted.vault(),
+        txn,
+        &admitted.entity()?,
+        h,
+        admitted.document(),
+        admitted.before(),
+        native_tokens,
+        |_, _, _, _, _| Ok(false),
+    )
+}
+
+fn persist_scanned_inner(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    doc: &EntityDoc,
+    before: Option<&loro::VersionVector>,
+    native_tokens: std::collections::BTreeSet<EntityId>,
+    scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
+) -> Result<()> {
     let store = &vault.store;
     // A MESSAGE or TURN whose text changes owes its turn a sieve read and,
     // on an armed vault, a tag pass (ARCH-0036) and a vector of the new text
@@ -204,7 +400,7 @@ pub(super) fn persist_scanned(
         .generation
         .checked_add(1)
         .ok_or(invalid("document generation overflow"))?;
-    let slot = DocumentSlot::from_hex(&h.document)?;
+    let slot = document_slot(h)?;
     if let Some(before) = before.filter(|_| h.pending < 31) {
         let bytes = doc
             .doc
@@ -221,7 +417,13 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
+    if !native_tokens.is_empty() {
+        crate::provenance::record_actor_stamp_uses_in_txn(store, txn, entity, native_tokens)?;
+    }
     crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
+    // FIX 4817: a home part's new revision withdraws what wore the old one.
+    let custody = crate::secret_custody::CustodyWrite::of(vault);
+    crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -431,10 +633,23 @@ impl Vault {
                 "entity_doc.migrate_text",
             )?;
 
+            let (storage_document, sequence_document) =
+                if header.entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                    (
+                        free_document_storage(&self.store, txn, &entity.to_hex())?,
+                        self.store
+                            .port_document_present(txn, DocumentSlot::of(*entity))?
+                            .then(|| entity.to_hex()),
+                    )
+                } else {
+                    (None, None)
+                };
             let mut h = Head {
                 entity: entity.to_hex(),
                 incarnation: EntityId::now().to_hex(),
                 document: entity.to_hex(),
+                storage_document,
+                sequence_document,
                 field: field.clone(),
                 generation: 0,
                 pending: 0,
@@ -585,8 +800,14 @@ pub(crate) fn guard_record_put(
 /// citing record.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     if let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? {
-        for doc in [entity.to_hex(), h.document] {
-            drop_document(store, txn, &doc)?;
+        let native = document_slot(&h)?.to_hex();
+        let mut documents = std::collections::BTreeSet::from([native]);
+        if h.storage_document.is_none() {
+            documents.insert(entity.to_hex());
+        }
+        documents.extend(h.sequence_document);
+        for document in documents {
+            drop_document(store, txn, &document)?;
         }
     }
     super::forks::erase_forks(store, txn, entity)?;
@@ -602,6 +823,8 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
         }
     }
     super::citation_floor::erase_in_txn(store, txn, entity)?;
+    #[cfg(feature = "sync")]
+    crate::store::window_record_sources::remove_entity_in_txn(store, txn, entity)?;
     ENTITY_DOC_HEAD.delete(store, txn, &HexId(*entity))?;
     Ok(())
 }
@@ -646,12 +869,7 @@ pub(super) fn move_pointer(
 /// Removes a document's snapshot, state vectors and pending updates.
 pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) -> Result<()> {
     let slot = DocumentSlot::from_hex(document)?;
-    let rows = [
-        DocumentRow::Snapshot,
-        DocumentRow::StateVector,
-        DocumentRow::ShallowSince,
-    ];
-    store.port_document_rows_delete(txn, slot, &rows)?;
+    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
     store.port_document_updates_delete(txn, slot)
 }
 
@@ -780,8 +998,10 @@ pub(crate) fn body_with_document(
                     fields.push((rmpv::Value::from(key), value));
                 }
             }
+            let mut body = rmpv::Value::Map(fields);
+            super::native_skill_state::project_state(doc, &mut body)?;
             let mut out = Vec::new();
-            rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
+            rmpv::encode::write_value(&mut out, &body)
                 .map_err(|_| invalid("document view encoding"))?;
             Ok(out)
         }

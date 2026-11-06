@@ -340,3 +340,156 @@ impl Classify for Classifier<'_> {
         Some(handles)
     }
 }
+
+/// A final capture with native source slots still distinct from ordinary
+/// family plans. The paired source owner consumes it before any emission.
+pub(super) struct RecordDocumentClassification<'o> {
+    pub(super) parts: loro::checkpoint::Parts,
+    pub(super) ordinary: Classifier<'o>,
+    pub(super) native_slots: std::collections::BTreeSet<loro::checkpoint::AtomId>,
+}
+
+/// Captures the actual closed document with native digest keys withheld.
+/// This does not change the ordinary emitted WINDOW_ROOTS registry.
+pub(super) fn capture_record_documents<'o>(
+    doc: &loro::LoroDoc,
+    roots: &[&str],
+    owners: &'o dyn SyncPayloadOwners,
+    records: &super::record_documents::PreparedRecordDocuments,
+) -> std::result::Result<RecordDocumentClassification<'o>, Refusal> {
+    use loro::checkpoint::Capture;
+
+    let mut roots = roots.to_vec();
+    if !roots.contains(&crate::sync::skill_docs::SKILL_DOCS_MAP) {
+        roots.push(crate::sync::skill_docs::SKILL_DOCS_MAP);
+    }
+    let mut classifier =
+        RecordDocumentClassifier::new(Classifier::new(owners, None, None), records);
+    let mut captured = doc.export_root_map_checkpoint(&roots, &mut classifier);
+    if classifier.ordinary.needs_parts {
+        let mut noting =
+            RecordDocumentClassifier::new(Classifier::new(owners, None, None), records);
+        noting.ordinary.noting = Some(PartHolders::default());
+        doc.export_root_map_checkpoint(&roots, &mut noting);
+        let turn = TurnSource::of(&noting.ordinary.turns);
+        classifier = RecordDocumentClassifier::new(
+            Classifier::new(owners, noting.ordinary.noting, turn),
+            records,
+        );
+        captured = doc.export_root_map_checkpoint(&roots, &mut classifier);
+    }
+    let parts = match captured {
+        Capture::Classified(parts) => parts,
+        Capture::Unclassified(why) => {
+            return Err(classifier
+                .ordinary
+                .refusal
+                .unwrap_or((None, super::operations::unsupported(why))));
+        }
+    };
+    if classifier.ordinary.plans.len() != parts.atoms.len() {
+        return Err((None, SyncUnclassified::Undecodable));
+    }
+    classifier.ordinary.turn = classifier.ordinary.turn.take().filter(|_| {
+        classifier.ordinary.plans.iter().any(|plan| {
+            plan.derived
+                .is_some_and(|slot| slot.role == DerivedRole::Manifest)
+        })
+    });
+    Ok(RecordDocumentClassification {
+        parts,
+        ordinary: classifier.ordinary,
+        native_slots: classifier.native_slots,
+    })
+}
+
+/// Classifies native writes by their actual Site, not callback ordinals.
+/// All other families still use the original Classifier and its homes.
+struct RecordDocumentClassifier<'o, 'r> {
+    ordinary: Classifier<'o>,
+    records: &'r super::record_documents::PreparedRecordDocuments,
+    native_slots: std::collections::BTreeSet<loro::checkpoint::AtomId>,
+}
+
+impl<'o, 'r> RecordDocumentClassifier<'o, 'r> {
+    fn new(
+        ordinary: Classifier<'o>,
+        records: &'r super::record_documents::PreparedRecordDocuments,
+    ) -> Self {
+        Self {
+            ordinary,
+            records,
+            native_slots: Default::default(),
+        }
+    }
+
+    fn native(
+        &mut self,
+        root: &str,
+        key: &str,
+        kind: SlotKind,
+        holders: Vec<Holder>,
+    ) -> Option<Vec<OwnerId>> {
+        if holders.is_empty() {
+            return self.ordinary.refuse(None, SyncUnclassified::NoOwner);
+        }
+        let id = loro::checkpoint::AtomId::try_from(self.ordinary.plans.len()).ok()?;
+        let handles = holders
+            .into_iter()
+            .map(|holder| self.ordinary.handle(Home::Holder(holder)))
+            .collect();
+        self.ordinary.plans.push(Plan {
+            root: root.to_owned(),
+            key: key.to_owned(),
+            kind,
+            // The original head/row/part/key is NOT an ordinary sealed copy.
+            // Its complete native source is emitted by the paired owner.
+            value: Vec::new(),
+            split: None,
+            derived: None,
+        });
+        self.native_slots.insert(id);
+        Some(handles)
+    }
+}
+
+impl Classify for RecordDocumentClassifier<'_, '_> {
+    fn plain_key(&mut self, root: &str, key: &str) -> bool {
+        if root != crate::sync::skill_docs::SKILL_DOCS_MAP {
+            return self.ordinary.plain_key(root, key);
+        }
+        // Only a canonical opaque entity id may outlive its native content.
+        crate::EntityId::from_hex(key).is_ok_and(|entity| entity.to_hex() == key)
+    }
+
+    fn key_holders(&mut self, root: &str, key: &str) -> Option<Vec<OwnerId>> {
+        if root != crate::sync::skill_docs::SKILL_DOCS_MAP {
+            return self.ordinary.key_holders(root, key);
+        }
+        let Some(holders) = self.records.key_holders(key) else {
+            return self.ordinary.refuse(None, SyncUnclassified::OrphanPart);
+        };
+        self.native(root, key, SlotKind::Key, holders)
+    }
+
+    fn holders(&mut self, field: Field<'_>) -> Option<Vec<OwnerId>> {
+        let Field::Value {
+            root,
+            key,
+            value,
+            site,
+        } = field
+        else {
+            return self.ordinary.holders(field);
+        };
+        if root != crate::sync::skill_docs::SKILL_DOCS_MAP && root != "entities" {
+            return self.ordinary.holders(field);
+        }
+        match self.records.value_holders(root, key, value, site) {
+            Ok(Some(holders)) => self.native(root, key, SlotKind::Value, holders),
+            Ok(None) if root == "entities" => self.ordinary.holders(field),
+            Ok(None) => self.ordinary.refuse(None, SyncUnclassified::OrphanPart),
+            Err(_) => self.ordinary.refuse(None, SyncUnclassified::Undecodable),
+        }
+    }
+}

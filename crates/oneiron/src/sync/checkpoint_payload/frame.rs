@@ -7,6 +7,8 @@
 //! joined turn's key, part count, copies and fields (FIX 12153). A carrier
 //! has one spelling; any other refuses.
 
+pub(super) mod record_documents;
+
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 use serde::{Deserialize, Serialize};
@@ -20,8 +22,9 @@ use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, RowDb, RowLocator, bad_part};
 
 /// The spelling's version: 2 binds each copy to its home (FIX 10283), 3
-/// carries a parted room turn joined, its slots derived (FIX 12153).
-const FRAME: u8 = 3;
+/// carries a parted room turn joined, its slots derived (FIX 12153); 4
+/// carries every independent native record-document source.
+const FRAME: u8 = 4;
 
 #[derive(Serialize, Deserialize)]
 struct Frame {
@@ -31,6 +34,7 @@ struct Frame {
     rows: Vec<FrameRow>,
     slots: Vec<FrameSlot>,
     joined: Vec<FrameJoined>,
+    record_documents: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -293,6 +297,7 @@ impl LoroCarrier {
             rows,
             slots,
             joined,
+            record_documents: record_documents::encode(&self.skeleton, &self.record_documents)?,
         };
         rmp_serde::to_vec_named(&frame).map_err(|_| bad_part())
     }
@@ -337,12 +342,15 @@ impl LoroCarrier {
                 holes: turn.holes,
             });
         }
+        let skeleton = Skeleton::from_bytes(&frame.skeleton).map_err(|_| bad_part())?;
+        let record_documents = record_documents::decode(&skeleton, &frame.record_documents)?;
         let carrier = Self {
             window: frame.window,
-            skeleton: Skeleton::from_bytes(&frame.skeleton).map_err(|_| bad_part())?,
+            skeleton,
             rows,
             slots,
             joined,
+            record_documents,
         };
         if carrier.to_bytes()? != bytes {
             return Err(bad_part());

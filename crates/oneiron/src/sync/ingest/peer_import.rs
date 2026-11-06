@@ -25,7 +25,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_EMBEDDING_SETUP,
-    ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SKILL,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{AssetBodyFacts, asset_file_in_txn};
@@ -42,10 +42,11 @@ pub(in crate::sync) const PEER_ORIGIN_MAP: &str = "peer_origins";
 /// MESSAGE row takes the own-device lane only when no peer's import brought
 /// it, on whichever own machine it lands (FIX 11709). ASSET and ASSET_TEXT
 /// position imports likewise exclude peer-origin owner and source bytes.
-const PEER_JUDGED_KINDS: [u8; 5] = [
+const PEER_JUDGED_KINDS: [u8; 6] = [
     ENTITY_TYPE_AGENT_DEF,
     ENTITY_TYPE_EMBEDDING_SETUP,
     ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_SKILL,
     ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT,
 ];
@@ -232,6 +233,33 @@ pub(in crate::sync) fn peer_row_in_txn(
         PEER_ORIGIN.delete(&vault.store, wtxn, &key)?;
     }
     Ok(false)
+}
+
+/// Transport-only origin check for a restored native SKILL source. It reads
+/// both original origin forms without minting an import or changing either.
+pub(crate) fn record_document_peer_source_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    window: &str,
+    entity: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if !EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SKILL)
+    {
+        return Err(Error::InvalidConfig("not a native skill source".into()));
+    }
+    let sent = digest(raw);
+    if carries_origins(doc)
+        && map_get_bytes(&doc.get_map(PEER_ORIGIN_MAP), &entity.to_hex()).as_deref()
+            == Some(sent.as_slice())
+    {
+        return Ok(true);
+    }
+    Ok(PEER_ORIGIN
+        .get(store, txn, &origin_key(window, entity))?
+        .is_some_and(|held| latest_origin(&held) == sent.as_slice()))
 }
 
 /// Drops the record of each carrier a local path removes, in any window,

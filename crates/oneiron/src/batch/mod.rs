@@ -7,6 +7,8 @@ mod agent_definition_create;
 mod authority_log;
 mod base_apply;
 mod builder;
+#[cfg(feature = "sync")]
+pub(crate) use builder::{AppliedRecordDocument, IngestedPutOutcome};
 mod child_of_overlay;
 pub(crate) mod claim_candidate_apply;
 mod claim_materialization;
@@ -33,6 +35,8 @@ pub(crate) use oneiron_store::batch::phonetic_codes;
 pub(crate) use phonetic_apply::checkpoint;
 mod prepared_index;
 mod put_apply;
+#[cfg(feature = "sync")]
+pub(crate) use put_apply::AdmittedRecordDocumentPut;
 pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
 mod recovery_shell;
@@ -93,12 +97,13 @@ pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
-pub(crate) use self::actor_content::apply_actor_ops;
+pub(crate) use self::actor_content::{ContentWriteInputs, apply_actor_ops};
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
 };
 pub(crate) use self::gate_mode::ApplyOpsGateMode;
+use self::gate_mode::NativePublicationContext;
 use self::gate_staging::stage_preflight_decision;
 pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
@@ -127,6 +132,8 @@ pub(crate) use self::types::{
 // Private re-exports preserving the module's original flat namespace for
 // sibling files and the white-box test module (`tests.rs` uses `super::*`).
 use self::authority_log::*;
+#[cfg(feature = "sync")]
+pub(crate) use self::builder::NativeSkillFinalInput;
 use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;

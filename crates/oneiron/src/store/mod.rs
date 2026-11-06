@@ -395,6 +395,8 @@ pub(crate) mod turn_missing;
 mod usage_sources;
 mod world_pad_custody;
 mod writer_lease;
+#[cfg(feature = "sync")]
+pub(crate) mod window_record_sources;
 
 #[cfg(test)]
 pub(crate) mod test_hooks;
@@ -419,6 +421,8 @@ pub(crate) use served_vaults::served_vault_at;
 #[cfg(feature = "sync")]
 pub(crate) use backup_change::telemetry_batch_class;
 pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
+#[cfg(unix)]
+pub(crate) use body_envelope::BodyInstance;
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_INSTANCES, BODY_KEYS, BodyFile, BodyKeyRow,
@@ -445,8 +449,9 @@ pub(crate) use body_envelope::{
     ResponseOwners, ResponseRead, ResponseScan, bind_missing_response_owners_in_txn,
     bind_response_in_txn, bind_retained_response_owner_in_txn, carrier_row,
     erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
-    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    response_owners_bound_in_txn, settle_shared_response_in_txn, stamp_opaque_erased,
+    response_binding_in_txn, response_carrier, response_instance_owner_in_rows,
+    response_instance_owner_in_txn, response_owed_to_all_in_txn, response_owners_bound_in_txn,
+    settle_shared_response_in_txn, stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{

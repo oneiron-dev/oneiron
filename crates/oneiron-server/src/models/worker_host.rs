@@ -415,26 +415,6 @@ fn stop_device_admission_if_unused(host: &WorkerHost, device: &str) {
     }
 }
 
-/// The device ledger of the device managed worker `worker_id` launches on,
-/// when its launch names one: what a snapshot transfer may take there.
-#[cfg(unix)]
-fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
-    let host = HOST.get()?;
-    let device = host
-        .lock()
-        .get(worker_id)?
-        .row
-        .launch
-        .as_ref()?
-        .device
-        .clone()?;
-    host.ledgers
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&device)
-        .cloned()
-}
-
 /// The device ledger of the actual managed worker `worker` names
 /// (FIX10370): the hosted row with its id AND its instance, resolved
 /// under the workers lock before any registry lock; `None` where the
@@ -849,10 +829,9 @@ pub(super) fn external_workers(
     for row in rows {
         if row.binding.provider != provider_name
             || row.mode != WorkerMode::External
-            || row
-                .endpoint
-                .as_deref()
-                .is_some_and(|endpoint| endpoint != provider.base_url.as_str())
+            || row.endpoint.as_deref().is_some_and(|endpoint| {
+                endpoint.trim_end_matches('/') != provider.base_url.trim_end_matches('/')
+            })
             || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
         {
             continue;

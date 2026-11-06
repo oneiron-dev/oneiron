@@ -11,7 +11,7 @@ use super::session::WsSink;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 use crate::artifact_hosting::ArtifactPublicationPart;
 use crate::side_table::HexId;
-use crate::sync::client::{SyncClient, SyncResidenceMode};
+use crate::sync::client::{SyncClient, SyncResidenceMode, WindowClaimCopyRelease};
 use crate::sync::documents::DS_E;
 use crate::sync::transport::{self, TransportError, window_sub_tags};
 use crate::sync::window::UpdateVerdict;
@@ -43,7 +43,7 @@ pub(super) struct NodeBatchTurn {
 
 #[derive(Debug)]
 struct PendingWindowUpdate {
-    frames: std::collections::VecDeque<Vec<u8>>,
+    frames: std::collections::VecDeque<(Vec<u8>, Option<WindowClaimCopyRelease>)>,
     binding: transport::WindowPadBinding,
     first_id: Option<[u8; 32]>,
 }
@@ -55,6 +55,67 @@ fn forget_pending(
 ) {
     if let Some(pending) = pending.take() {
         client.forget_window_send(window_key, &pending.binding, pending.first_id);
+    }
+}
+
+/// The existing split sink holds the native evidence, not a serialized grant,
+/// until its underlying socket is ready to accept this particular batch.
+pub(super) struct PreparedNodeBatch {
+    raw_batch: Vec<u8>,
+    frames: Vec<Vec<u8>>,
+    size: usize,
+    copy_releases: Vec<(usize, WindowClaimCopyRelease)>,
+}
+
+impl PreparedNodeBatch {
+    pub(super) fn encode(
+        frames: Vec<Vec<u8>>,
+        copy_releases: Vec<(usize, WindowClaimCopyRelease)>,
+    ) -> Result<Self, TransportError> {
+        let raw_batch = transport::encode_node_batch(&frames).into_result()?;
+        let size = frames.iter().fold(1, |size, frame| size + 4 + frame.len());
+        Ok(Self {
+            raw_batch,
+            frames,
+            size,
+            copy_releases,
+        })
+    }
+
+    pub(super) fn into_frame(
+        mut self,
+        vault: &crate::Vault,
+        peer: crate::authority::PeerMachine,
+    ) -> Vec<u8> {
+        for (_, release) in &self.copy_releases {
+            release.recheck(vault, peer);
+        }
+        let (mut added_bytes, mut added_members) = (0usize, 0usize);
+        for (_, release) in &self.copy_releases {
+            if release.retained() {
+                added_bytes = added_bytes.saturating_add(release.added_bytes());
+                added_members += usize::from(release.adds_member());
+            }
+        }
+        if self.size.saturating_add(added_bytes) > transport::MAX_DECODED_PAYLOAD_BYTES
+            || self.frames.len().saturating_add(added_members) > transport::MAX_NODE_BATCH_MEMBERS
+        {
+            for (_, release) in &self.copy_releases {
+                release.abandon();
+            }
+            return self.raw_batch;
+        }
+        if added_bytes == 0 {
+            return self.raw_batch;
+        }
+        // Reverse insertion preserves original member indices and part order.
+        for (index, release) in self.copy_releases.iter_mut().rev() {
+            release.append(*index, &mut self.frames);
+        }
+        // An optional materialization fault cannot refuse a prevalidated raw batch.
+        transport::encode_node_batch(&self.frames)
+            .into_result()
+            .unwrap_or(self.raw_batch)
     }
 }
 
@@ -72,6 +133,7 @@ impl SyncConnection {
         let mut frames = Vec::new();
         let mut size = 1;
         let mut full_updates = Vec::new();
+        let mut copy_releases = Vec::new();
         let mut documents_next = turn.documents_lead;
         turn.documents_lead = !turn.documents_lead;
         let prepared = (|| -> Result<(), String> {
@@ -87,6 +149,7 @@ impl SyncConnection {
                         &mut frames,
                         &mut size,
                         &mut full_updates,
+                        &mut copy_releases,
                         &mut turn.pending,
                     )?;
                 }
@@ -97,7 +160,7 @@ impl SyncConnection {
         let sent = match prepared {
             Err(error) => Err(error),
             Ok(()) if frames.is_empty() => Ok(()),
-            Ok(()) => match transport::encode_node_batch(&frames).into_result() {
+            Ok(()) => match PreparedNodeBatch::encode(frames, copy_releases) {
                 Err(error) => Err(error.to_string()),
                 Ok(batch) => {
                     let mut left = self.left.subscribe();
@@ -107,7 +170,7 @@ impl SyncConnection {
                             self.publish_leave_unqueued(&mut full_updates);
                             return Err(LoopExit::Shutdown);
                         }
-                        sent = write.send(Message::Binary(batch.into())) => {
+                        sent = write.send_node_batch(batch) => {
                             sent.map_err(|error| error.to_string())
                         }
                     }
@@ -140,6 +203,7 @@ impl SyncConnection {
         frames: &mut Vec<Vec<u8>>,
         size: &mut usize,
         full_updates: &mut Vec<LocalUpdate>,
+        copy_releases: &mut Vec<(usize, WindowClaimCopyRelease)>,
         pending: &mut Option<PendingWindowUpdate>,
     ) -> Result<bool, String> {
         while let Some(update) = updates.first() {
@@ -194,8 +258,14 @@ impl SyncConnection {
                         context.as_ref().map(|window| &window.doc),
                     )
                     .map_err(|error| error.to_string())?;
-                let (candidate, _) = ready
-                    .frames(&update.window_key, sub_tag, opened.then_some(1))
+                let ready = client.prepare_window_claim_send(
+                    ready,
+                    &update.window_key,
+                    sub_tag,
+                    context.as_ref().map(|window| &window.doc),
+                );
+                let candidate = ready
+                    .frames(opened.then_some(1), false)
                     .map_err(|error| error.to_string())?;
                 let multipart = !super::session::fits_all(&[], 1, &candidate);
                 if !multipart && !super::session::fits_all(frames, *size, &candidate) {
@@ -203,8 +273,8 @@ impl SyncConnection {
                 }
                 drop(candidate);
                 if multipart {
-                    let (candidate, _) = ready
-                        .frames_batched(&update.window_key, sub_tag, opened.then_some(1))
+                    let candidate = ready
+                        .frames(opened.then_some(1), true)
                         .map_err(|error| error.to_string())?;
                     if !fits(frames, *size, &candidate[0]).map_err(|error| error.to_string())? {
                         return Ok(false);
@@ -222,14 +292,8 @@ impl SyncConnection {
                     None
                 };
                 if multipart {
-                    let (members, binding) = client
-                        .window_send_batch_frames(
-                            &ready,
-                            &update.window_key,
-                            sub_tag,
-                            seq,
-                            &update.update_bytes,
-                        )
+                    let (members, binding, releases) = ready
+                        .send_frames(client, seq, &update.update_bytes, true)
                         .map_err(|error| error.to_string())?;
                     let first_id = members.first().and_then(|first| {
                         transport::decode_window_sync(&first[1..])
@@ -237,37 +301,49 @@ impl SyncConnection {
                             .and_then(|(_, _, payload)| transport::window_pad_frame_id(payload))
                     });
                     *pending = Some(PendingWindowUpdate {
-                        frames: members.into(),
+                        frames: members.into_iter().zip(releases).collect(),
                         binding,
                         first_id,
                     });
                 } else {
-                    let members = client
-                        .window_send_frames(
-                            &ready,
-                            &update.window_key,
-                            sub_tag,
-                            seq,
-                            &update.update_bytes,
-                        )
+                    let (members, _, releases) = ready
+                        .send_frames(client, seq, &update.update_bytes, false)
                         .map_err(|error| error.to_string())?;
-                    for frame in members {
-                        *size += 4 + frame.len();
-                        frames.push(frame);
+                    for (mut frame, release) in members.into_iter().zip(releases) {
+                        if let Some(mut release) = release {
+                            release.stage(&mut frame);
+                            copy_releases.push((frames.len(), release));
+                        }
+                        if !frame.is_empty() {
+                            *size += 4 + frame.len();
+                            frames.push(frame);
+                        }
                     }
                 }
             }
             if let Some(partial) = pending.as_mut() {
-                while let Some(frame) = partial.frames.front() {
-                    if !fits(frames, *size, frame).map_err(|error| error.to_string())? {
+                while let Some((frame, release)) = partial.frames.front() {
+                    let required = release
+                        .as_ref()
+                        .map_or(frame.len(), |release| release.required_prefix());
+                    if required > 0
+                        && !fits(frames, *size, &frame[..required])
+                            .map_err(|error| error.to_string())?
+                    {
                         return Ok(false);
                     }
-                    let frame = partial
+                    let (mut frame, release) = partial
                         .frames
                         .pop_front()
                         .expect("pending frame was just read");
-                    *size += 4 + frame.len();
-                    frames.push(frame);
+                    if let Some(mut release) = release {
+                        release.stage(&mut frame);
+                        copy_releases.push((frames.len(), release));
+                    }
+                    if !frame.is_empty() {
+                        *size += 4 + frame.len();
+                        frames.push(frame);
+                    }
                 }
             }
             *pending = None;

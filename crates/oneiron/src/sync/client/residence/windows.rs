@@ -8,6 +8,7 @@ use serde_json::json;
 
 use super::super::OwnDeviceImport;
 use super::super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
+use super::super::home_claim_copies::{HomeClaimCopies, with_home_claim_copies};
 use super::super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
 use crate::sync::selector::encode_sync_selector;
@@ -41,16 +42,19 @@ fn import_promotion_snapshot_with(
     (window, doc): (&WindowKey, &loro::LoroDoc),
     snapshot: &[u8],
     own_device: Option<&OwnDeviceImport>,
+    copies: &HomeClaimCopies,
 ) -> bool {
-    crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
-        && crate::sync::ingest::with_own_device_import(
-            vault,
-            own_device,
-            (window, doc),
-            snapshot,
-            || crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)),
-        )
-        .is_ok()
+    with_home_claim_copies(vault, window, copies, || {
+        crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
+            && crate::sync::ingest::with_own_device_import(
+                vault,
+                own_device,
+                (window, doc),
+                snapshot,
+                || crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)),
+            )
+            .is_ok()
+    })
 }
 
 /// Sync-state prefix of a window this machine holds in full whose retain the
@@ -143,7 +147,9 @@ impl SyncClient {
         // Its envelope's pads reach custody first (FIX 7107), once its
         // isolated check over the empty window it opens into admits it (FIX
         // 10474).
-        let Some(snapshot) = self.promotion_snapshot(window, &reply.snapshot, None)? else {
+        let Some((snapshot, copies)) =
+            self.promotion_snapshot(window, &reply.snapshot, None, rpc.home)?
+        else {
             return Err(refused());
         };
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES {
@@ -170,6 +176,7 @@ impl SyncClient {
             (window, &loaded.doc),
             &snapshot,
             own_device.as_ref(),
+            &copies,
         ) {
             self.manager.discard_window(window);
             return Err(refused());
@@ -315,7 +322,8 @@ impl SyncClient {
         // Its envelope's pads reach custody first (FIX 7107), once its
         // isolated check over the window it merges into admits it (FIX 10474);
         // a refused one is refused as a failed retain is.
-        let Some(snapshot) = self.promotion_snapshot(window, &reply.snapshot, Some(&loaded.doc))?
+        let Some((snapshot, copies)) =
+            self.promotion_snapshot(window, &reply.snapshot, Some(&loaded.doc), rpc.home)?
         else {
             self.mark_retain_refused(window)?;
             return Ok(false);
@@ -330,6 +338,7 @@ impl SyncClient {
                 (window, &loaded.doc),
                 &snapshot,
                 own_device.as_ref(),
+                &copies,
             )
         {
             self.mark_retain_refused(window)?;

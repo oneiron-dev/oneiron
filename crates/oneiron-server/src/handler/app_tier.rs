@@ -312,13 +312,7 @@ impl VerbCall {
             } => (auth, request, context, conn),
             Self::Residence(call) => return call.answer(server, direct_tx).await,
         };
-        let reply = crate::livequery::rpc_reply(&server, &auth, request, context).await?;
-        for frame in reply.queued(conn) {
-            direct_tx
-                .send(frame)
-                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
-        }
-        Ok(())
+        crate::livequery::rpc_reply_to(&server, &auth, request, context, conn, &direct_tx).await
     }
 }
 
@@ -541,6 +535,23 @@ fn answer_app_message(
                         state.residence_work.attachment(),
                     ),
                 )));
+            }
+            if matches!(
+                request.method.as_str(),
+                "residence.bundle.list" | "residence.bundle.get"
+            ) {
+                crate::livequery::residence_rpc_to(
+                    server,
+                    &bound,
+                    peer,
+                    request,
+                    &mut state.residence_index,
+                    &mut state.authority_append_stage,
+                    &mut state.residence_touch,
+                    conn,
+                    direct_tx,
+                )?;
+                return Ok(None);
             }
             crate::livequery::residence_rpc(
                 server,

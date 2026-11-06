@@ -37,6 +37,7 @@ pub(crate) use crate::room_codec::carrier_parts;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;
 pub mod client;
+mod isolated_receiver;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
@@ -66,6 +67,7 @@ pub(crate) mod repo_manifests;
 pub mod residence;
 pub mod residence_operation_budgets;
 pub(crate) mod room_facts;
+pub(crate) mod skill_docs;
 pub(crate) use crate::room_codec::room_parts;
 pub(crate) mod origin_positions;
 pub(crate) mod room_turns;
@@ -97,9 +99,9 @@ pub use connection::{
     ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
     ResidenceModeChange, SyncConnection,
 };
-pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
+pub(crate) use ingest::{SelectedRecordDocument, VerifiedOwnDeviceLane};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
@@ -136,7 +138,7 @@ pub use selector::{
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
     admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
     decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer,
+    filtered_window_doc_for, filtered_window_doc_for_peer, filtered_window_doc_for_peer_in_scope,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

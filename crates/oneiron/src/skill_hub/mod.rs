@@ -24,6 +24,8 @@ mod package_codec;
 mod package_work;
 mod publisher;
 mod ref_sync;
+#[cfg(feature = "sync")]
+mod record_refinement;
 mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
@@ -55,6 +57,8 @@ pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
 pub(crate) use ref_sync::{RefFetch, pinned_tracking};
+#[cfg(feature = "sync")]
+pub(crate) use record_refinement::{RecordRefinementAdmission, admit_record_document_refinement};
 pub(crate) use refinement_admission::{
     RefinementAdmissionProof, skill_refinement_origin_in_txn, validate_refinement_admission,
 };
@@ -132,7 +136,7 @@ pub(crate) use self::index::{
 pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 pub(crate) use self::verdict::{
     scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
-    skill_scan_verdicts_for_content_hash_in_store,
+    skill_scan_verdict_heads_sourced_in_store, skill_scan_verdicts_for_content_hash_in_store,
 };
 
 // The flat skill_hub.rs module used to provide these names to the test module

@@ -33,7 +33,7 @@ impl SyncConnection {
         promotion_rx: &mut tokio::sync::broadcast::Receiver<crate::sync::WindowKey>,
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
-        let (mut write, mut read) = ws_stream.split();
+        let (mut write, mut read) = super::socket::split(ws_stream, client);
         // Live, bounded and lossy. Partials never enter the durable offline queue.
         let mut presence_rx = self
             .manager

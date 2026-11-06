@@ -30,11 +30,15 @@ mod work;
 pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
 pub(crate) use validation::trusted_soft_addressing_edge;
 
+pub(crate) use canonical::StoreCapturedCanonical;
 pub use canonical::*;
 pub(crate) use document::note_fork_decided;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 #[cfg(feature = "sync")]
-pub(crate) use document::{materialize_window_documents, validate_window_documents};
+pub(crate) use document::{
+    NotePlanRows, materialize_window_documents, materialize_window_documents_with_source,
+    validate_window_documents,
+};
 pub use ladder::*;
 #[cfg(feature = "sync")]
 pub use maintenance::{WindowRebootstrapReport, WindowRecoveryReport};
@@ -157,8 +161,12 @@ pub fn encode_recovery_artifact(artifact_type: u16, payload: &[u8]) -> Result<Ve
 /// the payload that follows them, so a payload encoded in place behind a
 /// reserved header is never copied into a second buffer.
 fn seal_recovery_artifact(artifact_type: u16, bytes: &mut [u8]) {
+    let checksum = recovery_artifact_checksum(artifact_type, &bytes[HEADER_LEN..]);
+    seal_recovery_artifact_with_checksum(artifact_type, bytes, checksum);
+}
+
+fn seal_recovery_artifact_with_checksum(artifact_type: u16, bytes: &mut [u8], checksum: [u8; 32]) {
     let (header, payload) = bytes.split_at_mut(HEADER_LEN);
-    let checksum = recovery_artifact_checksum(artifact_type, payload);
     header[..VERSION_OFFSET].copy_from_slice(&RECOVERY_ARTIFACT_MAGIC);
     header[VERSION_OFFSET..KIND_OFFSET].copy_from_slice(&RECOVERY_ARTIFACT_VERSION.to_le_bytes());
     header[KIND_OFFSET..LEN_OFFSET].copy_from_slice(&artifact_type.to_le_bytes());
@@ -303,12 +311,17 @@ fn validate_recovery_artifact(
     })
 }
 
-fn recovery_artifact_checksum(artifact_type: u16, payload: &[u8]) -> [u8; 32] {
+fn recovery_artifact_checksum_start(artifact_type: u16, payload_len: usize) -> blake3::Hasher {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&RECOVERY_ARTIFACT_MAGIC);
     hasher.update(&RECOVERY_ARTIFACT_VERSION.to_le_bytes());
     hasher.update(&artifact_type.to_le_bytes());
-    hasher.update(&(payload.len() as u64).to_le_bytes());
+    hasher.update(&(payload_len as u64).to_le_bytes());
+    hasher
+}
+
+fn recovery_artifact_checksum(artifact_type: u16, payload: &[u8]) -> [u8; 32] {
+    let mut hasher = recovery_artifact_checksum_start(artifact_type, payload.len());
     hasher.update(payload);
     *hasher.finalize().as_bytes()
 }
@@ -351,7 +364,9 @@ mod maintenance_tests;
 mod tests;
 
 #[cfg(feature = "sync")]
-pub(crate) use document::materialize_recovery_notes_in_txn;
+pub(crate) use document::{
+    materialize_recovery_notes_in_txn, materialize_recovery_notes_with_source_in_txn,
+};
 
 mod privacy_kit;
 pub use privacy_kit::{

@@ -2949,6 +2949,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_members_invitation_code(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.invitation_code", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_members_change(
         &self,
         input: serde_json::Value,
@@ -2988,6 +2997,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.members.accept", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_accept_with_credential(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.accept_with_credential", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

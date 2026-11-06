@@ -54,6 +54,41 @@ struct ReplyEnvelope {
     payload: rmpv::Value,
 }
 
+struct RpcChunks {
+    chunks: std::vec::IntoIter<Vec<u8>>,
+    current: Option<std::io::Cursor<Vec<u8>>>,
+}
+
+impl RpcChunks {
+    fn new(chunks: Vec<Vec<u8>>) -> Self {
+        Self {
+            chunks: chunks.into_iter(),
+            current: None,
+        }
+    }
+}
+
+impl std::io::Read for RpcChunks {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if let Some(cursor) = self.current.as_mut() {
+                let n = std::io::Read::read(cursor, buf)?;
+                if n != 0 {
+                    return Ok(n);
+                }
+                self.current = None;
+            }
+            self.current = Some(std::io::Cursor::new(match self.chunks.next() {
+                Some(chunk) => chunk,
+                None => return Ok(0),
+            }));
+        }
+    }
+}
+
 /// The home answered a residence RPC and refused it (FIX 3353), apart from a
 /// call that failed: a socket that broke or timed out, or a reply that did not
 /// parse.
@@ -255,7 +290,8 @@ impl ResidenceRpc {
             .await
             .map_err(|_| refused())?
             .map_err(|_| refused())?;
-        let mut assembled = Vec::new();
+        let mut chunks = Vec::new();
+        let mut received = 0usize;
         for seq in 0..512u64 {
             let frame = loop {
                 // A ready stream of opening frames must not outrun the same
@@ -302,13 +338,18 @@ impl ResidenceRpc {
             if reply.kind != "rpc.res" {
                 return Err(refused());
             }
-            let chunk = reply.payload.as_slice().ok_or_else(refused)?;
-            if assembled.len().saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
+            let chunk = match reply.payload {
+                rmpv::Value::Binary(bytes) => bytes,
+                rmpv::Value::String(text) => text.into_bytes(),
+                _ => return Err(refused()),
+            };
+            if received.saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
                 return Err(refused());
             }
-            assembled.extend_from_slice(chunk);
+            received += chunk.len();
+            chunks.push(chunk);
             if reply.last {
-                return rmp_serde::from_slice(&assembled)
+                return rmp_serde::from_read(RpcChunks::new(chunks))
                     .map(Ok)
                     .map_err(|_| refused());
             }
