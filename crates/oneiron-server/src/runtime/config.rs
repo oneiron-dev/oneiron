@@ -45,6 +45,23 @@ pub struct RuntimeConfig {
     #[serde(skip)]
     #[schema(ignore)]
     pub host_destinations: BTreeMap<String, String>,
+    /// `[runtime.helper_destinations]`: the operator's own credential-helper
+    /// bindings for the official CLI seats this host runs (FIX 10624 step
+    /// 2), each by its name: the custody record that serves it, the effector
+    /// the owner's binding names for its consumer, and the exact git context
+    /// and username it answers. Empty by default, so no seat's helper is
+    /// answered.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub helper_destinations: BTreeMap<String, super::HelperDestination>,
+    /// `[runtime.seat_model_providers]`: the operator's model door slots for
+    /// the official CLI seats this host runs (FIX 15702), each by its name:
+    /// the `[models.providers]` entry with a `key_secret` it sends through
+    /// and the wire models a seat may ask for. Empty by default, so no seat
+    /// is offered the door.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub seat_model_providers: BTreeMap<String, super::SeatModelBinding>,
     /// `[runtime] seat_host`: whether this host claims and runs the queued
     /// official CLI attempts itself (FIX 4552). On by default; an owner
     /// whose CLI logins live with another runner turns it off, and those
@@ -73,6 +90,8 @@ impl PartialEq for RuntimeConfig {
             && self.byo_key_secret == other.byo_key_secret
             && self.role_defaults == other.role_defaults
             && self.host_destinations == other.host_destinations
+            && self.helper_destinations == other.helper_destinations
+            && self.seat_model_providers == other.seat_model_providers
             && self.seat_host == other.seat_host
             && self.seat_host_aliases == other.seat_host_aliases
     }
@@ -88,6 +107,8 @@ impl fmt::Debug for RuntimeConfig {
             .field("byo_key_secret", &self.byo_key_secret)
             .field("role_defaults", &self.role_defaults)
             .field("host_destinations", &self.host_destinations)
+            .field("helper_destinations", &self.helper_destinations)
+            .field("seat_model_providers", &self.seat_model_providers)
             .field("seat_host", &self.seat_host)
             .field("seat_host_aliases", &self.seat_host_aliases)
             .finish()
@@ -113,6 +134,8 @@ impl RuntimeConfig {
             role_defaults: RuntimeRoleDefaults::for_mode(mode),
             role_default_explicit_fields: RuntimeRoleDefaultExplicitFields::default(),
             host_destinations: BTreeMap::new(),
+            helper_destinations: BTreeMap::new(),
+            seat_model_providers: BTreeMap::new(),
             seat_host: SEAT_HOST_DEFAULT,
             seat_host_aliases: Vec::new(),
         }
@@ -121,6 +144,12 @@ impl RuntimeConfig {
     pub fn apply_override(&mut self, value: RuntimeConfigOverride) {
         if let Some(host_destinations) = value.host_destinations {
             self.host_destinations = host_destinations;
+        }
+        if let Some(helper_destinations) = value.helper_destinations {
+            self.helper_destinations = helper_destinations;
+        }
+        if let Some(seat_model_providers) = value.seat_model_providers {
+            self.seat_model_providers = seat_model_providers;
         }
         if let Some(seat_host) = value.seat_host {
             self.seat_host = seat_host;

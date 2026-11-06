@@ -54,6 +54,12 @@ pub(super) struct CheckpointImage {
     /// artifact opens; never in an image.
     #[serde(skip)]
     pub(super) snapshot: Option<[u8; 32]>,
+    /// Each sync window the payload split (FIX 10277): its carrier, the
+    /// payload-free history its rows are joined from at a restore, with the
+    /// copies its holders' compartments hold. The window's own rows are not
+    /// among `databases`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) window_carriers: Vec<super::payload::WindowCarrierRecord>,
 }
 
 impl CheckpointImage {

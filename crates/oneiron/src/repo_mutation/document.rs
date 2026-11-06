@@ -21,15 +21,48 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
         .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))?;
     let new = std::str::from_utf8(content)
         .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))?;
+    lower_reviewed_text(vault, &proposal, &repo, path, old, new)
+}
+
+/// A composed stack member's document lowering (FIX 4360): its sealed
+/// application `S -> C` under the proposal's own operation id, actor,
+/// session and provenance, expecting the prefix text `S`. A replay after
+/// ingress finds the same receipt and appends nothing. The standalone path
+/// above keeps the original `B -> P`.
+pub(super) fn land_stacked_document(
+    vault: &Vault,
+    proposal_id: EntityId,
+    staged: &str,
+    composed: &str,
+) -> Result<()> {
+    let proposal = vault
+        .repo_proposal(proposal_id)?
+        .ok_or(Error::EntityNotFound)?;
+    let (path, _) = proposal.ordinary_file()?;
+    let repo = RepoRef::parse(&proposal.repo)?;
+    lower_reviewed_text(vault, &proposal, &repo, path, staged, composed)
+}
+
+/// One reviewed file's exact document ingress, `old -> new`, as one span.
+fn lower_reviewed_text(
+    vault: &Vault,
+    proposal: &super::proposal::RepoProposal,
+    repo: &RepoRef,
+    path: &str,
+    old: &str,
+    new: &str,
+) -> Result<()> {
     if old == new {
         return Ok(());
     }
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
+    // The repository's code-document identity, the one its symbols are
+    // keyed by (FIX 12761).
+    let scope = vault.resolve_repo_identity(repo)?;
     let session = vault
-        .open_code_document(&scope, path, old, proposal.session)?
+        .open_code_document(scope.as_str(), path, old, proposal.session)?
         .with_op_provenance(proposal.op_provenance.clone());
     vault.apply_code_file_ingress_exact(&mut [CodeFileIngress {
-        operation: proposal_id,
+        operation: proposal.id,
         session,
         edit: CodeFileEdit::between(path, old, new),
         metadata_edit: None,
