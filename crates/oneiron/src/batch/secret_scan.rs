@@ -58,7 +58,7 @@ pub(crate) use self::mask::{
     mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
 };
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
-pub(crate) use self::provider_tokens::embedded_credential;
+pub(crate) use self::provider_tokens::{embedded_credential, provider_prefix_head};
 use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
 pub(crate) use self::whole_read::{
