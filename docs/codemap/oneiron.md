@@ -1190,7 +1190,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/history_projection/adopt.rs` | src | s | 1 fn · 1 crate-vis | — | Adopting an authenticated handoff closure as the trusted pin |
 | `src/claim/history_projection/carry.rs` | src | s | 1 fn · 1 crate-vis | — | The in-chain re-root carry-forward: an empty delta signed under the new authority head |
 | `src/claim/history_projection/chain.rs` | src | m | 16 crate-vis | — | Reading and verifying a pinned history: its rows, its handoff chain and its projection |
-| `src/claim/history_projection/pin.rs` | src | s | 1 fn · 3 crate-vis | — | The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive |
+| `src/claim/history_projection/pin.rs` | src | s | 1 fn · 4 crate-vis | — | The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive |
 | `src/claim/history_projection/resolve.rs` | src | s | 1 fn · 1 crate-vis | — | The live CLAIM projected from its authenticated history |
 | `src/claim/history_seal.rs` | src | s | 7 crate-vis | — | The target index's seal (FIX 4296): a running digest over every control put one target's machine-history… |
 | `src/claim/history_store.rs` | src | m | 19 crate-vis | — | Scoped, engine-owned CLAIM carriers for immutable MACHINE birth and transition evidence |
@@ -3544,8 +3544,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/catalogue.rs` | src | s | 1 re-export | — | Defined below the model invocation layer |
 | `src/llm/decision/codec.rs` | src | s | 2 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 2 fn · 1 const · 1 re-export | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
-| `src/llm/decision/generated/score.rs` | src | s | 3 crate-vis | — | A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure… |
-| `src/llm/decision/generated/wire.rs` | src | s | 1 trait · 3 crate-vis | DecisionWireLabels | A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each… |
+| `src/llm/decision/generated_read/score.rs` | src | s | 3 crate-vis | — | A generated read's Score question (OF-498a, L06 ack 10-22): one number in the question's range and how sure… |
+| `src/llm/decision/generated_read/wire.rs` | src | s | 1 trait · 3 crate-vis | DecisionWireLabels | A generated read's wire names (FIX 7506): what the request shows in place of each question's id and each… |
 | `src/llm/decision/held.rs` | src | s | 1 struct · 2 fn · 1 re-export | HeldLadder | What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host… |
 | `src/llm/decision/ladder/ask_consent.rs` | src | s | 3 struct · 1 enum · 5 fn | AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue | An ask about one consent effect (DEC-0006 "the confirm card carries an optional reason", FIX 2975) |
 | `src/llm/decision/ladder/mod.rs` | src | m | 1 struct · 3 re-export · 10 crate-vis | DecisionLadder | Host-injected, one-step decision ladder |
@@ -6176,7 +6176,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/items.rs` | src | m | 3 fn · 1 crate-vis | — | Thin-item fetch and open reads |
 | `src/sync/client/residence/kit_fetch.rs` | src | m | 2 fn · 1 re-export · 2 crate-vis | — | A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or… |
 | `src/sync/client/residence/kit_fetch/custody.rs` | src | s | 1 fn | — | A restore's read of its key custody from the residence home with the kit alone (FIX 5846): no session, slip… |
-| `src/sync/client/residence/machine_history.rs` | src | s | 1 crate-vis | — | The machine-claim history this machine is owed, from the home (FIX 3820) |
+| `src/sync/client/residence/machine_history.rs` | src | m | 1 crate-vis | — | The machine-claim history this machine is owed, from the home (FIX 3820) |
+| `src/sync/client/residence/machine_history/freshness.rs` | src | s | 1 crate-vis | — | Freshness for local pins whose history is no longer owed |
 | `src/sync/client/residence/media_vectors.rs` | src | s | 1 crate-vis | — | Own-peer text media-vector reuse, separate from canonical window bytes |
 | `src/sync/client/residence/pad_custody.rs` | src | m | 2 crate-vis | — | Pad hydration from the home (KS-5, FIX 6706): a world's current pads as capsules sealed to this machine… |
 | `src/sync/client/residence/promoted_pads.rs` | src | s | 5 crate-vis | — | The pads of a promoted window's world (FIX 3789) |
