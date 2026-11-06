@@ -26,6 +26,7 @@ use crate::wire_telemetry::LimitQuestions;
 
 mod capture;
 mod pricing;
+mod quote;
 mod redelivery;
 mod settlement;
 
