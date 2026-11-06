@@ -122,6 +122,7 @@ pub use source::{
 pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
-    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
-    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
+    MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
+    MailSyncSource,
 };
