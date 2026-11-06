@@ -339,18 +339,21 @@ pub(crate) fn stage_derived_floors(
 }
 
 /// The policies every derived carrier of `doc`'s map names, by row: the map
-/// as it stands, every value its history past `from` inserted, and, when
-/// `from` is its shallow root, the root's own values (fix list row 17207).
-/// A sealed mirror that took a merge stages them ([`stage_derived_floors`])
-/// as window admission does, so a set written over with a smaller one still
-/// binds its row.
+/// as it stands, every value its history past `from` inserted, and the root
+/// state `snapshot`, the bytes it was merged from, encodes, read from that
+/// section itself (a full snapshot can keep a root as well as a shallow one)
+/// (fix list row 17207). A sealed mirror that took a merge stages them
+/// ([`stage_derived_floors`]) as window admission does, so a set written over
+/// with a smaller one still binds its row.
 ///
 /// # Errors
 ///
-/// A shallow root that does not read: no floor it holds is lost unseen.
+/// A snapshot whose encoded root does not read: no floor it holds is lost
+/// unseen.
 pub(crate) fn history_derived_floors(
     doc: &LoroDoc,
     from: &VersionVector,
+    snapshot: &[u8],
 ) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
     let mut floors: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
     let mut note = |map_key: &str, bytes: &[u8]| {
@@ -375,16 +378,18 @@ pub(crate) fn history_derived_floors(
             note(key, bytes);
         }
     }
-    // A shallow doc's root holds values no retained operation carries.
-    let root = doc.shallow_since_vv().to_vv();
-    if doc.is_shallow() && from.includes_vv(&root) && root.includes_vv(from) {
-        let at_root = doc.fork();
-        at_root
-            .checkout(&doc.shallow_since_frontiers())
-            .map_err(|_| refused("a sealed mirror's shallow root does not read"))?;
-        for (map_key, bytes) in entries(&at_root.get_map(SOURCE_AUDIENCES_MAP)) {
-            if let Some(bytes) = bytes {
-                note(&map_key, &bytes);
+    // The root the merged bytes encode holds values no retained operation
+    // and no latest state carries (REVIEW-6333).
+    let is_snapshot =
+        LoroDoc::decode_import_blob_meta(snapshot, true).is_ok_and(|meta| meta.mode.is_snapshot());
+    if is_snapshot {
+        let root = crate::sync::window::encoded_root_state(snapshot)
+            .ok_or_else(|| refused("a sealed mirror's encoded root does not read"))?;
+        if let Some(root) = root {
+            for (map_key, bytes) in entries(&root.get_map(SOURCE_AUDIENCES_MAP)) {
+                if let Some(bytes) = bytes {
+                    note(&map_key, &bytes);
+                }
             }
         }
     }
