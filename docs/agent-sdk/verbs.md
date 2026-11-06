@@ -230,6 +230,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest_feedback.put`
 - `vault.weave.owner.digest.render`
 - `vault.inbox.concerns.review`
+- `vault.proactivity.digest`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
 - `vault.inbox.groups.resolve`
