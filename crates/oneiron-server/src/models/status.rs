@@ -30,6 +30,13 @@ pub struct ModelsStatus {
     /// One row per host/device admission queue, copied from live state.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<DeviceStatus>,
+    /// The mounted vault's session ownership facts per device worker
+    /// (FIX10370), in the live status only; none when no session row
+    /// stands for the vault. Non-additive facts: they neither alter the
+    /// worker's own row nor any quota or admission; a row's bytes mix
+    /// device pages with host snapshots.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub session_allocations: Vec<SessionAllocationStatus>,
     /// Sealed inference snapshot parking (V2-R3), over the vaults this
     /// process serves, in the live status only.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,6 +102,22 @@ pub struct DeviceExecutorStatus {
     pub external: bool,
     pub idle: bool,
     pub load_class: Option<WorkClass>,
+}
+
+/// The mounted vault's session ownership facts on one device worker
+/// (FIX10370): counts plus the summed mixed-domain bytes. Aggregated
+/// after filtering to the mounted vault, before serialization; names no
+/// handle, binding, epoch or conversation.
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionAllocationStatus {
+    pub device: String,
+    pub worker_id: String,
+    pub sessions: u64,
+    pub reported_sessions: u64,
+    /// Summed `unique_bytes` over reported sessions; `None` unless every
+    /// session of the row is both reported and measured (null on the
+    /// wire, not absent).
+    pub reported_unique_bytes: Option<u64>,
 }
 
 impl DeviceStatus {

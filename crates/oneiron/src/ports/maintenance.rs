@@ -29,6 +29,7 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
     /// byte-exact; the body must be a map carrying exactly one `entity_doc_ref` string.
     fn port_entity_document_pointer_put(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut Self::Write<'_>,
         id: &EntityId,
         body: &[u8],

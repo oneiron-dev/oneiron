@@ -56,7 +56,7 @@ impl Vault {
         }
         if matches!(
             reason,
-            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) && !crate::share::active_brief_shares_for(
             &self.store,
             txn,

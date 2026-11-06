@@ -1,7 +1,9 @@
 //! A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix
 //! pair, which the notification's ADDFD installs, and the host keeps the
-//! other in the socket's entry.
+//! other in the socket's entry. A stream socket's entry also keeps a copy of
+//! the guest's end, taken before the guest holds it (FIX 6788).
 
+use super::control::Control;
 use super::{Socket, State, datagram_writer, inode, lifetime};
 use crate::{linux, wire};
 use std::io;
@@ -16,18 +18,26 @@ pub(super) fn open(
     request: &wire::Request,
     listener: &OwnedFd,
     state: &Arc<State>,
-    family: &i32,
-    kind: &i32,
-    protocol: &i32,
     reply: &mut wire::Reply,
 ) -> io::Result<()> {
+    let wire::Operation::Socket {
+        family,
+        kind,
+        protocol,
+        ipv6_only,
+    } = &request.op
+    else {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    };
+    let (family, kind) = (*family, *kind);
     let base = kind & 0xf;
-    if !matches!(*family, libc::AF_INET | libc::AF_INET6)
+    if !matches!(family, libc::AF_INET | libc::AF_INET6)
         || !matches!(base, libc::SOCK_STREAM | libc::SOCK_DGRAM)
         || !matches!(*protocol, 0 | libc::IPPROTO_TCP | libc::IPPROTO_UDP)
     {
         return Err(io::Error::from_raw_os_error(libc::EAFNOSUPPORT));
     }
+    let ipv6_only = family == libc::AF_INET6 && *ipv6_only;
     // The entry's descriptors and writer take their room on the host
     // floor first; a full floor is EAGAIN (FIX 5978).
     let (fds, workers) = if base == libc::SOCK_STREAM {
@@ -40,13 +50,19 @@ pub(super) fn open(
         let (guest, host) = UnixStream::pair()?;
         guest.set_nonblocking(kind & libc::SOCK_NONBLOCK != 0)?;
         let id = inode(&guest)?;
+        // Taken before ADDFD: no later listen or connect has to take the
+        // guest's end out of a guest process.
+        let control = Control::new(state, &guest)?;
         (
             Arc::new(Socket {
-                family: *family,
+                family,
                 kind: base,
                 target: Mutex::new(None),
                 stream: Mutex::new(Some(host)),
                 datagram: None,
+                control: Mutex::new(Some(control)),
+                ipv6_only: AtomicBool::new(ipv6_only),
+                connecting: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
                 _charge: charge,
             }),
@@ -60,11 +76,14 @@ pub(super) fn open(
         let copy = guest.try_clone()?;
         (
             Arc::new(Socket {
-                family: *family,
+                family,
                 kind: base,
                 target: Mutex::new(None),
                 stream: Mutex::new(None),
                 datagram: Some((copy, host)),
+                control: Mutex::new(None),
+                ipv6_only: AtomicBool::new(ipv6_only),
+                connecting: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
                 _charge: charge,
             }),

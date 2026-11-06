@@ -432,6 +432,11 @@ impl HeldStamp {
         super::bridge::format_edge_key(&self.src, EdgeKind::FacetOf, &self.tgt)
     }
 
+    /// Whether the stamp's row or its facet is one of `rows`.
+    pub(super) fn names_any(&self, rows: &std::collections::BTreeSet<EntityId>) -> bool {
+        rows.contains(&self.src) || rows.contains(&self.tgt)
+    }
+
     /// The stamps of each of `groups` as the record a staged receipt keeps of
     /// them: each stamp's source, target, its value's length (u64 BE) and its
     /// value.
