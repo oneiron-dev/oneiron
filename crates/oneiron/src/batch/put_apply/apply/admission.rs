@@ -19,6 +19,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
     pub(super) pending_prompt: Option<&'a [EntityId]>,
     pub(super) prepared_person_substrate: Option<&'a crate::batch::PreparedPersonSubstrate>,
+    pub(super) prepared_agent_birth: Option<&'a crate::agent_def::PreparedAgentDefinitionBirth>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
     pub(super) authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
@@ -107,6 +108,7 @@ pub(super) fn admit_put<'a>(
                 owner_authored,
                 pending_prompt,
                 prepared_person_substrate,
+                prepared_agent_birth,
             },
     } = request;
     let Replication {
@@ -241,6 +243,7 @@ pub(super) fn admit_put<'a>(
             owner_authored,
             pending_prompt,
             prepared_person_substrate,
+            prepared_agent_birth,
             authority_beside,
             own_device,
             replicated,

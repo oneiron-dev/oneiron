@@ -292,6 +292,7 @@ impl BatchBuilder<'_> {
         let marked_carriers = std::mem::take(&mut self.marked_carriers);
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
         let prepared_person_substrate = self.prepared_person_substrate.take();
+        let prepared_agent_birth = self.prepared_agent_birth.take();
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -412,6 +413,7 @@ impl BatchBuilder<'_> {
                     .with_marked_carriers(marked_carriers)
                     .with_caller_envelopes(caller_envelopes)
                     .with_prepared_person_substrate(prepared_person_substrate)
+                    .with_prepared_agent_birth(prepared_agent_birth)
                     .with_prepared(prepared),
                 origin,
             };

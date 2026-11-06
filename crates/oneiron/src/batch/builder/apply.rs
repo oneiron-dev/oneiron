@@ -146,7 +146,8 @@ impl BatchBuilder<'_> {
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
             .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
             .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes))
-            .with_prepared_person_substrate(self.prepared_person_substrate.take());
+            .with_prepared_person_substrate(self.prepared_person_substrate.take())
+            .with_prepared_agent_birth(self.prepared_agent_birth.take());
         let mut original_bodies = Vec::new();
         let taken = if actor.is_some() {
             crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(

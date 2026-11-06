@@ -218,6 +218,8 @@ pub(in crate::batch) struct PutContext<'a> {
     pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
     pub(in crate::batch) prepared_person_substrate:
         Option<&'a crate::batch::PreparedPersonSubstrate>,
+    pub(in crate::batch) prepared_agent_birth:
+        Option<&'a crate::agent_def::PreparedAgentDefinitionBirth>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

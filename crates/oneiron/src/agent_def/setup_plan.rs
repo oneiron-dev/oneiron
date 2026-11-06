@@ -3,7 +3,9 @@
 use std::borrow::Cow;
 
 use super::AgentDefinition;
-use super::portable_binding::{PreparedAgentBirth, prepare_agent_birth_in_txn};
+use super::portable_binding::{
+    PreparedAgentDefinitionBirth, prepare_agent_definition_birth_in_txn,
+};
 use crate::batch::PreparedPersonSubstrate;
 use crate::context_board::PreparedAgentPerson;
 use crate::error::Result;
@@ -76,7 +78,7 @@ impl PreparedSetupOwner {
 /// All of these units were prepared in the caller's writer. No definition,
 /// PERSON, credential consumption, or entity effect has been written yet.
 pub(crate) struct PreparedAgentSetup {
-    pub(super) birth: Option<PreparedAgentBirth>,
+    pub(super) birth: PreparedAgentDefinitionBirth,
     pub(super) person: Option<PreparedAgentPerson>,
     pub(super) owners: Vec<PreparedSetupOwner>,
     entity_puts: Vec<EntityId>,
@@ -98,7 +100,7 @@ pub(crate) fn prepare_agent_setup_in_txn(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<PreparedAgentSetup> {
-    let birth = prepare_agent_birth_in_txn(&vault.store, txn, &id, definition)?;
+    let birth = prepare_agent_definition_birth_in_txn(&vault.store, txn, &id, definition)?;
     let mut preceding = vec![SetupEntityPut::borrowed(
         id,
         ENTITY_TYPE_AGENT_DEF,
@@ -107,8 +109,7 @@ pub(crate) fn prepare_agent_setup_in_txn(
     let mut owners = Vec::new();
     // The genuine AGENT_DEF create writes its optional source ASSET before
     // ensure_agent_person, so this owner birth must be visible to that read.
-    if let Some(birth) = &birth {
-        let (asset_id, asset_body) = birth.entity_put();
+    if let Some((asset_id, asset_body)) = birth.entity_put() {
         if let Some(owner) = prepare_owner_before_put(
             vault,
             txn,
