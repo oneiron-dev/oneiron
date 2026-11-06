@@ -388,6 +388,22 @@ outside this put-only charge, as do overlay copies, database pages, transaction
 scratch, encoding allocation peaks and a full working-set bound. No extra
 encoding, memory line, admission, wait or configured limit is introduced.
 
+Separate from those put buffers, the bound retained finalizer records the
+actual encoded key capacities of the old-age lookup and its two conditional
+deletes. The typed lookup makes its original key once and reports its capacity
+before the same raw read and decode. A found capture time still deletes the
+age-ordered row before its by-run row; each delete reports its original key's
+capacity before the same database operation, including false or error returns.
+A missing lookup skips both deletes, and the original errors still stop aging.
+
+All three known key capacities use the same existing caller lease. Native keys
+drop before that lease on success, absence, errors and unwind; their capacities
+stay charged conservatively until the lease drops. Ordinary unbound lookups,
+deletes and cleanup keep their original behavior through the same shared native
+bodies. This key-only charge does not cover raw-read value copies, decoded
+values, overlay copies, database pages, transaction scratch or key construction
+peaks. It adds no key copy, encode, lease, admission, wait or configured limit.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,

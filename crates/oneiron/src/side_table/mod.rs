@@ -401,7 +401,20 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         txn: &RoTxn<'_>,
         key: &K,
     ) -> Result<Option<V>> {
-        self.get_raw(dbs, txn, &self.key_bytes(key))?
+        self.get_with_key_capacity(dbs, txn, key, |_| {})
+    }
+
+    /// Reads one row, reporting its encoded key's capacity before the database read.
+    pub(crate) fn get_with_key_capacity(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &RoTxn<'_>,
+        key: &K,
+        observe: impl FnOnce(u64),
+    ) -> Result<Option<V>> {
+        let full = self.key_bytes(key);
+        observe(full.capacity() as u64);
+        self.get_raw(dbs, txn, &full)?
             .map(|bytes| self.decode_value(&bytes))
             .transpose()
     }
