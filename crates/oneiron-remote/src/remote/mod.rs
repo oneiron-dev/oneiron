@@ -31,6 +31,8 @@ use serde::de::DeserializeOwned;
 use crate::caps::{MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
 use crate::error::{bad_request, forbidden, transport_error};
 
+mod app_action;
+
 // OF-469: a pinned authority checkpoint, fetched for adoption.
 mod checkpoint;
 // FIX 11454: a sealed custody change past the request ceiling, spooled whole.
@@ -47,6 +49,8 @@ mod response;
 mod wire;
 
 use self::origin::{bearer_header, normalize_origin};
+pub use self::app_action::prepare_app_action;
+pub use self::pairing::{PreparedPairing, paired_binding_key, replace_paired_slip};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
     ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
@@ -224,17 +228,7 @@ impl RemoteClient {
     /// The bearer, and for a slip holder a fresh holder proof: one per
     /// request, never reused.
     fn credential_headers(&self) -> Result<HeaderMap, MemoryError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, self.authorization.clone());
-        if let Some((slip, key)) = self.holder.as_deref() {
-            let unsigned = || transport_error("could not sign this request's holder proof");
-            let proof = oneiron::authority::holder_proof(slip, key, crate::unix_seconds_now())
-                .map_err(|_| unsigned())?;
-            let mut binding = HeaderValue::from_str(&proof.to_string()).map_err(|_| unsigned())?;
-            binding.set_sensitive(true);
-            headers.insert(BINDING_HEADER, binding);
-        }
-        Ok(headers)
+        credential_headers_for(&self.authorization, self.holder.as_deref())
     }
 
     /// [`Self::credential_headers`], and the room turn this handle runs in.
@@ -548,6 +542,23 @@ impl RemoteClient {
             .join(&format!("{FACADE_PREFIX}/{verb}"))
             .map_err(|error| transport_error(format!("could not build the {verb} URL: {error}")))
     }
+}
+
+fn credential_headers_for(
+    authorization: &HeaderValue,
+    holder: Option<&(CapabilitySlip, SigningKey)>,
+) -> Result<HeaderMap, MemoryError> {
+    let mut headers = HeaderMap::new();
+    headers.insert(AUTHORIZATION, authorization.clone());
+    if let Some((slip, key)) = holder {
+        let unsigned = || transport_error("could not sign this request's holder proof");
+        let proof = oneiron::authority::holder_proof(slip, key, crate::unix_seconds_now())
+            .map_err(|_| unsigned())?;
+        let mut binding = HeaderValue::from_str(&proof.to_string()).map_err(|_| unsigned())?;
+        binding.set_sensitive(true);
+        headers.insert(BINDING_HEADER, binding);
+    }
+    Ok(headers)
 }
 
 /// The slip and connection key a holder signs each request's proof with,

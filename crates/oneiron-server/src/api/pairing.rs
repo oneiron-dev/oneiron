@@ -284,6 +284,27 @@ fn paired_home(vault: &oneiron::Vault) -> Option<PairedHome> {
         sync_node_id,
     })
 }
+pub(super) async fn redeem_artifact_backend(
+    State(server): State<Arc<SyncServer>>,
+    axum::Extension(source): axum::Extension<oneiron::artifact_hosting::ArtifactBackendSource>,
+    address: RedeemSource,
+    Json(request): Json<RedeemLink>,
+) -> Result<Json<Paired>, EnvelopedApiError> {
+    let principal =
+        oneiron::EntityId::from_hex(&request.holder_ref).map_err(|_| ApiError::unauthorized())?;
+    let vault = server.vault().clone();
+    let matches = tokio::task::spawn_blocking(move || {
+        vault.artifact_backend_principal_matches(principal, &source)
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("artifact backend binding failed"))?
+    .map_err(|error| super::core_engine_error("artifact backend binding failed", error))?;
+    if !matches {
+        return Err(ApiError::unauthorized().into());
+    }
+    redeem(State(server), address, Json(request)).await
+}
+
 pub(super) async fn redeem(
     State(server): State<Arc<SyncServer>>,
     RedeemSource(address): RedeemSource,
