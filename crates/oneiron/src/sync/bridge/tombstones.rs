@@ -366,7 +366,6 @@ impl<'work> TombstoneBatch<'work> {
             cancelled,
         }
     }
-
 }
 
 /// Applies every staged tombstone under ONE top-level write transaction
@@ -426,7 +425,9 @@ fn apply_tombstone_batch(
     }
 
     batch.ok().map(|(affected, cancelled)| {
-        state.into_effects(affected, cancelled).publish_under_lock(vault, window_key)
+        state
+            .into_effects(affected, cancelled)
+            .publish_under_lock(vault, window_key)
     })
 }
 
@@ -608,7 +609,6 @@ pub(in crate::sync) fn stage_tombstones_in_txn(
     };
     Ok(state.into_effects(affected, cancelled))
 }
-
 
 /// Applies one staged tombstone inside a nested write transaction (savepoint)
 /// of `parent`, committing the child only when the whole item succeeded.
