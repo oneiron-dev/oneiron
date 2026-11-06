@@ -5044,6 +5044,8 @@ pub struct TaskRow {
     pub cancel_pathology: Option<CancelRejectionPathology>,
     #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
     pub widening: Option<ConsultWidening>,
+    #[serde(rename = "due_at", default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<u64>,
     #[serde(rename = "fits", default, skip_serializing_if = "Option::is_none")]
     pub fits: Option<Vec<String>>,
 }
