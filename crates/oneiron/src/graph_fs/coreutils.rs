@@ -13,7 +13,7 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, Retrieva
 use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
-use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines, text_counts};
+use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_head_lines, text_counts};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -325,14 +325,13 @@ impl GraphFsResolver<'_, '_> {
         let mut next_cursor = None;
         let read = self.read_file_with_reader(path, reader)?;
         if let Some(file) = &read.value {
-            let (finished, next) = page_lines(
+            let (finished, next) = page_head_lines(
                 file.bytes(),
                 from.lines,
                 &mut out,
                 lines.saturating_sub(from.printed),
                 reader,
                 self.options.page_byte_cap,
-                |_| Ok(Some(String::new())),
             )?;
             next_cursor = next.map(|at| {
                 scope.seal(&HeadPosition {

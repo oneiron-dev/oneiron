@@ -237,18 +237,8 @@ impl CommandOutputBuilder {
         }
         let printed = if boundary { printed } else { 0 };
         let rest_len = len - printed;
-        let fits = self.entries < self.max_entries
-            && self.bytes.len().saturating_add(rest_len) <= self.byte_cap;
-        if !fits {
-            self.full = true;
-            if self.entries > 0 {
-                return Some(printed);
-            }
-        }
-        let mut remaining = if fits {
-            rest_len
-        } else {
-            self.byte_cap.min(rest_len)
+        let Some((mut remaining, fits)) = self.line_window(rest_len) else {
+            return Some(printed);
         };
         let mut skipped = printed;
         let mut copied = 0;
@@ -272,6 +262,40 @@ impl CommandOutputBuilder {
         }
         self.entries += 1;
         if fits { None } else { Some(printed + copied) }
+    }
+
+    /// Copies a qualified rendered-line window directly into this page.
+    pub(super) fn push_line_streamed(
+        &mut self,
+        len: usize,
+        printed: usize,
+        copy: impl FnOnce(&mut Vec<u8>, usize) -> Result<usize>,
+    ) -> Result<Option<usize>> {
+        let Some((remaining, fits)) = self.line_window(len - printed) else {
+            return Ok(Some(printed));
+        };
+        let copied = copy(&mut self.bytes, remaining)?;
+        self.entries += 1;
+        Ok(if fits { None } else { Some(printed + copied) })
+    }
+
+    fn line_window(&mut self, rest_len: usize) -> Option<(usize, bool)> {
+        let fits = self.entries < self.max_entries
+            && self.bytes.len().saturating_add(rest_len) <= self.byte_cap;
+        if !fits {
+            self.full = true;
+            if self.entries > 0 {
+                return None;
+            }
+        }
+        Some((
+            if fits {
+                rest_len
+            } else {
+                self.byte_cap.min(rest_len)
+            },
+            fits,
+        ))
     }
 
     pub(super) fn entries(&self) -> usize {
