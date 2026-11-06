@@ -32,7 +32,7 @@ enum EraseSource {
 
 #[derive(Serialize, Deserialize)]
 struct ArchiveRelease {
-    pin: LineChatArchivePin,
+    pin: Option<LineChatArchivePin>,
     erase: bool,
     sources: BTreeMap<EntityId, EraseSource>,
     detached: bool,
@@ -42,7 +42,9 @@ struct ArchiveRelease {
 
 impl ArchiveRelease {
     fn owns_version(&self) -> bool {
-        self.pin.own_join || self.sources.get(&self.pin.artifact_id) == Some(&EraseSource::Artifact)
+        self.pin.is_some_and(|pin| {
+            pin.own_join || self.sources.get(&pin.artifact_id) == Some(&EraseSource::Artifact)
+        })
     }
 }
 
@@ -65,7 +67,7 @@ pub(crate) fn release_line_chat_archive_pin_in_txn(
     let pin = match PINS.get(store, txn, claim)? {
         Some(pin) => {
             PINS.delete(store, txn, claim)?;
-            pin
+            Some(pin)
         }
         // A content image may omit the capture. The accepted LIVE source
         // continuation still owns its original immutable selector.
@@ -74,7 +76,7 @@ pub(crate) fn release_line_chat_archive_pin_in_txn(
             None => return Ok(()),
         },
     };
-    if pin.own_join || prior.is_some() {
+    if pin.is_some_and(|pin| pin.own_join) || prior.is_some() {
         let mut release = prior.unwrap_or_else(|| ArchiveRelease {
             pin,
             erase: false,
@@ -122,10 +124,15 @@ fn settle_line_chat_archive_releases_except_in_txn(
             continue;
         }
         if !release.owns_version() || release.released {
+            if release.released {
+                retirement::note_sources_in_txn(store, txn, &release)?;
+            }
             retirement::finish_in_txn(store, txn, &claim, release)?;
             continue;
         }
-        let pin = &release.pin;
+        let Some(pin) = release.pin.as_ref() else {
+            continue;
+        };
         // Missing version metadata does not erase a native owner's
         // custody obligation: retained copies can still owe retirement.
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&pin.content_hash)?;
@@ -150,7 +157,13 @@ fn settle_line_chat_archive_releases_except_in_txn(
         let releases: Vec<_> = RELEASES
             .scan(store, txn)?
             .into_iter()
-            .filter(|(_, other)| other.detached && same_version(&other.pin, pin))
+            .filter(|(_, other)| {
+                other.detached
+                    && other
+                        .pin
+                        .as_ref()
+                        .is_some_and(|other| same_version(other, pin))
+            })
             .collect();
         for (owner, mut release) in releases {
             retirement::capture_in_txn(store, txn, &mut release)?;
@@ -171,7 +184,12 @@ fn settle_line_chat_archive_releases_except_in_txn(
             continue;
         }
         for (owner, mut release) in RELEASES.scan(store, txn)? {
-            if !release.detached || !same_version(&release.pin, pin) {
+            if !release.detached
+                || !release
+                    .pin
+                    .as_ref()
+                    .is_some_and(|other| same_version(other, pin))
+            {
                 continue;
             }
             release.released = true;
@@ -238,7 +256,10 @@ fn captured_elsewhere(
         if other != *releasing
             && Some(&other) != detaching
             && !pending.detached
-            && same_version(&pending.pin, pin)
+            && pending
+                .pin
+                .as_ref()
+                .is_some_and(|other| same_version(other, pin))
         {
             return Ok(true);
         }
@@ -335,10 +356,12 @@ pub(crate) fn line_chat_archive_keeps_version_in_txn(
     for (_, release) in RELEASES.scan(store, txn)? {
         if !release.released
             && release.sources.get(artifact) == Some(&EraseSource::Artifact)
-            && release.pin.artifact_id == *artifact
-            && release.pin.version == version
-            && release.pin.content_hash == *content_hash
-            && release.pin.version_claim == *version_claim
+            && release.pin.is_some_and(|pin| {
+                pin.artifact_id == *artifact
+                    && pin.version == version
+                    && pin.content_hash == *content_hash
+                    && pin.version_claim == *version_claim
+            })
         {
             return Ok(true);
         }

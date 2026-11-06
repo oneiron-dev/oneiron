@@ -33,7 +33,12 @@ impl Vault {
             &crate::secret_custody::CustodyWrite::of(self),
             txn,
         )?;
-        self.settle_owed_byoa_exhaust_erases_in_txn(txn)
+        let cancelled = self.settle_owed_byoa_exhaust_erases_in_txn(txn)?;
+        crate::channel_identity_provider::settle_line_chat_archive_releases_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            txn,
+        )?;
+        Ok(cancelled)
     }
 }
 
@@ -62,6 +67,13 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
         return Ok(true);
     }
     if vault.byoa_exhaust_erases_owed_in_txn(txn, &sources)? {
+        return Ok(true);
+    }
+    if crate::channel_identity_provider::line_chat_archive_releases_owed_in_txn(
+        &vault.store,
+        txn,
+        &sources,
+    )? {
         return Ok(true);
     }
     if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
