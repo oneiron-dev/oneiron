@@ -20,7 +20,9 @@ pub(in crate::calendar) fn occurrences(
         };
     };
     let Some(master) = row.facts.series() else {
-        return Ok(vec![occurrence]);
+        // A row under the busy hold whose kind, held, is floating or
+        // all-day keeps both its header's interval and its civil span.
+        return Ok(std::iter::once(occurrence).chain(row.wall_span).collect());
     };
     if row
         .facts
@@ -61,7 +63,7 @@ fn civil_occurrences(
     exceptions: &[CalendarSeriesExceptionValue],
     withheld: &std::collections::BTreeSet<(crate::EntityId, String)>,
 ) -> Result<Vec<TimeRange>> {
-    let Some((_, length)) = row.facts.civil_extent() else {
+    let Some((_, length)) = row.facts.placed_extent() else {
         return Ok(Vec::new());
     };
     if row
