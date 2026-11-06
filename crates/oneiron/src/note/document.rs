@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
-use crate::ports::{is_metadata_field, validate_metadata};
+use crate::ports::{is_metadata_field, validate_metadata_shape};
 use crate::provenance::ActorStamp;
 use crate::{EntityId, WriteActor};
 use loro::cursor::{Cursor, Side};
@@ -151,7 +151,7 @@ fn check_field(field: &str, bytes: &[u8]) -> Result<()> {
     if matches!(field, ID | PINS) || !is_metadata_field(field) {
         return Err(invalid("unknown NOTE metadata"));
     }
-    validate_metadata(field, &decode_metadata_value(bytes)?)
+    validate_metadata_shape(field, &decode_metadata_value(bytes)?)
 }
 
 /// A title in the common encoding: one string value the shared field rules
@@ -162,7 +162,7 @@ fn decode_title(bytes: &[u8]) -> Result<String> {
         .as_str()
         .ok_or_else(|| invalid("invalid NOTE title"))?;
     validate_title(title)?;
-    validate_metadata(TITLE, &value)?;
+    validate_metadata_shape(TITLE, &value)?;
     Ok(title.to_owned())
 }
 
@@ -170,7 +170,7 @@ fn decode_title(bytes: &[u8]) -> Result<String> {
 pub(super) fn encode_title(title: &str) -> Result<Vec<u8>> {
     validate_title(title)?;
     let value = rmpv::Value::from(title);
-    validate_metadata(TITLE, &value)?;
+    validate_metadata_shape(TITLE, &value)?;
     encode_metadata_value(&value)
 }
 
