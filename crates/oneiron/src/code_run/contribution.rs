@@ -91,7 +91,8 @@ pub enum ContributionReplayUnavailable {
     /// The capsule's or a fork's body is gone, withheld or no longer its
     /// hash, or its exposure no longer sits where it was captured.
     Unreadable,
-    /// An erase retired the capsule's request or a fork's response body.
+    /// An erase retired the capsule's request or a fork's response body, or
+    /// a fork writer found the capsule's content erased (FIX 6256).
     Erased,
     /// No knowledge exposure of the target in a captured step: the skill's
     /// body, or the edge's source's, as the host put it in the run's task. A
@@ -113,6 +114,9 @@ pub enum ContributionReplayUnavailable {
     /// served now.
     ModelUnavailable,
     /// The forks did not finish by the clock, or the scorer did not decide.
+    /// A fork writer that found a subject of the pair gone now stops here
+    /// too: a soft delete may be restored, so the stop is never lasting
+    /// (FIX 6256).
     Unfinished,
     /// An engine step's fork's program did not run against the captured
     /// step now (FIX 3607), for the shadow runner's own reason, one a retry
@@ -147,9 +151,9 @@ impl ContributionReplayUnavailable {
 
     /// Whether the reason holds for good: the pair is recorded unavailable
     /// and no later pass pays for it again. A model not served now, an
-    /// anchor that does not resolve now and a pass that ran out of time are
-    /// asked again, as is a program replay the shadow runner says a retry
-    /// may find available.
+    /// anchor that does not resolve now and a pass that ran out of time or
+    /// met a subject gone now are asked again, as is a program replay the
+    /// shadow runner says a retry may find available.
     #[must_use]
     pub const fn lasting(&self) -> bool {
         match self {
@@ -506,7 +510,9 @@ impl Runner<'_> {
     /// The fork as scored in `mode`, else scored now in it against the
     /// pair's anchor, its task the step's input without the exposure for
     /// both forks; in the `Executed` mode it is read with what its program
-    /// did (FIX 3607). A fork kept scored in another mode diverged.
+    /// did (FIX 3607). A fork kept scored in another mode diverged. A score
+    /// its writer refuses is unavailable for that writer's own reason
+    /// (FIX 6256).
     fn scored(
         &self,
         prepared: &Prepared,
@@ -548,10 +554,7 @@ impl Runner<'_> {
             passed,
             judge: ForkJudge::Scorer,
         });
-        let Some(kept) = put_fork(self.vault, &self.pair, &fork)? else {
-            return Ok(Err(ContributionReplayUnavailable::Unreadable));
-        };
-        Ok(scored_in(kept, mode))
+        Ok(put_fork(self.vault, &self.pair, &fork)?.and_then(|kept| scored_in(kept, mode)))
     }
 }
 

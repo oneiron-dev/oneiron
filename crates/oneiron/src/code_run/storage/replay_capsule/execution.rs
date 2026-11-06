@@ -13,11 +13,15 @@
 //! the fork's answer ([`super::erase`]).
 
 use super::super::super::contribution::{
-    ContributionForkExecution, ContributionForkReceipt, ExecutedOutput, ForkExecutionOutcome,
+    ContributionForkExecution, ContributionForkReceipt, ContributionReplayUnavailable,
+    ExecutedOutput, ForkExecutionOutcome,
 };
 use super::super::super::replay_capsule::StepReplayCapsule;
 use super::admit::{Unwritten, spilling, with_spill};
-use super::{CAPSULES, FORKS, ForkValue, capsule_key, fork_row_name, held_body};
+use super::{
+    CAPSULES, FORKS, ForkValue, ForkWrite, capsule_key, fork_capsule_in_txn, fork_row_name,
+    held_body,
+};
 use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::compaction::output::OutputRef;
 use crate::{EntityId, Error, Result, Vault};
@@ -30,10 +34,11 @@ const EXECUTION_PLACE: &str = "side:CODE_RUN_REPLAY_CAPSULE:fork_execution";
 /// and its bytes, in order; none when it did not run) admitted and
 /// published as a body the capsule's run owns, and the fork's row put with
 /// the outcome `record` makes of their refs, in that order, all in one
-/// writer. `None`, with nothing written, once the capsule is erased or gone,
-/// a subject of the pair is gone, or the fork's row is no longer `fork`. A
-/// fork whose outcome another writer settled or moved on first keeps that
-/// one, and it is returned.
+/// writer. Nothing is written once the capsule is gone or the fork's row is
+/// no longer `fork` (`Unreadable`), its actor's erase took its content
+/// (`Erased`), or a subject of the pair is gone now: the fence's
+/// `Unfinished`, never lasting (FIX 6256). A fork whose outcome another
+/// writer settled or moved on first keeps that one, and it is returned.
 ///
 /// # Errors
 ///
@@ -46,36 +51,37 @@ pub(crate) fn store_fork_execution(
     fork: &ContributionForkReceipt,
     bodies: &[(&str, &[u8])],
     record: impl Fn(&[OutputRef]) -> Option<ForkExecutionOutcome>,
-) -> Result<Option<ContributionForkReceipt>> {
+) -> Result<ForkWrite<ContributionForkReceipt>> {
     let key = capsule_key(capsule);
     let fork_key = (*pair, fork_row_name(fork.treatment).to_owned());
     let lens: Vec<usize> = bodies.iter().map(|(_, bytes)| bytes.len()).collect();
     let reserved = spilling(vault.code_result_inline_bytes(), &lens);
     with_spill(vault, reserved, |wtxn, spill| {
-        let Some(held) = CAPSULES.get(&vault.store, wtxn, &key)? else {
-            return Ok(None);
+        let held = match fork_capsule_in_txn(vault, wtxn, &key)? {
+            Ok((held, _)) => held,
+            Err(reason) => return Ok(Err(reason)),
         };
-        if held.content.actor().is_none() {
-            return Ok(None);
-        }
         let Some(mut row) = FORKS.get(&vault.store, wtxn, &fork_key)? else {
-            return Ok(None);
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         let ForkValue::Fork(kept) = &row.value else {
-            return Ok(None);
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         let mut expected = fork.clone();
         expected.score = kept.score;
         expected.execution.clone_from(&kept.execution);
-        if *kept != expected || !row.provenance.live_in_txn(vault, wtxn) {
-            return Ok(None);
+        if *kept != expected {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        }
+        if let Err(reason) = row.provenance.fence_in_txn(vault, wtxn) {
+            return Ok(Err(reason));
         }
         let settled = kept
             .execution
             .as_ref()
             .is_some_and(ForkExecutionOutcome::settled);
         if settled || kept.execution != fork.execution {
-            return Ok(Some(kept.clone()));
+            return Ok(Ok(kept.clone()));
         }
         let key_bytes = CAPSULES.key_bytes(&key);
         let mut admitted = Vec::with_capacity(bodies.len());
@@ -105,7 +111,7 @@ pub(crate) fn store_fork_execution(
         receipt.execution = Some(outcome);
         row.value = ForkValue::Fork(receipt.clone());
         FORKS.put(vault, wtxn, &fork_key, &row)?;
-        Ok(Some(receipt))
+        Ok(Ok(receipt))
     })
 }
 

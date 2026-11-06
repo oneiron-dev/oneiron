@@ -114,6 +114,10 @@ impl Runner<'_> {
     }
 
     /// The fork as stored, else generated now and kept before it is scored.
+    /// A fork its writer does not keep is unavailable for that writer's own
+    /// reason (FIX 6256): a subject gone now is `Unfinished`, never a
+    /// lasting `Unreadable`, so a restore before a later writer cannot make
+    /// the stop permanent.
     pub(super) fn generated(
         &self,
         prepared: &Prepared,
@@ -144,7 +148,7 @@ impl Runner<'_> {
         let path_id = bytes_to_hex_lower(&self.vault.store.clock.ulid()?);
         let path = format!("replay/contribution/{path_id}.response.json");
         // Publication and its discoverable erase ownership commit together.
-        let stored = store_fork_response(
+        store_fork_response(
             self.vault,
             capsule,
             &self.pair,
@@ -174,11 +178,7 @@ impl Runner<'_> {
                 score: None,
                 generated_at: crate::unix_seconds_now(),
             },
-        )?;
-        let Some(fork) = stored else {
-            return Ok(Err(ContributionReplayUnavailable::Unreadable));
-        };
-        Ok(Ok(fork))
+        )
     }
 }
 
