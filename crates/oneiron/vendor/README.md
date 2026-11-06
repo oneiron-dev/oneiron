@@ -55,6 +55,17 @@ Local production changes (FIX 9615):
   still-admitted scratch capacity. The output tendril has separate unadmitted
   backing; no reservation is transferred to it or to DOM payload. The ordinary
   tokenizer keeps its original StrTendril operations and take/clear behavior.
+- `CheckedParser::with_tag_name_reservation` uses the same private text-buffer
+  backing for the current tag name, with its own caller reservation. Tag
+  creation's first character and subsequent tag-name pushes stop on the same
+  first typed error. Native case folding, LocalName construction and appropriate
+  end-tag matching are retained. Interned atom storage is separate and unadmitted.
+- `CheckedParser::with_attribute_name_reservation` reserves current attribute
+  name scratch through the same primitive and its own parser-owned callback.
+  Attribute creation's first character and later name pushes stop on refusal.
+  Duplicate-name checks, native LocalName construction, namespace handling and
+  attribute-value moves keep their original behavior. Attribute values, the
+  attribute vector and interned atoms remain separate, unadmitted allocations.
 - The ordinary driver and checked driver share the existing feed loop. The
   ordinary `Parser`, `parse_document`, fragment APIs and `Document::from` keep
   their signatures and algorithms. The new checked API is re-exported at root.

@@ -1,11 +1,11 @@
-//! The spec temporary buffer, optionally backed by a caller reservation.
+//! Parser text scratch, optionally backed by a caller reservation.
 
 use crate::tendril::StrTendril;
 use std::mem;
 
 type Reservation = Box<dyn Fn(&mut String, usize) -> bool + Send>;
 
-pub(super) enum TemporaryBuffer {
+pub(super) enum TextBuffer {
     Native(StrTendril),
     Reserved {
         // Drop the bytes before the callback returns their admission.
@@ -14,7 +14,7 @@ pub(super) enum TemporaryBuffer {
     },
 }
 
-impl TemporaryBuffer {
+impl TextBuffer {
     pub(super) fn new() -> Self {
         Self::Native(StrTendril::new())
     }

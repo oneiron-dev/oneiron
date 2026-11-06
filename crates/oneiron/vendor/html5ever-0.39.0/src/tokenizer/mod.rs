@@ -38,9 +38,9 @@ use crate::{Attribute, LocalName, QualName, SmallCharSet};
 mod char_ref;
 mod interface;
 pub mod states;
-mod temporary_buffer;
+mod text_buffer;
 
-use self::temporary_buffer::TemporaryBuffer;
+use self::text_buffer::TextBuffer;
 
 /// The result of invoking the tokenizer once.
 pub enum ProcessResult<Handle> {
@@ -147,7 +147,7 @@ pub struct Tokenizer<Sink> {
     current_tag_kind: Cell<TagKind>,
 
     /// Current tag name.
-    current_tag_name: RefCell<StrTendril>,
+    current_tag_name: RefCell<TextBuffer>,
 
     /// Current tag is self-closing?
     current_tag_self_closing: Cell<bool>,
@@ -159,7 +159,7 @@ pub struct Tokenizer<Sink> {
     current_tag_attrs: RefCell<Vec<Attribute>>,
 
     /// Current attribute name.
-    current_attr_name: RefCell<StrTendril>,
+    current_attr_name: RefCell<TextBuffer>,
 
     /// Current attribute value.
     current_attr_value: RefCell<StrTendril>,
@@ -174,7 +174,7 @@ pub struct Tokenizer<Sink> {
     last_start_tag_name: RefCell<Option<LocalName>>,
 
     /// The "temporary buffer" mentioned in the spec.
-    temp_buf: RefCell<TemporaryBuffer>,
+    temp_buf: RefCell<TextBuffer>,
 
     /// Record of how many ns we spent in each state, if profiling is enabled.
     state_profile: RefCell<BTreeMap<states::State, u64>>,
@@ -207,16 +207,16 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             ignore_lf: Cell::new(false),
             discard_bom: Cell::new(discard_bom),
             current_tag_kind: Cell::new(StartTag),
-            current_tag_name: RefCell::new(StrTendril::new()),
+            current_tag_name: RefCell::new(TextBuffer::new()),
             current_tag_self_closing: Cell::new(false),
             current_tag_had_duplicate_attributes: Cell::new(false),
             current_tag_attrs: RefCell::new(vec![]),
-            current_attr_name: RefCell::new(StrTendril::new()),
+            current_attr_name: RefCell::new(TextBuffer::new()),
             current_attr_value: RefCell::new(StrTendril::new()),
             current_comment: RefCell::new(StrTendril::new()),
             current_doctype: RefCell::new(Doctype::default()),
             last_start_tag_name: RefCell::new(start_tag_name),
-            temp_buf: RefCell::new(TemporaryBuffer::new()),
+            temp_buf: RefCell::new(TextBuffer::new()),
             state_profile: RefCell::new(BTreeMap::new()),
             time_in_sink: Cell::new(0),
             current_line: Cell::new(1),
@@ -234,6 +234,40 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
 
     fn push_temp(&self, character: char) -> bool {
         if !self.temp_buf.borrow_mut().push_char(character) {
+            self.stopped.set(true);
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn set_tag_name_reservation(
+        &mut self,
+        reservation: Box<dyn Fn(&mut String, usize) -> bool + Send>,
+    ) {
+        if !self.current_tag_name.get_mut().install(reservation) {
+            self.stopped.set(true);
+        }
+    }
+
+    fn push_tag(&self, character: char) -> bool {
+        if !self.current_tag_name.borrow_mut().push_char(character) {
+            self.stopped.set(true);
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn set_attribute_name_reservation(
+        &mut self,
+        reservation: Box<dyn Fn(&mut String, usize) -> bool + Send>,
+    ) {
+        if !self.current_attr_name.get_mut().install(reservation) {
+            self.stopped.set(true);
+        }
+    }
+
+    fn push_name(&self, character: char) -> bool {
+        if !self.current_attr_name.borrow_mut().push_char(character) {
             self.stopped.set(true);
             return false;
         }
@@ -505,7 +539,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
     fn emit_current_tag(&self) -> ProcessResult<Sink::Handle> {
         self.finish_attribute();
 
-        let name = LocalName::from(&**self.current_tag_name.borrow());
+        let name = LocalName::from(self.current_tag_name.borrow().as_str());
         self.current_tag_name.borrow_mut().clear();
 
         match self.current_tag_kind.get() {
@@ -576,41 +610,43 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
         *self.current_tag_attrs.borrow_mut() = vec![];
     }
 
-    fn create_tag(&self, kind: TagKind, c: char) {
+    fn create_tag(&self, kind: TagKind, c: char) -> bool {
         self.discard_tag();
-        self.current_tag_name.borrow_mut().push_char(c);
+        if !self.push_tag(c) {
+            return false;
+        }
         self.current_tag_kind.set(kind);
+        true
     }
 
     fn have_appropriate_end_tag(&self) -> bool {
         match self.last_start_tag_name.borrow().as_ref() {
             Some(last) => {
                 (self.current_tag_kind.get() == EndTag)
-                    && (**self.current_tag_name.borrow() == **last)
+                    && (self.current_tag_name.borrow().as_str() == &**last)
             },
             None => false,
         }
     }
 
-    fn create_attribute(&self, c: char) {
+    fn create_attribute(&self, c: char) -> bool {
         self.finish_attribute();
-
-        self.current_attr_name.borrow_mut().push_char(c);
+        self.push_name(c)
     }
 
     fn finish_attribute(&self) {
-        if self.current_attr_name.borrow().is_empty() {
+        if self.current_attr_name.borrow().as_str().is_empty() {
             return;
         }
 
         // Check for a duplicate attribute.
         // FIXME: the spec says we should error as soon as the name is finished.
         let dup = {
-            let name = &*self.current_attr_name.borrow();
+            let name = self.current_attr_name.borrow();
             self.current_tag_attrs
                 .borrow()
                 .iter()
-                .any(|a| *a.name.local == **name)
+                .any(|a| &*a.name.local == name.as_str())
         };
 
         if dup {
@@ -619,7 +655,7 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
             self.current_attr_name.borrow_mut().clear();
             self.current_attr_value.borrow_mut().clear();
         } else {
-            let name = LocalName::from(&**self.current_attr_name.borrow());
+            let name = LocalName::from(self.current_attr_name.borrow().as_str());
             self.current_attr_name.borrow_mut().clear();
             self.current_tag_attrs.borrow_mut().push(Attribute {
                 // The tree builder will adjust the namespace if necessary.
@@ -694,8 +730,16 @@ impl<Sink: TokenSink> Tokenizer<Sink> {
 
 // Shorthand for common state machine behaviors.
 macro_rules! shorthand (
-    ( $me:ident : create_tag $kind:ident $c:expr   ) => ( $me.create_tag($kind, $c)                           );
-    ( $me:ident : push_tag $c:expr                 ) => ( $me.current_tag_name.borrow_mut().push_char($c)     );
+    ( $me:ident : create_tag $kind:ident $c:expr   ) => ({
+        if !$me.create_tag($kind, $c) {
+            return ProcessResult::Suspend;
+        }
+    });
+    ( $me:ident : push_tag $c:expr                 ) => ({
+        if !$me.push_tag($c) {
+            return ProcessResult::Suspend;
+        }
+    });
     ( $me:ident : discard_tag                      ) => ( $me.discard_tag()                                   );
     ( $me:ident : discard_char $input:expr         ) => ( $me.discard_char($input)                            );
     ( $me:ident : push_temp $c:expr                ) => ({
@@ -704,8 +748,16 @@ macro_rules! shorthand (
         }
     });
     ( $me:ident : clear_temp                       ) => ( $me.clear_temp_buf()                                );
-    ( $me:ident : create_attr $c:expr              ) => ( $me.create_attribute($c)                            );
-    ( $me:ident : push_name $c:expr                ) => ( $me.current_attr_name.borrow_mut().push_char($c)    );
+    ( $me:ident : create_attr $c:expr              ) => ({
+        if !$me.create_attribute($c) {
+            return ProcessResult::Suspend;
+        }
+    });
+    ( $me:ident : push_name $c:expr                ) => ({
+        if !$me.push_name($c) {
+            return ProcessResult::Suspend;
+        }
+    });
     ( $me:ident : push_value $c:expr               ) => ( $me.current_attr_value.borrow_mut().push_char($c)   );
     ( $me:ident : append_value $c:expr             ) => ( $me.current_attr_value.borrow_mut().push_tendril($c));
     ( $me:ident : push_comment $c:expr             ) => ( $me.current_comment.borrow_mut().push_char($c)      );

@@ -146,6 +146,12 @@ and every local source change.
   before growth and settles its actual capacity; bytes free before the owned
   callback releases admission. Emission copies to a native tendril and clears
   the retained scratch. That output tendril and DOM payload remain unadmitted.
+  A separate checked tag-name String uses the same capacity reservation and
+  parser-owned lifetime. Native tag-name bytes, case folding, end-tag matching
+  and LocalName construction are unchanged; atom storage remains unadmitted.
+  A separate checked attribute-name String also uses that reservation. Empty
+  and duplicate-name checks, LocalName construction and namespace/value handling
+  keep their original bytes and order; attribute values and atoms are unadmitted.
   Other private parser vectors and transitive payloads remain unadmitted.
 
 - `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):

@@ -69,6 +69,8 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
         let current = Arc::clone(&backing);
         let open_elements = Mutex::new(Backing::new(budget.clone()));
         let temporary_buffer = Mutex::new(Backing::new(budget.clone()));
+        let tag_name = Mutex::new(Backing::new(budget.clone()));
+        let attribute_name = Mutex::new(Backing::new(budget.clone()));
         parser
             .with_open_elements_reservation(move |elements, additional| {
                 open_elements
@@ -78,6 +80,18 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
             })
             .with_temporary_buffer_reservation(move |text, additional| {
                 temporary_buffer
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .reserve_string(text, additional)
+            })
+            .with_tag_name_reservation(move |text, additional| {
+                tag_name
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .reserve_string(text, additional)
+            })
+            .with_attribute_name_reservation(move |text, additional| {
+                attribute_name
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .reserve_string(text, additional)
