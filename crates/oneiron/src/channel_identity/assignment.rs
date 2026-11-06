@@ -576,6 +576,7 @@ pub(crate) fn clear_assignment_for_delete(
     }
     // FIX 6424 part 3: the erased identity's kept lifecycle receipts go.
     crate::channel_identity_lifecycle::drop_lifecycle_requests_of_identity_in_txn(store, txn, id)?;
+    crate::phone_line::drop_identity_in_txn(store, txn, id)?;
     // Its mailbox progress and the messages a run set aside from its mailbox
     // go with it, on the tear and the soft erase alike.
     crate::channel_identity_provider::mailbox_cursor::drop_mailbox_cursor_in_txn(store, txn, id)?;
