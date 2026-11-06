@@ -140,6 +140,24 @@ same preparation and reply validation; the prepared value is for callers that
 provide their own transport. It does not turn the facade client into the guest's
 action transport or supply persistence across backend sessions.
 
+An app that already retains its own private Ed25519 connection seed can use
+`PreparedPairing::from_seed(link, seed)` instead. The same link, signed transcript,
+checkpoint-pin check and reply decoder apply. The fresh-key `new` path is
+unchanged. The seed is the app's secret, not permission: the explicit owner grant
+and current-grant checks still decide every engine action. Generate and retain it
+through the app's own private channel, never in its published source, cookies,
+browser state, request body or logs. Supplying a retained key does not supply a
+storage backend, persist guest tmpfs, recover a spent pairing link or change the
+one-use redemption rule. The app remains responsible for retaining the resulting
+credential as well as receiving any separately owner-issued grant slip.
+
+If the app restores an ordinary paired credential, call
+`oneiron_remote::paired_binding_key(&credential)` to recover its nonsecret public
+binding key for the owner's later slip issuance. A bare bearer returns `None`;
+malformed paired credentials keep the ordinary parser error. The helper uses the
+native key parser and derives only the public key. It sends nothing and verifies
+no grant, slip or identity; never send the private credential to the owner.
+
 After adopting the app's separately issued grant slip, use
 `oneiron_remote::prepare_app_action(&credential, verb, &action_body)` to prepare
 an existing `InProcessRequest` for the native Fetch relay. Its method, relative
