@@ -26,6 +26,9 @@ pub(super) fn put(
     }
     Ok(())
 }
+pub(super) fn stage(record: &RetrievalRunRecord) -> Result<Option<crate::side_table::StagedRow>> {
+    key(record).map(|key| TURN_INDEX.stage(&key, &())).transpose()
+}
 pub(super) fn delete(
     target: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,

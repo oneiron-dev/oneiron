@@ -327,6 +327,22 @@ drops before the caller's lease. An unbound finalizer keeps the membership
 behavior without capacity accounting. This prices known vector backing, not
 allocator internals, the copy's allocation peak or a performance result.
 
+The same bound finalizer also records the actual encoded key and value
+capacities of its by-turn and trace-fork index puts. Each uses the original
+typed table's staged row once, then the same native put. The turn index still
+skips a record without a turn, and the fork index still skips an unknown hash.
+An unbound finalizer and other existing fork-index callers keep their direct
+put paths. The original turn-index, main-row, fork-index and provisional-delete
+order and errors stay unchanged.
+
+These temporary index buffers drop inside their original write scopes before
+the caller's same lease, including write errors and unwind. Their known
+capacities stay charged conservatively until that lease drops. Session-overlay
+copies and other storage made by the put are separate allocations, not these
+staged buffers. Provisional-delete keys, other index and retention buffers,
+encoding allocation peaks and a full working-set bound remain outside this
+charge. No new memory line, refusal, wait or configured limit is introduced.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,

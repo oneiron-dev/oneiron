@@ -771,7 +771,7 @@ fn stage_retrieval_run_with_visibility(
         super::turn_index::put(target, wtxn, record)?;
         RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &record.run_id)?;
         if let Some(trace) = &record.trace {
-            put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id)?;
+            put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id, None)?;
         }
     } else {
         RETRIEVAL_RUN_PROVISIONAL.put(target, wtxn, &record.run_id, &PresentMarker)?;
@@ -1012,8 +1012,19 @@ fn stage_context_pack_retrieval_run_finalize(
         memory.materialized(0, bytes);
         memory.shrink(input_backing_bytes);
     }
-    super::turn_index::put(target, wtxn, &record)?;
-    if let Some(memory) = memory {
+    if let Some(memory) = memory.as_deref_mut() {
+        if let Some(row) = super::turn_index::stage(&record)? {
+            memory.materialized(
+                0,
+                row.value_capacity_bytes()
+                    .saturating_add(row.key_capacity_bytes()),
+            );
+            row.put(target, wtxn)?;
+        }
+    } else {
+        super::turn_index::put(target, wtxn, &record)?;
+    }
+    if let Some(memory) = memory.as_deref_mut() {
         let row = RETRIEVAL_RUN.stage(&run_id, &record)?;
         memory.materialized(
             0,
@@ -1025,7 +1036,13 @@ fn stage_context_pack_retrieval_run_finalize(
         RETRIEVAL_RUN.put(target, wtxn, &run_id, &record)?;
     }
     if let Some(trace) = &record.trace {
-        put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id)?;
+        put_retrieval_trace_fork_index(
+            target,
+            wtxn,
+            &trace.fork_hash,
+            record.run_id,
+            memory.as_deref_mut(),
+        )?;
     }
     RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
     Ok(())
@@ -1074,9 +1091,20 @@ fn put_retrieval_trace_fork_index(
     wtxn: &mut RwTxn<'_>,
     fork_hash: &RetrievalTraceForkHash,
     run_id: RetrievalRunId,
+    memory: Option<&mut crate::host_memory::MemoryLease>,
 ) -> Result<()> {
     if !is_unknown_retrieval_trace_fork_hash(fork_hash) {
-        RETRIEVAL_TRACE_FORK_INDEX.put(target, wtxn, &(*fork_hash, run_id), &PresentMarker)?;
+        if let Some(memory) = memory {
+            let row = RETRIEVAL_TRACE_FORK_INDEX.stage(&(*fork_hash, run_id), &PresentMarker)?;
+            memory.materialized(
+                0,
+                row.value_capacity_bytes()
+                    .saturating_add(row.key_capacity_bytes()),
+            );
+            row.put(target, wtxn)?;
+        } else {
+            RETRIEVAL_TRACE_FORK_INDEX.put(target, wtxn, &(*fork_hash, run_id), &PresentMarker)?;
+        }
     }
     Ok(())
 }
