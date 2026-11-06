@@ -32,7 +32,7 @@ use loro::LoroDoc;
 
 use super::canonical::{
     CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalSnapshot, CanonicalValidation,
-    RebuildAt, invalid, rebuild_page, rebuild_start,
+    RebuildAt, StoreCapturedCanonical, invalid, rebuild_page, rebuild_start,
 };
 use super::ladder::{
     CanonicalComparison, ManifestChunks, PreparedRecovery, RecoveryBudget, RecoveryTier, limit,
@@ -80,6 +80,41 @@ pub(crate) enum RecoveryProgress {
     Complete,
 }
 
+/// Both forms own one snapshot. Only the actual Store capture can provide
+/// the native restore source; an ordinary decoded snapshot remains raw.
+enum RecoverySource {
+    Raw(CanonicalSnapshot),
+    Captured(StoreCapturedCanonical),
+}
+
+impl std::ops::Deref for RecoverySource {
+    type Target = CanonicalSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Raw(snapshot) => snapshot,
+            Self::Captured(source) => source.snapshot(),
+        }
+    }
+}
+
+impl RecoverySource {
+    fn captured(&self) -> Option<&StoreCapturedCanonical> {
+        match self {
+            Self::Raw(_) => None,
+            Self::Captured(source) => Some(source),
+        }
+    }
+
+    fn erase_actors_here(&mut self, vault: &Vault) -> Result<()> {
+        match self {
+            Self::Raw(snapshot) => *snapshot = snapshot.with_actors_erased_here(vault)?,
+            Self::Captured(source) => source.erase_actors_here(vault)?,
+        }
+        Ok(())
+    }
+}
+
 /// One window's recovery from its canonical artifact, owning that artifact
 /// for its whole life: every page reads the same source.
 pub(crate) struct RecoveryWork {
@@ -88,7 +123,7 @@ pub(crate) struct RecoveryWork {
     /// Whose turns the pages take: the owner of an owner act, else the
     /// host's own work.
     principal: Option<EntityId>,
-    source: CanonicalSnapshot,
+    source: RecoverySource,
     digest: [u8; 32],
     phase: RecoveryPhase,
     validation: Option<CanonicalValidation>,
@@ -111,11 +146,39 @@ impl RecoveryWork {
         budget: RecoveryBudget,
         principal: Option<EntityId>,
     ) -> Self {
+        Self::from_source(
+            manifest_path,
+            RecoverySource::Raw(snapshot.clone()),
+            budget,
+            principal,
+        )
+    }
+
+    pub(crate) fn from_store_capture(
+        manifest_path: &Path,
+        source: StoreCapturedCanonical,
+        budget: RecoveryBudget,
+        principal: Option<EntityId>,
+    ) -> Self {
+        Self::from_source(
+            manifest_path,
+            RecoverySource::Captured(source),
+            budget,
+            principal,
+        )
+    }
+
+    fn from_source(
+        manifest_path: &Path,
+        source: RecoverySource,
+        budget: RecoveryBudget,
+        principal: Option<EntityId>,
+    ) -> Self {
         Self {
             path: manifest_path.to_owned(),
             budget,
             principal,
-            source: snapshot.clone(),
+            source,
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
             validation: None,
@@ -233,7 +296,7 @@ impl RecoveryWork {
                     // only that form. Full domain validation precedes quarantine
                     // and every durable write.
                     if self.validation.is_none() {
-                        self.source = self.source.with_actors_erased_here(vault)?;
+                        self.source.erase_actors_here(vault)?;
                     }
                     if !self
                         .validation
@@ -283,12 +346,13 @@ impl RecoveryWork {
                 };
                 let key = WindowKey::new(&self.source.window);
                 if forward
-                    .recovery_page(
+                    .recovery_page_with_source(
                         vault,
                         &prepared.window,
                         materializer,
                         &key,
                         &self.source,
+                        self.source.captured(),
                         page,
                     )?
                     .is_some()
@@ -337,11 +401,12 @@ impl RecoveryWork {
                 .doc
                 .take()
                 .ok_or_else(|| invalid("recovery preflight"))?;
-            crate::sync::bridge::preflight_validated_canonical_recovery(
+            crate::sync::bridge::preflight_validated_canonical_recovery_with_source(
                 vault,
                 materializer,
                 &self.source,
                 &doc,
+                self.source.captured(),
             )?;
             self.doc = Some(doc);
             self.preflight_manifest = Some(ManifestChunks::default());

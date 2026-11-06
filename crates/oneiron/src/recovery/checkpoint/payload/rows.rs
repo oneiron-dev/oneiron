@@ -153,7 +153,7 @@ families! {
         SYNC_RESIDENCE_BUNDLE_STAGE_PART DOCUMENT_SHALLOW_SINCE DOCUMENT_STATE_VECTOR SYNC_SV_ROOT
         WINDOW_STATE_VECTOR SYNC_SVF_ROOT WINDOW_SHALLOW_FENCE USAGE_VAULT_ROLLUP SYNC_HOME_WINDOW_VV
         IDENTITY_TOPOLOGY_PROPOSER_SCOPE IDENTITY_TOPOLOGY_AUTHORED_HERE;
-    Class::Unclassified => SYNC_AD_E AUTH_CONTROL_KEY AUTH_REVOKED_TOKEN_JTI
+    Class::Unclassified => SYNC_RECORD_DOCUMENT_SOURCE SYNC_AD_E AUTH_CONTROL_KEY AUTH_REVOKED_TOKEN_JTI
         AUTHORITY_CACHE_GENERATION AUTHLOG_FIRST_SEEN_SIDECAR CRITIC_UNREADABLE_REPORTED
         AUTHLOG_INGEST_CHECK
         AUTHLOG_INGEST_COUNT AUTHLOG_OBSERVATION_POLICY AUTHLOG_SEQ_HWM AUTHLOG_SEQ_OBSERVATION
@@ -753,6 +753,13 @@ pub(super) fn kinds() -> &'static [(Class, &'static [&'static str])] {
 /// the erased marker, a wait's erased reply), go to it; every other row of
 /// theirs stays as declared, unclassified and named on the receipt.
 pub(super) fn class_for_row(database: &str, key: &[u8], value: &[u8], declared: Class) -> Class {
+    if database == "sync_state" && key.starts_with(side_table::SYNC_RECORD_DOCUMENT_SOURCE.prefix) {
+        #[cfg(feature = "sync")]
+        if crate::store::window_record_sources::valid_row(key, value) {
+            return Class::Structure;
+        }
+        return Class::Unclassified;
+    }
     let mixed = match database {
         "job_records" => true,
         "vault_meta" => key.starts_with(side_table::CODE_RUN_WAIT_INDEX.prefix),

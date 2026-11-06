@@ -163,6 +163,10 @@ pub(crate) fn apply_session_bundle_claim_puts_with_transitions(
 
 /// Batch-level mutable state threaded through per-op arms and the tail.
 struct BatchApplyState {
+    #[cfg(feature = "sync")]
+    record_documents: Vec<crate::entity_doc::PendingRecordDocument>,
+    #[cfg(feature = "sync")]
+    pending_native_skill_puts: Vec<super::put_apply::PendingNativeSkillPut>,
     replay: bool,
     run_derivations: Option<crate::skill_attribution::RunDerivations>,
     hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
@@ -237,7 +241,40 @@ pub(super) fn apply_ops_with_origin(
         origin,
         None,
         None,
+        None,
+        #[cfg(feature = "sync")]
+        None,
     )
+}
+
+/// Owned lower-apply outputs. The request and each final put remain data,
+/// not publication or proof that actor-after and caller-terminal checks ran.
+pub(super) struct PendingNativeSkillBatch {
+    #[cfg(feature = "sync")]
+    record_documents: Vec<crate::entity_doc::PendingRecordDocument>,
+    #[cfg(feature = "sync")]
+    request: Option<crate::skill::SkillStateWrite>,
+    #[cfg(feature = "sync")]
+    puts: Vec<super::put_apply::PendingNativeSkillPut>,
+}
+
+impl PendingNativeSkillBatch {
+    #[cfg(feature = "sync")]
+    pub(super) fn take_record_documents(
+        &mut self,
+    ) -> Vec<crate::entity_doc::PendingRecordDocument> {
+        std::mem::take(&mut self.record_documents)
+    }
+
+    #[cfg(feature = "sync")]
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        Option<crate::skill::SkillStateWrite>,
+        Vec<super::put_apply::PendingNativeSkillPut>,
+    ) {
+        (self.request, self.puts)
+    }
 }
 
 /// [`apply_ops_with_origin`] for a batch that carries other authority rows
@@ -259,11 +296,50 @@ pub(super) fn apply_ops_with_authority_beside(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+    origin: BaseWriteOrigin<'_>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
+    own_device: Option<&VerifiedOwnDeviceLane>,
+    native_publication: Option<NativePublicationContext<'_>>,
+    #[cfg(feature = "sync")] record_document: Option<
+        &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+    >,
+) -> Result<()> {
+    apply_ops_with_authority_beside_collecting(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        gate_mode,
+        origin,
+        authority_beside,
+        own_device,
+        native_publication,
+        #[cfg(feature = "sync")]
+        record_document,
+    )
+    .map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(super) fn apply_ops_with_authority_beside_collecting(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
     mut gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
-) -> Result<()> {
+    native_publication: Option<NativePublicationContext<'_>>,
+    #[cfg(feature = "sync")] record_document: Option<
+        &crate::entity_doc::RecordDocumentCandidate<'_, '_>,
+    >,
+) -> Result<PendingNativeSkillBatch> {
     // FIX 9398: the batch's deletes drop the rooms' media copies once, as it ends.
     let _room_media_drops = crate::embed::RoomMediaDrops::open(store, wtxn);
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
@@ -300,7 +376,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let (masked_files, masked_claim_pre) = if marked_carriers_only(&marked_carriers, &ops.ops) {
         (secret_scan::MaskedFiles::default(), Vec::new())
     } else {
-        secret_scan::mask_batch_ops(
+        secret_scan::mask_batch_ops_for_record_document(
             store,
             config,
             analyzer,
@@ -311,6 +387,8 @@ pub(super) fn apply_ops_with_authority_beside(
                 || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
                     if grant.selected_saver().is_some()),
             mutation_recorded_at,
+            #[cfg(feature = "sync")]
+            record_document,
         )?
     };
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
@@ -380,6 +458,10 @@ pub(super) fn apply_ops_with_authority_beside(
         replay,
     };
     let mut state = BatchApplyState {
+        #[cfg(feature = "sync")]
+        record_documents: Vec::new(),
+        #[cfg(feature = "sync")]
+        pending_native_skill_puts: Vec::new(),
         replay,
         run_derivations,
         hub_admission,
@@ -473,6 +555,9 @@ pub(super) fn apply_ops_with_authority_beside(
                     text_index_trusted,
                     authority_beside,
                     own_device,
+                    native_publication,
+                    #[cfg(feature = "sync")]
+                    record_document,
                 )?;
             }
             BatchOp::ClaimCandidate {
@@ -608,5 +693,17 @@ pub(super) fn apply_ops_with_authority_beside(
         op_index += 1;
     }
 
-    tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
+    #[cfg(feature = "sync")]
+    let record_documents = std::mem::take(&mut state.record_documents);
+    #[cfg(feature = "sync")]
+    let puts = std::mem::take(&mut state.pending_native_skill_puts);
+    tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)?;
+    Ok(PendingNativeSkillBatch {
+        #[cfg(feature = "sync")]
+        record_documents,
+        #[cfg(feature = "sync")]
+        request: gate_mode.skill_state_write,
+        #[cfg(feature = "sync")]
+        puts,
+    })
 }

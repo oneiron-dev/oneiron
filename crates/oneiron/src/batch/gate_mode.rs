@@ -22,8 +22,18 @@ impl PendingAutoProbe {
     }
 }
 
+/// The actual Vault and caller of a native publication path, not admission.
+#[derive(Clone, Copy)]
+pub(super) struct NativePublicationContext<'vault> {
+    pub(super) vault: &'vault crate::Vault,
+    pub(super) actor: Option<crate::WriteActor>,
+    pub(super) content_writes: Option<&'vault super::actor_content::ContentWriteSet>,
+}
+
 #[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
+    #[cfg(feature = "sync")]
+    pub(super) skill_state_write: Option<crate::skill::SkillStateWrite>,
     pub(super) hub_admission: Option<crate::skill_hub::HubAdmissionProof>,
     pub(super) refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     pub(super) record_decisions: bool,
@@ -77,6 +87,8 @@ pub(crate) struct ApplyOpsGateMode {
 impl ApplyOpsGateMode {
     pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
         Self {
+            #[cfg(feature = "sync")]
+            skill_state_write: None,
             hub_admission: None,
             refinement_admission: None,
             record_decisions,
@@ -98,6 +110,13 @@ impl ApplyOpsGateMode {
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
         }
+    }
+
+    /// Carries one target-bound typed request, not admission to publish it.
+    #[cfg(feature = "sync")]
+    pub(super) fn with_skill_state_write(mut self, request: crate::skill::SkillStateWrite) -> Self {
+        self.skill_state_write = Some(request);
+        self
     }
 
     /// Marks this batch's claim candidates as the vault owner's own: a
