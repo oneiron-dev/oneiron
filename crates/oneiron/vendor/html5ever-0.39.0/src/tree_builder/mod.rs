@@ -153,6 +153,11 @@ pub struct TreeBuilder<Handle, Sink> {
     // safety!
     //
     // FIXME: Auto-generate the trace hooks like Servo does.
+
+    coalesce_table_text: bool,
+
+    // Keep last: stack storage must be freed before the captured reservation.
+    open_elements_reservation: Option<control::OpenElementsReservation<Handle>>,
 }
 
 impl<Handle, Sink> TreeBuilder<Handle, Sink>
@@ -184,6 +189,8 @@ where
             foster_parenting: Default::default(),
             context_elem: Default::default(),
             current_line: Cell::new(1),
+            coalesce_table_text: false,
+            open_elements_reservation: None,
         }
     }
 
@@ -225,6 +232,8 @@ where
             foster_parenting: Default::default(),
             context_elem: RefCell::new(Some(context_elem)),
             current_line: Cell::new(1),
+            coalesce_table_text: false,
+            open_elements_reservation: None,
         };
 
         // https://html.spec.whatwg.org/multipage/#parsing-html-fragments
@@ -961,17 +970,27 @@ where
                 .iter()
                 .position(|n| self.sink.same_node(n, &furthest_block))
                 .expect("furthest block missing from open element stack");
-            self.open_elems
-                .borrow_mut()
-                .insert(new_furthest_block_index + 1, new_element);
+            let mut open_elements = self.open_elems.borrow_mut();
+            self.reserve_open_elements(&mut open_elements, 1)?;
+            open_elements.insert(new_furthest_block_index + 1, new_element);
 
             // 20.
         }
         Some(())
     }
 
-    fn push(&self, elem: &Handle) {
-        self.open_elems.borrow_mut().push(elem.clone());
+    fn push(&self, elem: &Handle) -> Option<()> {
+        let mut open_elements = self.open_elems.borrow_mut();
+        self.reserve_open_elements(&mut open_elements, 1)?;
+        open_elements.push(elem.clone());
+        Some(())
+    }
+
+    fn push_owned(&self, elem: Handle) -> Option<()> {
+        let mut open_elements = self.open_elems.borrow_mut();
+        self.reserve_open_elements(&mut open_elements, 1)?;
+        open_elements.push(elem);
+        Some(())
     }
 
     fn pop(&self) -> Handle {
@@ -1422,7 +1441,7 @@ where
             attrs,
             false,
         )?;
-        self.push(&elem);
+        self.push(&elem)?;
         self.sink.append(&self.doc_handle, AppendNode(elem));
         // FIXME: application cache selection algorithm
         Some(())
@@ -1478,7 +1497,7 @@ where
         self.insert_at(insertion_point, AppendNode(elem.clone()))?;
 
         match push {
-            PushFlag::Push => self.push(&elem),
+            PushFlag::Push => self.push(&elem)?,
             PushFlag::NoPush => (),
         }
         // FIXME: Remove from the stack if we can't append?
@@ -1524,7 +1543,7 @@ where
             self.insert_at(adjusted_insertion_location, AppendNode(elem.clone()))?;
         }
 
-        self.push(&elem);
+        self.push(&elem)?;
 
         Some(elem)
     }

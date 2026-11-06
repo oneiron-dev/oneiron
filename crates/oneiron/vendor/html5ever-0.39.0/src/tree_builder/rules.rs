@@ -239,7 +239,7 @@ where
                             self.sink.mark_script_already_started(&elem);
                         }
                         stop_on_none!(self.insert_appropriately(AppendNode(elem.clone()), None));
-                        self.open_elems.borrow_mut().push(elem);
+                        stop_on_none!(self.push_owned(elem));
                         self.to_raw_text_mode(ScriptData)
                     },
 
@@ -390,7 +390,7 @@ where
                             .as_ref()
                             .expect("no head element")
                             .clone();
-                        self.push(&head);
+                        stop_on_none!(self.push(&head));
                         let result = self.step(InsertionMode::InHead, token);
                         self.remove_from_stack(&head);
                         result
@@ -1128,7 +1128,16 @@ where
                 Token::NullCharacter => self.unexpected(&token),
 
                 Token::Characters(split, text) => {
-                    self.pending_table_text.borrow_mut().push((split, text));
+                    let mut pending = self.pending_table_text.borrow_mut();
+                    if self.coalesce_table_text {
+                        if let Some((previous_split, previous_text)) = pending.last_mut() {
+                            if *previous_split == split {
+                                previous_text.push_tendril(&text);
+                                return ProcessResult::Done;
+                            }
+                        }
+                    }
+                    pending.push((split, text));
                     ProcessResult::Done
                 },
 

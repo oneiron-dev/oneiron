@@ -136,7 +136,12 @@ and every local source change.
   `CheckedParser::one_str` consumes borrowed UTF-8 through inline single-scalar
   tendrils, avoiding the whole-input heap copy before the first checkpoint. The
   caller-memory template path uses it; ordinary one-shot parsing is unchanged.
-  Retained tokenizer/lookahead payloads remain separate allocations.
+  Scalar mode coalesces adjacent table-text runs with the same split status
+  instead of retaining one pending-vector entry per scalar. Full text is kept.
+  Retained tokenizer/lookahead payloads remain separate allocations. An optional
+  pre-input open-element reservation admits the actual private Vec before growth;
+  its guard releases after the stack frees at parser completion, not after rendering.
+  Other private parser vectors and transitive payloads remain unadmitted.
 
 - `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):
   a fallible native node-arena reservation API admits whole replacement storage

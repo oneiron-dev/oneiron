@@ -25,7 +25,32 @@ pub enum TreeSinkOperation<'a, Handle> {
 pub(super) type SinkCheckpoint<Handle, Sink> =
     Box<dyn Fn(&Sink, TreeSinkOperation<'_, Handle>) -> bool + Send>;
 
+pub(super) type OpenElementsReservation<Handle> =
+    Box<dyn Fn(&mut Vec<Handle>, usize) -> bool + Send>;
+
 impl<Handle, Sink> TreeBuilder<Handle, Sink> {
+    pub(crate) fn coalesce_table_text(&mut self) {
+        self.coalesce_table_text = true;
+    }
+
+    pub(crate) fn set_open_elements_reservation(
+        &mut self,
+        reservation: OpenElementsReservation<Handle>,
+    ) {
+        self.open_elements_reservation = Some(reservation);
+    }
+
+    pub(super) fn reserve_open_elements(
+        &self,
+        elements: &mut Vec<Handle>,
+        additional: usize,
+    ) -> Option<()> {
+        self.open_elements_reservation
+            .as_ref()
+            .is_none_or(|reservation| reservation(elements, additional))
+            .then_some(())
+    }
+
     pub(crate) fn set_tree_sink_checkpoint(&mut self, checkpoint: SinkCheckpoint<Handle, Sink>) {
         self.tree_sink_checkpoint = Some(checkpoint);
     }

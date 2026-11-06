@@ -35,9 +35,18 @@ Local production changes (FIX 9615):
   The first typed refusal uses the same checked-driver error and partial-DOM drop.
 - `CheckedParser::one_str` feeds borrowed UTF-8 as inline, single-scalar
   tendrils instead of copying the entire input into a heap tendril before the
-  first checkpoint. It stops producing input on the first failure and uses
+  first checkpoint. In this scalar-input mode, adjacent table text with the
+  same split status coalesces before buffering, so a long run does not retain
+  one pending-vector entry per scalar. Ordinary input mode is unchanged.
+  It stops producing input on the first failure and uses
   the existing finish/error path. Tokenizer lookahead and retained payloads
   can still allocate separately; this is not a bound on all parser memory.
+- `CheckedParser::with_open_elements_reservation`, installed before input,
+  lets the caller reserve the actual private open-element Vec before a push
+  or insertion. The same first typed error stops root, ordinary, foreign,
+  script, head-reentry and adoption paths. Its owned callback is the last
+  tree-builder field, so the stack frees before the reservation is released
+  at parser completion, rather than retaining that charge during rendering.
 - The ordinary driver and checked driver share the existing feed loop. The
   ordinary `Parser`, `parse_document`, fragment APIs and `Document::from` keep
   their signatures and algorithms. The new checked API is re-exported at root.
@@ -64,7 +73,7 @@ the first typed error is retained; the current parser step, including private
 unadmitted work, may continue until the next checkpoint or guarded node operation.
 
 Callbacks use the caller's memory and work deadline, not a node-count/content
-limit or a new timer. Attribute, retained atom/tendril, parser-stack, lookahead and owned
+limit or a new timer. Attribute, retained atom/tendril, other parser-stack, lookahead and owned
 diagnostic payload allocations remain unadmitted. One tokenizer step, character-reference work,
 allocator surplus before settlement and opaque codec calls still prevent a
 global heap or hard wall-time bound. This snapshot does not complete FIX 9615.
