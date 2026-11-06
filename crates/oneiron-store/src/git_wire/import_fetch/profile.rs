@@ -184,8 +184,9 @@ impl ImportProcessProfile {
 /// relay's, and the door relay's (FIX 19233).
 pub const SOURCE_RELAY_TICKET_HEADER: &str = "x-oneiron-relay-ticket";
 
-/// The header line that carries `ticket`, one token of visible ASCII.
-fn relay_ticket_header(ticket: &str) -> Result<zeroize::Zeroizing<String>> {
+/// The header line that carries `ticket`, one token of visible ASCII; an
+/// exact publish's relay legs carry theirs the same way (FIX 19083).
+pub(crate) fn relay_ticket_header(ticket: &str) -> Result<zeroize::Zeroizing<String>> {
     if ticket.is_empty() || !ticket.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
         return Err(invalid("an import relay ticket is malformed"));
     }
@@ -195,11 +196,11 @@ fn relay_ticket_header(ticket: &str) -> Result<zeroize::Zeroizing<String>> {
 }
 
 /// The loopback origin an invocation's own relays listen on.
-const LOOPBACK: &str = "http://127.0.0.1:";
+pub(crate) const LOOPBACK: &str = "http://127.0.0.1:";
 
 /// Whether `url` is one plain loopback relay URL: a port and a path, no
 /// userinfo, query, fragment, space, backslash or control byte.
-fn loopback_relay(url: &str) -> Result<()> {
+pub(crate) fn loopback_relay(url: &str) -> Result<()> {
     let rest = url.strip_prefix(LOOPBACK).unwrap_or_default();
     if rest.is_empty()
         || rest.contains(['@', '?', '#'])

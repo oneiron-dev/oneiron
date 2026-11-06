@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4580 declarations.
+Census: 1262 facade rows, 4581 declarations.
 Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -13395,6 +13395,7 @@ class OriginPublishRefusal(TypedDict):
     observed: NotRequired[OriginPublishRemote | None]
     changed_fields: list[str]
     detail: NotRequired[str | None]
+BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginPublishRequestView(TypedDict):
     request_id: EntityId
     repo: str
@@ -13415,6 +13416,7 @@ class OriginPublishRequestView(TypedDict):
     refusal: NotRequired[OriginPublishRefusal | None]
     created_at: int
     finished_at: NotRequired[int | None]
+    broker_isolation: NotRequired[BrokerIsolation | None]
 class OriginPublishReviewRequest(TypedDict):
     repo: str
     request_id: EntityId
