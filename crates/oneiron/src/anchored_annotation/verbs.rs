@@ -114,8 +114,7 @@ impl Memory<'_> {
                     if mount.is_withheld(&entry.path) {
                         continue;
                     }
-                    let Some(bytes) = file_bytes_by_hash(self.vault(), &entry.content_hash, sight)?
-                    else {
+                    let Some(bytes) = self.code_file_bytes(&entry.content_hash, sight)? else {
                         continue;
                     };
                     // A file that is not text, or whose path is past the
@@ -141,7 +140,8 @@ impl Memory<'_> {
                     .map(|at| &snapshot.files[at])
                     .filter(|entry| !mount.is_withheld(&entry.path))
                     .ok_or_else(absent)?;
-                let bytes = file_bytes_by_hash(self.vault(), &entry.content_hash, sight)?
+                let bytes = self
+                    .code_file_bytes(&entry.content_hash, sight)?
                     .ok_or_else(absent)?;
                 code_line_units(commit, path, &entry.content_hash, &bytes)?
                     .ok_or_else(|| MemoryError::bad_request("artifact units could not be read"))?
@@ -199,16 +199,25 @@ impl Memory<'_> {
                 "locator format does not match the artifact",
             ));
         }
-        Ok(AnnotationAnchorView {
-            artifact_id: anchor.artifact_id,
-            version: anchor.version,
-            locator: (&anchor.locator).into(),
-            quote: code_span_words(
+        let readable = match CodeFile::of(&anchor.locator) {
+            Some(file) => self.code_file_row_readable(&file.hash)?,
+            None => false,
+        };
+        let quote = if readable {
+            code_span_words(
                 self.vault(),
                 &anchor.artifact_id,
                 &anchor.locator,
                 self.secret_sight()?,
-            )?,
+            )?
+        } else {
+            None
+        };
+        Ok(AnnotationAnchorView {
+            artifact_id: anchor.artifact_id,
+            version: anchor.version,
+            locator: (&anchor.locator).into(),
+            quote,
             body: anchor.body.as_ref().map(Into::into),
         })
     }
@@ -492,6 +501,31 @@ impl Memory<'_> {
 
 /// A code artifact's anchor version is [`CODE_ANCHOR_VERSION`]; a request
 /// may leave it out.
+impl Memory<'_> {
+    /// Whether the caller's credential reads the ASSET row that holds a code
+    /// file's bytes, as the code snapshot doors require of each file they
+    /// read (`codebase_readable`, FIX 7905). Absent and withheld read alike.
+    fn code_file_row_readable(&self, hash: &[u8; 32]) -> MemoryResult<bool> {
+        let row = crate::store::code_snapshot::codebase_asset_entity_id(hash)?;
+        self.produced_from([row]);
+        Ok(self.get_entity_tolerant(&row.to_hex())?.value.is_some())
+    }
+
+    /// A code file's bytes by its hash, through the caller's row read and
+    /// file sight; `None` when the caller does not read its row or the
+    /// ASSET is gone.
+    fn code_file_bytes(
+        &self,
+        hash: &[u8; 32],
+        sight: crate::secret_custody::SecretSight,
+    ) -> MemoryResult<Option<Vec<u8>>> {
+        if !self.code_file_row_readable(hash)? {
+            return Ok(None);
+        }
+        Ok(file_bytes_by_hash(self.vault(), hash, sight)?)
+    }
+}
+
 fn require_code_anchor_version(version: Option<u64>) -> MemoryResult<()> {
     if version.is_some_and(|version| version != CODE_ANCHOR_VERSION) {
         return Err(MemoryError::bad_request(
