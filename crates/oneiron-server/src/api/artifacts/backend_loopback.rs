@@ -16,6 +16,8 @@ use crate::config::ArtifactBackendConfig;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
 
+const PORT_WAIT_CADENCE: Duration = Duration::from_millis(250);
+
 struct CancelOnDrop(Arc<AtomicBool>);
 
 impl Drop for CancelOnDrop {
@@ -129,7 +131,7 @@ fn blocking_setup(
             }
             Err(error) if error.raw_os_error() == Some(libc::ECONNREFUSED) => {
                 // Same cadence as native blocked IO; no opening deadline.
-                std::thread::park_timeout(Duration::from_millis(250));
+                std::thread::park_timeout(PORT_WAIT_CADENCE);
             }
             Err(error) => return Err(error),
         }
