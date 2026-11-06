@@ -283,16 +283,13 @@ impl GraphFsResolver<'_, '_> {
             let entry = page
                 .entries()
                 .get(at.frames[depth].passed)
-                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
-                .cloned();
-            let next_page = page.next_cursor().map(str::to_owned);
-            pages[depth] = Some(page);
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor);
             // Lines to resume belong to the entry the walk stopped on, so to
             // the first one it reaches now.
             let lines = at.lines.take();
             let Some(entry) = entry else {
                 // This page is walked: on to the listing's next page, or back up.
-                if let Some(next_page) = next_page {
+                if let Some(next_page) = page.next_cursor().map(str::to_owned) {
                     let frame = &mut at.frames[depth];
                     frame.page = Some(next_page);
                     frame.passed = 0;
@@ -320,18 +317,22 @@ impl GraphFsResolver<'_, '_> {
                     return Ok(true);
                 }
                 if is_dir {
+                    let name =
+                        copy_path_parts(&[entry.name()], reader, self.options.page_byte_cap)?;
                     at.frames[depth].passed += 1;
                     at.frames.push(WalkFrame {
-                        name: entry.name().to_owned(),
+                        name,
                         page: None,
                         passed: 0,
                     });
+                    pages[depth] = Some(page);
                     pages.push(None);
                     dirs.push(child);
                     continue;
                 }
             }
             at.frames[depth].passed += 1;
+            pages[depth] = Some(page);
         }
         Ok(false)
     }
