@@ -369,6 +369,7 @@ pub(crate) fn rows_of_conversation(
         // Lenient: one damaged row must not hide every healthy snapshot.
         if let Some(record) = CATALOG.get_lenient(store, txn, &id)? {
             if record.reusable() {
+                out.try_reserve(1).map_err(std::io::Error::from)?;
                 out.push(record);
             }
         }
