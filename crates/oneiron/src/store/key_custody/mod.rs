@@ -29,6 +29,7 @@ mod kept_images;
 mod log;
 mod outbox;
 mod platform;
+mod private_publication;
 pub mod protocol;
 mod publication_policy;
 mod publish;
@@ -81,6 +82,7 @@ pub(crate) use self::outbox::OutboxTarget;
 pub use self::files::custody_container_path;
 // The one portable directory flush, for the training outbox too (FIX 6880).
 pub use self::platform::sync_dir;
+pub(crate) use self::private_publication::PrivateCustodyPublications;
 pub(crate) use self::publication_policy::TargetRecipients;
 pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};
 pub(crate) use self::recipients::RecipientRetirement;
@@ -171,6 +173,9 @@ impl KeyCustody {
     /// The custody this store reads, once it has a binding: none was ever
     /// published under it before then.
     pub(crate) fn local(&self) -> Option<LocalCustody<'_>> {
+        if let Some(custody) = private_publication::local(self) {
+            return custody;
+        }
         self.binding.get().map(LocalCustody::at)
     }
 
@@ -212,6 +217,9 @@ impl KeyCustody {
     /// `committed` sits beside `home`: a binding a restore's own transaction
     /// wrote under it. One beside another root is another vault's custody.
     pub(in crate::store) fn adopt(&self, committed: Option<&CustodyBinding>) -> Result<()> {
+        if let Some(result) = private_publication::adopt(self, committed) {
+            return result;
+        }
         if self.binding.get().is_none()
             && let Some(committed) = committed
         {
@@ -225,6 +233,13 @@ impl KeyCustody {
 
     /// This store's binding, refused when another one is committed.
     fn checked(&self, committed: Option<&CustodyBinding>) -> Result<LocalCustody<'_>> {
+        if let Some(custody) = private_publication::local(self) {
+            let custody = custody.ok_or_else(binding_mismatch)?;
+            if committed.is_some_and(|committed| committed != custody.binding()) {
+                return Err(binding_mismatch());
+            }
+            return Ok(custody);
+        }
         let binding = self.binding.get().ok_or_else(binding_mismatch)?;
         if committed.is_some_and(|committed| committed != binding) {
             return Err(binding_mismatch());
@@ -240,6 +255,9 @@ impl KeyCustody {
         dbs: &impl SideTableDbs,
         txn: &RoTxn<'_>,
     ) -> Result<LocalCustody<'_>> {
+        if let Some(result) = private_publication::bind(self, dbs, txn) {
+            return result;
+        }
         let committed = BINDING.get(dbs, txn, &())?;
         self.adopt(committed.as_ref())?;
         if self.binding.get().is_none() {

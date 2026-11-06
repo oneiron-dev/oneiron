@@ -80,7 +80,7 @@ impl Store {
             let (decision_id, raw) = row?;
             let mut record = match self.decode_gate_decision_value(decision_id, &raw) {
                 Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
-                    if orcb::raw_key_retired(custody, &raw)? {
+                    if orcb::raw_key_retired(custody.clone(), &raw)? {
                         continue;
                     }
                     return Err(error);
@@ -95,7 +95,10 @@ impl Store {
                 continue;
             }
             record.scrub_actor(actor);
-            cleared.push((decision_id, reseal_gate_decision(custody, &raw, &record)?));
+            cleared.push((
+                decision_id,
+                reseal_gate_decision(custody.clone(), &raw, &record)?,
+            ));
         }
         for (decision_id, value) in &cleared {
             LEDGER.put(self, wtxn, decision_id, value)?;

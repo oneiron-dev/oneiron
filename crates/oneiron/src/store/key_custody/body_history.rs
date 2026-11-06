@@ -554,6 +554,9 @@ impl KeyCustody {
                 "a body history row of another family",
             ));
         }
+        if super::private_publication::journal_history(self, &rows) {
+            return Ok(());
+        }
         let Some(custody) = self.local() else {
             return Ok(());
         };

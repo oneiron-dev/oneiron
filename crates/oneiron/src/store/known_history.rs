@@ -317,7 +317,7 @@ impl Store {
         }
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
-        let key = master_or_mint(self, wtxn, custody)?;
+        let key = master_or_mint(self, wtxn, custody.clone())?;
         let secret = entry(&*key).to_secret();
         drop(key);
         let subject = holder_subject(custody.binding(), holder)?;
@@ -372,7 +372,7 @@ impl Store {
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
         let mut holders = Vec::new();
         for (holder, refs) in HISTORY.scan(self, wtxn)? {
-            let entries = read_entries(custody, &holder, refs.slots())?;
+            let entries = read_entries(custody.clone(), &holder, refs.slots())?;
             if !entries.is_empty() {
                 holders.push((holder, entries));
             }
@@ -619,7 +619,7 @@ impl KnownHistoryIds {
             if retirement_in_txn(vault_meta, txn, &subject)?.is_some() {
                 continue;
             }
-            let entries = read_entries(custody, holder, slots.iter().copied())?;
+            let entries = read_entries(custody.clone(), holder, slots.iter().copied())?;
             if !entries.is_empty() {
                 holders.push((*holder, entries));
             }
@@ -838,7 +838,7 @@ pub(crate) fn read_back_known_history(
             .and_then(<EntityId as SideKey>::decode_key)
         {
             let refs = HISTORY.decode_value(value)?;
-            read_entries(custody, &holder, refs.slots())?;
+            read_entries(custody.clone(), &holder, refs.slots())?;
         }
     }
     Ok(())

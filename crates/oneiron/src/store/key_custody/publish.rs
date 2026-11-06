@@ -321,7 +321,7 @@ impl Store {
         outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<Option<Publication>> {
-        if custody_empty(self, custody, journal)? {
+        if custody_empty(self, custody.clone(), journal)? {
             return Ok(Some(Publication::nothing()));
         }
         // Every folder member an earlier pass registered is retried at its
@@ -651,7 +651,7 @@ impl Store {
             return Ok(None);
         }
         let journal = custody.journal()?;
-        if custody_empty(self, custody, &journal)? {
+        if custody_empty(self, custody.clone(), &journal)? {
             return Ok(None);
         }
         let set = journal.register(std::slice::from_ref(spec))?;
