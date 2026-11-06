@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::origin::{RepoManifest, RepoPortableId};
-use crate::sync::{SyncQueue, WindowKey};
 use crate::sync::window::{
     RepoManifestConflictDiscard, RepoManifestConflictReview,
     discard_reviewed_repo_manifest_carrier_as, review_repo_manifest_conflict,
 };
+use crate::sync::{SyncQueue, WindowKey};
 use crate::{EntityId, Vault};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
