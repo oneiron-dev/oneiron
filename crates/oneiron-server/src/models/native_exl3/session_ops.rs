@@ -13,6 +13,7 @@
 use oneiron::llm::{
     SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, SessionAppend, SessionAppended, SessionCapability,
     SessionExport, SessionExported, SessionImport, SessionImported, SessionInvalidation, SessionOp,
+    SessionPrepare, SessionPrepared,
 };
 use oneiron_driver::InferenceWorker;
 use serde::Serialize;
@@ -204,6 +205,79 @@ pub(in crate::models) async fn append_source_released(
     }
     report(worker, &frame.body);
     serde_json::from_value(frame.body).map_err(|_| ReleasedAppendFault::Op(OpFault::Cut))
+}
+
+/// A preparation's canonical source or its newly rendered tail changed.
+#[derive(Debug)]
+pub(in crate::models) enum PrepareSourceMiss {
+    Canonical(SessionInvalidation),
+    TailChanged,
+}
+
+pub(in crate::models) type PrepareSourceFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), PrepareSourceMiss>> + Send + 'a>>;
+pub(in crate::models) type PrepareSourceCheck<'a> = dyn Fn() -> PrepareSourceFuture<'a> + Sync + 'a;
+
+pub(in crate::models) enum ReleasedPrepareFault {
+    Op(OpFault),
+    Release(oneiron::LlmError),
+    Source(PrepareSourceMiss),
+}
+
+pub(in crate::models) async fn prepare_source_released(
+    launch: &NativeLaunch,
+    epoch: &str,
+    body: &SessionPrepare,
+    conversation: &JsonValue,
+    worker: &InferenceWorker,
+    lease: &oneiron::BudgetLease,
+    source: &PrepareSourceCheck<'_>,
+) -> Result<SessionPrepared, ReleasedPrepareFault> {
+    let op = SessionOp::Prepare;
+    if !lease.has_dispatch_release() {
+        return send(launch, epoch, op, body, Some(conversation), worker)
+            .await
+            .map_err(ReleasedPrepareFault::Op);
+    }
+    let body = serde_json::to_value(body).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let bytes =
+        serde_json::to_vec(conversation).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let input = InputRegion::new(&bytes).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
+        .await
+        .map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))?;
+    let frame = channel
+        .exchange_prepare_released(
+            op.wire_name(),
+            Some(epoch),
+            body,
+            input.outbound(),
+            lease,
+            source,
+        )
+        .await
+        .map_err(|error| match error {
+            super::transport::PrepareExchangeError::Transport(_) => {
+                ReleasedPrepareFault::Op(OpFault::Cut)
+            }
+            super::transport::PrepareExchangeError::Release(error) => {
+                ReleasedPrepareFault::Release(error)
+            }
+            super::transport::PrepareExchangeError::Source(reason) => {
+                ReleasedPrepareFault::Source(reason)
+            }
+        })?;
+    drop(input);
+    if frame.op == "refused" {
+        return Err(ReleasedPrepareFault::Op(OpFault::Refused(
+            wire::refusal_code(&frame.body).to_owned(),
+        )));
+    }
+    if frame.op != op.wire_name() {
+        return Err(ReleasedPrepareFault::Op(OpFault::Cut));
+    }
+    report(worker, &frame.body);
+    serde_json::from_value(frame.body).map_err(|_| ReleasedPrepareFault::Op(OpFault::Cut))
 }
 
 /// `session.export` of `body` to the incarnation `epoch` names: its answer

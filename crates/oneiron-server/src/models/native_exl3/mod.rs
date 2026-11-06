@@ -34,6 +34,10 @@ pub(super) use session_ops::{
     append_source_released as session_append_source_released,
 };
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+pub(super) use session_ops::{
+    PrepareSourceCheck, PrepareSourceFuture, PrepareSourceMiss, ReleasedPrepareFault,
+    prepare_source_released as session_prepare_source_released,
+};
 pub(super) use session_ops::{ReleasedOpFault, send_released as session_send_released};
 pub(super) use transport::next_request_id;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
