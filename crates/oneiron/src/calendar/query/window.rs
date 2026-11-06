@@ -113,15 +113,29 @@ fn occurrences_in(
         .map(|(_, _, _, key)| key.clone())
         .collect();
     let window = range.to_time_range();
+    // A master expands once, before any UID, as a timed one always did;
+    // each UID then masks its own exceptions.
+    let timed = match master.occurred {
+        Some(at) => Some((
+            at,
+            expand_master_window(series, window).map_err(|_| {
+                Error::InvalidConfig("calendar recurrence projection failed".into())
+            })?,
+        )),
+        None => None,
+    };
+    let civil_all = match (master.occurred, civil) {
+        (None, Some((_, length))) => {
+            super::occurrences::civil_starts(&master, series, window, &keys, &[], length)?
+        }
+        _ => Vec::new(),
+    };
     let mut result = Vec::new();
     for uid in master.facts.uids() {
-        match (master.occurred, civil) {
-            (Some(at), _) => {
-                let starts = expand_master_window(series, window).map_err(|_| {
-                    Error::InvalidConfig("calendar recurrence projection failed".into())
-                })?;
+        match (&timed, civil) {
+            (Some((at, starts)), _) => {
                 let duration = at.end.saturating_sub(at.start);
-                for start in mask_master_exceptions(master_id, uid, starts, &keys) {
+                for start in mask_master_exceptions(master_id, uid, starts.clone(), &keys) {
                     result.push(CalendarOccurrenceView {
                         event_ref: master_id.to_hex(),
                         master_ref: master_id.to_hex(),
@@ -136,15 +150,15 @@ fn occurrences_in(
             (None, Some((_, length))) => {
                 let all_day = master.facts.civil_all_day();
                 let duration = master.facts.civil_duration();
-                let starts = super::occurrences::civil_starts(
-                    &master,
-                    series,
-                    window,
+                let kept: std::collections::BTreeSet<u64> = mask_master_exceptions(
+                    master_id,
+                    uid,
+                    civil_all.iter().map(|&(key, _)| key).collect(),
                     &keys,
-                    std::slice::from_ref(uid),
-                    length,
-                )?;
-                for (key, start) in starts {
+                )
+                .into_iter()
+                .collect();
+                for &(key, start) in civil_all.iter().filter(|(key, _)| kept.contains(key)) {
                     let span = super::facts::civil_envelope(start, length);
                     result.push(CalendarOccurrenceView {
                         event_ref: master_id.to_hex(),
