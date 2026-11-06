@@ -31,6 +31,10 @@ pub enum CodeArtifactClass {
     /// compiled tree in `lens_tree`, and its `repo_ref` names the pack slot
     /// it was compiled for, not a repository.
     Lens,
+    /// A pack hook's script (FIX 11260): its `repo_ref` names the pack slot
+    /// it was installed from (`pack:<pack>@<content hash>/hooks/<name>`),
+    /// not a repository, and it carries no tree.
+    Hook,
 }
 
 impl CodeArtifactClass {
@@ -40,6 +44,7 @@ impl CodeArtifactClass {
             Self::Codebase => "codebase",
             Self::Artifact => "artifact",
             Self::Lens => "lens",
+            Self::Hook => "hook",
         }
     }
 
@@ -48,8 +53,9 @@ impl CodeArtifactClass {
             "codebase" => Ok(Self::Codebase),
             "artifact" => Ok(Self::Artifact),
             "lens" => Ok(Self::Lens),
+            "hook" => Ok(Self::Hook),
             _ => Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "class must be codebase, artifact or lens",
+                "class must be codebase, artifact, lens or hook",
             ))),
         }
     }
@@ -273,6 +279,10 @@ fn validate_code_artifact_body(body: &CodeArtifactBody) -> Result<()> {
         return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "only a lens body carries lens_tree",
         )));
+    }
+    // A pack hook, like a lens, names its pack slot, not a repository.
+    if body.class == CodeArtifactClass::Hook {
+        return Ok(());
     }
     crate::code_snapshot::repo_ref::RepoRef::parse(&body.repo_ref).map_err(|_| {
         Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
