@@ -5,8 +5,9 @@
 //! copy releases a file-plane ASSET only while its stored manifest still
 //! names the body proved here and the row stands at the revision that
 //! landed it: the home could serve those exact bytes, so this copy is not
-//! their only one. A body this machine wrote, a row written again since,
-//! and one no proof names, stay. The proof is this install's own evidence:
+//! their only one. This install's own body write forgets the proof
+//! (`Vault::put_asset_body_in_txn`), whatever bytes it writes. A body this
+//! machine wrote, a row written again since, and one no proof names, stay. The proof is this install's own evidence:
 //! no checkpoint images it and a restore drops it.
 
 use heed::{RoTxn, RwTxn};
