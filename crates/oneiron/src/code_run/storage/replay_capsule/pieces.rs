@@ -19,7 +19,9 @@
 //! read checks that the run holds every piece whole and that none is
 //! withheld; a matching digest grants nothing. An erase of the actor
 //! releases every piece its runs hold for it. A refresh releases a piece
-//! only once no request of the run and actor names it.
+//! only once no request of the run and actor names it. A step start is
+//! kept as pieces the same way, at paths of its own
+//! ([`super::start_pieces`]).
 
 use std::collections::BTreeSet;
 
@@ -52,6 +54,17 @@ impl PieceScope {
     fn path(self, digest: &[u8; 32]) -> String {
         format!(
             "replay/capsule/piece/{}/{}",
+            self.actor.to_hex(),
+            blake3::Hash::from(*digest)
+        )
+    }
+
+    /// Where the run holds the step start piece whose digest is `digest`
+    /// (FIX 4192). It is apart from the request pieces, so a release of
+    /// one kind never counts the other.
+    pub(super) fn start_path(self, digest: &[u8; 32]) -> String {
+        format!(
+            "replay/capsule/start-piece/{}/{}",
             self.actor.to_hex(),
             blake3::Hash::from(*digest)
         )
@@ -289,7 +302,7 @@ fn held_json_in_txn(
 /// The bytes of `piece` as run `run` holds them at `path`, in `rtxn`: `None`
 /// when the run's occurrence is not whole with those bytes, is withheld, or
 /// its bytes are gone or drifted.
-fn held_piece_in_txn(
+pub(super) fn held_piece_in_txn(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
     run: EntityId,
@@ -314,7 +327,7 @@ fn held_piece_in_txn(
 }
 
 /// Whether run `run`'s occurrence at `path` holds `piece` whole, in `txn`.
-fn holds_in_txn(
+pub(super) fn holds_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     run: EntityId,
@@ -367,7 +380,11 @@ pub(super) fn manifest_pieces_in_txn(
 
 /// The bytes `piece` names, read in `txn` whoever holds them: `None` when
 /// they are gone or drifted.
-fn piece_bytes_in_txn(store: &Store, txn: &RoTxn<'_>, piece: OutputRef) -> Result<Option<Vec<u8>>> {
+pub(super) fn piece_bytes_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    piece: OutputRef,
+) -> Result<Option<Vec<u8>>> {
     let output = CodeRunRawOutput::of_ref(piece);
     let Some(body) = RAW_OUTPUTS.get(store, txn, &output.handle)? else {
         return Ok(None);
@@ -382,8 +399,8 @@ fn piece_bytes_in_txn(store: &Store, txn: &RoTxn<'_>, piece: OutputRef) -> Resul
 
 /// FIX 4192: every shared piece each of `runs` holds for `actor`, by run,
 /// read in `txn`: each descriptor of the run whose occurrence sits at the
-/// piece path of its own digest. An erase of the actor releases them all,
-/// whatever a manifest still reads.
+/// request or start piece path of its own digest. An erase of the actor
+/// releases them all, whatever a manifest still reads.
 ///
 /// # Errors
 ///
@@ -403,13 +420,14 @@ pub(super) fn actor_pieces_in_txn(
             let Some(at) = body.state.held() else {
                 continue;
             };
-            let path = scope.path(&at.blake3);
-            if ResultOccurrence::owned(run, &path)?.id() == body.occurrence {
-                let piece = OutputRef {
-                    hash: at.blake3,
-                    byte_len: at.bytes,
-                };
-                held.push((piece, path));
+            for path in [scope.path(&at.blake3), scope.start_path(&at.blake3)] {
+                if ResultOccurrence::owned(run, &path)?.id() == body.occurrence {
+                    let piece = OutputRef {
+                        hash: at.blake3,
+                        byte_len: at.bytes,
+                    };
+                    held.push((piece, path));
+                }
             }
         }
         pieces.push((run, held));
@@ -525,7 +543,7 @@ pub(super) fn release_retired_pieces_in_txn(
 }
 
 /// The ref the bytes `bytes` are published under.
-fn piece_ref(bytes: &[u8]) -> OutputRef {
+pub(super) fn piece_ref(bytes: &[u8]) -> OutputRef {
     OutputRef {
         hash: *blake3::hash(bytes).as_bytes(),
         byte_len: bytes.len() as u64,
@@ -546,6 +564,6 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
 
 /// A manifest or a node from its MessagePack; `None` for bytes that are not
 /// one.
-fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+pub(super) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     rmp_serde::from_slice(bytes).ok()
 }
