@@ -62,13 +62,7 @@ impl ExportReceiptSource {
     /// # Errors
     /// Returns an error when the archive source is malformed or has mismatched identity.
     pub fn record(&self) -> Result<Option<ReceiptRecord>> {
-        self.validate()?;
-        match self {
-            Self::Preserved { body, .. } => rmp_serde::from_slice(&body.to_bytes()?)
-                .map(Some)
-                .map_err(|_| invalid()),
-            Self::Unavailable { .. } => Ok(None),
-        }
+        self.validated_record()
     }
     pub(crate) fn from_record(receipt_id: String, record: Option<&ReceiptRecord>) -> Result<Self> {
         let Some(record) = record else {
@@ -101,6 +95,10 @@ impl ExportReceiptSource {
         })
     }
     pub(crate) fn validate(&self) -> Result<()> {
+        self.validated_record().map(|_| ())
+    }
+
+    fn validated_record(&self) -> Result<Option<ReceiptRecord>> {
         let Some(id) = self.receipt_id().strip_prefix("attempt:") else {
             return Err(invalid());
         };
@@ -117,8 +115,9 @@ impl ExportReceiptSource {
             if record.receipt_id != *receipt_id {
                 return Err(invalid());
             }
+            return Ok(Some(record));
         }
-        Ok(())
+        Ok(None)
     }
 }
 /// Exact owning citation positions, not a recursive scan for arbitrary strings.

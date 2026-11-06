@@ -3,6 +3,7 @@ mod access;
 mod codec;
 mod custody;
 mod prepared;
+mod reader;
 pub(crate) use access::archived_receipt_carriers_in_txn;
 pub(crate) use codec::is_receipt_archive_source;
 pub(crate) use custody::{
