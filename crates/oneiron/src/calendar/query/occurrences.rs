@@ -51,8 +51,8 @@ pub(in crate::calendar) fn occurrences(
 
 /// The occurrences of an all-day or floating series that meet `window` (FIX
 /// 16568). Its master steps on the UTC carrier, where its date and floating
-/// exceptions key too, and each start spans the civil envelope its first
-/// occurrence spans: wherever that civil time falls in some zone. A master
+/// exceptions key too, and each start spans the civil envelope of its first
+/// occurrence's civil length: wherever that civil time falls in some zone. A master
 /// seeded in a zone (a dated `DTSTART` with a `TZID`) has its starts read
 /// back to their civil times first.
 fn civil_occurrences(
@@ -62,7 +62,7 @@ fn civil_occurrences(
     exceptions: &[CalendarSeriesExceptionValue],
     withheld: &std::collections::BTreeSet<(crate::EntityId, String)>,
 ) -> Result<Vec<TimeRange>> {
-    let Some(first) = row.wall_span else {
+    let Some((_, length)) = row.facts.civil_extent() else {
         return Ok(Vec::new());
     };
     if row
@@ -74,7 +74,6 @@ fn civil_occurrences(
         return Ok(Vec::new());
     }
     let failed = || Error::InvalidConfig("calendar recurrence projection failed".into());
-    let (_, length) = super::facts::civil_bounds(first);
     let (east, west) = super::facts::CIVIL_REACH_SECS;
     // A zone's starts sit up to a day of offsets off their civil times.
     let zoned = !master.tz.eq_ignore_ascii_case("UTC");

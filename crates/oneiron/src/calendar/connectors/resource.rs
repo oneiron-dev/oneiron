@@ -111,6 +111,7 @@ pub(super) fn render(
         Some(bytes) => source_components(bytes)?,
         None => Vec::new(),
     };
+    let civil = civil_series(vault, *master)?;
     let mut out =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
     for &event in &member_ids {
@@ -151,11 +152,9 @@ pub(super) fn render(
                 }
                 PREDICATE_CALENDAR_SERIES_EXCEPTION => {
                     let value = decode_series_exception_value(&body.value)?;
-                    line(
-                        &mut out,
-                        "RECURRENCE-ID",
-                        &super::remote::format_utc(value.original_start_utc)?,
-                    )?;
+                    let (name, original) =
+                        recurrence_id_line(value.original_start_utc, civil.as_ref())?;
+                    line(&mut out, name, &original)?;
                     recurrence_id = Some(value.original_start_utc);
                 }
                 PREDICATE_CALENDAR_ATTENDEE => {
@@ -212,6 +211,64 @@ pub(super) fn render(
         component_hashes,
     })
 }
+/// The kind of an all-day or floating series and the zone its recurrence
+/// keys read in (FIX 16568); `None` for a series anchored at an instant.
+fn civil_series(
+    vault: &Vault,
+    master: EntityId,
+) -> Result<Option<(CalendarTimeKind, String)>, CalendarConnectorError> {
+    let (mut kind, mut tz) = (None, None);
+    for id in vault.claims_for_subject(&master)? {
+        let Some(body) = vault.get_claim(&id)? else {
+            continue;
+        };
+        if body.lifecycle != ClaimLifecycleStatus::Active {
+            continue;
+        }
+        match body.predicate.as_str() {
+            PREDICATE_CALENDAR_TIME_KIND => kind = Some(decode_time_kind_value(&body.value)?.kind),
+            PREDICATE_CALENDAR_SERIES_MASTER => {
+                tz = Some(decode_series_master_value(&body.value)?.tz)
+            }
+            _ => {}
+        }
+    }
+    Ok(match (kind, tz) {
+        (Some(kind @ (CalendarTimeKind::AllDay | CalendarTimeKind::Floating)), Some(tz)) => {
+            Some((kind, tz))
+        }
+        _ => None,
+    })
+}
+
+/// The `RECURRENCE-ID` line naming the occurrence keyed `original`, typed as
+/// its series' start is: an all-day series' date, a floating series' floating
+/// time (its key read in the series' zone, the UTC carrier as a rule), else
+/// the UTC instant.
+fn recurrence_id_line(
+    original: u64,
+    civil: Option<&(CalendarTimeKind, String)>,
+) -> Result<(&'static str, String), CalendarConnectorError> {
+    let Some((kind, tz)) = civil else {
+        return Ok(("RECURRENCE-ID", super::remote::format_utc(original)?));
+    };
+    let wall = crate::calendar::utc_to_wall(original, tz)?;
+    Ok(if *kind == CalendarTimeKind::AllDay {
+        (
+            "RECURRENCE-ID;VALUE=DATE",
+            format!("{:04}{:02}{:02}", wall.y, wall.mo, wall.d),
+        )
+    } else {
+        (
+            "RECURRENCE-ID",
+            format!(
+                "{:04}{:02}{:02}T{:02}{:02}{:02}",
+                wall.y, wall.mo, wall.d, wall.h, wall.mi, wall.s
+            ),
+        )
+    })
+}
+
 /// Properties the render writes from the EVENT claims; a source line under
 /// any of these names is replaced, never repeated. `DURATION` is owned because
 /// the render always states the end as `DTEND`.
