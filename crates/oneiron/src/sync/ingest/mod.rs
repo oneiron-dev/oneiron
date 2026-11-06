@@ -27,7 +27,7 @@ pub(in crate::sync) use self::entity::ingest_entity_in_savepoint;
 pub(in crate::sync) use self::entity::{
     EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, waits_for_sibling_row,
 };
-pub(crate) use self::message_writer::note_message_put_in_txn;
+pub(crate) use self::message_writer::{forget_message_writer_in_txn, note_message_put_in_txn};
 pub(in crate::sync) use self::message_writer::{
     MESSAGE_WRITER_MAP, admit_writer_proof_carrier, admit_writer_proof_map, copy_writer_proofs,
     forget_written_rows, publish_writer_proof,

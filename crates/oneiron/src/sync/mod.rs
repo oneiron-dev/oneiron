@@ -99,7 +99,7 @@ pub use connection::{
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
-pub(crate) use ingest::note_message_put_in_txn;
+pub(crate) use ingest::{forget_message_writer_in_txn, note_message_put_in_txn};
 pub use ingest::with_own_device_push;
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
