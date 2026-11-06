@@ -121,6 +121,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_SETTLEMENT, LIVE),
     // A parked task question stands with the live send and its live custody
     // key (FIX 16029): live state replaces the image's; absent stays absent.
+    // Its owner Ask restores as content (DECISION_ASK), so the poller's pass
+    // (`forget_ended_remote_task_inputs`) reconciles the two: an Ask of a
+    // question no row holds is withdrawn, and a waiting row's missing Ask is
+    // queued again, each Ask checked by its typed identity, never its number.
     (&t::OUTBOUND_REMOTE_TASK_INPUT, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_SESSION_END, LIVE),
