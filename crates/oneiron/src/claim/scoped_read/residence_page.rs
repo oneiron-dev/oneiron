@@ -14,8 +14,8 @@ use crate::pipeline::WorldScope;
 impl ScopedRead<'_> {
     /// Ranks `window` rows for `query` at `as_of` (unix seconds), narrowed by
     /// `scope` as a recall's search is, and returns the admitted hits with
-    /// how many rows the ranking held before the fresh-read recheck: fewer
-    /// than `window` only once the matches ran out. A scope the read refuses
+    /// whether the lexical scan exhausted its matches without a window cut.
+    /// Folded or freshly withheld rows do not prove exhaustion. A scope the read refuses
     /// is refused with its typed error, never searched unscoped.
     pub(crate) fn residence_search_page(
         self,
@@ -23,7 +23,7 @@ impl ScopedRead<'_> {
         window: usize,
         scope: Option<&ResolvedRecallSelection>,
         as_of: u64,
-    ) -> Result<(Vec<ScoredEntity>, usize)> {
+    ) -> Result<(Vec<ScoredEntity>, bool)> {
         let Some(scope) = scope else {
             return self.residence_page_ranked(query, window, as_of, None);
         };
@@ -74,11 +74,11 @@ impl ScopedRead<'_> {
         window: usize,
         as_of: u64,
         selected: Option<(&ResolvedRecallSelection, WorldScope)>,
-    ) -> Result<(Vec<ScoredEntity>, usize)> {
+    ) -> Result<(Vec<ScoredEntity>, bool)> {
         let scope = selected.as_ref().map(|(scope, _)| *scope);
         let (filter, policy) = self.resolve_retrieval_filter(None)?;
         if filter.deny_all {
-            return Ok((Vec::new(), 0));
+            return Ok((Vec::new(), true));
         }
         let excluded = self.request_exclusions(&policy, None)?;
         let plan = self.plan_admits(&filter, &policy, &excluded);
@@ -136,7 +136,7 @@ impl ScopedRead<'_> {
             }
         }
         let results = pipeline.run_for_pack()?;
-        let ranked = results.scores.len();
+        let exhausted = results.text_exhausted;
         let filtered = self.filter_search_results(
             results.scores,
             window,
@@ -146,6 +146,6 @@ impl ScopedRead<'_> {
             results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
-        Ok((filtered.value, ranked))
+        Ok((filtered.value, exhausted))
     }
 }
