@@ -34153,6 +34153,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/edit_roundtrip/judgment/batches.rs",
+     "purpose": "Ordered answer-write batches over one proposal's edit session",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/edit_roundtrip/judgment_cells.rs",
      "purpose": "Typed sheet-answer verification and reader seam",
      "surface": {
@@ -92159,7 +92169,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93197,7 +93207,7 @@
    },
    "over_bar": 175,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6573,
+   "source_files": 6574,
    "test_files": 895
   },
   "oneiron-android": {
@@ -126058,7 +126068,7 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -126424,7 +126434,7 @@
      "path": "src/models/http/reply_line.rs",
      "purpose": "The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
