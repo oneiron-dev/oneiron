@@ -236,7 +236,10 @@ impl EngineNativeExecutor<'_> {
                 .frozen_unix_ms
                 .saturating_add(completed_steps),
         )?;
-        record.step_checkpoints.push(checkpoint);
+        let bridge_end = record.bridge_calls.len();
+        record
+            .step_checkpoints
+            .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
         // A wait seen on a failed step is sealed with it too (DOOR-079 1b).
         let parked = parked_wait(record, terminal_status.as_ref(), bridge_start);
         // The reply's correction record commits with this checkpoint (FIX
