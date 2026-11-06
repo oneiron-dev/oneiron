@@ -217,6 +217,9 @@ pub(crate) enum SeatModelRefusal {
     Llm(LlmError),
     /// The claim's run admission refused it: nothing was reserved or sent.
     Denied(RunDenied),
+    /// The claim's spend scope names a payer this host cannot bill yet, for
+    /// this reason: nothing was reserved or sent.
+    Unfunded(&'static str),
 }
 
 impl From<LlmError> for SeatModelRefusal {
@@ -287,9 +290,7 @@ pub(crate) async fn send_seat_model(
     let Some(offer) = offer else {
         return Err(SeatModelRefusal::Denied(meter.refuse_unoffered(&model)));
     };
-    let mut call = meter
-        .admit(&offer, &model, &header.digest, provider.protocol)
-        .map_err(SeatModelRefusal::Denied)?;
+    let mut call = meter.admit(&offer, &model, &header.digest, provider.protocol)?;
     // The broker echoes the permit's lease as the call's id.
     header.call = call
         .lease()

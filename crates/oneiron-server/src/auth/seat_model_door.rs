@@ -198,6 +198,13 @@ async fn model_door(
         }
         Err(SeatModelRefusal::Llm(error)) => refused(&error),
         Err(SeatModelRefusal::Denied(denied)) => admission_refused(&denied),
+        // The claim's payer cannot be billed yet: the owners' payer-needed
+        // ask stands, and nothing was sent.
+        Err(SeatModelRefusal::Unfunded(_)) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": {"code": "admission_unavailable"}})),
+        )
+            .into_response(),
     };
     response
         .headers_mut()
@@ -223,7 +230,7 @@ fn relayed(reply: oneiron_broker::BrokerStream, call: SeatModelCall) -> Body {
                 ))
             }
             Ok(oneiron_broker::StreamPart::End) => {
-                call.end();
+                call.end_stream();
                 None
             }
             Ok(oneiron_broker::StreamPart::Cut(_)) | Err(_) => {

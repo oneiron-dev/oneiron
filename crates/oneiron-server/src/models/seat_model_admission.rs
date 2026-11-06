@@ -28,28 +28,34 @@ use oneiron_llm_anthropic::parse_anthropic_usage;
 use oneiron_llm_openai::parse_openai_usage;
 use serde_json::Value as JsonValue;
 
+use super::seat_model::SeatModelRefusal;
+use super::sse::{SseDecoder, SseEvent};
 use crate::ai_host::live_lease::{LiveLease, LiveLeaseState};
+use crate::ai_host::payer_funding::{requires_payer, scope_funding};
 use crate::runtime::SeatModelProtocol;
 use crate::server::SyncServer;
 
 /// The purpose a seat's model calls are admitted under.
 const SEAT_MODEL_PURPOSE: &str = "seat.model";
 
-/// The most bytes of one event line the usage reader holds while its end
-/// has not arrived; a longer line is skipped, never buffered further.
-const MAX_EVENT_LINE: usize = 1 << 20;
-
 /// One seat claim's paid model calls: its run and its spend scope's lease.
 pub(crate) struct SeatModelMeter {
     vault: Arc<Vault>,
     run: RunAdmission,
     lease: LiveLeaseState,
+    /// Why the claim's calls have no account to bill: its spend scope's
+    /// payer could not be read, or holds on the owners' payer-needed ask.
+    /// Every call is then refused, never billed to the vault owner.
+    unfunded: Option<&'static str>,
 }
 
 impl SeatModelMeter {
     /// The meter of `fence`'s claim, its calls the claim's own agent
     /// `holder`'s: the vault's budget policy for that agent, bounded by
-    /// what the attempt's spend scope has left when it has one.
+    /// what the attempt's spend scope has left when it has one, and billed
+    /// to the payer that scope's root names (OF-531), as the AI host's step
+    /// is. A scope whose payer this host cannot bill yet queues the owners'
+    /// payer-needed ask, and the claim's calls are refused meanwhile.
     ///
     /// # Errors
     ///
@@ -80,9 +86,25 @@ impl SeatModelMeter {
             BudgetExhaustionPolicy::Suspend,
             actor,
         )?;
+        let payer_required = requires_payer(&vault, fence.attempt_id, false)?;
+        let (payer, unfunded) = match scope_funding(&vault, scope.as_ref(), payer_required) {
+            Ok(payer) => (payer, None),
+            Err(fault) => {
+                tracing::warn!(
+                    reason = fault.reason(),
+                    "a seat claim's model calls have no account to bill; they are refused"
+                );
+                (None, Some(fault.reason()))
+            }
+        };
         let lease = LiveLease::new(&vault, scope, meter.clone(), limit, 0).state();
-        let run = server.ai.model_runtime().funded_run(run_id, meter, None);
-        Ok(Arc::new(Self { vault, run, lease }))
+        let run = server.ai.model_runtime().funded_run(run_id, meter, payer);
+        Ok(Arc::new(Self {
+            vault,
+            run,
+            lease,
+            unfunded,
+        }))
     }
 
     /// Books on the spend scope what the claim spent since the last look,
@@ -117,24 +139,30 @@ impl SeatModelMeter {
     ///
     /// # Errors
     ///
-    /// The run's refusal; nothing is reserved.
+    /// The run's refusal, or no account to bill; nothing is reserved.
     pub(crate) fn admit(
         self: &Arc<Self>,
         offer: &OfferBinding,
         wire_model: &str,
         digest: &str,
         protocol: SeatModelProtocol,
-    ) -> Result<SeatModelCall, RunDenied> {
+    ) -> Result<SeatModelCall, SeatModelRefusal> {
+        if let Some(reason) = self.unfunded {
+            return Err(SeatModelRefusal::Unfunded(reason));
+        }
         self.book();
         let request = admission_request(offer);
-        let permit = self.run.admit_request(
-            RunCall {
-                selector: Some(wire_model),
-                request: &request,
-                offer,
-            },
-            digest,
-        )?;
+        let permit = self
+            .run
+            .admit_request(
+                RunCall {
+                    selector: Some(wire_model),
+                    request: &request,
+                    offer,
+                },
+                digest,
+            )
+            .map_err(SeatModelRefusal::Denied)?;
         let dispatch = self.run.raw_dispatch(&permit, offer, digest, None);
         Ok(SeatModelCall {
             meter: Arc::clone(self),
@@ -227,6 +255,15 @@ impl SeatModelCall {
         }
     }
 
+    /// Settles a streamed call whose reply ended cleanly: its last event,
+    /// even without its blank line, still counts.
+    pub(crate) fn end_stream(&mut self) {
+        if self.success {
+            self.usage.finish();
+        }
+        self.end();
+    }
+
     /// Settles the call, once: answered on its reported usage when the
     /// provider's success reached its protocol's end, else failed.
     pub(crate) fn end(&mut self) {
@@ -258,7 +295,9 @@ impl Drop for SeatModelCall {
 /// What a relayed reply reports of its usage and its end, read from its
 /// bytes as they go back, never changing them: an OpenAI chat `usage`
 /// object and `[DONE]`, or Anthropic's `message_start`, `message_delta` and
-/// `message_stop`. No reply text is kept.
+/// `message_stop`. A streamed reply is read event by event through the
+/// server-sent-events decoder, its data lines joined. No reply text is
+/// kept past its event.
 struct SeatModelUsage {
     protocol: SeatModelProtocol,
     usage: Option<LlmUsage>,
@@ -266,21 +305,21 @@ struct SeatModelUsage {
     served: Option<String>,
     /// The reply reached its protocol's end.
     terminal: bool,
-    /// The event line whose end has not arrived yet.
-    line: Vec<u8>,
-    /// The line held is past [`MAX_EVENT_LINE`]: it is skipped to its end.
-    skipping: bool,
+    events: SseDecoder,
+    /// An event outgrew the decoder: the reply's usage is unknown from
+    /// there, and the call pays its reservation.
+    broken: bool,
 }
 
 impl SeatModelUsage {
-    const fn new(protocol: SeatModelProtocol) -> Self {
+    fn new(protocol: SeatModelProtocol) -> Self {
         Self {
             protocol,
             usage: None,
             served: None,
             terminal: false,
-            line: Vec::new(),
-            skipping: false,
+            events: SseDecoder::default(),
+            broken: false,
         }
     }
 
@@ -309,51 +348,52 @@ impl SeatModelUsage {
         }
     }
 
-    /// A streamed chunk: each complete event line is read once.
+    /// A streamed chunk: each event it completes is read once.
     fn feed(&mut self, chunk: &[u8]) {
-        let mut rest = chunk;
-        while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
-            let (head, tail) = rest.split_at(end);
-            rest = &tail[1..];
-            if self.skipping {
-                self.skipping = false;
-                self.line.clear();
-                continue;
-            }
-            if self.line.is_empty() {
-                self.event_line(head);
-            } else {
-                self.line.extend_from_slice(head);
-                let line = std::mem::take(&mut self.line);
-                self.event_line(&line);
-            }
-        }
-        if self.skipping {
+        if self.broken {
             return;
         }
-        self.line.extend_from_slice(rest);
-        if self.line.len() > MAX_EVENT_LINE {
-            self.line.clear();
-            self.skipping = true;
+        match self.events.push(chunk) {
+            Ok(events) => {
+                for event in &events {
+                    self.event(event);
+                }
+            }
+            Err(_) => self.unknown(),
         }
     }
 
-    /// One event line: a `data:` line that can carry usage or the end.
-    fn event_line(&mut self, line: &[u8]) {
-        let Some(data) = line.strip_prefix(b"data:") else {
+    /// The stream ended cleanly: a last event without its blank line counts.
+    fn finish(&mut self) {
+        if self.broken {
             return;
-        };
-        let data = data.trim_ascii();
+        }
+        for event in &self.events.finish() {
+            self.event(event);
+        }
+    }
+
+    /// An event outgrew the decoder: nothing it or a later event reports is
+    /// trusted, and the reply is never read as ended.
+    fn unknown(&mut self) {
+        self.broken = true;
+        self.usage = None;
+        self.terminal = false;
+    }
+
+    /// One event's joined data, when it can carry usage or the end.
+    fn event(&mut self, event: &SseEvent) {
+        let data = event.data.trim();
         match self.protocol {
             SeatModelProtocol::OpenAiChat => {
-                if data == b"[DONE]" {
+                if data == "[DONE]" {
                     self.terminal = true;
                     return;
                 }
-                if !contains(data, b"\"usage\"") {
+                if !data.contains("\"usage\"") {
                     return;
                 }
-                let Ok(event) = serde_json::from_slice::<JsonValue>(data) else {
+                let Ok(event) = serde_json::from_str::<JsonValue>(data) else {
                     return;
                 };
                 if let Some(usage) = event.get("usage").filter(|usage| usage.is_object()) {
@@ -365,10 +405,10 @@ impl SeatModelUsage {
                 }
             }
             SeatModelProtocol::AnthropicMessages => {
-                if !contains(data, b"\"message_") {
+                if !data.contains("\"message_") {
                     return;
                 }
-                let Ok(event) = serde_json::from_slice::<JsonValue>(data) else {
+                let Ok(event) = serde_json::from_str::<JsonValue>(data) else {
                     return;
                 };
                 match event.get("type").and_then(JsonValue::as_str) {
@@ -405,11 +445,4 @@ impl SeatModelUsage {
             }
         }
     }
-}
-
-/// Whether `haystack` holds `needle`.
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
 }
