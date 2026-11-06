@@ -166,7 +166,7 @@ impl Vault {
             let DecidedSheetInputs::FolderItems { before } = &progress.inputs else {
                 return Err(invalid("folder ask has different stored inputs"));
             };
-            let expected = row.clone();
+            let expected = row.expected(ask.deadline)?;
             let Some(item) = request.items.get(progress.next) else {
                 row.progress = None;
                 row = self.advance_decided_sheet_answers(output, &expected, row, ask.deadline)?;

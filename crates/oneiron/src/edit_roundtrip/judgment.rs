@@ -380,7 +380,7 @@ impl Vault {
             let DecidedSheetInputs::SheetRows { headers, rows } = &progress.inputs else {
                 return Err(invalid("sheet ask has different stored inputs"));
             };
-            let expected = row.clone();
+            let expected = row.expected(ask.deadline)?;
             let Some(input) = rows.get(progress.next) else {
                 row.progress = None;
                 row = self.advance_decided_sheet_answers(artifact, &expected, row, ask.deadline)?;
