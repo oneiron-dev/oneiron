@@ -396,7 +396,7 @@ impl SyncConnection {
         client.home_peer =
             crate::sync::home_proof::home_peer(self.manager.vault(), &response, binding.as_ref());
 
-        let (mut write, mut read) = ws_stream.split();
+        let (mut write, mut read) = super::socket::split(ws_stream, client);
 
         // Phase 1-2: this socket needs fresh window subscriptions even if
         // the same client instance survived a prior disconnect.
@@ -591,7 +591,7 @@ impl SyncConnection {
         }
 
         // Reunite the stream
-        let ws_stream = read.reunite(write).map_err(|e| format!("{e}"))?;
+        let ws_stream = super::socket::reunite(read, write)?;
 
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
 
