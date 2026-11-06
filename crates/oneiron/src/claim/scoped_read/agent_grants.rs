@@ -140,6 +140,43 @@ impl ScopedRead<'_> {
         false
     }
 
+    /// The candidates a search under `filter` may rank (FIX 7528): the rows
+    /// `filter` (B, resolved from `requested`) reads and, for a reader A may
+    /// stand for, the rows each of its own live Grants reads alone under
+    /// `requested`, as one envelope (`union_envelope`). It is only the
+    /// search's prefilter: every candidate still takes the row gate, B first
+    /// and then A under each Grant alone, so it admits no row by itself. A
+    /// Grant floor that cannot be judged adds nothing and is counted, as A
+    /// counts it; the envelope is then B's alone.
+    pub(super) fn candidate_filter_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        requested: Option<&RetrievalFilter>,
+    ) -> ResolvedRetrievalFilter {
+        let Some(reader) = self.grant_reader() else {
+            return filter.clone();
+        };
+        let grants = reader_grants_in(self.vault, rtxn, reader).unwrap_or_else(|error| {
+            warn_grant_errors(1, &[], Some(error.kind()));
+            Vec::new()
+        });
+        let mut candidates = filter.clone();
+        for (grant, scope) in &grants {
+            let floor =
+                policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(scope));
+            match crate::gate::narrow_retrieval_filter(&floor, requested) {
+                Ok(under) => {
+                    candidates =
+                        candidates.union_envelope(&under.under_credential_of(&self.actor_key));
+                }
+                Err(error) => warn_grant_errors(1, &[*grant], Some(error.kind())),
+            }
+        }
+        candidates
+    }
+
     /// The reader A may stand for: this key's own actor, while the key
     /// supplies no proof, carries no Scope and is not the owner's. A narrowed
     /// key (`read_nothing` among them) stays exactly as it is.

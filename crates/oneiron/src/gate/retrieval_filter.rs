@@ -59,6 +59,38 @@ impl ResolvedRetrievalFilter {
     pub(crate) fn read_scope(&self) -> Scope {
         read_scope(self.entity_types.as_ref(), self.max_sensitivity_band)
     }
+
+    /// The rows this filter reads and the rows `other` reads, as one
+    /// prefilter (FIX 7528): kinds joined, the higher band, staleness if
+    /// either reads it, the lower minima. A deny-all side adds nothing. It
+    /// is a candidate envelope, never an authorization: each row it lets
+    /// through must still pass one whole alternative's own check. Both sides
+    /// retrieve under the same key, so this filter's credential is kept.
+    #[must_use]
+    pub(crate) fn union_envelope(&self, other: &Self) -> Self {
+        if other.deny_all {
+            return self.clone();
+        }
+        if self.deny_all {
+            return Self {
+                credential: self.credential.clone(),
+                ..other.clone()
+            };
+        }
+        let entity_types = match (&self.entity_types, &other.entity_types) {
+            (Some(left), Some(right)) => Some(left.union(right).copied().collect()),
+            _ => None,
+        };
+        Self {
+            entity_types,
+            max_sensitivity_band: self.max_sensitivity_band.max(other.max_sensitivity_band),
+            include_stale: self.include_stale || other.include_stale,
+            min_confidence: self.min_confidence.min(other.min_confidence),
+            min_salience: self.min_salience.min(other.min_salience),
+            deny_all: false,
+            credential: self.credential.clone(),
+        }
+    }
 }
 
 /// Retrieval's kinds (`None` is every registered type) and sensitivity band
