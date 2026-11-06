@@ -5,12 +5,11 @@ use std::fmt;
 use serde::de::{MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer};
 use serde::{Deserialize, Deserializer};
 
-use super::{RawOutboundBody, Value, ZeroizingBufReader, answers, zeroize_json};
+use super::{Value, ZeroizingBufReader, answers, zeroize_json};
 
-pub(super) fn read(body: &RawOutboundBody, id: u64) -> Result<Option<Value>, ()> {
+pub(super) fn read(reader: impl std::io::Read, id: u64) -> Result<Option<Value>, ()> {
     let mut found = None;
-    let mut deserializer =
-        serde_json::Deserializer::from_reader(ZeroizingBufReader::new(body.reader()));
+    let mut deserializer = serde_json::Deserializer::from_reader(ZeroizingBufReader::new(reader));
     let parsed = deserializer
         .deserialize_any(Selection {
             id,
