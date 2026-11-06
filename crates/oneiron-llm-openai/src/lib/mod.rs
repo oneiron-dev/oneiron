@@ -37,6 +37,7 @@ pub use self::transport::{
 };
 pub use self::wire::{
     build_openai_chat_request, classify_openai_status, parse_openai_chat_response,
+    parse_openai_usage,
 };
 
 // The flat lib.rs module used to provide these names to the inline test
