@@ -66,3 +66,40 @@ pub(super) fn judge_revision_due_sourced_in_txn(
         source_rows,
     ))
 }
+
+/// The original standing-ruling read, including the native rows filtered out.
+pub(super) fn standing_ruling_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+    basis: &ScoredBasis,
+    cycle: &SkillEditCycle,
+    judge_revision: &str,
+) -> Result<(Option<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let (standing, mut sources) =
+        super::super::ledger::skill_edit_verdict_sourced_in_txn(vault, rtxn, proposal)?;
+    let standing = standing.filter(|verdict| {
+        basis.matches(verdict)
+            && verdict.displaced_by_revision.is_none()
+            && verdict.judge_revision.as_deref() == Some(judge_revision)
+            && (verdict.disposition.admits()
+                || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
+                || (matches!(
+                    verdict.disposition,
+                    SkillEditDisposition::DeferredCycleCap
+                        | SkillEditDisposition::DeferredJudgeCadence
+                        | SkillEditDisposition::DeferredInconclusive
+                ) && verdict.cycle == cycle.as_str()))
+    });
+    if let Some(pending) = &standing
+        && pending.disposition == SkillEditDisposition::NeedsTradeoffDecision
+    {
+        let (waits, ask_sources) =
+            super::super::tradeoff::pending_waits_sourced_in_txn(vault, rtxn, pending)?;
+        sources = crate::attempt_queue::source_rows::union_source_rows([sources, ask_sources]);
+        if !waits {
+            return Ok((None, sources));
+        }
+    }
+    Ok((standing, sources))
+}

@@ -676,28 +676,15 @@ fn standing_ruling_in_txn(
     cycle: &SkillEditCycle,
     judge_revision: &str,
 ) -> Result<Option<HeldOutVerdict>> {
-    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
-        basis.matches(verdict)
-            && verdict.displaced_by_revision.is_none()
-            && verdict.judge_revision.as_deref() == Some(judge_revision)
-            && (verdict.disposition.admits()
-                || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                || (matches!(
-                    verdict.disposition,
-                    SkillEditDisposition::DeferredCycleCap
-                        | SkillEditDisposition::DeferredJudgeCadence
-                        | SkillEditDisposition::DeferredInconclusive
-                ) && verdict.cycle == cycle.as_str()))
-    });
-    match standing {
-        Some(pending)
-            if pending.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                && !tradeoff::pending_waits_in_txn(vault, rtxn, &pending)? =>
-        {
-            Ok(None)
-        }
-        standing => Ok(standing),
-    }
+    Ok(sources::standing_ruling_sourced_in_txn(
+        vault,
+        rtxn,
+        proposal,
+        basis,
+        cycle,
+        judge_revision,
+    )?
+    .0)
 }
 
 /// The most recent ruling on one proposal, whatever it said.
