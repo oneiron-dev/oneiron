@@ -18,9 +18,7 @@ pub(crate) fn discard_export_payload_in_txn(
 ) -> Result<()> {
     let mut cleared = Vec::new();
     for (key, mut record) in EXPORTS.scan_from(store, txn, artifact.as_bytes())? {
-        if record.artifact != *artifact
-            || (record.author.is_empty() && record.effects.is_empty())
-        {
+        if record.artifact != *artifact || (record.author.is_empty() && record.effects.is_empty()) {
             continue;
         }
         record.author.clear();
