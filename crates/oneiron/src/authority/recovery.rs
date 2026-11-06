@@ -25,16 +25,18 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let signer = RecoveryAuthoritySigner::from_restored_kit(secret, &vault_id)?;
         let sign = |transcript: &[u8]| signer.sign_authority_transcript(transcript);
-        let entry = self.re_root_authority_in_txn(
+        let signer_key = signer.authority_key();
+        let (entry, rows) = self.re_root_authority_in_txn(
             &mut txn,
             new_device,
             (
-                signer.authority_key(),
-                Some(FrontierSigner::Callback(signer.public_key(), &sign)),
+                &signer_key,
+                Some(FrontierSigner::Callback(&signer_key, &sign)),
             ),
             &sign,
         )?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         Ok(entry)
     }
 }

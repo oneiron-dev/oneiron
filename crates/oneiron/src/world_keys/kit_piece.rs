@@ -95,6 +95,22 @@ impl Vault {
             && matches!(self.kept_kit_piece(KitPiecePair::Pending(kit)), Ok(Some(_))))
     }
 
+    /// Whether a restore of the named kit can join a piece kept here. With
+    /// no kit supplied, use the same current/pending selection as
+    /// [`Self::restore_kit_here`], without requiring the root to be this
+    /// install's pin. This is an input-count fact, not authority or proof
+    /// that the remaining pieces and passphrase open the kit.
+    pub fn keeps_kit_piece_for_input(&self, kind: KitSecretKind, kit: Option<KitId>) -> bool {
+        if let Some(kit) = kit {
+            return self.keeps_kit_piece_for(kind, kit);
+        }
+        self.keeps_kit_piece(kind)
+            || (kind == KitSecretKind::RecoveryRoot
+                && self
+                    .pending_kit_named(&[])
+                    .is_some_and(|kit| self.keeps_kit_piece_for(kind, kit)))
+    }
+
     /// Rebuilds a kit's secret on this machine (FIX 2063): [`restore_kit`] over
     /// `given` and this machine's own piece of the same kit when it keeps one, so
     /// the owner gives only the pieces still needed. A kept piece of another kit
