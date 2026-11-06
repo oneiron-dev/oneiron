@@ -193,7 +193,7 @@ async function effortCorpus(engine: EngineFixture) {
 function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (readonly [string, number[]])[] = []) {
   const vectors = new Map<string, number[]>([
     [fixture.embedder.probeText, fixture.embedder.probeVector],
-    ...fixture.claims.map(row => [`${row.predicate}: ${row.value}`, row.vector] as [string, number[]]),
+    ...fixture.claims.map(row => [row.value, row.vector] as [string, number[]]),
     ...extraVectors,
   ]);
   const seen = new Set<string>();
@@ -679,7 +679,7 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
       await awaitPublic(async () => (await engine.client.request<VectorPage>("GET", `/api/search/vector?${params}`)).body,
         page => page.items.some(hit => hit.id === identities.get(row.label)!.id),
         { label: `fixture embedding visible through public vector search: ${row.label}` });
-      expect(provider.seen.has(`${row.predicate}: ${row.value}`)).toBe(true);
+      expect(provider.seen.has(row.value)).toBe(true);
     }
 
     const filter: FacadeInput<"vault.claims.list"> = { subject_ref: engine.pairedActor.principalRef, limit: 1000 };
