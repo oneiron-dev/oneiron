@@ -42,6 +42,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 embedding_matches: HashMap::new(),
                 vector_completed: false,
+                text_exhausted: false,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 // No channel ran: an authority refusal is not a cache failure.
@@ -256,6 +257,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 embedding_matches: HashMap::new(),
                 vector_completed: dense_completed(&attempt.diagnostics),
+                text_exhausted: attempt.text_exhausted,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
@@ -278,6 +280,7 @@ impl PipelineBuilder<'_> {
                 critical: Default::default(),
             });
         }
+        let mut text_exhausted = attempt.text_exhausted;
         let mut temporal_report = attempt.temporal_report;
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
@@ -362,6 +365,7 @@ impl PipelineBuilder<'_> {
                 self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
+                text_exhausted = retry.text_exhausted;
                 temporal_report = retry.temporal_report;
                 scores = retry.scores;
                 cited_messages = retry.cited_messages;
@@ -581,6 +585,7 @@ impl PipelineBuilder<'_> {
         Ok(PipelineOutput {
             embedding_matches,
             vector_completed: dense_completed(&diagnostics),
+            text_exhausted,
             revisions,
             words_bound,
             retrieval_quality,
