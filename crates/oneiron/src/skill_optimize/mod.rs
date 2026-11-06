@@ -191,6 +191,10 @@ pub use self::eval_set::{
     JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
     ScoreDirection, eval_seat_canary,
 };
+pub use self::eval_set::{
+    EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
+    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
+};
 pub(crate) use self::eval_set::{
     erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,
 };
