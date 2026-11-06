@@ -1,10 +1,12 @@
 //! Resumable depth-first walks for `find` and `grep`. A walk's sealed
 //! position names each directory still open and the listing page it reads,
-//! which starts right after the last entry it finished, and where the next
-//! file's lines resume and in which entry, so a page that its output or scan
-//! limit cut picks up where it stopped. An entry written or removed before
-//! the resume point shifts nothing (FIX 4885): the page resumes by the
-//! listing's own cursor, not by a count into a page read again.
+//! which starts right after the last entry it reached, and the entry a page
+//! ended inside with where its lines resume, so a page that its output or
+//! scan limit cut picks up where it stopped. The next page finishes that
+//! entry first, then the listing goes on after it. An entry written or
+//! removed before the resume point shifts nothing (FIX 4885): the page
+//! resumes by the listing's own cursor, not by a count into a page read
+//! again, and no entry that comes in before the cut one takes its lines.
 
 use crate::error::Result;
 use oneiron_contracts::claim::ScopedReadReceipt;
@@ -41,8 +43,9 @@ struct WalkPosition {
     root_done: bool,
     /// The directories still open, the root first.
     frames: Vec<WalkFrame>,
-    /// Where the next file's lines resume, when a page ended inside it, and
-    /// the path of the entry they belong to: they resume that entry only.
+    /// The entry a page ended inside, by path, and where its lines resume:
+    /// the next page finishes it before it reads any listing, as its frame
+    /// has already passed it (a directory's own frame is open already).
     lines: Option<(String, LinePosition)>,
 }
 
@@ -248,6 +251,16 @@ impl GraphFsResolver<'_, '_> {
                 page: None,
                 passed: 0,
             });
+        } else if let Some((path, lines)) = at.lines.take() {
+            // The entry the last page ended inside: finished first, whatever
+            // came into its listing before it since.
+            steps += 1;
+            if self.coreutils_path_visible(&path)?
+                && let Visited::Cut(lines) = self.visit(verb, &path, false, Some(lines), walk)?
+            {
+                at.lines = lines.map(|lines| (path, lines));
+                return Ok(true);
+            }
         }
         let mut dirs: Vec<String> = Vec::with_capacity(at.frames.len());
         for frame in &at.frames {
@@ -300,12 +313,22 @@ impl GraphFsResolver<'_, '_> {
             steps += 1;
             let child = join_graph_path(&dirs[depth], entry.name());
             let is_dir = entry.kind() == GraphFsEntryKind::Directory;
-            // Lines to resume belong to the entry the walk stopped on: the
-            // first one it reaches now, when that is still the same path.
-            let lines = lines_of(&mut at.lines, &child);
             if self.coreutils_path_visible(&child)? {
-                if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, lines, walk)? {
-                    at.lines = lines.map(|lines| (child, lines));
+                if let Visited::Cut(lines) = self.visit(verb, &child, is_dir, None, walk)? {
+                    // The next page finishes this entry, then goes on after
+                    // it: the frame passes it now, and a directory's own
+                    // frame opens, so its tree still follows it.
+                    if let Some(lines) = lines {
+                        pass(&mut at.frames[depth], &mut pages[depth], after);
+                        if is_dir {
+                            at.frames.push(WalkFrame {
+                                name: entry.name().to_owned(),
+                                page: None,
+                                passed: 0,
+                            });
+                        }
+                        at.lines = Some((child, lines));
+                    }
                     return Ok(true);
                 }
                 if is_dir {
@@ -369,10 +392,8 @@ impl GraphFsResolver<'_, '_> {
     }
 }
 
-/// The lines to resume in the entry at `path`: the saved ones, when they
-/// belong to it. Whatever was saved is spent at the first entry reached, as
-/// the walk resumes at the entry it stopped on; one that went since starts
-/// none of its lines in another.
+/// The lines to resume in the walk root at `path`: the saved ones, when they
+/// belong to it.
 fn lines_of(saved: &mut Option<(String, LinePosition)>, path: &str) -> Option<LinePosition> {
     saved
         .take()
