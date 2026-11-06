@@ -12,6 +12,8 @@
 //! back writes the value it stands for again, and one that deletes the
 //! handle removes the secret.
 
+mod key_sort;
+
 use std::ops::Range;
 
 use heed::{RoTxn, RwTxn};
@@ -403,7 +405,11 @@ impl LiftedKeys {
                 keys.push((value.to_owned(), format!("{HANDLE_OPEN}{handle}]")));
             }
         }
-        keys.sort_by_key(|(value, _)| std::cmp::Reverse(value.len()));
+        if let Some((reader, _)) = reader {
+            key_sort::sort_keys(&mut keys, reader)?;
+        } else {
+            keys.sort_by_key(|(value, _)| std::cmp::Reverse(value.len()));
+        }
         Ok(Self(keys))
     }
 
