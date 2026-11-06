@@ -1,9 +1,9 @@
 //! A step start's publication in its capsule's writer (FIX 4192): the
 //! estimate its body instances are minted for before the writer opens,
 //! the lengths the writer's spill must hold, and the start published as
-//! its pieces and its manifest. FIX 19821: the manifest, the frame and the
-//! call nodes are held inline whatever the inline bound. A restore reads
-//! them among its rows to find the pieces that hold the start's asks.
+//! its pieces and its manifest. FIX 19821: the manifest and each node are
+//! held inline whatever the inline bound. A restore reads them among its
+//! rows to find every piece that holds the start's content.
 
 use super::*;
 
@@ -24,8 +24,8 @@ pub(super) fn start_estimate(vault: &Vault, capture: &StepCapture<'_>) -> Result
 
 /// The length of each body [`publish_start_in_txn`] publishes for `start`
 /// in `txn` under the inline bound: each of its pieces the run does not
-/// hold yet for the actor (FIX 4192). FIX 19821: its manifest, frame and
-/// call nodes are held inline whatever the bound, so none of them is here.
+/// hold yet for the actor (FIX 4192). FIX 19821: its manifest and nodes
+/// are held inline whatever the bound, so none of them is here.
 /// None without a start.
 pub(super) fn start_lens_in_txn(
     vault: &Vault,
