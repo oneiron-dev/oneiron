@@ -41,7 +41,8 @@
 //! 20607). Each body is released through the shadow runner's model release
 //! ([`WitnessedRelease`]). A lapsed admission stops the pair. It is never
 //! kept as a program's outcome, so the pair never falls back to the `Text`
-//! mode for it.
+//! mode for it. The writer that keeps a program's outcome admits the Coach
+//! again first, so a lapse after the read-back keeps nothing.
 
 mod callable;
 
@@ -607,9 +608,9 @@ impl Runner<'_> {
     /// kept before either fork is scored: as kept when it is settled, else
     /// its kept answer's program run now. A workflow step's fork as it is.
     /// An outcome its writer does not keep is unavailable for that writer's
-    /// own reason (FIX 6256). The answer is read, and its program run, under
-    /// the Coach's admission; a lapse stops the pair and is never kept (FIX
-    /// 20607).
+    /// own reason (FIX 6256). The answer is read, its program run and its
+    /// outcome kept, each under the Coach's admission; a lapse stops the
+    /// pair and is never kept (FIX 20607).
     pub(super) fn executed(
         &self,
         prepared: &Prepared,
@@ -660,10 +661,12 @@ impl Runner<'_> {
             .map(String::as_str)
             .zip(executed.bodies().map(|(_, bytes)| bytes.as_slice()))
             .collect();
-        let (answer, pin) = (fork.response, frozen.pin);
-        let capsule = &prepared.capsule;
-        // Its bodies, its execution and their erase ownership commit together.
-        store_fork_execution(self.vault, capsule, &self.pair, &fork, &bodies, |refs| {
+        let (answer, pin, pair) = (fork.response, frozen.pin, &self.pair);
+        let (vault, capsule, source) = (self.vault, &prepared.capsule, &prepared.source);
+        let admits = |txn: &heed::RoTxn<'_>| source.admits_in(vault, txn, PairReader::Coach);
+        // Its bodies, its execution and their erase ownership commit together,
+        // in a writer that admits the Coach again first (FIX 20607).
+        store_fork_execution(vault, capsule, pair, &fork, &bodies, &admits, |refs| {
             executed
                 .record(answer, pin, &paths, refs)
                 .map(ForkExecutionOutcome::Executed)
@@ -672,7 +675,8 @@ impl Runner<'_> {
 
     /// `fork` with its program kept unavailable for `unavailable`: pending
     /// one retry when a retry may clear it and the fork has not waited yet,
-    /// else for good.
+    /// else for good. It is kept only while the Coach is still admitted in
+    /// the writer that keeps it, else the fork is `Unfinished` (FIX 20607).
     fn unexecuted(
         &self,
         prepared: &Prepared,
@@ -684,8 +688,9 @@ impl Runner<'_> {
         } else {
             ForkExecutionOutcome::Unavailable(unavailable)
         };
-        let (vault, capsule) = (self.vault, &prepared.capsule);
-        store_fork_execution(vault, capsule, &self.pair, &fork, &[], |_| {
+        let (vault, capsule, source) = (self.vault, &prepared.capsule, &prepared.source);
+        let admits = |txn: &heed::RoTxn<'_>| source.admits_in(vault, txn, PairReader::Coach);
+        store_fork_execution(vault, capsule, &self.pair, &fork, &[], &admits, |_| {
             Some(outcome.clone())
         })
     }
