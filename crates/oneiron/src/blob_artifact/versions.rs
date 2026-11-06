@@ -9,7 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::code_snapshot::entity_id_from_hash_material;
-use crate::store::{BodyMint, StagedAssetBody, Store};
+use crate::store::{BodyMint, ManifestDbs, StagedAssetBody};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -586,7 +586,7 @@ impl Vault {
 }
 
 fn read_blob_artifact_highwater_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<u64>> {
@@ -601,7 +601,7 @@ fn read_blob_artifact_highwater_in_txn(
 }
 
 pub(crate) fn read_blob_artifact_head_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<BlobArtifactVersion>> {

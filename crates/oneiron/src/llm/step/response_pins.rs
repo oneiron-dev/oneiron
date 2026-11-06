@@ -35,7 +35,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -55,13 +55,14 @@ const PINS: SideTable<EntityId, Vec<StepResponseRef>, Named> =
 
 /// Pins `claim`'s response to the exact version `pin` names, in the write
 /// that files the claim and appends the version: both commit or roll back
-/// with it.
+/// with it. `store` is where the claim lives: base, or a room's view for a
+/// step a room's run stages, whose pin drops with the room (FIX 4818).
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(super) fn register_step_response_pin_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     pin: &StepResponseRef,
