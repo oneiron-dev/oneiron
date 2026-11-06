@@ -9,8 +9,7 @@ first answer, wipes other complete messages, and still validates every
 remaining element and trailing byte before returning. A malformed later
 element or trailing data still makes the reply unreadable. Special-map
 decoding keeps the native whole-Value parser, including maps that decode
-to an array. Each message can still be arbitrarily large; the
-credential-clearing pass still parses the whole raw batch.
+to an array. Each message can still be arbitrarily large.
 
 `RawOutboundBody` owns either an existing byte allocation or that spool.
 Clones and ranges retain the same owner. Each reader has a separate logical
@@ -28,6 +27,17 @@ credential callback. Strings and keys are cleared through native
 replacement order. Unchanged JSON keeps its original bytes. Changed JSON
 uses the native compact serialization. Inline event and question bodies
 still use `SentValue::clear_bytes`.
+
+For a file-backed top-level JSON array, clearing first parses, clears and
+wipes one complete message at a time, and validates the entire array and
+trailing bytes. If no parsed message changed, the same original body is
+returned without requesting another spool. If any message changed, a second
+read clears each message again and writes the array through the native
+compact sequence serializer into an anonymous spool. This avoids a whole
+batch Value, not a whole message Value. Both passes use the same parser
+nesting rules. A second-read or output error remains a clear failure; this
+extra read is not a speed claim. Non-array JSON, including native special
+maps that decode to an array, retains the whole-Value path.
 
 After that original clear, the first `tools/call` answer moves any byte-backed
 raw body into the same anonymous spool before acknowledgement, deferral, or
@@ -107,11 +117,12 @@ are not selected by this early publisher.
 ## Remaining whole-body adapters
 
 This is not a bounded-memory implementation of the full connector result
-path. The typed JSON response and credential-clearing comparison still
-hold whole Values. SSE events, control replies and later retry responses
+path. Individual typed JSON messages and credential-clearing comparisons
+still hold whole Values, as do non-array clearing inputs. SSE events,
+control replies and later retry responses
 still use their native in-memory readers. The stored STEP body is still an
 admitted Vec. Door-hook publication, settled-wait publication, streamed
-JSON clearing, and spool-aware stored replay admission remain separate
+JSON clearing within each message, and spool-aware stored replay admission remain separate
 work. This transaction repair selects only delivered connector answers,
 direct or in the answered native `self.use` envelope, on the canonical
 recording-host path. It does not change session or scoped-call publication. The existing 512 KiB result representation
