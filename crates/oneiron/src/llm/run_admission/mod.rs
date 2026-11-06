@@ -30,7 +30,8 @@ mod wire;
 mod work_context;
 
 pub use admission::{
-    RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
+    RawDispatch, RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied,
+    UNRESOLVED_SELECTOR,
 };
 pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{
