@@ -332,26 +332,43 @@ impl Memory<'_> {
         rostered: Option<(&OffRecordSession<'_>, EntityId)>,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.vault.write_txn_door(callback, |wtxn| {
-            admit.map_or(Ok(()), |admit| admit(wtxn))?;
-            let Some((session, room)) = rostered else {
-                self.verify_actor_write_in_txn(wtxn)?;
-                return write(wtxn);
-            };
-            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
-            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
-                self.vault
-                    .verify_write_actor_in_txn(wtxn, &self.write_actor())?;
-            }
-            if !session.is_member_in_txn(wtxn, room, self.actor)? {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN,
-                    "the speaker is not in this stretch's room".to_owned(),
-                    &["Join the room before speaking in it."],
-                ));
-            }
-            write(wtxn)
-        })
+        self.with_witness_write_txn_as_after_commit(callback, admit, rostered, write, Ok)
+    }
+
+    /// Publishes a landed witness before the write door can reacquire its
+    /// writer for postcommit work, under the same admission checks.
+    pub(super) fn with_witness_write_txn_as_after_commit<T, U>(
+        &self,
+        callback: crate::store::Callback,
+        admit: Option<Admit<'_>>,
+        rostered: Option<(&OffRecordSession<'_>, EntityId)>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+        after_commit: impl FnOnce(T) -> MemoryResult<U>,
+    ) -> MemoryResult<U> {
+        self.vault.write_txn_door_after_commit(
+            callback,
+            |wtxn| {
+                admit.map_or(Ok(()), |admit| admit(wtxn))?;
+                let Some((session, room)) = rostered else {
+                    self.verify_actor_write_in_txn(wtxn)?;
+                    return write(wtxn);
+                };
+                verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+                if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
+                    self.vault
+                        .verify_write_actor_in_txn(wtxn, &self.write_actor())?;
+                }
+                if !session.is_member_in_txn(wtxn, room, self.actor)? {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "the speaker is not in this stretch's room".to_owned(),
+                        &["Join the room before speaking in it."],
+                    ));
+                }
+                write(wtxn)
+            },
+            after_commit,
+        )
     }
 
     // ── the overlay landing ─────────────────────────────────────────────

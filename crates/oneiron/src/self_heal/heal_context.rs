@@ -103,10 +103,15 @@ pub struct HealLink {
 pub struct HealEvidenceContext {
     /// The selection it was read under.
     pub policy: HealContextPolicy,
-    /// Every attempt the cause walk reached, 32-hex, in source order: each before the
-    /// attempts its links name, ties by id, and those [`Self::cyclic`] names last.
+    /// Every attempt the cause walk reached that the reader may know of (FIX 10814): one
+    /// whose record its lane admits, or a root its request named. 32-hex, in source
+    /// order: each before the attempts its links name, ties by id, and those
+    /// [`Self::cyclic`] names last. Another reached attempt is only an `unavailable`
+    /// entry, without its id.
     pub attempts: Vec<String>,
-    /// Every stored retry, run-tree and message-graph link followed, once.
+    /// Every stored retry, run-tree and message-graph link followed, once; an attempt
+    /// link only when the attempt it is stored on is admitted and the one it names is
+    /// in [`Self::attempts`].
     pub links: Vec<HealLink>,
     /// 32-hex ids of the attempts and messages on a link cycle, or reached only through
     /// one, by id.

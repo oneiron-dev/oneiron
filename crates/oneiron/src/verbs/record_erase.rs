@@ -235,7 +235,7 @@ pub fn preview_record_erase(
 }
 
 /// `vault.records.erase_confirm`: erases the record the caller previewed,
-/// under a user hard delete, once the preview it takes again still has the
+/// under the owner erase reason, once the preview it takes again still has the
 /// digest they confirmed. `owner` is the caller's own proof: with it a held
 /// record starts its own `erase` act. The confirm names the caller's own live
 /// retained preview of this record first: without it the erase is refused,
@@ -271,7 +271,7 @@ pub fn confirm_record_erase(
     let outcome = memory.confirm_entity_erase(
         &preview,
         EraseOptions {
-            reason: EraseReason::UserHardDelete,
+            reason: EraseReason::OwnerErase,
             also_same_bytes: input.also_same_bytes,
             veto_starter: Some(owner),
         },

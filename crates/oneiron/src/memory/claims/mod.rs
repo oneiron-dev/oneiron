@@ -287,6 +287,8 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+
+pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;
 mod settle;
 
