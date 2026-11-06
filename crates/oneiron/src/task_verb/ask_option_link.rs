@@ -448,6 +448,41 @@ impl Vault {
     }
 }
 
+/// Voids `person`'s own seat on the ask `group_ref` at its admitting node, in
+/// `txn` (FIX 7494): the authenticated twin of an option link's "Not you?"
+/// ([`Vault::void_ask_option_link`]), relayed from a replica. It marks the
+/// seat voided, raises the group's void generation the first time, and wakes
+/// the asking agent the same way. A person the ask does not ask is refused.
+/// Answers the group's void generation after it.
+pub(super) fn void_seat_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    group_ref: EntityId,
+    group: &ask_record::AskGroup,
+    person: EntityId,
+    now: u64,
+) -> crate::Result<u64> {
+    if !group
+        .members
+        .iter()
+        .any(|member| member.actor == person.to_hex())
+    {
+        return Err(ask_record::invalid());
+    }
+    let seat = (group_ref, person);
+    if !VOIDS.contains(&vault.store, txn, &seat)? {
+        let next = counter_in(vault, txn, VOID_GENERATIONS, group_ref)?
+            .checked_add(1)
+            .ok_or_else(ask_record::invalid)?;
+        VOID_GENERATIONS.put(&vault.store, txn, &group_ref, &next)?;
+        VOIDS.put(&vault.store, txn, &seat, b"1")?;
+    }
+    deliver_ask_change_in_txn(vault, txn, group_ref)?;
+    super::ask_facade::signal_waiters(vault, txn, group_ref, now.saturating_mul(1000))
+        .map_err(|_| ask_record::invalid())?;
+    counter_in(vault, txn, VOID_GENERATIONS, group_ref)
+}
+
 /// The ask's Changed status for the code runs parked on its wait, in the
 /// caller's transaction (OF-533): its current void generation and voided
 /// friends, delivered to each waiter that has not seen that generation and
