@@ -52372,7 +52372,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 51,
+      "crate-vis": 52,
       "re-export": 19
      }
     },
@@ -52500,7 +52500,17 @@
      "path": "src/note/citation_erase.rs",
      "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/citation_residence.rs",
+     "purpose": "Erase reach for residence copies of NOTEs (FIX 18400)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92137,7 +92147,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 72,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92811,7 +92821,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6539,
+   "source_files": 6540,
    "test_files": 895
   },
   "oneiron-android": {
