@@ -454,7 +454,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     analyzer,
                     &mut *wtxn,
                     &mut state,
-                    &gate_mode,
+                    &mut gate_mode,
                     id,
                     entity_type,
                     occurred,
