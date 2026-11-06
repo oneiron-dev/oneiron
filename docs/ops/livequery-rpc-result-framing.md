@@ -72,3 +72,27 @@ routed copy can coexist. The existing reply channel is still unbounded, so
 enqueued frames can accumulate. The owned value, routing rows, answer-owned holds
 and client collection also remain. This is not a queue bound, a total-memory
 bound, or completed end-to-end streaming.
+
+## Sealed bundle reply routing
+
+The socket's `residence.bundle.list` and `residence.bundle.get` replies route
+and enqueue one already encoded frame at a time. They reuse the original eager
+residence answer and its two serialization passes, rather than collecting a
+second batch of routed frames before the first enqueue. The bound credential,
+live-credential check, proved peer, operation budgets, bundle computation,
+receipt and encoding remain on the socket's owner loop in their original order.
+These calls still reject facade call contexts; no answer hold or worker is added.
+
+A bundle get still materializes its original slice (at most the existing
+256 KiB), base64 JSON value and complete encoded frame batch. The lazy routing
+only removes the complete routed batch at that stage. The typed pad-unavailable
+reply uses the same method path. Bundle lists keep their existing materialized
+generation list. Each frame carries the same request id, sequence, stamp and
+routing rows, and a closed reply channel returns the same protocol error without
+sending later frames.
+
+The encoded batch, JSON values, per-frame routing copy, unbounded reply queue
+and client collection remain. This is not a total-memory, latency or end-to-end
+streaming guarantee. Other residence methods, machine-only calls, ping and the
+existing eager APIs are unchanged. No bundle selection, retention, cap, deadline,
+wire format, credential or release policy changes.
