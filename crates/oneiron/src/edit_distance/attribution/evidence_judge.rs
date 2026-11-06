@@ -635,6 +635,7 @@ fn settle_edit_proposal_in_txn(
             subject: Some(skill),
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
+            read_position: None,
         },
     )?;
     Ok(Some(sequence))

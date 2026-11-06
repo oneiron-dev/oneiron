@@ -321,9 +321,30 @@ pub(super) fn failed_preflight_axes(
     definition: &GoalDefinition,
     judge_revision: &str,
 ) -> Result<Option<BTreeMap<String, GoalAxisScore>>> {
+    Ok(failed_preflight_axes_sourced(vault, proposal, basis, definition, judge_revision)?.0)
+}
+
+/// The same failed-preflight read, including stored rows rejected by its basis filter.
+pub(super) fn failed_preflight_axes_sourced(
+    vault: &Vault,
+    proposal: &EntityId,
+    basis: &ScoredBasis,
+    definition: &GoalDefinition,
+    judge_revision: &str,
+) -> Result<(
+    Option<BTreeMap<String, GoalAxisScore>>,
+    Option<Vec<EntityId>>,
+)> {
     let txn = vault.store.env.read_txn()?;
     let row = PREFLIGHTS.get(&vault.store, &txn, proposal)?;
-    let judge = JudgeBinding::in_txn(vault, &txn, judge_revision)?;
+    let row_sources = if row.is_some() {
+        None
+    } else {
+        Some(Vec::new())
+    };
+    let (judge, judge_sources) = JudgeBinding::sourced_in_txn(vault, &txn, judge_revision)?;
+    let sources =
+        crate::attempt_queue::source_rows::union_source_rows([row_sources, judge_sources]);
     drop(txn);
     let Some(row) = row.filter(|row| {
         !row.passed
@@ -336,7 +357,7 @@ pub(super) fn failed_preflight_axes(
                     judge,
                 }
     }) else {
-        return Ok(None);
+        return Ok((None, sources));
     };
     let mut measured = BTreeMap::new();
     let honesty = (HONESTY_AXIS.to_owned(), row.honesty);
@@ -356,5 +377,5 @@ pub(super) fn failed_preflight_axes(
             },
         );
     }
-    Ok(Some(measured))
+    Ok((Some(measured), sources))
 }

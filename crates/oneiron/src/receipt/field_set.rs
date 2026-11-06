@@ -271,18 +271,17 @@ pub fn append_pack_attribution_fields(
 }
 
 /// Freezes the read set the attempt's producers recorded while it ran
-/// (FIX 6934): the ids of the rows its inputs were read from, sorted. Only a
-/// complete set is stamped, `[]` when it read no vault row; an unknown one
-/// stamps nothing, so an absent key reads as unknown, as on a receipt minted
-/// before the field existed.
+/// (FIX 6934): sorted entity ids and typed native physical witnesses. Only a
+/// complete set is stamped, with empty components when it read no vault row;
+/// an unknown set stamps nothing, so an absent key reads as unknown.
 pub(crate) fn append_pack_source_rows_fields(
     receipt: &mut ReceiptRecord,
-    rows: Option<&[EntityId]>,
+    sources: Option<&crate::store::attempt_sources::AttemptSources>,
 ) -> Result<()> {
-    let Some(rows) = rows else {
+    let Some(sources) = sources else {
         return Ok(());
     };
-    let encoded = serde_json::to_string(rows)
+    let encoded = serde_json::to_string(sources)
         .map_err(|_| Error::InvariantViolation("pack source rows encode"))?;
     receipt
         .fields
@@ -538,10 +537,17 @@ impl ReceiptRecord {
 
     /// The complete set of rows the receipt's attempt read its inputs from
     /// (FIX 6934), read from the recorded field alone. `None`, unknown, when
-    /// its producers recorded no complete set or the receipt predates the
-    /// field.
+    /// its producers recorded no complete set or it includes native sources
+    /// this entity-only projection cannot represent.
     #[must_use]
     pub fn pack_source_rows(&self) -> Option<Vec<EntityId>> {
+        let sources = self.pack_sources()?;
+        sources.entity_rows().map(<[EntityId]>::to_vec)
+    }
+
+    /// The complete frozen source set, including native physical witnesses.
+    #[must_use]
+    pub fn pack_sources(&self) -> Option<crate::store::attempt_sources::AttemptSources> {
         serde_json::from_str(self.fields.get(FIELD_MANIFEST_SOURCE_ROWS)?).ok()
     }
 

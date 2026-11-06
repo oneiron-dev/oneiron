@@ -133,6 +133,7 @@
 mod ask_band;
 pub(crate) mod audit_rate;
 mod brief;
+mod coach_read;
 mod decisions;
 mod dials;
 mod eval_set;
@@ -214,15 +215,16 @@ pub use self::judge_swap::{
 pub(crate) use self::judge_swap::{
     judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask, swap_case_retest_picked,
 };
+pub(crate) use self::labels::{
+    CanonicalJudgeLabel, canonical_judge_label_in_txn, judge_ask_room, recheck_judge_labels,
+    take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+};
 pub use self::labels::{
-    JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheck,
-    JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade, JudgeRegrade,
-    JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
+    JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelReadPosition,
+    JudgeLabelRecheck, JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade,
+    JudgeRegrade, JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
     judge_label_anchor, judge_rubric, record_judge_label_regrade, record_judge_pick,
     set_judge_digest_minutes,
-};
-pub(crate) use self::labels::{
-    judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
@@ -258,6 +260,7 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
+pub use gate::SkillVerdictReadPosition;
 pub use gate::{
     AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
@@ -274,14 +277,19 @@ pub use gate::{
     preflight_skill_edit_offline_floors, project_goal_revision_proposals, receipt_is_held_out,
     register_held_out_replay_scorer, resolve_skill_edit_tradeoff,
     resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit, score_gate_skill_edit_in_cycle,
-    score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
-    set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
-    settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
-    skill_edit_needs_goal_axis_report, skill_edit_score_call_purpose, skill_edit_verdict,
-    skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_goal_axis_plan,
-    skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
-    supersede_skill_edit_judge,
+    score_gate_skill_edit_in_cycle_positioned, score_gate_skill_edit_with_scorer,
+    set_skill_edit_cycle_cap, set_skill_edit_goal_axes, set_skill_goal_project,
+    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as,
+    settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest, skill_edit_cycle_cap,
+    skill_edit_goal, skill_edit_goal_axis_report, skill_edit_needs_goal_axis_report,
+    skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
+    skill_edit_verdicts_for_proposal, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask,
+    skill_tradeoff_asks_for, skill_tradeoff_preferences, supersede_skill_edit_judge,
+};
+pub(crate) use gate::{
+    CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,
+    canonical_skill_edit_verdict_in_txn, canonical_skill_edit_verdicts_in_txn,
+    skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn, verdict_rows_sourced_observed_in_txn,
 };
 pub(crate) use gate::{
     SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,
@@ -289,7 +297,8 @@ pub(crate) use gate::{
     project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
     settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
     skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
-    validate_judge_revision, with_optimized_skill_admission,
+    skill_edit_verdict_sourced, skill_tradeoff_ask_sourced, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 pub(crate) use gate::{project_axes, project_rules_for_record};
 
@@ -304,7 +313,6 @@ pub(crate) use self::job::{
 
 use self::dials::invalid;
 pub(crate) use self::tier::tier_verdict_in_txn;
-
 #[cfg(test)]
 mod tests;
 

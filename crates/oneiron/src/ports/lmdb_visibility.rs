@@ -1,5 +1,5 @@
 //! Transaction-local visibility ledger for canonical and composed session views.
-use super::{DeletionMarker, DeletionState, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
+use super::{DeletionMarker, DeletionState, TombstoneStoreRead, WindowAddress};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
@@ -42,17 +42,7 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
     }
 
     fn port_deletion_state(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<DeletionState> {
-        let kept = deletion_memo_key(self, txn);
-        if let Some(key) = kept
-            && let Some(state) = DELETION_MEMO.with(|memo| memo.borrow().get(key, id))
-        {
-            return Ok(state);
-        }
-        let state = deletion_state_read(self, txn, id)?;
-        if let Some(key) = kept {
-            DELETION_MEMO.with(|memo| memo.borrow_mut().put(key, *id, state));
-        }
-        Ok(state)
+        deletion_state_observed_in_txn(self, txn, id, None)
     }
 
     fn port_deletion_marker(
@@ -72,6 +62,60 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
     ) -> Result<bool> {
         marker_table(marker).contains(self, txn, &HexId(*id))
     }
+}
+
+/// The original memoized read, with an optional successful-state observer.
+/// The callback runs after all memo borrows end. It must not reenter the
+/// store, change recall scopes or panic. It receives no canonical row evidence.
+pub(crate) fn deletion_state_observed_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    observer: Option<&mut super::DeletionStateObserver<'_>>,
+) -> Result<DeletionState> {
+    deletion_state_with_sources_in_txn(dbs, txn, id, observer, None)
+}
+
+/// Original memoized read with partial fresh archive/removal inputs. A memo hit
+/// emits only its state provenance, never fabricated fresh source rows.
+pub(crate) fn deletion_state_with_sources_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    mut observer: Option<&mut super::DeletionStateObserver<'_>>,
+    mut sources: Option<&mut super::DeletionSourceObserver<'_>>,
+) -> Result<DeletionState> {
+    use super::{DeletionStateOrigin, DeletionStateRead};
+
+    let kept = deletion_memo_key(dbs, txn);
+    if let Some(key) = kept
+        && let Some(state) = DELETION_MEMO.with(|memo| memo.borrow().get(key, id))
+    {
+        if let Some(observer) = observer.as_deref_mut() {
+            observer(DeletionStateRead {
+                id: *id,
+                state,
+                origin: DeletionStateOrigin::Memo,
+            });
+        }
+        return Ok(state);
+    }
+    let state = if sources.is_none() {
+        deletion_state_read(dbs, txn, id)?
+    } else {
+        deletion_state_read_with_sources(dbs, txn, id, &mut sources)?
+    };
+    if let Some(key) = kept {
+        DELETION_MEMO.with(|memo| memo.borrow_mut().put(key, *id, state));
+    }
+    if let Some(observer) = observer {
+        observer(DeletionStateRead {
+            id: *id,
+            state,
+            origin: DeletionStateOrigin::Computed,
+        });
+    }
+    Ok(state)
 }
 
 /// Every hard-delete marker id in this transaction, including marker-only erasures.
@@ -119,12 +163,29 @@ fn deletion_state_read(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<DeletionState> {
-    let archived = dbs
-        .sync_state()
-        .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
-        .is_some();
+    deletion_state_read_with_sources(dbs, txn, id, &mut None)
+}
+
+fn deletion_state_read_with_sources(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    sources: &mut Option<&mut super::DeletionSourceObserver<'_>>,
+) -> Result<DeletionState> {
+    let key = crate::deletion::archive_tombstone_key(id);
+    let archive = dbs.sync_state().get(txn, key.as_str())?;
+    super::deletion_sources::observe(
+        sources,
+        super::DeletionSource::Row {
+            table: super::DeletionSourceTable::SyncState,
+            key: key.as_bytes(),
+            value: archive.as_deref(),
+        },
+    );
+    let archived = archive.is_some();
+    drop(archive);
     let stale = super::integrity::stale_in_txn(dbs, txn, id)?;
-    let deleted = archived || removed_in_txn(dbs, txn, id)?;
+    let deleted = archived || removed_with_sources_in_txn(dbs, txn, id, sources)?;
     Ok(DeletionState {
         archived,
         deleted,
@@ -270,22 +331,56 @@ pub(crate) fn removed_in_txn(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    removed_with_sources_in_txn(dbs, txn, id, &mut None)
+}
+
+fn removed_with_sources_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    sources: &mut Option<&mut super::DeletionSourceObserver<'_>>,
+) -> Result<bool> {
     let raw = dbs.entities().get(txn, id.as_bytes())?;
+    super::deletion_sources::observe(
+        sources,
+        super::DeletionSource::Row {
+            table: super::DeletionSourceTable::Entities,
+            key: id.as_bytes(),
+            value: raw.as_deref(),
+        },
+    );
     // Every answer is an indexed marker; no window document is decoded.
     // The row's own deletion, applied here or accepted and awaiting its
     // retry, is its `df:` fence (or `dt:` once hard), whatever the payload
     // length or a window's mutable tombstone map say.
     Ok(
-        crate::deletion::row_deletion_marked(dbs, txn, id, raw.as_deref())?
-            || dbs
-                .vault_meta()
-                .get(txn, &super::integrity::tombstone_key(id))?
-                .is_some()
+        crate::deletion::row_deletion_marked_observed(dbs, txn, id, raw.as_deref(), sources)?
+            || {
+                let key = super::integrity::tombstone_key(id);
+                let tombstone = dbs.vault_meta().get(txn, &key)?;
+                super::deletion_sources::observe(
+                    sources,
+                    super::DeletionSource::Row {
+                        table: super::DeletionSourceTable::VaultMeta,
+                        key: &key,
+                        value: tombstone.as_deref(),
+                    },
+                );
+                tombstone.is_some()
+            }
             || match raw {
                 // A local delete whose publication is pending.
                 Some(raw) => {
-                    let window = crate::deletion::deletion_window_for_row(dbs, txn, id, &raw)?;
-                    dbs.port_pending_tombstone_present(txn, WindowAddress::new(&window), id)?
+                    let window = crate::deletion::deletion_window_for_row_observed(
+                        dbs, txn, id, &raw, sources,
+                    )?;
+                    super::lmdb_window_rows::pending_tombstone_present_observed(
+                        dbs,
+                        txn,
+                        WindowAddress::new(&window),
+                        id,
+                        sources,
+                    )?
                 }
                 None => false,
             },

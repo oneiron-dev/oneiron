@@ -26,7 +26,7 @@ pub struct HandleAttemptFailure {
     pub blocked_reports: Vec<BlockedReportRef>,
     /// Existing durable checkpoint immediately before the failing work.
     pub pre_fail_checkpoint_ref: EntityId,
-    /// Existing referenced MESSAGE thread used by the healer/human Q&A feed.
+    /// Q&A thread or host correlation reference; not read authority.
     pub qa_thread_ref: EntityId,
     /// Existing retry policy chooses this instant. FailureLadder only forwards it.
     pub retry_at: u64,
