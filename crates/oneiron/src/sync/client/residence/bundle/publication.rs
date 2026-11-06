@@ -298,7 +298,7 @@ async fn publish_one(
         )
         .await?;
     if staged {
-        let attempt = attempt::BundleAttempt {
+        let mut attempt = attempt::BundleAttempt {
             home: Some(home),
             executor,
             generation,
@@ -316,7 +316,7 @@ async fn publish_one(
         };
         // The exact attempt persists before the first commit send, so an ack
         // lost on the way resumes, never reuploads.
-        attempt::persist(vault, AttemptKey::Request(request), &attempt).map_err(storage)?;
+        attempt::persist(vault, AttemptKey::Request(request), &mut attempt).map_err(storage)?;
         match work::begin_work(rpc, &attempt).await? {
             work::WorkOutcome::Accepted(status) => match status.state {
                 work::WorkState::Pending => return Ok(()),

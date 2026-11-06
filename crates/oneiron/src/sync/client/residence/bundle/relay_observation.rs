@@ -143,6 +143,7 @@ pub(super) fn restore_upload(vault: &Vault, attempt: &BundleAttempt) {
         held.restored
             && held.generation != attempt.generation
             && match (attempt.assembled_at, held.assembled_at) {
+                // Strictly ordered among attempts stored together (persist).
                 (Some(attempt_at), Some(held_at)) => attempt_at > held_at,
                 (Some(_), None) => true,
                 (None, Some(_)) => false,
