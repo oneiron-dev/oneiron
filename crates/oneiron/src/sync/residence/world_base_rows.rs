@@ -257,12 +257,16 @@ pub(crate) fn discarded_rows_in(store: &Store, txn: &RoTxn<'_>) -> Result<BTreeS
         .collect())
 }
 
-/// Forgets the discard's mark of `id`: its row may come back.
+/// Forgets the discard's mark of `id`: its row may come back. A BASE window
+/// that a projection already rewrote holds deletes where the home holds the
+/// row's values, so each is fetched whole again (FIX 14534 part E).
 pub(crate) fn forget_discarded_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
-    DISCARDED_WORLD_ROW.delete(store, txn, &HexId(id))?;
+    if DISCARDED_WORLD_ROW.delete(store, txn, &HexId(id))? {
+        crate::sync::window::resync_projected_windows_in_txn(store, txn)?;
+    }
     Ok(())
 }

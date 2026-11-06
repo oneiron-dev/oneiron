@@ -39,7 +39,8 @@ use super::super::note::discard::{NoteAtom, is_note_carrier_map, project_atom, p
 use super::super::schema::{ASSET_BODY_REFS_MAP, create_window_doc};
 use super::super::types::WindowKey;
 use super::super::window_rows::{
-    WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR, WINDOW_UPDATE,
+    WINDOW_FULL_RESYNC_MARKER, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
+    WINDOW_UPDATE,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -229,12 +230,14 @@ impl Classify for DiscardClassifier<'_> {
 pub(crate) enum Projected {
     /// The document holds nothing the discarded rows own.
     Unchanged,
-    /// The projected document's native snapshot bytes, and how many values
-    /// went and were rewritten.
+    /// The projected document's native snapshot bytes, how many values went
+    /// and were rewritten, and how many the rows own stay whole for now: each
+    /// written by an operation the home does not hold.
     Joined {
         bytes: Vec<u8>,
         erased: usize,
         rewritten: usize,
+        waiting: usize,
     },
     /// The document cannot be projected now, and why.
     Deferred(&'static str),
@@ -242,7 +245,10 @@ pub(crate) enum Projected {
 
 /// `doc`, a quiescent window document, with every value the rows in
 /// `discarded` own erased at its own operation and every NOTE bundle that
-/// keeps other members redacted. No operation is authored.
+/// keeps other members redacted. No operation is authored. With `held`, the
+/// operations the home holds, a value written by any other operation stays
+/// whole and counts as waiting (E2 = A): only the home's operations are
+/// rewritten.
 ///
 /// # Errors
 ///
@@ -250,6 +256,7 @@ pub(crate) enum Projected {
 pub(crate) fn project_window_doc(
     doc: &LoroDoc,
     discarded: &BTreeSet<EntityId>,
+    held: Option<&VersionVector>,
 ) -> Result<Projected> {
     if discarded.is_empty() {
         return Ok(Projected::Unchanged);
@@ -264,7 +271,10 @@ pub(crate) fn project_window_doc(
     if let Some(why) = classifier.unknown {
         return Ok(Projected::Deferred(why));
     }
-    let mut sorted = match classifier.sort(parts.atoms) {
+    let unheld = held
+        .map(|held| unheld_atoms(&parts.skeleton, held))
+        .unwrap_or_default();
+    let mut sorted = match classifier.sort(parts.atoms, unheld) {
         Ok(sorted) => sorted,
         Err(why) => return Ok(Projected::Deferred(why)),
     };
@@ -275,9 +285,33 @@ pub(crate) fn project_window_doc(
         return Ok(Projected::Deferred(why));
     }
     if sorted.erased.is_empty() && sorted.rewritten == 0 {
-        return Ok(Projected::Unchanged);
+        return Ok(if sorted.waiting == 0 {
+            Projected::Unchanged
+        } else {
+            Projected::Deferred("values the rows own whose operations the home lacks")
+        });
     }
     Ok(sorted.join(&parts.skeleton))
+}
+
+/// The atoms `skeleton`'s retained operations write past `held`. A
+/// shallow-root winner is below every retained operation, and held.
+fn unheld_atoms(skeleton: &Skeleton, held: &VersionVector) -> BTreeSet<AtomId> {
+    let mut unheld = BTreeSet::new();
+    for change in &skeleton.changes {
+        let from = held.get(&change.peer).copied().unwrap_or(0);
+        for (index, op) in change.ops.iter().enumerate() {
+            let counter = i32::try_from(index)
+                .ok()
+                .and_then(|index| change.counter.checked_add(index));
+            if counter.is_none_or(|counter| counter >= from)
+                && let Some(atom) = op.value
+            {
+                unheld.insert(atom);
+            }
+        }
+    }
+    unheld
 }
 
 /// A capture's atoms, sorted: the ones that go, and the ones that stay,
@@ -286,23 +320,40 @@ struct Sorted {
     erased: BTreeSet<AtomId>,
     available: BTreeMap<AtomId, Atom>,
     rewritten: usize,
+    /// Atoms written by operations the home does not hold: they stay whole.
+    unheld: BTreeSet<AtomId>,
+    /// How many of those the projection would have changed.
+    waiting: usize,
 }
 
 impl DiscardClassifier<'_> {
     /// Sorts the atoms of this classifier's capture by their holders: a part
-    /// goes only when a manifest that goes names it and none that stays does.
-    fn sort(&self, atoms: Vec<Atom>) -> std::result::Result<Sorted, &'static str> {
+    /// goes only when a manifest that goes names it and none that stays does;
+    /// an atom in `unheld` stays as it is.
+    fn sort(
+        &self,
+        atoms: Vec<Atom>,
+        unheld: BTreeSet<AtomId>,
+    ) -> std::result::Result<Sorted, &'static str> {
         let mut sorted = Sorted {
             erased: BTreeSet::new(),
             available: BTreeMap::new(),
             rewritten: 0,
+            unheld,
+            waiting: 0,
         };
         for mut atom in atoms {
             let holder = match atom.holders.as_slice() {
                 [holder] => *holder,
                 _ => KEEP,
             };
-            if holder == ERASE {
+            let changes = holder == ERASE
+                || holder >= REWRITE
+                || (holder >= PART && self.part_goes(holder - PART));
+            if changes && sorted.unheld.contains(&atom.id) {
+                sorted.waiting += 1;
+                sorted.available.insert(atom.id, atom);
+            } else if holder == ERASE {
                 sorted.erased.insert(atom.id);
             } else if holder >= REWRITE {
                 let bytes = usize::try_from(holder - REWRITE)
@@ -351,6 +402,10 @@ impl Sorted {
                 }
                 continue;
             };
+            if self.unheld.contains(&atom) {
+                self.waiting += 1;
+                continue;
+            }
             match after {
                 Some(bytes) => {
                     let found = self
@@ -378,6 +433,7 @@ impl Sorted {
                 bytes: joined.bytes,
                 erased: erased.len(),
                 rewritten: self.rewritten,
+                waiting: self.waiting,
             },
             Ok(_) => Projected::Deferred("a projection its join did not prove"),
             Err(error) => {
@@ -436,13 +492,15 @@ pub(crate) fn install_discard_projection(vault: &Vault, key: &WindowKey) -> Resu
     for (_, bytes) in &updates {
         import_doc(&doc, bytes)?;
     }
-    let (bytes, erased, rewritten) = match project_window_doc(&doc, &discarded)? {
+    // Every operation is the home's: the write checks it.
+    let (bytes, erased, rewritten) = match project_window_doc(&doc, &discarded, None)? {
         Projected::Unchanged => return Ok(DiscardInstall::Unchanged),
         Projected::Deferred(why) => return Ok(DiscardInstall::Deferred(why)),
         Projected::Joined {
             bytes,
             erased,
             rewritten,
+            ..
         } => (bytes, erased, rewritten),
     };
     let held = doc.oplog_vv();
@@ -545,6 +603,41 @@ fn file_floor_in_txn(store: &Store, txn: &mut RwTxn<'_>, window: &str, floor: &[
     record.push(0);
     record.extend_from_slice(floor);
     BASE_WINDOW_DISCARD.put(store, txn, &window.to_owned(), &record)
+}
+
+/// Raises BASE window `window`'s floor to hold `part`, operations the home
+/// holds that a projection of an arrival rewrote; its owed state stays.
+pub(super) fn raise_floor_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    window: &str,
+    part: &VersionVector,
+) -> Result<()> {
+    let key = window.to_owned();
+    let record = BASE_WINDOW_DISCARD
+        .get(store, txn, &key)?
+        .unwrap_or_default();
+    let mut floor = record
+        .get(1..)
+        .and_then(|bytes| VersionVector::decode(bytes).ok())
+        .unwrap_or_default();
+    floor.merge(part);
+    let mut raised = vec![record.first().copied().unwrap_or(0)];
+    raised.extend_from_slice(&floor.encode());
+    BASE_WINDOW_DISCARD.put(store, txn, &key, &raised)
+}
+
+/// Marks for a full resync every BASE window a projection already rewrote,
+/// once a row the discard took is accepted back: each holds deletes where
+/// the home holds that row's values, and its replacement from the home is
+/// projected anew for the rows the discard still marks.
+pub(crate) fn resync_projected_windows_in_txn(store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
+    for (window, record) in BASE_WINDOW_DISCARD.scan(store, txn)? {
+        if record.len() > 1 {
+            WINDOW_FULL_RESYNC_MARKER.put(store, txn, &window, &[1u8])?;
+        }
+    }
+    Ok(())
 }
 
 /// Settles BASE window `window`'s owed projection with nothing to install:

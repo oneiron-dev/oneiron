@@ -24,6 +24,7 @@ use loro::{LoroDoc, Subscription};
 
 mod admission;
 mod device_only;
+mod discard_ingress;
 mod discard_projection;
 mod egress;
 mod forward;
@@ -57,10 +58,13 @@ pub use self::device_only::{
     raw_update_verdict_for, selector_update_verdict_for_peer,
 };
 pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for};
-pub(crate) use self::discard_projection::mark_projection_owed_in_txn;
+pub(in crate::sync) use self::discard_ingress::persist_window_arrival;
 pub(in crate::sync) use self::discard_projection::{
     DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
     projection_floor_in, settle_projection_in_txn,
+};
+pub(crate) use self::discard_projection::{
+    mark_projection_owed_in_txn, resync_projected_windows_in_txn,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
@@ -328,8 +332,11 @@ pub(crate) fn persist_window_doc_in_txn(
     state: &[u8],
     vv: &[u8],
 ) -> Result<()> {
+    // The owner's discard of a world copy takes what it owns from a BASE
+    // window's state before that state persists (FIX 14534 part E).
+    let state = discard_ingress::project_snapshot_in_txn(vault, wtxn, key, state)?;
     // Its pads persist by reference where custody here holds them (FIX 7107).
-    let state = pad_custody::persisted_window_pads(vault, key, state, None);
+    let state = pad_custody::persisted_window_pads(vault, key, &state, None);
     WINDOW_SNAPSHOT.put(
         &vault.store,
         wtxn,

@@ -11,7 +11,6 @@ use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
-use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
 use crate::sync::schema::create_window_doc;
 use crate::sync::transport;
@@ -19,7 +18,7 @@ use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_s
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
     LoadedWindow, ReplacementByteBound, WindowExport, apply_pending_window_updates,
-    load_window_from_state, persisted_window_pads,
+    load_window_from_state,
 };
 
 impl SyncClient {
@@ -681,9 +680,17 @@ impl SyncClient {
                         }
                     };
                 // Its pads persist by reference where custody here holds them
-                // (FIX 7107).
-                let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
-                if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                // (FIX 7107); a BASE window's as the owner's discard projects
+                // it, for what the home holds of it (FIX 14534 part E).
+                let durable_vv = durable_doc.oplog_vv();
+                if let Err(e) = crate::sync::window::persist_window_arrival(
+                    &self.vault,
+                    &key,
+                    &window.doc,
+                    &durable_vv,
+                    &missing,
+                    false,
+                ) {
                     self.manager.discard_window(&key);
                     return Err(TransportError::Storage(format!(
                         "persist live durable delta: {e}"
@@ -695,9 +702,18 @@ impl SyncClient {
             // accepted update bytes ourselves: without a u:w: row, remote state —
             // including tombstones, whose LMDB purge already ran — would vanish
             // from the doc on restart. Its pads persist by reference where
-            // custody here holds them (FIX 7107).
-            let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
-            if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
+            // custody here holds them (FIX 7107); a BASE window's as the owner's
+            // discard projects it (FIX 14534 part E). The home sent it, unless
+            // this connection is a federation peer's.
+            let from_home = self.config.federation_peer.is_none();
+            if let Err(e) = crate::sync::window::persist_window_arrival(
+                &self.vault,
+                &key,
+                &window.doc,
+                &vv_before,
+                payload,
+                from_home,
+            ) {
                 // Never leave RAM ahead of durable state on a FAILED persist
                 // (client analog of the ONE-1129 server evict-on-persist-failure):
                 // the import advanced this doc's version vector, so keeping the
