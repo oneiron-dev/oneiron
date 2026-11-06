@@ -123,3 +123,22 @@ machinery. They add no separate lifetime system or global-erasure guarantee.
 Typed SESSION projection, revision-to-SESSION links, served owner routes and host
 receipt retention remain separate work. No text-flattening adapter or duplicate
 SESSION lifecycle is installed, and no voiceprint consent is implied.
+
+## Typed SESSION input and selected-artifact reads
+
+`Vault::read_meeting_transcript_as_owner` retrieves the exact selected stored
+artifact under a current native owner proof. One read transaction checks the
+transcript and audio versions, hashes, ledger relationship and actual audio
+bytes. The returned artifact still needs its own fresh, exact-byte bulk import
+consent; reading or labeling it grants neither import nor factual approval.
+
+`ProducedMeetingTranscript::session_input` projects its validated structured
+turns into the native `ParsedTranscript` shape. It keeps source turn ids in the
+same order, the recording's source thread id and the normalized NOTE fallback.
+Capture time is in seconds. Absolute turn claims use checked capture time times
+1,000 plus the exact start/end millisecond offsets. Without capture time those
+absolute claims stay absent. Source labels remain strings, never PERSON ids or
+TURN roles. This method does not run the FileDrop line parser, mint/close a
+SESSION, or queue either extraction path. The connected meeting SESSION caller
+still needs the native import-source and review propagation in both MESO and
+CHAT before activation; ordinary FileDrop behavior is unchanged.
