@@ -30545,6 +30545,12 @@ pub fn vault_evals_repair_prepare(
     memory: &Memory<'_>,
     input: crate::skill_optimize::EvalRepairTaskSource,
 ) -> MemoryResult<crate::skill_optimize::EvalRepairCasePreparation> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.evals.repair.prepare",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory
         .read_eval_repair_task(&input)
         .map(crate::skill_optimize::EvalRepairCasePreparation::from)

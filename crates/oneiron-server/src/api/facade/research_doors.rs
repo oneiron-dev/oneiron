@@ -107,28 +107,6 @@ pub(crate) async fn vault_evals_measurements_request(
     .await
 }
 
-/// Prepare only the pinned recipe and actual scoped-read receipt. No owner
-/// write proof is requested, and no task input or expected response is served.
-pub(crate) async fn vault_evals_repair_prepare(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: oneiron::skill_optimize::EvalRepairTaskSource,
-) -> Listed<oneiron::skill_optimize::EvalRepairCasePreparation> {
-    use super::host_doors::support::{credential_listing, refused};
-
-    const VERB: &str = "vault.evals.repair.prepare";
-    let caller = match super::facade_actor(server, auth) {
-        Ok(caller) => caller,
-        Err(error) => return refused(error.into_memory_error()),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory
-            .read_eval_repair_task(&input)
-            .map(oneiron::skill_optimize::EvalRepairCasePreparation::from)
-    })
-    .await
-}
-
 /// Record or reuse the exact recipe through the existing owner-validated
 /// writer, without widening this credential's source-reading rights.
 pub(crate) async fn vault_evals_repair_record(
@@ -137,10 +115,13 @@ pub(crate) async fn vault_evals_repair_record(
     input: oneiron::skill_optimize::EvalRepairCaseRequest,
 ) -> Listed<oneiron::skill_optimize::EvalRepairCaseReference> {
     const VERB: &str = "vault.evals.repair.record";
-    owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
+    let source_rows = super::host_doors::support::hex_rows([&input.recipe.source.claim_ref]);
+    let (answer, mut rows) = owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
         memory
             .record_eval_repair_case(owner, &input)
             .map(oneiron::skill_optimize::EvalRepairCaseReference::from)
     })
-    .await
+    .await;
+    rows.extend(source_rows);
+    (answer, rows)
 }
