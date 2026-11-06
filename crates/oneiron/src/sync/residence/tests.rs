@@ -75,6 +75,7 @@ fn paged_index_is_metadata_only_and_first_touch_is_one_granted_item() {
             entity_id: visible.to_hex(),
             title: Some("A current item".into()),
             learned_at: 1,
+            content_world: ContentWorld::Base,
         }]
     );
     let blob = selected_item_blob(&vault, &source, &window, scope, &selector, visible)
