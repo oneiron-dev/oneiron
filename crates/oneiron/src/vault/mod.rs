@@ -253,6 +253,12 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The host's isolated inspection of e-sign original PDFs, reached before
+    /// a field save's or a sign act's writer (FIX 9609,
+    /// [`Vault::install_esign_page_inspector`]). In memory only.
+    pub(crate) esign_page_inspector: std::sync::Mutex<
+        Option<std::sync::Arc<dyn crate::blob_artifact::esign::EsignPageInspector>>,
+    >,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
