@@ -552,10 +552,11 @@ fn rebuilt(
         let end = piece(tree.child(para, DML, "endParaRPr").ok()?);
         let p = para_node.qualified.as_str();
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
-        let segments: Vec<(usize, &Node, Vec<char>)> = tree
+        let segments: Vec<(usize, usize, &Node, Vec<char>)> = tree
             .children(para)
-            .filter(|(_, node)| !node.is(DML, "pPr") && !node.is(DML, "endParaRPr"))
-            .map(|(at, node)| {
+            .enumerate()
+            .filter(|(_, (_, node))| !node.is(DML, "pPr") && !node.is(DML, "endParaRPr"))
+            .map(|(ordinal, (at, node))| {
                 let text = if node.is(DML, "br") {
                     vec!['\u{b}']
                 } else {
@@ -564,7 +565,7 @@ fn rebuilt(
                         .flat_map(|(_, node)| node.text.chars())
                         .collect()
                 };
-                (at, node, text)
+                (ordinal, at, node, text)
             })
             .collect();
         let old: Vec<char> = within(tree, para)
@@ -580,13 +581,14 @@ fn rebuilt(
             .collect();
         if !segments
             .iter()
-            .flat_map(|(_, _, text)| text.iter())
+            .flat_map(|(_, _, _, text)| text.iter())
             .eq(old.iter())
         {
             return None;
         }
         let new: Vec<char> = line.chars().collect();
-        if old == new && !within(tree, para).any(|(_, node)| node.is(DML, "fld")) {
+        let field_free = !within(tree, para).any(|(_, node)| node.is(DML, "fld"));
+        if old == new && field_free {
             return Some(
                 std::str::from_utf8(&bytes[para_node.span.clone()])
                     .ok()?
@@ -606,7 +608,7 @@ fn rebuilt(
         }
         {
             let mut position = 0;
-            for (at, node, text) in &segments {
+            for (_, at, node, text) in &segments {
                 let start = position;
                 let end = position + text.len();
                 if !node.is(DML, "r")
@@ -627,7 +629,17 @@ fn rebuilt(
         let retained_runs = |from: usize, to: usize| -> Option<String> {
             let mut runs = String::new();
             let mut position = 0;
-            for (at, node, text) in &segments {
+            let mut previous: Option<(usize, &Node)> = None;
+            for (ordinal, at, node, text) in &segments {
+                // Only original neighbors inside this unchanged interval keep their gap.
+                if let Some((prior, previous_node)) = previous {
+                    if field_free && prior + 1 == *ordinal && from < position && position < to {
+                        runs.push_str(
+                            std::str::from_utf8(&bytes[previous_node.span.end..node.span.start])
+                                .ok()?,
+                        );
+                    }
+                }
                 let start = position.max(from);
                 let end = (position + text.len()).min(to);
                 if text.is_empty()
@@ -650,6 +662,7 @@ fn rebuilt(
                     }
                 }
                 position += text.len();
+                previous = Some((*ordinal, *node));
             }
             Some(runs)
         };
