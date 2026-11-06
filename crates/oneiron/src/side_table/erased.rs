@@ -2,9 +2,10 @@
 //! erase's own write of a row's erased form. An erase always lands, so the
 //! wall, which admits new content and may refuse it, never stands between an
 //! erase and the row it scrubs. What this put writes is restricted by its
-//! argument: an [`Erased`] value, which only the row type's own erase
-//! transform ([`ErasedForm::into_erased`]) makes, from a row as it was
-//! stored, admitted then. Every other put keeps the wall.
+//! argument: an [`Erased`] value, made only by the row type's actor-erasure
+//! transform ([`ErasedForm::into_erased`]) or a concrete content-removal
+//! projection, from a row as it was stored, admitted then. Every other put
+//! keeps the wall.
 
 use heed::RwTxn;
 
@@ -54,5 +55,23 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     ) -> Result<()> {
         let bytes = self.encode_value(&value.0)?;
         self.write_raw(dbs, txn, &self.key_bytes(key), &bytes)
+    }
+}
+
+impl Erased<crate::code_run::CodeRunReplayRecord> {
+    /// Erases only the named output previews of the stored replay record.
+    /// Unlike the actor-erased form, this preserves every bridge outcome
+    /// and every unrelated output. The source erase releases the selected
+    /// body occurrences in the same writer.
+    pub(crate) fn code_run_output_previews(
+        mut record: crate::code_run::CodeRunReplayRecord,
+        paths: &std::collections::BTreeSet<String>,
+    ) -> Self {
+        for output in &mut record.outputs {
+            if paths.contains(&output.path) {
+                output.preview.text = crate::code_run::CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
+            }
+        }
+        Self(record)
     }
 }

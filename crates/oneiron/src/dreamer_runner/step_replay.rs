@@ -107,6 +107,8 @@ pub enum CapsuleRequest {
         body: OutputRef,
         path: String,
         stored_hash: [u8; 32],
+        /// Whether restore explicitly marked this request body as erased.
+        erased: bool,
     },
     /// The side-row wall refused the request outright, for these reasons
     /// (a recovery phrase, a key split over members, an opaque codec): no
@@ -205,6 +207,8 @@ pub struct ExecutorStepStart {
     pub digest: [u8; 32],
     /// The bridge log's length at the step's start.
     pub bridge_start: u64,
+    /// Whether restore explicitly marked this start body as erased.
+    pub erased: bool,
 }
 
 /// What an erase leaves of a capsule (FIX 6144): what the step was (its

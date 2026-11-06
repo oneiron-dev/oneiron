@@ -22,9 +22,11 @@ use super::types::{
 };
 use crate::code_run::{
     CapsuleRequest, CapsuleRungBinding, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
-    ExecutorStepStart, ReplayRoutePin, StepReplayCapsule, StepStartBody, capsule_request,
-    capsule_start_body, decode_code_run_replay_record, step_replay_capsules_in_txn,
+    ExecutorStepStart, ReplayRoutePin, SelfDispatchOutcome, StepReplayCapsule, StepStartBody,
+    capsule_request, capsule_start_body, decode_code_run_replay_record, resolve_result,
+    step_replay_capsules_in_txn,
 };
+use crate::engine_executor::{JsResultRef, is_result_output_path};
 use crate::limit_ask::EngineLimit;
 use crate::secret_rotation::ArtifactTaintState;
 use crate::{EntityId, LlmRequest, Result, Vault};
@@ -44,6 +46,14 @@ pub(crate) struct FrozenBody {
     pub(crate) state: ArtifactTaintState,
     pub(crate) secret: Option<String>,
     pub(crate) bytes: Option<Vec<u8>>,
+}
+
+/// A stored reply produced during the captured step. It becomes visible to
+/// an arm only when that arm matches the recorded call that produced it.
+pub(crate) struct FrozenReply {
+    pub(crate) seq: u64,
+    pub(crate) body: FrozenBody,
+    pub(crate) name: Option<String>,
 }
 
 /// One captured step, read and frozen for an arm: its request as stored,
@@ -68,6 +78,7 @@ pub struct PreparedShadowStep {
     pub(crate) bridge_start: u64,
     pub(crate) bridge_end: u64,
     pub(crate) frozen: Vec<FrozenBody>,
+    pub(crate) replies: Vec<FrozenReply>,
     /// The vault's `[limits]` scan row, frozen for the arm's reads.
     pub(crate) scan_bytes: u64,
 }
@@ -207,10 +218,13 @@ fn prepare_step_source(
         return Ok(Err(admitted::lapsed()));
     }
     let Some(request) = capsule_request(vault, capsule)? else {
-        return Ok(Err(unavailable(
-            Reason::SourceWithheld,
-            "request_unreadable",
-        )));
+        let (reason, cause) =
+            if matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. }) {
+                (Reason::SourceErased, "request_erased")
+            } else {
+                (Reason::SourceWithheld, "request_unreadable")
+            };
+        return Ok(Err(unavailable(reason, cause)));
     };
     if !admits()? {
         return Ok(Err(admitted::lapsed()));
@@ -234,6 +248,10 @@ fn prepare_step_source(
         Ok(frozen) => frozen,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
+    let replies = match freeze_replies(vault, capsule.run, &prefix, &window, admits)? {
+        Ok(replies) => replies,
+        Err(unavailable) => return Ok(Err(unavailable)),
+    };
     let bridge_end = window.bridge_calls.len() as u64;
     Ok(Ok(PreparedShadowStep {
         step: ShadowStepIdentity::of(capsule),
@@ -250,6 +268,7 @@ fn prepare_step_source(
         prefix,
         window,
         frozen,
+        replies,
         scan_bytes: vault.limit_watch().bound(EngineLimit::CodeResultScanBytes),
     }))
 }
@@ -263,7 +282,12 @@ fn read_step_in_txn(
     start: &ExecutorStepStart,
 ) -> Result<Outcome<(CodeRunReplayRecord, CodeRunReplayRecord)>> {
     let Some(bytes) = capsule_start_body(vault, rtxn, capsule)? else {
-        return Ok(Err(unavailable(Reason::SourceWithheld, "start_unreadable")));
+        let (reason, cause) = if start.erased {
+            (Reason::SourceErased, "start_erased")
+        } else {
+            (Reason::SourceWithheld, "start_unreadable")
+        };
+        return Ok(Err(unavailable(reason, cause)));
     };
     let Some(prefix) = start_prefix(&bytes) else {
         return Ok(Err(unavailable(
@@ -357,26 +381,14 @@ fn freeze_bodies(
     let mut frozen = Vec::new();
     let mut frozen_bytes = 0_u64;
     for output in crate::engine_executor::shadow_readable_outputs(prefix) {
-        let state = vault.code_run_raw_output_taint_state(Some(run), &output)?;
-        let secret = vault.code_run_raw_output_secret(Some(run), &output)?;
-        let bytes = if state.is_tainted() {
-            None
-        } else {
-            if !admits()? {
-                return Ok(Err(admitted::lapsed()));
-            }
-            let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
-                return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
-            };
-            frozen_bytes = frozen_bytes.saturating_add(bytes.len() as u64);
-            Some(bytes)
+        let body = match freeze_body(vault, run, output, admits, "prefix_body")? {
+            Ok(body) => body,
+            Err(unavailable) => return Ok(Err(unavailable)),
         };
-        frozen.push(FrozenBody {
-            output,
-            state,
-            secret,
-            bytes,
-        });
+        if let Some(bytes) = &body.bytes {
+            frozen_bytes = frozen_bytes.saturating_add(bytes.len() as u64);
+        }
+        frozen.push(body);
     }
     tracing::debug!(
         bodies = frozen.len(),
@@ -384,6 +396,102 @@ fn freeze_bodies(
         "a shadow step's earlier bodies are frozen"
     );
     Ok(Ok(frozen))
+}
+
+/// Freezes only the exact result occurrence named by each stored reply in
+/// this step's bridge window. Future results and bindings stay invisible.
+fn freeze_replies(
+    vault: &Vault,
+    run: EntityId,
+    prefix: &CodeRunReplayRecord,
+    window: &CodeRunReplayRecord,
+    admits: Admits<'_>,
+) -> Result<Outcome<Vec<FrozenReply>>> {
+    let mut replies = Vec::new();
+    for row in window.bridge_calls.iter().skip(prefix.bridge_calls.len()) {
+        // Other outcomes are still decoded only when the arm matches them.
+        if !row.outcome.as_map().is_some_and(|entries| {
+            entries.iter().any(|(key, value)| {
+                key.as_str() == Some("kind") && value.as_str() == Some("stored_reply")
+            })
+        }) {
+            continue;
+        }
+        let SelfDispatchOutcome::StoredReply(reply) =
+            crate::code_run::payload::decode_self_dispatch_outcome(&row.outcome)?
+        else {
+            continue;
+        };
+        let Some(reference) = reply
+            .output
+            .get("ref")
+            .and_then(serde_json::Value::as_str)
+            .filter(|reference| reference.starts_with("occurrence:"))
+        else {
+            return Ok(Err(unavailable(
+                Reason::SourceDigestMismatch,
+                "stored_reply_ref",
+            )));
+        };
+        let reference = JsResultRef::Handle(reference.to_owned());
+        let Some((output, _)) = resolve_result(
+            run,
+            window
+                .outputs
+                .iter()
+                .filter(|output| is_result_output_path(&output.path)),
+            &[],
+            &reference,
+        ) else {
+            return Ok(Err(unavailable(
+                Reason::SourceMissing,
+                "stored_reply_output",
+            )));
+        };
+        let body = match freeze_body(vault, run, output, admits, "stored_reply_body")? {
+            Ok(body) => body,
+            Err(unavailable) => return Ok(Err(unavailable)),
+        };
+        replies.push(FrozenReply {
+            seq: row.seq,
+            body,
+            name: reply
+                .output
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+        });
+    }
+    Ok(Ok(replies))
+}
+
+/// The same admission and taint checks for a prefix body or a matched reply.
+fn freeze_body(
+    vault: &Vault,
+    run: EntityId,
+    output: CodeRunRawOutput,
+    admits: Admits<'_>,
+    missing: &'static str,
+) -> Result<Outcome<FrozenBody>> {
+    let state = vault.code_run_raw_output_taint_state(Some(run), &output)?;
+    let secret = vault.code_run_raw_output_secret(Some(run), &output)?;
+    let bytes = if state.is_tainted() {
+        None
+    } else {
+        if !admits()? {
+            return Ok(Err(admitted::lapsed()));
+        }
+        let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
+            return Ok(Err(unavailable(Reason::SourceMissing, missing)));
+        };
+        Some(bytes)
+    };
+    Ok(Ok(FrozenBody {
+        output,
+        state,
+        secret,
+        bytes,
+    }))
 }
 
 /// Whether `actor`, the actor an arm's source run is for, is gone here

@@ -193,6 +193,21 @@ impl Vault {
             .map(|record| record.with_oid(oid)))
     }
 
+    /// The live object's manifest ASSET binding in the caller's snapshot.
+    /// A missing, deleted or undecodable object has no attributable source.
+    pub(crate) fn lfs_object_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        oid: LfsOid,
+    ) -> Result<Option<EntityId>> {
+        if super::lifecycle::DELETED.contains(&self.store, txn, &oid)? {
+            return Ok(None);
+        }
+        Ok(OBJECTS
+            .get_lenient(&self.store, txn, &oid)?
+            .map(|record| record.asset_id))
+    }
+
     /// The directory the object plane and an upload's spool are written in:
     /// the disk a free-space floor is judged on.
     pub fn lfs_storage_dir(&self) -> &std::path::Path {

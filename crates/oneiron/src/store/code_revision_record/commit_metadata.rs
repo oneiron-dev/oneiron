@@ -1,11 +1,13 @@
-//! Authorship, message and file modes are canonical revision data, not export input.
+//! Core half of `store::code_revision_record::commit_metadata`: its store-layer items live in `oneiron_store::code_revision_record::commit_metadata` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::code_revision_record::commit_metadata::*;
+
 use crate::store::code_commit_metadata::CodeCommitMetadata;
 use crate::{EntityId, Error, Result};
 use rmpv::Value;
 use std::collections::BTreeMap;
-fn invalid() -> Error {
-    Error::InvalidClaimBody("invalid canonical code commit metadata")
-}
+
 pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
     let Some(meta) = &revision.commit_metadata else {
         return Ok(());
@@ -24,24 +26,7 @@ pub(crate) fn validate(revision: &super::CodeRevision) -> Result<()> {
 
     Ok(())
 }
-pub(crate) fn to_value(meta: Option<&CodeCommitMetadata>) -> Value {
-    meta.map_or(Value::Nil, |m| {
-        Value::Array(vec![
-            m.author.map_or(Value::Nil, |author| {
-                Value::Binary(author.as_bytes().to_vec())
-            }),
-            Value::from(m.message.clone()),
-            Value::Array(
-                m.file_modes
-                    .iter()
-                    .map(|(id, mode)| {
-                        Value::Array(vec![Value::Binary(id.to_vec()), Value::from(*mode)])
-                    })
-                    .collect(),
-            ),
-        ])
-    })
-}
+
 pub(crate) fn from_value(value: &Value) -> Result<Option<CodeCommitMetadata>> {
     if value.is_nil() {
         return Ok(None);

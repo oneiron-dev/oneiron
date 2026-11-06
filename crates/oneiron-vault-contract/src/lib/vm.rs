@@ -90,6 +90,11 @@ pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// supervisor maps a guest owner path below it onto the vault's own config
 /// directory (`crate::settings_paths`).
 pub const VM_GUEST_CONFIG_DIR: &str = "/config";
+/// Where the guest mounts the node's optional read-only shared-model drive.
+pub const VM_GUEST_MODELS_DIR: &str = "/models";
+/// An image mounting the optional model drive and passing its guest-local
+/// root to the engine names this as `vm_model_drive_revision` in its manifest.
+pub const VM_MODEL_DRIVE_REVISION: u32 = 1;
 /// The guest's view of its network plan on the config drive (FIX 6808,
 /// [`VmGuestNetworkConfig`]): one JSON object, read whole by the root
 /// bootstrap before the vault's key goes in. Without it the guest sets up no

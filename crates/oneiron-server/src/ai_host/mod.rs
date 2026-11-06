@@ -153,6 +153,8 @@ pub struct AiHandle {
     decisions: Arc<OnceLock<DecisionHost>>,
     /// The installed Coach-heal worker's real publisher and served runtime.
     coach_heal_wake: Arc<OnceLock<coach_heal::WakeHost>>,
+    /// The runtime recorded by the actual host Coach worker installation.
+    coach_host_wake: Arc<OnceLock<tokio::runtime::Handle>>,
     /// The same cheap compactor code mode serves, exposed to typed host
     /// triggers once that route is bound. No route means MODEL_UNAVAILABLE.
     host_compaction: Arc<
@@ -167,6 +169,8 @@ pub struct AiHandle {
     /// The compaction writer factory chat and code mode share, settled when
     /// the host attaches (FIX 4465 D).
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
+    /// The host's resolved Dreamer question and draft wording.
+    dreamer_wording: Arc<crate::config::models::DreamerWording>,
     /// The wording runs are asked for their confession in (FIX 8696).
     confession: Arc<str>,
     /// The control the Dreamer's passes are admitted and paused through,
@@ -174,6 +178,10 @@ pub struct AiHandle {
     /// 6909): the owner's pause and resume doors set and clear their own
     /// cause on it. `None` elsewhere.
     dreamer_control: Option<DreamerControl>,
+    /// The owner's runner-seat policy (`[models.dreamer] runner_seats`), as
+    /// the config this handle was built from names it: the seat host routes
+    /// a bound runner work's end under it (FIX 9320, FIX 10625).
+    runner_seats: Option<crate::runtime::seat_login::RunnerSeatPolicySettings>,
 }
 
 /// The running workers, owned by the serve path until shutdown.

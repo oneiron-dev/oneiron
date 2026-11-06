@@ -53,7 +53,7 @@ impl ClaimMaterialization {
             return Err(binding_error());
         }
         let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let next = crate::claim::validate_claim_body_and_decode_in_txn(store, txn, data, false)?;
         let Some(valid_to) = next.valid_to else {
             return Err(binding_error());
         };

@@ -385,7 +385,7 @@ fn receipt_in_txn(
 }
 
 /// Lowercase or uppercase hex as bytes; `None` for anything else.
-fn unhex(text: &str) -> Option<Vec<u8>> {
+pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {
     if text.is_empty() || text.len() % 2 != 0 {
         return None;
     }

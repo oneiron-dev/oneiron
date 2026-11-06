@@ -8,7 +8,7 @@ use loro::LoroDoc;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimSubject, validate_claim_body_and_decode};
+use crate::claim::{ClaimSubject, validate_claim_body_and_decode_in_txn};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -128,6 +128,7 @@ impl<'a> Routes<'a> {
         let mut named = BTreeSet::new();
         let mut entity_candidates = BTreeSet::new();
         let mut typed_world_targets = BTreeSet::new();
+        let rtxn = vault.store.env.read_txn()?;
         map_for_each_value_bytes(&remote.get_map("entities"), |raw, blob| {
             let (Some(blob), Ok(id)) = (blob, EntityId::from_hex(raw)) else {
                 return;
@@ -138,9 +139,12 @@ impl<'a> Routes<'a> {
             if id.to_hex() != raw || header.entity_type != ENTITY_TYPE_CLAIM {
                 return;
             }
-            let Ok(body) =
-                validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)
-            else {
+            let Ok(body) = validate_claim_body_and_decode_in_txn(
+                &vault.store,
+                &rtxn,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            ) else {
                 return;
             };
             if let Some(refusal) = crate::federation::guest_claim_withheld(&body) {
@@ -178,6 +182,7 @@ impl<'a> Routes<'a> {
                 moved.push((id, header.learned_at));
             }
         });
+        drop(rtxn);
         if !moved.is_empty() {
             let base = placed.foreign_of(None)?;
             for (id, learned_at) in moved {

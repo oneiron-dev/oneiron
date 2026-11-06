@@ -5,8 +5,7 @@ use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
     protocol::{
-        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session,
-        Snapshot,
+        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot,
     },
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
@@ -324,13 +323,10 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
         |mut context: StoreContextMut<'_, State<T>>, (path,): (String,)| {
             let state = context.data_mut();
             state.count_call()?;
-            let result = match state.workspace.read(&path) {
-                Ok(bytes) => {
-                    state.count_bytes(bytes.len())?;
-                    Ok(bytes)
-                }
-                Err(_) => Err(String::from("workspace read refused")),
-            };
+            let result = state
+                .workspace
+                .read(&path)
+                .map_err(|_| String::from("workspace read refused"));
             Ok((result,))
         },
     )?;

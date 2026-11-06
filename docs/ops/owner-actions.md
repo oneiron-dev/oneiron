@@ -1352,9 +1352,16 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 
 The Coach reads the open inbox with a triage skill you bind, and files what it finds as
 proposals in your run tray. It never closes, moderates or deletes a note. Bind the skill first:
-`GET /v1/owner/feedback/triage/binding` returns `{skill, revision}`, and `PUT` with
-`{"skill": "<SKILL id>", "seen": <revision>}` binds it (`"skill": null` unbinds; a stale `seen`
-is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
+`GET /v1/owner/feedback/triage/binding` returns
+`{skill, enqueue_on_intake, revision, set_at}`. `PUT` with
+`{"skill": "<SKILL id>", "enqueue_on_intake": false, "seen": <revision>}` binds it
+(`"skill": null` unbinds; a stale `seen` is refused). The required
+`enqueue_on_intake` boolean defaults to false while never set, keeping manual/nightly
+batching. Set it true to queue the same ordinary sweep as each new inbox note lands;
+running work retains one coalesced later sweep. Turning it off leaves already admitted
+work intact. This is scheduling under the owner's setting, not anonymous authority.
+The repo's `skills/feedback-triage/SKILL.md` is a starting skill. Details:
+[`Feedback triage on intake`](feedback-triage-intake.md).
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
 already going is joined. If that sweep is already running, the request also retains one later
@@ -2194,6 +2201,25 @@ room turn, or when it comes from a credential that binds no principal or read ke
 writes. A refusal answers with the code, words and suggestions the verb's own route refused
 with, and a retry under a refused key answers with the same words. A TURN write wakes the Dreamer once on either
 path.
+
+## Pairing code guesses
+
+A pairing code is short enough to type, so `POST /v1/core/pairing/redeem` counts each client
+address's redemptions. An address may make five that no success answers. After that it waits
+before its next code is read: one second, then twice as long after each try, up to an hour.
+While it waits the door answers `429 TOO_MANY_ATTEMPTS` with `Retry-After`. A success, or an
+hour with no redemption from the address, starts it over. Every address counts alike, loopback
+and paired mesh machines too, and no address ever waits for another, so a stranger cannot block
+your own pairing. Behind a managed host's supervisor or relay the server sees no caller's own
+address, so it counts nothing there; the managed edge bounds those callers. A restart forgets the
+count. Change the rows in `[limits]`:
+
+```toml
+[limits]
+pairing_redeem_free_failures = 5          # redemptions an address makes before it waits
+pairing_redeem_wait_ceiling_ms = 3600000  # the longest wait
+pairing_redeem_quiet_ms = 3600000         # no redemption this long starts the address over
+```
 
 ## Live agent runs
 

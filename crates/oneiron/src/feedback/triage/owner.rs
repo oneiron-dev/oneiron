@@ -22,6 +22,8 @@ pub struct FeedbackTriageBindingRequest {
     /// The SKILL entity to bind; `None` unbinds.
     #[serde(default)]
     pub skill: Option<EntityId>,
+    /// Queue the ordinary sweep on new inbox notes; false keeps batching.
+    pub enqueue_on_intake: bool,
     /// The `revision` the owner's surface read: a binding that moved since
     /// is refused, and nothing changes.
     pub seen: u64,
@@ -227,10 +229,11 @@ impl Vault {
         binding_in_txn(self, &txn)
     }
 
-    /// Binds the SKILL the feedback triage runs, or unbinds it, at the
-    /// revision the owner read. Naming the skill bound already changes
-    /// nothing and keeps the revision. The skill must be a live, active,
-    /// approved shared SKILL; the triage job's load rechecks it.
+    /// Sets the skill and intake scheduling policy at the revision the
+    /// owner read. Keeping both unchanged keeps the revision. A changed
+    /// skill must be a live, active, approved shared SKILL; the triage job's
+    /// load rechecks it. Disabling intake scheduling leaves admitted work
+    /// and manual or nightly sweeps unchanged.
     ///
     /// # Errors
     ///
@@ -250,10 +253,13 @@ impl Vault {
             if input.seen != current.revision {
                 return Err(Error::ConcurrentWrite(STALE_BINDING));
             }
-            if current.skill == input.skill {
+            if current.skill == input.skill && current.enqueue_on_intake == input.enqueue_on_intake
+            {
                 return Ok(current);
             }
-            if let Some(skill) = &input.skill {
+            if current.skill != input.skill
+                && let Some(skill) = &input.skill
+            {
                 if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                     return Err(Error::EntityNotFound);
                 }
@@ -271,6 +277,7 @@ impl Vault {
             }
             let next = FeedbackTriageBinding {
                 skill: input.skill,
+                enqueue_on_intake: input.enqueue_on_intake,
                 revision: current
                     .revision
                     .checked_add(1)

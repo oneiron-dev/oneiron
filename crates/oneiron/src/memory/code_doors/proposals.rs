@@ -22,14 +22,43 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeProposalSubmitRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
+        self.code_proposal_submit(owner, input, None)
+    }
+
+    /// Submits a fresh review of an approved ordinary file's proved redacted
+    /// resolution. The existing input supplies fresh attribution, message and
+    /// review policy; its content is replaced by the engine's projection.
+    pub fn code_proposal_rereview_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        original: EntityId,
+        input: CodeProposalSubmitRequest,
+    ) -> MemoryResult<CodeProposalSubmitted> {
+        self.code_proposal_submit(owner, input, Some(original))
+    }
+
+    fn code_proposal_submit(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeProposalSubmitRequest,
+        original: Option<EntityId>,
+    ) -> MemoryResult<CodeProposalSubmitted> {
         let actor = self.code_owner(owner)?;
         let repo_ref = self.code_repo(input.repo)?;
         self.code_submission_sources(&input)?;
+        if let Some(original) = original {
+            self.code_readable(original, None)?;
+        }
         let repo = input.repo;
         let (request, catalog) = owner_submission(repo_ref, actor, input);
-        let proposal = self
-            .vault
-            .propose_repo_mutation_as_owner(owner, repo, request, catalog)?;
+        let proposal = match original {
+            Some(original) => self
+                .vault
+                .propose_repo_rereview_as_owner(owner, repo, original, request, catalog)?,
+            None => self
+                .vault
+                .propose_repo_mutation_as_owner(owner, repo, request, catalog)?,
+        };
         self.produced_from([proposal.id]);
         Ok(CodeProposalSubmitted {
             proposal: proposal.id,
