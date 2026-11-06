@@ -317,6 +317,7 @@ pub(super) fn materialize_entities_with_changes(
     let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
         .with_residence(Residence::Quarantine(doc));
     let mut staged = EntityMaterialization::default();
+    let copy_writer = crate::embed::home_vectors::copy_scope::observe_writer(vault, window_key);
     let result = vault.with_write_txn_grouped(|wtxn| {
         staged.stage_in_txn(doc, delta, vault, window_key, &ingest, wtxn)?;
         #[cfg(test)]
@@ -377,6 +378,9 @@ pub(super) fn materialize_entities_with_changes(
         }
     }
 
+    if let Some(copy_writer) = copy_writer {
+        copy_writer.finish(&result);
+    }
     let committed = result.is_ok();
     if let Err(e) = result {
         // ONE-1147: the whole batch txn aborted — every applied op's write

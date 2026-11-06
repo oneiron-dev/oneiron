@@ -250,7 +250,7 @@ impl SyncClient {
                     // update can bring it level, the server's replacement can.
                     Err(_) if self.update_reaches_below_root(&key, payload) => {
                         self.staged_world_updates
-                            .retain(|(staged, bytes, _)| staged != &key || bytes != payload);
+                            .retain(|staged| staged.key != key || staged.bytes != payload);
                         Ok(vec![replacement_request(window_key)?])
                     }
                     Err(error) => Err(error),
@@ -448,7 +448,7 @@ impl SyncClient {
             };
             let mut index = 0;
             while index < self.staged_world_updates.len() {
-                let key = self.staged_world_updates[index].0.clone();
+                let key = self.staged_world_updates[index].key.clone();
                 let live = self.ensure_window(key.as_str())?;
                 // A window demoted since its frame was staged stays closed.
                 if !self.full_window_exchange_allowed(key.as_str())? {
@@ -458,7 +458,7 @@ impl SyncClient {
                 match crate::sync::window::validate_window_update_with_staged_worlds(
                     &self.vault,
                     &live.doc,
-                    &self.staged_world_updates[index].1,
+                    &self.staged_world_updates[index].bytes,
                     &key,
                     &evidence,
                 ) {
@@ -476,35 +476,43 @@ impl SyncClient {
                         ));
                     }
                 }
-                let (key, bytes, from) = self.staged_world_updates[index].clone();
+                let staged = self.staged_world_updates[index].clone();
                 // A staged update keeps the machine that sent it (FIX 11709).
-                let own_device = self.own_device_import(from);
-                self.import_accepted_window_update_with_evidence(
-                    key.as_str(),
+                let own_device = self.own_device_import(staged.from);
+                self.import_accepted_window_update_with_copies(
+                    staged.key.as_str(),
                     &live,
-                    &bytes,
+                    &staged.bytes,
                     &evidence,
                     own_device.as_ref(),
+                    &staged.copies,
                 )?;
                 // The pass goes on in arrival order: a ready update never
                 // waits on an unresolved one staged before it, and one an
                 // import resolved is taken on the next pass of this drain,
                 // its deadline (FIX 8863).
                 self.staged_world_updates.remove(index);
-                healed.push(key);
+                healed.push((staged.key, staged.copies));
                 progressed = true;
             }
             if !progressed {
                 break;
             }
         }
-        for key in healed {
+        for (key, copies) in healed {
             let live = self.ensure_window(key.as_str())?;
-            crate::sync::window::forward_rematerialize(
+            super::super::home_claim_copies::with_home_claim_copies(
                 &self.vault,
-                &live.doc,
-                self.manager.materializer(),
                 &key,
+                &copies,
+                || {
+                    crate::sync::window::forward_rematerialize(
+                        &self.vault,
+                        &live.doc,
+                        self.manager.materializer(),
+                        &key,
+                    )
+                },
             )
             .map_err(|error| TransportError::Storage(format!("heal staged world edge: {error}")))?;
         }
@@ -529,7 +537,7 @@ impl SyncClient {
     /// [`Self::import_accepted_window_update`] with `evidence`, staged world
     /// rows, and under `own_device`, the proof an own machine sent `payload`
     /// (FIX 11709).
-    pub(in crate::sync::client) fn import_accepted_window_update_with_evidence(
+    pub(in crate::sync::client) fn land_accepted_window_update_with_evidence(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,
