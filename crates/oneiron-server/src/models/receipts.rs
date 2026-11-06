@@ -275,11 +275,10 @@ impl ServerReceipts {
     }
 }
 
-impl RunReceiptSink for ServerReceipts {
-    fn record(&self, receipt: RunReceipt) {
-        if let Some(usage) = self.usage() {
-            usage.record(&receipt);
-        }
+impl ServerReceipts {
+    /// Native usage is already committed with its allocation hold. This leg
+    /// only observes the receipt; it must not produce another usage event.
+    pub(crate) fn observe(&self, receipt: RunReceipt) {
         let chosen = self
             .chosen
             .read()
@@ -289,6 +288,15 @@ impl RunReceiptSink for ServerReceipts {
             Some(sink) => sink.record(receipt),
             None => LoggedReceipts.record(receipt),
         }
+    }
+}
+
+impl RunReceiptSink for ServerReceipts {
+    fn record(&self, receipt: RunReceipt) {
+        if let Some(usage) = self.usage() {
+            usage.record(&receipt);
+        }
+        self.observe(receipt);
     }
 
     fn budget_hit(
