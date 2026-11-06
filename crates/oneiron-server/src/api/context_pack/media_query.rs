@@ -56,6 +56,12 @@ pub(crate) struct DecodedMediaQuery {
     kinds: Vec<InputKind>,
 }
 
+impl DecodedMediaQuery {
+    pub(crate) fn input_storage_bytes(&self) -> u64 {
+        (self.bytes.capacity() as u64).saturating_add(self.mime.capacity() as u64)
+    }
+}
+
 /// One more ranked list a door adds: a declared space, the tower that
 /// encoded the vector, and the vector.
 pub(crate) struct MediaSeed {
