@@ -1,5 +1,9 @@
 //! Caller-owned model-step context and terminal outcomes.
 
+pub use crate::model_step_effect::StepEffectBinding;
+
+use serde::{Deserialize, Serialize};
+
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
@@ -34,10 +38,21 @@ impl DurableStepContext<'_> {
     }
 }
 
+/// One exact committed terminal response. This is correlation data, never
+/// execution authority or proof that the response has been paid for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepReceipt {
+    pub(crate) attempt_id: AttemptId,
+    pub(crate) step_hash: [u8; 32],
+    pub(crate) claim_id: EntityId,
+}
+
 /// Terminal outcome of [`call_as_step`](crate::llm::call_as_step).
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepOutcome {
     Finished {
+        /// The durable step that produced this response, not execution authority.
+        binding: StepReceipt,
         response: LlmResponse,
         memoized: bool,
         /// Budget legibility (ONE-1305): Some inside wake passes (when

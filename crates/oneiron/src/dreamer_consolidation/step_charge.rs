@@ -10,7 +10,7 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::model_step_context::StepOutcome;
+use crate::model_step_context::{StepOutcome, StepReceipt};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 
@@ -20,7 +20,7 @@ use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 #[derive(Default)]
 pub(super) struct StepChargeTally {
     pub(super) units: u64,
-    pub(super) step_hashes: Vec<[u8; 32]>,
+    pub(super) step_bindings: Vec<StepReceipt>,
 }
 
 impl StepChargeTally {
@@ -54,7 +54,7 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self.step_hashes.clone(),
+            step_bindings: self.step_bindings.clone(),
         }
     }
 
@@ -91,11 +91,13 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self
-                .step_hashes
+            step_bindings: self
+                .step_bindings
                 .iter()
                 .copied()
-                .filter(|hash| *hash != step_hash)
+                .filter(|binding| {
+                    binding.attempt_id != attempt_id || binding.step_hash != step_hash
+                })
                 .collect(),
         })
     }
@@ -119,11 +121,13 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause: DreamerParkCause::Retry,
             completed_units: self.units,
-            step_hashes: self
-                .step_hashes
+            step_bindings: self
+                .step_bindings
                 .iter()
                 .copied()
-                .filter(|hash| *hash != step_hash)
+                .filter(|binding| {
+                    binding.attempt_id != attempt_id || binding.step_hash != step_hash
+                })
                 .collect(),
         })
     }
@@ -131,16 +135,15 @@ impl StepChargeTally {
     pub(super) fn record_terminal(
         &mut self,
         vault: &Vault,
-        attempt_id: AttemptId,
-        step_hash: [u8; 32],
+        binding: StepReceipt,
         usage: &LlmUsage,
     ) -> Result<()> {
-        if self.step_hashes.contains(&step_hash)
-            || DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt_id, &step_hash)?
+        if self.step_bindings.contains(&binding)
+            || DreamerRunnerStore::new(vault).checkpoint_step_charged(binding)?
         {
             return Ok(());
         }
-        self.step_hashes.push(step_hash);
+        self.step_bindings.push(binding);
         self.record_usage(usage);
         Ok(())
     }
@@ -152,14 +155,13 @@ impl StepChargeTally {
     pub(super) fn record_terminal_metered(
         &mut self,
         ctx: &WakeAttemptContext<'_>,
-        attempt_id: AttemptId,
-        step_hash: [u8; 32],
+        binding: StepReceipt,
         usage: &LlmUsage,
     ) -> Result<()> {
-        let tallied = self.step_hashes.len();
-        self.record_terminal(ctx.vault, attempt_id, step_hash, usage)?;
-        if self.step_hashes.len() > tallied {
-            ctx.note_terminal_step_charge(step_hash, usage_units(usage));
+        let tallied = self.step_bindings.len();
+        self.record_terminal(ctx.vault, binding, usage)?;
+        if self.step_bindings.len() > tallied {
+            ctx.note_terminal_step_charge(binding, usage_units(usage));
         }
         Ok(())
     }
@@ -225,6 +227,7 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
 /// settles identically whichever arm accounts it (FIX 12487 round 1).
 pub(super) enum SliceFate {
     Finished {
+        binding: StepReceipt,
         response: LlmResponse,
         failure_policy: Option<DreamerFailureDecision>,
     },
@@ -239,19 +242,20 @@ pub(super) enum SliceFate {
 /// every paid outcome must pass here exactly once.
 pub(super) fn tally_slice_outcome(
     vault: &Vault,
-    attempt_id: AttemptId,
-    step_hash: [u8; 32],
     outcome: DurableStepResult<StepOutcome>,
+    unsaved_usage: Option<LlmUsage>,
     charges: &mut StepChargeTally,
 ) -> Result<SliceFate> {
     Ok(match outcome {
         Ok(StepOutcome::Finished {
+            binding,
             response,
             failure_policy,
             ..
         }) => {
-            charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+            charges.record_terminal(vault, binding, &response.usage)?;
             SliceFate::Finished {
+                binding,
                 response,
                 failure_policy,
             }
@@ -268,7 +272,16 @@ pub(super) fn tally_slice_outcome(
         Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
             SliceFate::Checkpoint
         }
-        Err(error) => SliceFate::Refused(error.to_string()),
+        Err(error) => {
+            if let DurableStepError::SpentLlm { usage, .. }
+            | DurableStepError::SpentFallback { usage, .. } = &error
+            {
+                charges.record_usage(usage);
+            } else if let Some(usage) = unsaved_usage {
+                charges.record_usage(&usage);
+            }
+            SliceFate::Refused(error.to_string())
+        }
     })
 }
 
@@ -282,14 +295,18 @@ pub(super) fn tally_slice_outcome(
 /// (FIX 12487 round 2).
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
-    attempt_id: AttemptId,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
 ) -> Result<bool> {
     let mut trapped = false;
-    for SliceStep { step_hash, outcome } in extracted.steps {
+    for SliceStep {
+        outcome,
+        unsaved_usage,
+        ..
+    } in extracted.steps
+    {
         if matches!(
-            tally_slice_outcome(vault, attempt_id, step_hash, outcome, charges)?,
+            tally_slice_outcome(vault, outcome, unsaved_usage, charges)?,
             SliceFate::Trapped
         ) {
             trapped = true;

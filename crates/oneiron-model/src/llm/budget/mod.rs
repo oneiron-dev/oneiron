@@ -2,6 +2,7 @@
 //! Entry: BudgetGuard.
 //! Definitions are owned by guard, dispatch, policy, templates and types; LLM vocabulary stays in the parent.
 
+mod accounting;
 mod checkpoint;
 mod dispatch;
 mod guard;
@@ -14,6 +15,7 @@ mod types;
 
 mod settlement;
 
+pub use self::accounting::BudgetAccountingSnapshot;
 pub use self::checkpoint::BudgetCheckpoint;
 pub use self::dispatch::{
     DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,

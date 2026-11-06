@@ -31,6 +31,7 @@ pub(crate) async fn call_as_step_with_generation(
         &FallbackRegistry::standard(),
         None,
         DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+        None,
         generation,
     )
     .await
