@@ -195,6 +195,12 @@ impl VerbHookPre {
         &self.call
     }
 
+    /// Canonical post does no work when the pre chain kept no carry.
+    #[must_use]
+    pub(crate) fn has_post_carry(&self) -> bool {
+        self.carry.is_some()
+    }
+
     /// The consumed ask this resumed call runs on, if it resumed one.
     #[must_use]
     pub(crate) fn resumed(&self) -> Option<&ask::AskToken> {
