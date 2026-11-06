@@ -56,6 +56,8 @@ mod connector_manifests;
 pub(crate) use connector_manifests::{
     lift_connector_pack_delta, lift_connector_pack_view, lift_proxy_connector_registration,
 };
+mod decision_asks;
+pub(crate) use decision_asks::{lift_decision_ask, lift_decision_asks};
 mod diagnostics;
 mod feedback;
 mod generated_lenses;
@@ -81,6 +83,8 @@ mod saved_queries;
 pub(crate) use saved_queries::{
     lift_saved_query_evaluation, lift_saved_query_read, lift_saved_query_record,
 };
+mod secret_uses;
+pub(crate) use secret_uses::lift_secret_use_answer;
 mod shape_groups;
 mod shape_plans;
 pub(crate) use shape_groups::lift_shape_groups;

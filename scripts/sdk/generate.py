@@ -2402,6 +2402,12 @@ def uniffi_export(row, types, census):
                 result = f'crate::codec::lift_connector_pack_delta({name}, output)'
             elif row['output'] == 'crate::task_verb::sdk::ProxyConnectorRegistration':
                 result = f'crate::codec::lift_proxy_connector_registration({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::SecretUseAnswer':
+                result = f'crate::codec::lift_secret_use_answer({name}, output)'
+            elif row['output'] == 'crate::llm::decision::DecisionAsk':
+                result = f'crate::codec::lift_decision_ask({name}, output)'
+            elif row['output'] == 'Vec<crate::llm::decision::DecisionAsk>':
+                result = f'crate::codec::lift_decision_asks({name}, output)'
             elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
