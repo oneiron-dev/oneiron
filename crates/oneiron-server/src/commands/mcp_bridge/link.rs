@@ -154,15 +154,15 @@ impl Link {
         &self,
         surface: McpSurface,
         credential: &Credential<'_>,
-        body: Vec<u8>,
+        mut body: Vec<u8>,
         bounds: &Bounds,
     ) -> Result<Exchange, Cut> {
         if let Some(socket) = &self.socket {
-            match socket.exchange(surface, credential, &body, bounds) {
+            match socket.exchange(surface, credential, body, bounds) {
                 Ok(exchange) => return Ok(exchange),
                 Err(Carried::Cut(cut)) => return Err(cut),
                 // Nothing reached the server: this request goes over HTTP.
-                Err(Carried::Unsent) => {}
+                Err(Carried::Unsent(unsent_body)) => body = unsent_body,
             }
         }
         // The owner's sign-in is attested for a socket upgrade alone: owner
@@ -266,8 +266,8 @@ impl HttpLink {
 
 /// How a request the socket was asked to carry ended without an answer.
 enum Carried {
-    /// It never reached the socket, so another carrier may send it.
-    Unsent,
+    /// It never reached the socket, so another carrier may send the original body.
+    Unsent(Vec<u8>),
     /// It was handed to the socket, so it may have run: it is not sent again.
     Cut(Cut),
 }
@@ -332,6 +332,8 @@ struct Outbound {
 
 /// What the driver tells one waiting request.
 enum Inbound {
+    /// The driver wrote the frame; the original HTTP fallback body can go.
+    Sent,
     Chunk {
         bytes: Vec<u8>,
         last: bool,
@@ -385,22 +387,31 @@ impl SocketLink {
         &self,
         surface: McpSurface,
         credential: &Credential<'_>,
-        body: &[u8],
+        mut body: Vec<u8>,
         bounds: &Bounds,
     ) -> Result<Exchange, Carried> {
         // The owner has no other carrier: what a slip sends over HTTP fails.
         let owner = matches!(credential, Credential::Owner { .. });
-        let unsent = move |cut: Cut| {
+        let unsent = move |cut: Cut, body| {
             if owner {
                 Carried::Cut(cut)
             } else {
-                Carried::Unsent
+                Carried::Unsent(body)
             }
         };
-        let Ok(body) = std::str::from_utf8(body) else {
-            return Err(unsent(Cut::Failed("the message is not UTF-8".to_owned())));
+        let body_text = match std::str::from_utf8(&body) {
+            Ok(body) => body,
+            Err(_) => {
+                return Err(unsent(
+                    Cut::Failed("the message is not UTF-8".to_owned()),
+                    body,
+                ));
+            }
         };
-        let session = self.session(credential, bounds.until).map_err(unsent)?;
+        let session = match self.session(credential, bounds.until) {
+            Ok(session) => session,
+            Err(cut) => return Err(unsent(cut, body)),
+        };
         let binding = match credential {
             Credential::Slip { sign, .. } => {
                 Some(sign().map_err(|error| Carried::Cut(Cut::Failed(error)))?)
@@ -408,7 +419,8 @@ impl SocketLink {
             Credential::Owner { .. } => None,
         };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(Carried::Cut)?;
+        let frame =
+            request_frame(id, surface, binding.as_deref(), body_text).map_err(Carried::Cut)?;
         let (chunks, mut answer) = mpsc::unbounded_channel();
         if session
             .outbound
@@ -420,7 +432,7 @@ impl SocketLink {
             })
             .is_err()
         {
-            return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
+            return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
         }
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
@@ -434,8 +446,9 @@ impl SocketLink {
                         return Err(Carried::Cut(Cut::Idle));
                     }
                     Err(_) => return Err(Carried::Cut(Cut::Deadline)),
+                    Ok(Some(Inbound::Sent)) => drop(std::mem::take(&mut body)),
                     Ok(Some(Inbound::Unsent)) => {
-                        return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
+                        return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned()), body));
                     }
                     Ok(Some(Inbound::Closed(why))) => return Err(Carried::Cut(Cut::Failed(why))),
                     Ok(Some(Inbound::Revoked(why))) => return Err(Carried::Cut(Cut::Revoked(why))),
@@ -661,6 +674,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                 if let Err(error) = socket.send(Message::Binary(request.frame.into())).await {
                     break format!("the MCP socket broke: {error}");
                 }
+                let _ = waiting[&request.id].chunks.send(Inbound::Sent);
             }
             frame = socket.next() => {
                 heard = tokio::time::Instant::now();
