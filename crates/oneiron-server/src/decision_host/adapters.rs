@@ -50,14 +50,13 @@ impl DecisionReadGate for HouseGate {
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| refused("refused at dispatch"))?;
         let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+        let settled = match &gated {
+            GatedRead::NotStarted => permit.settle_unsent(),
+            GatedRead::Read(Ok(answer)) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            GatedRead::Read(Err(_)) => permit.settle(CallOutcome::Failed),
         };
-        if let Err(denied) = permit.settle(outcome) {
+        if let Err(denied) = settled {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
         Ok(gated)
@@ -102,14 +101,13 @@ impl DecisionReadGate for RunHouseGate<'_> {
             .dispatch_paid(permit.lease(), &self.gate.connector)
             .map_err(|_| refused("refused at dispatch"))?;
         let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+        let settled = match &gated {
+            GatedRead::NotStarted => permit.settle_unsent(),
+            GatedRead::Read(Ok(answer)) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            GatedRead::Read(Err(_)) => permit.settle(CallOutcome::Failed),
         };
-        if let Err(denied) = permit.settle(outcome) {
+        if let Err(denied) = settled {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
         Ok(gated)
