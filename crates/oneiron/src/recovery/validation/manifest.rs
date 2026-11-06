@@ -2,12 +2,13 @@
 
 use super::{EntityMetadataHeader, invalid, strict};
 use crate::error::Result;
-use crate::recovery::canonical::CanonicalSnapshot;
+use crate::recovery::canonical::{CanonicalSnapshot, ExpectedContainers};
 
 #[derive(Default)]
 pub(in crate::recovery) struct ManifestValidation {
     stage: Stage,
     next: usize,
+    expected_containers: ExpectedContainers,
 }
 
 #[derive(Default)]
@@ -29,6 +30,7 @@ enum Stage {
     TaskOwners,
     Origins,
     ContainerStrict,
+    ContainerBuild,
     ContainerFinal,
     Complete,
 }
@@ -238,7 +240,7 @@ impl ManifestValidation {
                 }
                 Stage::ContainerStrict => {
                     let Some(row) = snapshot.container_manifests.get(self.next) else {
-                        self.start(Stage::ContainerFinal);
+                        self.start(Stage::ContainerBuild);
                         continue;
                     };
                     if let Some(prev) = self.next.checked_sub(1) {
@@ -246,12 +248,24 @@ impl ManifestValidation {
                         ordered(previous, row.container_id.as_str())?;
                     }
                 }
+                Stage::ContainerBuild => {
+                    if self.expected_containers.advance_row(snapshot) {
+                        self.start(Stage::ContainerFinal);
+                    }
+                    return Ok(false);
+                }
                 Stage::ContainerFinal => {
-                    if snapshot.container_manifests != snapshot.expected_containers() {
+                    let expected = self.expected_containers.rows();
+                    if snapshot.container_manifests.len() != expected.len() {
                         return Err(invalid("container manifest coverage"));
                     }
-                    self.start(Stage::Complete);
-                    continue;
+                    let Some(row) = expected.get(self.next) else {
+                        self.start(Stage::Complete);
+                        continue;
+                    };
+                    if snapshot.container_manifests[self.next] != *row {
+                        return Err(invalid("container manifest coverage"));
+                    }
                 }
                 Stage::Complete => return Ok(true),
             }
@@ -266,6 +280,9 @@ impl ManifestValidation {
     }
 
     pub(in crate::recovery) fn position(&self) -> (&'static str, usize) {
+        if matches!(self.stage, Stage::ContainerBuild) {
+            return self.expected_containers.position();
+        }
         let stage = match self.stage {
             Stage::Header => "header",
             Stage::EntityStrict => "entity order",
@@ -283,6 +300,7 @@ impl ManifestValidation {
             Stage::TaskOwners => "task owners",
             Stage::Origins => "origins",
             Stage::ContainerStrict => "container order",
+            Stage::ContainerBuild => "container build",
             Stage::ContainerFinal => "container final",
             Stage::Complete => "complete",
         };
