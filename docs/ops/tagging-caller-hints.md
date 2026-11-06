@@ -31,11 +31,12 @@ hint. Stored
 positions never construct an Owner key: every supported reader goes through
 the ordinary native read-key builder again.
 
-At save time, the worker rebuilds the supported reader through the ordinary
-native read-key builder. Actor binding, current grants and proof liveness are
-checked there. Source TURN/MESSAGE contributions and candidate entities are
-checked again by the scoped hint helper in the saving transaction. A missing
-read grant leaves the full candidate set in place. Expiry or revocation is
+Before saving, the worker rebuilds every supported captured reader through the
+ordinary native read-key builder. Actor binding, current grants and proof
+liveness are checked there. In the saving transaction, an optional hint counts
+only source TURN/MESSAGE contributions and candidates that every captured
+reader admits through the native scoped checks. An unknown or missing reader
+leaves the full candidate set in place. Expiry or revocation is
 checked by the native live-proof guard for each source and candidate: a false
 result supplies no hint, while an error is not treated as an absent grant. No hint text is returned. Other reader failures record a
 `hint_read` failure code and use the marker's existing retry path; they are not
@@ -44,8 +45,9 @@ silently treated as an absent hint.
 Deduplication does not make one caller's reader stand for another. Internal
 bookkeeping does not clear a carried caller reader. Equal caller contexts may
 share it. Distinct captured contexts remain distinct in the marker payload;
-when more than one is carried, this implementation uses no optional hint. If the marker's
-context changed after the worker prepared its read, the saving transaction
+each must admit a hint's sources and candidate in the same saving snapshot.
+A hint never combines permissions from different readers. If the marker's
+context changed after the worker prepared its readers, the saving transaction
 uses no optional hint. Retry successors carry the current persisted payload,
 and a checkpoint rekey carries its current caller context too.
 

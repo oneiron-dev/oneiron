@@ -84,7 +84,7 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         let turn = call.payload.turn;
         let made_by = self.encoder.model_id().as_str().to_owned();
-        let hint_lane = if matches!(self.config.mode, TaggingMode::Save) {
+        let hint_lanes = if matches!(self.config.mode, TaggingMode::Save) {
             match call.payload.hint_read.open(&self.vault) {
                 Ok(read) => read,
                 Err(error) => {
@@ -139,7 +139,7 @@ impl TaggingReconciler {
                             Some(read) if *read == call.payload.hint_read => match read {
                                 QueuedHintRead::Internal => HintRead::Internal,
                                 QueuedHintRead::Caller { .. } => {
-                                    HintRead::Caller(hint_lane.as_ref())
+                                    HintRead::Callers(hint_lanes.as_deref())
                                 }
                             },
                             _ => HintRead::Caller(None),

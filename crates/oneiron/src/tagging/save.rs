@@ -128,6 +128,7 @@ pub(super) fn save_in_txn(
 pub(super) enum HintRead<'r, 'v> {
     Internal,
     Caller(Option<&'r crate::claim::ScopedRead<'v>>),
+    Callers(Option<&'r [crate::claim::ScopedRead<'v>]>),
 }
 
 pub(super) fn save_with_hint_read_in_txn(
@@ -569,6 +570,11 @@ impl<'v> Linker<'v> {
             HintRead::Caller(read) => {
                 crate::dreamer_runner::maintenance::identity::hinted_mention_scoped_in_txn(
                     self.vault, txn, read, *kind, name, text, start, end, entities,
+                )?
+            }
+            HintRead::Callers(reads) => {
+                crate::dreamer_runner::maintenance::identity::hinted_mention_for_readers_in_txn(
+                    self.vault, txn, reads, *kind, name, text, start, end, entities,
                 )?
             }
         };
