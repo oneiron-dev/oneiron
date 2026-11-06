@@ -3,6 +3,7 @@
 
 pub(crate) use oneiron_store::graph_fs::paging::*;
 
+use super::coreutils_text::copy_text_parts;
 use super::model::{
     GRAPH_FS_MORE_RESERVE_BYTES, GraphFsEntry, GraphFsEntryKind, GraphFsMount, GraphFsOptions,
     GraphFsPage, GraphFsResolver,
@@ -130,9 +131,13 @@ pub(super) struct PageBuilder {
 }
 
 impl PageBuilder {
-    pub(super) fn new(path: &str, options: GraphFsOptions) -> Self {
-        Self {
-            path: path.to_owned(),
+    pub(super) fn new(
+        path: &str,
+        options: GraphFsOptions,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Self> {
+        Ok(Self {
+            path: copy_text_parts(&[path], reader, options.page_byte_cap)?,
             mount: options.mount,
             byte_cap: options.page_byte_cap,
             max_entries: options.max_entries,
@@ -140,7 +145,7 @@ impl PageBuilder {
             entry_cursors: Vec::new(),
             byte_count: 0,
             last_temporal_cursor: None,
-        }
+        })
     }
 
     /// Pushes `entry` when it fits, with `after`, the cursor of the page that
@@ -166,12 +171,12 @@ impl PageBuilder {
         true
     }
 
-    pub(super) fn last_entry_name(&self) -> Option<String> {
+    pub(super) fn last_entry_name(&self) -> Option<&str> {
         self.entries
             .iter()
             .rev()
             .find(|entry| entry.kind != GraphFsEntryKind::Cursor)
-            .map(|entry| entry.name.clone())
+            .map(|entry| entry.name.as_str())
     }
 
     pub(super) fn set_last_temporal_cursor(&mut self, cursor: TemporalCursor) {
@@ -182,9 +187,13 @@ impl PageBuilder {
         self.last_temporal_cursor
     }
 
-    pub(super) fn finish(mut self, mut next_cursor: Option<String>) -> GraphFsPage {
-        if let Some(cursor) = next_cursor.clone() {
-            let mut more = GraphFsEntry::cursor(cursor);
+    pub(super) fn finish(
+        mut self,
+        mut next_cursor: Option<String>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsPage> {
+        if let Some(cursor) = next_cursor.as_deref() {
+            let mut more = GraphFsEntry::cursor(copy_text_parts(&[cursor], reader, self.byte_cap)?);
             // The first entry always stays: dropping it would hand out a
             // cursor past an entry no page shows. When it and the cursor
             // together pass the cap, the page goes without its `_more` line
@@ -198,8 +207,8 @@ impl PageBuilder {
                 // The page now ends at the entry before: it resumes after
                 // that one, when its listing says where that is.
                 if let Some(Some(after)) = self.entry_cursors.last() {
-                    next_cursor = Some(after.clone());
-                    more = GraphFsEntry::cursor(after.clone());
+                    next_cursor = Some(copy_text_parts(&[after], reader, self.byte_cap)?);
+                    more = GraphFsEntry::cursor(copy_text_parts(&[after], reader, self.byte_cap)?);
                 }
             }
             if self.byte_count + more.byte_cost() <= self.byte_cap {
@@ -211,7 +220,7 @@ impl PageBuilder {
         if self.entry_cursors.iter().all(Option::is_none) {
             self.entry_cursors.clear();
         }
-        GraphFsPage {
+        Ok(GraphFsPage {
             path: self.path,
             mount: self.mount,
             entries: self.entries,
@@ -219,7 +228,7 @@ impl PageBuilder {
             byte_count: self.byte_count,
             read_receipt: None,
             entry_cursors: self.entry_cursors,
-        }
+        })
     }
 }
 

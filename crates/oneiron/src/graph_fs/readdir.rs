@@ -85,7 +85,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             return self.snapshot_readdir(&normalized, cursor, reader);
         }
         match components.as_slice() {
-            [] => Ok(self.fixed_page(
+            [] => self.fixed_page(
                 &normalized,
                 vec![
                     GraphFsEntry::directory("worlds"),
@@ -94,7 +94,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                     GraphFsEntry::directory("backlinks"),
                 ],
                 cursor,
-            )),
+                reader,
+            ),
             ["worlds"] => self.listdir_worlds(&normalized, cursor, reader),
             ["worlds", world] => {
                 let page = self.fixed_page(
@@ -105,7 +106,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                         GraphFsEntry::file("scope", None),
                     ],
                     cursor,
-                );
+                    reader,
+                )?;
                 if *world == "base" || EntityId::from_hex(world).is_ok() {
                     Ok(page)
                 } else {
@@ -139,7 +141,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                             ),
                         ],
                         cursor,
-                    )
+                        reader,
+                    )?
                 } else {
                     empty_page(&normalized, self.options.mount)
                 };
@@ -154,14 +157,15 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities", entity, "backlinks"] => {
                 self.listdir_backlinks(&normalized, &parse_entity_id(entity)?, cursor, reader)
             }
-            ["claims"] => Ok(self.fixed_page(
+            ["claims"] => self.fixed_page(
                 &normalized,
                 vec![
                     GraphFsEntry::directory("by-time"),
                     GraphFsEntry::directory("by-id"),
                 ],
                 cursor,
-            )),
+                reader,
+            ),
             ["claims", "by-time"] => self.listdir_claim_days(&normalized, cursor, reader),
             ["claims", "by-time", day] => {
                 self.listdir_claims_in_day(&normalized, day, cursor, reader)
@@ -302,9 +306,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         entries: Vec<GraphFsEntry>,
         cursor: Option<&str>,
-    ) -> GraphFsPage {
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsPage> {
         let after = cursor.unwrap_or_default();
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut sorted = entries;
         sorted.sort_by(|left, right| left.name.cmp(&right.name));
         let mut next_cursor = None;
@@ -312,13 +317,16 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !after.is_empty() && entry.name.as_str() <= after {
                 continue;
             }
-            let after = entry.name.clone();
+            let after = copy_text_parts(&[entry.name()], reader, self.options.page_byte_cap)?;
             if !builder.try_push_after(entry.clone(), after) {
-                next_cursor = builder.last_entry_name();
+                next_cursor = builder
+                    .last_entry_name()
+                    .map(|name| copy_text_parts(&[name], reader, self.options.page_byte_cap))
+                    .transpose()?;
                 break;
             }
         }
-        builder.finish(next_cursor)
+        builder.finish(next_cursor, reader)
     }
 
     /// The vault's worlds this reader may walk into, base first, then each
@@ -353,7 +361,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             || checkpoint(reader),
             |bytes| Ok(WorldPosition::from_bytes(bytes)),
         )?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         if after.is_none()
             && self.world_visible(&rtxn, &policy, None)?
             && !builder.try_push_after(
@@ -363,7 +371,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 })?,
             )
         {
-            return Ok(builder.finish(None));
+            return builder.finish(None, reader);
         }
 
         let after = after.and_then(|position| position.0);
@@ -400,7 +408,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             last_listed = Some(id);
         }
-        Ok(builder.finish(next_cursor))
+        builder.finish(next_cursor, reader)
     }
 
     /// Whether this reader may walk into `world` (`None` is base reality) in
@@ -439,7 +447,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             || checkpoint(reader),
             |bytes| Ok(TemporalCursor::from_bytes(bytes)),
         )?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         let mut last_scanned: Option<TemporalCursor> = None;
         self.scoped_read.persist_grant_clock()?;
@@ -486,7 +494,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             builder.set_last_temporal_cursor(cursor);
         }
-        Ok(builder.finish(next_cursor))
+        builder.finish(next_cursor, reader)
     }
 
     fn listdir_claims_in_world(
@@ -506,7 +514,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             || checkpoint(reader),
             |bytes| Ok(TemporalCursor::from_bytes(bytes)),
         )?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         let mut last_scanned: Option<TemporalCursor> = None;
         self.scoped_read.persist_grant_clock()?;
@@ -558,7 +566,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             builder.set_last_temporal_cursor(temporal);
         }
-        Ok(builder.finish(next_cursor))
+        builder.finish(next_cursor, reader)
     }
 
     fn listdir_backlinks(
@@ -580,7 +588,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             || checkpoint(reader),
             |bytes| Ok(EdgeCursor::from_bytes(bytes)),
         )?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         let mut last_emitted = after;
         let mut last_scanned: Option<EdgeCursor> = None;
@@ -628,7 +636,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             last_emitted = Some(cursor);
         }
-        Ok(builder.finish(next_cursor))
+        builder.finish(next_cursor, reader)
     }
 
     fn listdir_claim_days(
@@ -662,7 +670,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let day_of = |row: TemporalCursor| row.learned_at / 86_400;
         let mut listed = from.after.filter(|_| from.day_listed).map(day_of);
         let mut last_scanned = from.after;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
@@ -721,7 +729,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             listed = Some(day);
         }
-        Ok(builder.finish(next_cursor))
+        builder.finish(next_cursor, reader)
     }
 
     fn listdir_claims_in_day(
@@ -747,7 +755,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             || checkpoint(reader),
             |bytes| Ok(TemporalCursor::from_bytes(bytes)),
         )?;
-        let mut builder = PageBuilder::new(path, self.options);
+        let mut builder = PageBuilder::new(path, self.options, reader)?;
         let mut next_cursor = None;
         let mut last_scanned: Option<TemporalCursor> = None;
         self.scoped_read.persist_grant_clock()?;
@@ -798,7 +806,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             builder.set_last_temporal_cursor(temporal);
         }
-        Ok(builder.finish(next_cursor))
+        builder.finish(next_cursor, reader)
     }
 }
 
