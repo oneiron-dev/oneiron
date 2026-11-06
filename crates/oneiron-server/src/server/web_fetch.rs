@@ -58,6 +58,17 @@ impl SyncServer {
         })
     }
 
+    /// The guard for a fetch of a URL an outside, unauthenticated party
+    /// names (an OAuth client's metadata document, FIX 4902): the hosted
+    /// guard on a managed node, and on every other node one that refuses
+    /// this node's own addresses and every private network with no origin
+    /// excepted, so no caller can make a self-hosted vault fetch inside the
+    /// network it runs in.
+    pub(crate) fn untrusted_url_egress_guard(&self) -> Arc<HostedEgressGuard> {
+        self.hosted_egress_guard()
+            .unwrap_or_else(|| Arc::new(HostedEgressGuard::new(node_addresses, BTreeSet::new())))
+    }
+
     /// Called off the async runtime. The default rung is a credential-free
     /// native GET, with the host's headless browser after it on a managed
     /// node with a `[browser]` guest (FIX 7122); a host that supplies a
