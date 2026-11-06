@@ -101,6 +101,10 @@ pub struct OAuthAccess {
     pub world: Option<EntityId>,
     /// The owner agent grant the token stands on.
     pub grant_ref: EntityId,
+    /// The token family the access token is of: every token one code's redemption and its
+    /// refreshes minted. The `/mcp` caller's instrument names it, and a long call judges that
+    /// caller again by it ([`crate::Vault::oauth_access_is_live`]).
+    pub family: EntityId,
     /// The client the token was issued to.
     pub client_id: String,
     /// When the access token lapses (Unix seconds).
@@ -456,15 +460,10 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Some(family) = FAMILIES.get(&self.store, &txn, &HexId(row.family))? else {
+        let Some(family) = self.oauth_family_standing_in_txn(&txn, row.family, resource, now)?
+        else {
             return Ok(None);
         };
-        if family.revoked
-            || family.resource != resource
-            || !self.oauth_grant_stands_in_txn(&txn, &family.grant, now)?
-        {
-            return Ok(None);
-        }
         let tier = family.grant.tier;
         Ok(Some(OAuthAccess {
             agent: family.grant.agent,
@@ -474,8 +473,71 @@ impl Vault {
             ceiling: tier.ceiling(),
             world: family.grant.world,
             grant_ref: family.grant.grant_ref,
+            family: row.family,
             client_id: family.client_id,
             expires_at: row.expires_at,
         }))
+    }
+
+    /// Whether the `/mcp` caller an access token of `family` resolved to still stands at `now`
+    /// (FIX 4902 slice C): exactly while [`Self::resolve_oauth_access_token`] would still resolve
+    /// that token to `family` on `resource`. The token lapses at `expires_at`, and its row goes
+    /// only past that or with its family's revocation, so the lapse and the family's standing
+    /// decide it: not revoked, bound to `resource`, on an owner agent grant that still stands.
+    /// A long call or a waiter judges its caller again by this, without the token.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn oauth_access_is_live(
+        &self,
+        family: EntityId,
+        resource: &str,
+        expires_at: u64,
+        now: u64,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.oauth_access_is_live_in_txn(&txn, family, resource, expires_at, now)
+    }
+
+    /// [`Self::oauth_access_is_live`], read in the caller's transaction: a writer judges its
+    /// caller in the snapshot it commits in.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn oauth_access_is_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        family: EntityId,
+        resource: &str,
+        expires_at: u64,
+        now: u64,
+    ) -> Result<bool> {
+        if now >= expires_at {
+            return Ok(false);
+        }
+        Ok(self
+            .oauth_family_standing_in_txn(txn, family, resource, now)?
+            .is_some())
+    }
+
+    /// The row of `family` while its tokens still stand on `resource` at `now`: not revoked,
+    /// bound to that resource, and on an owner agent grant that still stands. `None` otherwise.
+    fn oauth_family_standing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        family: EntityId,
+        resource: &str,
+        now: u64,
+    ) -> Result<Option<TokenFamily>> {
+        let Some(row) = FAMILIES.get(&self.store, txn, &HexId(family))? else {
+            return Ok(None);
+        };
+        if row.revoked
+            || row.resource != resource
+            || !self.oauth_grant_stands_in_txn(txn, &row.grant, now)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(row))
     }
 }
