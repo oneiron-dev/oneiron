@@ -160,25 +160,37 @@ fn preflight_key_budgets(
         send_like,
         now,
     )?;
-    Ok(states
+    Ok(first_exhausted(&states).map(|state| {
+        let location = EffectorBudgetLocation {
+            key_ref: *key_id,
+            row: state.row,
+        };
+        (location, state.budget.exhaust_policy())
+    }))
+}
+
+/// The exhausted matched row an admission reports: the first exhausted
+/// spend row in the meter's row order, else the first exhausted count row
+/// (FIX 8753). A count crossing is never the reason a money refusal goes
+/// unsaid: it only refuses and paces, where an exhausted spend row may
+/// suspend.
+fn first_exhausted<'s, 'a>(states: &'s [BudgetRowState<'a>]) -> Option<&'s BudgetRowState<'a>> {
+    let exhausted = |state: &&BudgetRowState<'a>| {
+        if !state.matched {
+            return false;
+        }
+        let used = state.usage.used();
+        match state.budget.dimension {
+            // Spend debits 0 at admission and refuses when already exhausted.
+            EffectorBudgetDimension::Spend => used >= state.budget.limit,
+            _ => used.saturating_add(state.amount) > state.budget.limit,
+        }
+    };
+    states
         .iter()
-        .find(|state| {
-            if !state.matched {
-                return false;
-            }
-            let used = state.usage.used();
-            match state.budget.dimension {
-                EffectorBudgetDimension::Spend => used >= state.budget.limit,
-                _ => used.saturating_add(state.amount) > state.budget.limit,
-            }
-        })
-        .map(|state| {
-            let location = EffectorBudgetLocation {
-                key_ref: *key_id,
-                row: state.row,
-            };
-            (location, state.budget.on_exhaust)
-        }))
+        .filter(exhausted)
+        .find(|state| state.budget.dimension == EffectorBudgetDimension::Spend)
+        .or_else(|| states.iter().find(exhausted))
 }
 
 /// Charges one admitted external effect to a key's budget rows and, for a
@@ -314,24 +326,14 @@ fn charge_key_budgets(
     }
 
     // Evaluate ALL matched rows before applying ANY debit; report the first
-    // exceeding row in the meter's row order (key rows before compiled).
-    let exhausted = states.iter().find(|state| {
-        if !state.matched {
-            return false;
-        }
-        let used = state.usage.used();
-        match state.budget.dimension {
-            // Spend debits 0 at admission and refuses when already exhausted.
-            EffectorBudgetDimension::Spend => used >= state.budget.limit,
-            _ => used.saturating_add(state.amount) > state.budget.limit,
-        }
-    });
-    if let Some(state) = exhausted {
+    // exceeding spend row, else the first exceeding count row, in the meter's
+    // row order (key rows before compiled).
+    if let Some(state) = first_exhausted(&states) {
         let location = EffectorBudgetLocation {
             key_ref: *key_id,
             row: state.row,
         };
-        let on_exhaust = state.budget.on_exhaust;
+        let on_exhaust = state.budget.exhaust_policy();
         // Carry-read-only (M5b resolution 2026-07-10): the exhaustion path
         // fires NO new ladder events and persists nothing — the signal
         // history rides the read's `fired_thresholds`.
