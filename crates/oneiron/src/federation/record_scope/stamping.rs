@@ -47,6 +47,7 @@ pub(crate) fn stamp_put(
         scope,
     };
     SCOPE_RECORD.put(store, txn, &id, &stamp)?;
+    crate::agent_def::setup_trace::observe_position(store, id, stamp.scope);
     Ok(())
 }
 
@@ -244,7 +245,9 @@ pub(crate) fn restrict_stamp_in_txn(
     }
     stamp.scope.sensitivity = SensitivityCeiling::AtMost(band);
     bump_scope_revision(store, txn)?;
-    SCOPE_RECORD.put(store, txn, &id, &stamp)
+    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
+    crate::agent_def::setup_trace::observe_position(store, id, stamp.scope);
+    Ok(())
 }
 
 /// Settle a locally minted TASK at its writer's world and facet, in the
