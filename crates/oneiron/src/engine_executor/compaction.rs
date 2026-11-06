@@ -18,7 +18,7 @@ use crate::compaction::{
     CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
-    EpochEmbedder, EpochPlacement, FoldLedger, GatedCompaction, escape_compacted_text,
+    EpochEmbedder, EpochPlacement, FoldLedger, FoldRecord, GatedCompaction, escape_compacted_text,
     gate_compaction,
 };
 use crate::entity_id::EntityId;
@@ -54,6 +54,9 @@ struct LiveSeat {
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
     flight: Option<Receiver<FlightOutcome>>,
+    /// The in-flight batch's folds by kind: they need no backend call and
+    /// land with its passes, in the same ledger write.
+    kind_folds: Option<KindFolds>,
     /// The in-flight epoch pass's `host.compact` chain, for its post-hooks
     /// once the keyframe lands.
     hooks: CompactHooks,
@@ -86,6 +89,9 @@ enum PassOutcome {
 pub(super) struct Flight {
     pub(super) epoch: Option<CompactionRequest>,
     pub(super) folds: Vec<FoldJob>,
+    /// The batch's folds by kind, already written: they ride the flight so
+    /// they land with its passes, in one ledger write.
+    pub(super) kind_folds: Option<KindFolds>,
     /// The epoch pass's `host.compact` chain past its pre-hooks.
     pub(super) hooks: CompactHooks,
     /// The run's live request at this breakpoint, when its backend writes
@@ -96,6 +102,13 @@ pub(super) struct Flight {
     >,
     /// A blocking pre-hook's saved stop: no flight starts (FIX 10085).
     pub(super) pending: Option<VerbHookStop>,
+}
+
+/// One batch's folds by kind (ARCH-0067 §2.2, fold by kind): each written
+/// by the engine from its steps' typed outputs, with no backend call.
+pub(super) struct KindFolds {
+    pub(super) run_id: EntityId,
+    pub(super) records: Vec<FoldRecord>,
 }
 
 /// One mark of a batch, sealed: its request, and what its stub lists beside
@@ -112,6 +125,8 @@ pub(super) struct FoldJob {
     pub(super) handles: Vec<String>,
     /// What ran its pass, when its backend writes as its agent (FIX 4465).
     pub(super) execution: Option<crate::compaction::CompactionExecution>,
+    /// The step its mark was made at.
+    pub(super) marked_at: Option<u64>,
 }
 
 /// What a flight answered.
@@ -129,6 +144,8 @@ struct FlightOutcome {
 pub(super) struct FinishedFlight {
     pub(super) epoch: Option<Result<GatedCompaction, CompactionSuppression>>,
     pub(super) folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
+    /// The batch's folds by kind, which land with `folds`.
+    pub(super) kind_folds: Option<KindFolds>,
     /// The epoch pass's `host.compact` chain, for its post-hooks.
     pub(super) hooks: CompactHooks,
     /// What ran a self-written epoch pass: its landing's receipt (FIX 4465).
@@ -211,6 +228,7 @@ impl RunCompaction {
                 hot_steps,
                 spawn,
                 flight: None,
+                kind_folds: None,
                 hooks: CompactHooks::default(),
                 held: None,
                 held_recoveries: 0,
@@ -319,6 +337,7 @@ impl RunCompaction {
             },
         };
         seat.flight = None;
+        let kind_folds = seat.kind_folds.take();
         let hooks = std::mem::take(&mut seat.hooks);
         self.report.in_flight = false;
         self.report.self_unavailable = outcome.unavailable;
@@ -369,6 +388,7 @@ impl RunCompaction {
         Some(FinishedFlight {
             epoch,
             folds,
+            kind_folds,
             hooks,
             epoch_execution,
         })
@@ -473,6 +493,7 @@ impl RunCompaction {
                     Ok(Flight {
                         epoch: request,
                         folds,
+                        kind_folds,
                         hooks,
                         live,
                         pending,
@@ -543,6 +564,7 @@ impl RunCompaction {
                                 });
                             }));
                             seat.flight = Some(receiver);
+                            seat.kind_folds = kind_folds;
                             seat.hooks = hooks;
                             self.report.in_flight = true;
                         }
@@ -962,6 +984,41 @@ pub(super) fn span_ids(window: &[CompactionWindowMessage]) -> Vec<String> {
         hex_ids(&message.content, &mut found);
     }
     found.iter().map(EntityId::to_hex).collect()
+}
+
+/// Every entity id one text names, sorted: what a fold by kind's stub keeps
+/// of a folded output.
+pub(super) fn text_ids(text: &str) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+    hex_ids(text, &mut found);
+    found.iter().map(EntityId::to_hex).collect()
+}
+
+/// The read affordance a fold stub lists for one stored result's read path:
+/// the path as a first chunk (`…/chunk/0`), the form `sandbox.fs.read_file`
+/// reads, unless it already names a chunk.
+pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<String> {
+    let path = if read.contains("/chunk/") {
+        read.to_owned()
+    } else {
+        format!("{read}/chunk/0")
+    };
+    Ok(serde_json::to_string(&serde_json::json!({
+        "sandbox.fs.read_file": path,
+        "max_chunk_bytes": super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES,
+    }))?)
+}
+
+/// The text one speech call dispatched: a hook's rewrite where one rewrote
+/// it, else the guest's own request.
+pub(super) fn speech_call_text(call: &crate::code_run::CodeRunBridgeCall) -> Option<&str> {
+    let rmpv::Value::Map(entries) = call.rewritten_request.as_ref().unwrap_or(&call.request) else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("text"))
+        .and_then(|(_, value)| value.as_str())
 }
 
 /// Every stored result's read path `text` names.

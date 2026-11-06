@@ -1,5 +1,11 @@
-//! The provider rules of [`super::detect`]: a known provider's key, read at a
-//! token's start and at each later offset inside it.
+//! Core half of `batch::secret_scan::provider_tokens`: its store-layer items live in `oneiron_store::batch::secret_scan::provider_tokens` and are
+//! re-exported here; the items below stay in the engine.
+//!
+//! A stream reader reads one start at a time ([`credential_at`]) over a
+//! window of the token ([`KEY_WINDOW`]), so it never keeps a token whole
+//! (FIX 7200).
+
+pub(crate) use oneiron_store::batch::secret_scan::provider_tokens::*;
 
 use super::{
     REASON_AWS_ACCESS_KEY_ID, REASON_GITHUB_TOKEN, REASON_GOOGLE_API_KEY, REASON_OPENAI_KEY,
@@ -9,7 +15,7 @@ use super::{
 /// Where [`super::detect`]'s provider rules read a key in `text`: each whole
 /// token one names, with its reason.
 pub(super) fn provider_token_spans(text: &str) -> Vec<(std::ops::Range<usize>, &'static str)> {
-    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
+    text.split(|ch: char| !token_char(ch))
         .filter_map(|token| {
             classify_token(token).map(|reason| (shapes::span_of(text, token), reason))
         })
@@ -37,6 +43,28 @@ pub(super) fn classify_token(token: &str) -> Option<&'static str> {
     })
 }
 
+/// Whether `ch` is a token's: an ASCII letter or digit, `_` or `-`. A token
+/// is a longest run of them.
+pub(super) fn token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
+}
+
+/// The provider rules at one start of a token: what [`classify_token`] reads
+/// there. `window` is the token's text from that start, [`KEY_WINDOW`] bytes
+/// of it or all it has left; `token_start`: the start is the token's own.
+pub(super) fn credential_at(window: &str, token_start: bool) -> Option<&'static str> {
+    let head = *window.as_bytes().first()?;
+    if !PREFIX_HEADS[usize::from(head)] {
+        return None;
+    }
+    let body = if token_start {
+        Body::Token
+    } else {
+        Body::Embedded
+    };
+    classify_at(window, body)
+}
+
 /// The provider rules for a key that starts inside a longer token, read at
 /// `candidate`'s start: what [`classify_token`] reads at each later offset,
 /// for a stream reader that keeps a window of a token, not all of it.
@@ -46,23 +74,12 @@ pub(crate) fn embedded_credential(candidate: &[u8]) -> Option<&'static str> {
         .and_then(|candidate| classify_at(candidate, Body::Embedded))
 }
 
-/// How a key body is read: from the token's start, by each provider's own
-/// length rule over token bytes; inside a token, over a fixed length.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Body {
-    Token,
-    Embedded,
-}
-
 fn classify_at(token: &str, body: Body) -> Option<&'static str> {
     PROVIDER_RULES
         .iter()
         .find(|rule| rule.matches(token, body))
         .map(|rule| rule.reason)
 }
-
-/// The bytes an AWS access key id is read over, its prefix included.
-const ACCESS_KEY_ID_LEN: usize = 20;
 
 /// Every provider rule, in the order [`classify_at`] reads them: the first
 /// that matches names the reason. Each reads a key only from its prefix on.
@@ -90,6 +107,12 @@ const PROVIDER_RULES: [ProviderRule; 18] = [
 /// The fewest bytes any provider rule reads a key in.
 const MIN_KEY_LEN: usize = min_key_len(&PROVIDER_RULES);
 
+/// The most bytes any provider rule reads a key over, its prefix included.
+/// At any start, this much of a token reads as the token's whole rest does.
+/// A rule that reads the whole rest at the token's start checks only that
+/// its bytes are token bytes, and every byte of a token is one.
+pub(super) const KEY_WINDOW: usize = max_key_len(&PROVIDER_RULES);
+
 /// The bytes some provider rule's prefix starts with.
 static PREFIX_HEADS: [bool; 256] = prefix_heads(&PROVIDER_RULES);
 
@@ -99,19 +122,6 @@ struct ProviderRule {
     reason: &'static str,
     prefix: &'static str,
     shape: KeyShape,
-}
-
-/// How a provider rule reads the bytes from its prefix on.
-enum KeyShape {
-    /// An AWS access key id: its first [`ACCESS_KEY_ID_LEN`] bytes are
-    /// upper-case letters and digits, at a token's start or inside one.
-    AccessKeyId,
-    /// [`key_matches`]'s rule, with its body length and byte rules.
-    Suffix {
-        suffix_len: usize,
-        exact_len: bool,
-        alphanumeric: bool,
-    },
 }
 
 impl ProviderRule {
@@ -198,6 +208,20 @@ const fn min_key_len(rules: &[ProviderRule]) -> usize {
     least
 }
 
+/// [`ProviderRule::min_len`]'s greatest over `rules`.
+const fn max_key_len(rules: &[ProviderRule]) -> usize {
+    let mut most = 0;
+    let mut at = 0;
+    while at < rules.len() {
+        let len = rules[at].min_len();
+        if len > most {
+            most = len;
+        }
+        at += 1;
+    }
+    most
+}
+
 /// Which bytes a prefix in `rules` starts with; every byte when a rule has no
 /// prefix, since such a rule may start anywhere.
 const fn prefix_heads(rules: &[ProviderRule]) -> [bool; 256] {
@@ -229,62 +253,4 @@ fn key_starts(token: &str) -> impl Iterator<Item = usize> {
                 .iter()
                 .any(|rule| rule.may_start(&bytes[start..]))
     })
-}
-
-/// One provider rule: `prefix`, then `suffix_len` body bytes (`exact_len`:
-/// only those are read). Inside a token the body is always read over exactly
-/// `suffix_len` bytes, alphanumeric ones when the provider's keys are, and
-/// holds a digit or capital.
-fn key_matches(
-    token: &str,
-    prefix: &str,
-    suffix_len: usize,
-    exact_len: bool,
-    alphanumeric: bool,
-    body: Body,
-) -> bool {
-    match body {
-        Body::Token => suffix_matches(token, prefix, suffix_len, exact_len, is_ascii_token_body),
-        Body::Embedded => {
-            let allowed: fn(u8) -> bool = if alphanumeric {
-                |byte: u8| byte.is_ascii_alphanumeric()
-            } else {
-                is_ascii_token_body
-            };
-            suffix_matches(token, prefix, suffix_len, true, allowed)
-                && token.as_bytes()[prefix.len()..prefix.len() + suffix_len]
-                    .iter()
-                    .any(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
-        }
-    }
-}
-
-fn suffix_matches(
-    token: &str,
-    prefix: &str,
-    suffix_len: usize,
-    exact_len: bool,
-    allowed: fn(u8) -> bool,
-) -> bool {
-    let token = token.as_bytes();
-    let prefix = prefix.as_bytes();
-    if prefix.is_empty() || token.len() < prefix.len() + suffix_len {
-        return false;
-    }
-
-    if !token.starts_with(prefix) {
-        return false;
-    }
-    let suffix_start = prefix.len();
-    let min_suffix_end = suffix_start + suffix_len;
-    let suffix = if exact_len {
-        &token[suffix_start..min_suffix_end]
-    } else {
-        &token[suffix_start..]
-    };
-    suffix.iter().copied().all(allowed)
-}
-
-fn is_ascii_token_body(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }

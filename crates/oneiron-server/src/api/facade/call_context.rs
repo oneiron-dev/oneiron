@@ -298,9 +298,21 @@ impl<'a> FacadeCall<'a> {
         self.surface
     }
 
-    /// Actual current-request transport observations, for signing audit only.
+    /// Actual request or same-connection upgrade observations, for signing audit only.
     pub(super) fn signing_request_transport(&self) -> Option<SigningRequestTransport> {
         self.signing_request_transport.clone()
+    }
+
+    /// Binds the actual upgrade observations from this call's own socket.
+    /// An in-process call or resumed drain leaves them absent.
+    pub(crate) fn with_signing_request_transport(
+        self,
+        transport: Option<SigningRequestTransport>,
+    ) -> Self {
+        Self {
+            signing_request_transport: transport,
+            ..self
+        }
     }
 
     /// Who this call asks an opened device's home for (FIX 2905): an
