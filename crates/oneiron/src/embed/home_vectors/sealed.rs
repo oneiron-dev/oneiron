@@ -1,5 +1,8 @@
 //! Recipient-specific default CLAIM copies, separate from canonical windows.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use getrandom::SysRng;
 use oneiron_crypto::{
     Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId, WrapType,
@@ -20,6 +23,36 @@ const EPOCH: u64 = 1;
 pub(crate) struct HomeClaimDelivery<'a> {
     pub(crate) window: &'a str,
     pub(crate) payload: &'a [u8],
+}
+
+/// Native holders opened for one actual delivery. This association is data,
+/// not authority, a current-key proof or a durable import receipt.
+pub(crate) struct PreparedHomeClaimDelivery {
+    vault: PathBuf,
+    peer: PeerMachine,
+    window: String,
+    payload_digest: [u8; 32],
+    copies: Vec<Arc<super::retained::PreparedHomeClaimResponse>>,
+}
+
+impl PreparedHomeClaimDelivery {
+    pub(crate) fn into_copies_for(
+        self,
+        vault: &Vault,
+        peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+    ) -> Vec<Arc<super::retained::PreparedHomeClaimResponse>> {
+        if self.vault == vault.store.env.path()
+            && self.peer == peer
+            && self.window == delivery.window
+            && self.payload_digest == *blake3::hash(delivery.payload).as_bytes()
+        {
+            self.copies
+        } else {
+            tracing::debug!("derived home CLAIM copies do not match this delivery");
+            Vec::new()
+        }
+    }
 }
 
 /// One machine's opaque copy. Sender authentication still comes from the
@@ -71,6 +104,47 @@ fn crypto_error(error: oneiron_crypto::Error) -> Error {
 }
 
 impl Vault {
+    /// Opens and prepares each optional copy outside the canonical writer.
+    /// A failed copy keeps the raw update and its ordinary import unchanged.
+    pub(crate) fn prepare_home_claim_delivery(
+        &self,
+        peer: PeerMachine,
+        delivery: &HomeClaimDelivery<'_>,
+        copies: &[SealedHomeClaimVector],
+    ) -> PreparedHomeClaimDelivery {
+        let mut prepared = Vec::new();
+        for copy in copies {
+            let result = self
+                .open_home_claim_vector(peer, delivery, copy)
+                .and_then(|received| {
+                    received
+                        .map(|received| received.prepare_response_copy(self))
+                        .transpose()
+                });
+            match result {
+                Ok(Some(copy)) => prepared.push(Arc::new(copy)),
+                Ok(None) => {
+                    tracing::debug!(
+                        "derived home CLAIM copy did not match the authenticated delivery"
+                    );
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        error = ?error.kind(),
+                        "derived home CLAIM copy preparation failed; raw import unchanged"
+                    );
+                }
+            }
+        }
+        PreparedHomeClaimDelivery {
+            vault: self.store.env.path().to_path_buf(),
+            peer,
+            window: delivery.window.to_owned(),
+            payload_digest: *blake3::hash(delivery.payload).as_bytes(),
+            copies: prepared,
+        }
+    }
+
     /// Seals only a settled vector whose complete source is exactly the selected
     /// source. The queue/send caller must rejudge the recipient at final release.
     pub(crate) fn seal_home_claim_vector(

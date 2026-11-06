@@ -54,19 +54,17 @@ impl SyncClient {
         update: &[u8],
         from: PeerMachine,
     ) -> std::result::Result<(), TransportError> {
-        self.import_own_device_window_update_with_copies(window_key, update, from, Vec::new())
+        self.import_own_device_window_update_with_copies(window_key, update, from, None)
     }
 
-    /// The caller supplies actual prepared holders bound to this delivery,
-    /// before any world deferral. Empty keeps the ordinary raw update path.
+    /// Takes only holders opened for this exact delivery before world deferral.
+    /// Missing or mismatched derived copies keep the ordinary raw update path.
     pub(super) fn import_own_device_window_update_with_copies(
         &mut self,
         window_key: &str,
         update: &[u8],
         from: PeerMachine,
-        copies: Vec<
-            std::sync::Arc<crate::embed::home_vectors::retained::PreparedHomeClaimResponse>,
-        >,
+        prepared: Option<crate::embed::home_vectors::PreparedHomeClaimDelivery>,
     ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
@@ -83,6 +81,18 @@ impl SyncClient {
                 "full-window exchange requires causal promotion",
             ));
         }
+        let copies = prepared
+            .map(|prepared| {
+                prepared.into_copies_for(
+                    &self.vault,
+                    from,
+                    &crate::embed::home_vectors::HomeClaimDelivery {
+                        window: window_key,
+                        payload: update,
+                    },
+                )
+            })
+            .unwrap_or_default();
         if window.key.world().is_some() {
             // Every unresolved world update waits staged while their bytes
             // together stay within the memory bound, however many there are
