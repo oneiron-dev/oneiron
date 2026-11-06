@@ -229,6 +229,15 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         }
         _ => false,
     };
+    // FIX 3656: the birth placement a guest's import carries for these exact
+    // bytes, when no row is stored here yet; it lands only with the row.
+    let placed = match super::placement::carried_for(ctx.vault, ctx.window_key, key, value) {
+        Some((id, placement)) => {
+            (!EntityStoreRead::port_entity_present(&ctx.vault.store, &savepoint, &id)?)
+                .then_some((id, placement))
+        }
+        None => None,
+    };
     let step = ingest_entity_in_txn(ctx, &mut savepoint, key, value)?;
     if let EntityStep::Quarantine(refusal) = &step {
         drop(savepoint);
@@ -252,6 +261,18 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
             value.unwrap_or_default(),
         )?;
     } else {
+        // FIX 3656: the row's carried birth placement lands in the savepoint
+        // whose put landed the row here first, or not at all.
+        if let Some((id, placement)) = placed
+            && step.written() == Some(id)
+        {
+            crate::federation::record_scope::stamp_carried_placement(
+                &ctx.vault.store,
+                &mut savepoint,
+                id,
+                &placement,
+            )?;
+        }
         // Rule A: the row's carried birth lands in the savepoint that
         // admitted the row, or not at all.
         if let Some(doc) = ctx.carrier_doc()
