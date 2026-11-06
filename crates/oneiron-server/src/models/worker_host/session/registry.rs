@@ -565,6 +565,21 @@ pub(super) async fn send_with_release<B: serde::Serialize, R: serde::de::Deseria
     })
 }
 
+pub(super) async fn send_optional<B: serde::Serialize, R: serde::de::DeserializeOwned>(
+    place: &Place,
+    op: SessionOp,
+    body: &B,
+    conversation: Option<&JsonValue>,
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+) -> Result<R, SendFailure> {
+    match release {
+        Some(release) => send_with_release(place, op, body, conversation, release).await,
+        None => send(place, op, body, conversation)
+            .await
+            .map_err(SendFailure::Invalid),
+    }
+}
+
 /// The host's plaintext copies of each vault's snapshots, counted with
 /// their bytes while they live, so a park or restore admits against what
 /// the process already holds (FIX 11289); plus the bytes admitted but not

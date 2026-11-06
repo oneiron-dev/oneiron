@@ -24,21 +24,23 @@
 //! a replay. Linear-attention state is exact.
 use std::sync::{Arc, PoisonError, Weak};
 
-use oneiron::Vault;
 use oneiron::inference_snapshot::{SnapshotAdmission, SnapshotCompatibility, SnapshotRecord};
 use oneiron::llm::{
-    CacheDigest, CanonicalCheckpointRef, ManifestDigest, MessageStamp, SessionCheckpoint,
-    SessionCheckpointed, SessionCreate, SessionCreated, SessionImport, SessionInvalidation,
-    SessionKey, SessionOp, SessionOpStamp, SessionResidency, SessionTarget, SnapshotDigest,
-    SnapshotMiss,
+    CacheDigest, CanonicalCheckpointRef, DispatchRelease, ManifestDigest, MessageStamp,
+    SessionCheckpoint, SessionCheckpointed, SessionCreate, SessionCreated, SessionImport,
+    SessionInvalidation, SessionKey, SessionOp, SessionOpStamp, SessionResidency, SessionTarget,
+    SnapshotDigest, SnapshotMiss,
 };
+use oneiron::{BudgetLease, LlmError, Vault};
 use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
 use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, fits_host, identity_part, mib};
-use super::registry::{self, HostCopy, HostReservation, Phase, Place, Session, send};
+use super::registry::{self, HostCopy, HostReservation, Phase, Place, Session};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
-use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
+use crate::models::native_exl3::{
+    OpFault, ReleasedOpFault, SnapshotRegion, session_import, session_import_released,
+};
 
 /// A restored session, ready: what the turn forks from.
 pub(super) struct Restored {
@@ -51,6 +53,17 @@ pub(super) struct Restored {
 struct Cold {
     /// The snapshot failed its recheck or cannot be rebuilt: it is retired.
     retire: bool,
+}
+
+enum RestoreFault {
+    Cold(Cold, bool),
+    Release(LlmError, bool),
+}
+
+impl From<(Cold, bool)> for RestoreFault {
+    fn from((cold, leased): (Cold, bool)) -> Self {
+        Self::Cold(cold, leased)
+    }
 }
 
 const COLD: Cold = Cold { retire: false };
@@ -80,12 +93,33 @@ pub(super) async fn restore(
     path: &[MessageStamp],
     admitted: Admitted,
 ) -> Option<Restored> {
+    restore_with_release(worker_id, place, key, turn, path, admitted, None)
+        .await
+        .ok()
+        .flatten()
+}
+
+pub(super) async fn restore_with_release(
+    worker_id: &str,
+    place: &Place,
+    key: &SessionKey,
+    turn: &ManifestDigest,
+    path: &[MessageStamp],
+    admitted: Admitted,
+    release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+) -> Result<Option<Restored>, LlmError> {
     let Admitted::Granted(admission) = admitted else {
-        return None;
+        return Ok(None);
     };
-    let vault = lifecycle::vault(&key.anchor.vault)?;
-    let authority = turn_authority(turn)?;
-    let record = candidate(&vault, key).await?;
+    let Some(vault) = lifecycle::vault(&key.anchor.vault) else {
+        return Ok(None);
+    };
+    let Some(authority) = turn_authority(turn) else {
+        return Ok(None);
+    };
+    let Some(record) = candidate(&vault, key).await else {
+        return Ok(None);
+    };
     vault.snapshot_ledger().pin(record.id);
     let restore = Restore {
         worker_id,
@@ -97,12 +131,16 @@ pub(super) async fn restore(
         admission,
         record,
     };
-    match restore.run().await {
-        Ok(restored) => Some(restored),
-        Err((cold, leased)) => {
+    match restore.run(release).await {
+        Ok(restored) => Ok(Some(restored)),
+        Err(RestoreFault::Cold(cold, leased)) => {
             lifecycle::count(Counted::RestoreCold);
             restore.went_cold(&cold, leased);
-            None
+            Ok(None)
+        }
+        Err(RestoreFault::Release(error, leased)) => {
+            restore.went_cold(&COLD, leased);
+            Err(error)
         }
     }
 }
@@ -186,12 +224,15 @@ impl Restore<'_> {
     /// cannot reuse it or charge it twice. The device room is
     /// honoured where the ledger knows it, and elsewhere the worker's own
     /// answer decides (`snapshot_busy` is cold).
-    async fn run(&self) -> Result<Restored, (Cold, bool)> {
+    async fn run(
+        &self,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> Result<Restored, RestoreFault> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
         let ledger = super::super::device_ledger(self.worker_id);
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
-            return Err((COLD, false));
+            return Err((COLD, false).into());
         }
         // The canonical wire body and plaintext overlap while the body opens.
         let peak = bytes.saturating_add(self.record.sealed_bytes);
@@ -200,7 +241,7 @@ impl Restore<'_> {
         if let Some(ledger) = &ledger {
             ledger.hold(&holder, mib(bytes));
         }
-        let restored = self.import(&mut host_reserved).await;
+        let restored = self.import(&mut host_reserved, release).await;
         if let Some(ledger) = &ledger {
             ledger.release_hold(&holder);
         }
@@ -236,9 +277,13 @@ impl Restore<'_> {
 
     /// Decrypts the snapshot, imports it into a fresh session, rechecks it
     /// and publishes it ready.
-    async fn import(&self, host_reserved: &mut HostReservation) -> Result<Restored, (Cold, bool)> {
+    async fn import(
+        &self,
+        host_reserved: &mut HostReservation,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> Result<Restored, RestoreFault> {
         let plaintext = self.open(host_reserved).await.ok_or((COLD, false))?;
-        let created = self.create().await.ok_or((COLD, false))?;
+        let created = self.create(release).await?;
         let target = SessionTarget {
             handle: created.handle,
             binding: self.key.binding(),
@@ -259,22 +304,39 @@ impl Restore<'_> {
             snapshot_sha256: SnapshotDigest(self.record.snapshot_sha256),
         };
         let place = self.place;
-        let imported = session_import(
-            &place.launch,
-            &place.epoch,
-            &body,
-            region.get(),
-            &place.worker,
-        )
-        .await;
+        let imported = match release {
+            Some(release) => {
+                session_import_released(
+                    &place.launch,
+                    &place.epoch,
+                    &body,
+                    region.get(),
+                    &place.worker,
+                    release,
+                )
+                .await
+            }
+            None => session_import(
+                &place.launch,
+                &place.epoch,
+                &body,
+                region.get(),
+                &place.worker,
+            )
+            .await
+            .map_err(ReleasedOpFault::Operation),
+        };
         drop(region);
         let imported = imported.map_err(|fault| match fault {
-            OpFault::Refused(code)
+            ReleasedOpFault::Operation(OpFault::Refused(code))
                 if SnapshotMiss::from_code(&code) == Some(SnapshotMiss::Incompatible) =>
             {
-                (RETIRE, true)
+                RestoreFault::Cold(RETIRE, true)
             }
-            OpFault::Refused(_) | OpFault::Cut => (COLD, true),
+            ReleasedOpFault::Operation(OpFault::Refused(_) | OpFault::Cut) => {
+                RestoreFault::Cold(COLD, true)
+            }
+            ReleasedOpFault::Release(error) => RestoreFault::Release(error, true),
         })?;
         // The ordered recheck again, before anything is ready.
         self.recheck().await.map_err(|cold| (cold, true))?;
@@ -287,13 +349,18 @@ impl Restore<'_> {
             staged: imported.staged.digest,
             publish: true,
         };
-        let published: SessionCheckpointed = send(place, SessionOp::Checkpoint, &publish, None)
-            .await
-            .map_err(|_| (COLD, true))?;
+        let published: SessionCheckpointed =
+            registry::send_optional(place, SessionOp::Checkpoint, &publish, None, release)
+                .await
+                .map_err(|fault| match fault {
+                    registry::SendFailure::Invalid(_) => RestoreFault::Cold(COLD, true),
+                    registry::SendFailure::Release(error) => RestoreFault::Release(error, true),
+                })?;
         if !published.ready || published.checkpoint.as_ref() != Some(&imported.staged) {
-            return Err((COLD, true));
+            return Err((COLD, true).into());
         }
-        self.ready(target, published).ok_or((COLD, true))
+        self.ready(target, published)
+            .ok_or(RestoreFault::Cold(COLD, true))
     }
 
     /// The snapshot's plaintext, opened under the turn's admission: a body
@@ -327,14 +394,21 @@ impl Restore<'_> {
     /// A fresh session for the turn's key on this incarnation, registered
     /// as restoring and holding the snapshot's pin while the vault admits
     /// under the turn's admission; otherwise its handle is released.
-    async fn create(&self) -> Option<SessionCreated> {
+    async fn create(
+        &self,
+        release: Option<(DispatchRelease<'_>, &BudgetLease)>,
+    ) -> Result<SessionCreated, RestoreFault> {
         let body = SessionCreate {
             binding: self.key.binding(),
             op_id: policy::next_op_id(),
         };
-        let created: SessionCreated = send(self.place, SessionOp::Create, &body, None)
-            .await
-            .ok()?;
+        let created: SessionCreated =
+            registry::send_optional(self.place, SessionOp::Create, &body, None, release)
+                .await
+                .map_err(|fault| match fault {
+                    registry::SendFailure::Invalid(_) => RestoreFault::Cold(COLD, false),
+                    registry::SendFailure::Release(error) => RestoreFault::Release(error, false),
+                })?;
         let target = SessionTarget {
             handle: created.handle,
             binding: self.key.binding(),
@@ -358,7 +432,8 @@ impl Restore<'_> {
         };
         let refused = {
             let mut workers = registry::lock();
-            let worker = registry::current(&mut workers, self.worker_id, self.place)?;
+            let worker =
+                registry::current(&mut workers, self.worker_id, self.place).ok_or((COLD, false))?;
             if self.admits() {
                 worker.sessions.insert(self.key.binding(), session);
                 None
@@ -370,9 +445,9 @@ impl Restore<'_> {
         };
         if let Some((target, at)) = refused {
             registry::release_later(target, at, SessionInvalidation::Evicted);
-            return None;
+            return Err((COLD, false).into());
         }
-        Some(created)
+        Ok(created)
     }
 
     /// Makes the restored session ready, at once under the registry's lock:
