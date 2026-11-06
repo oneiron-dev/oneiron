@@ -2761,7 +2761,7 @@ class StreamFinalityReasonIdleTimeout(TypedDict):
     idle_timeout: StreamFinalityReasonIdleTimeoutBody
 class StreamFinalityReasonCustom(TypedDict):
     custom: str
-StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+StreamFinalityReason = Literal["explicit_finalize", "idle_timeout_30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
 IncompleteReason = Literal["terminal_disagreement"]
 class FinishReasonOtherBody(TypedDict):
     name: str
