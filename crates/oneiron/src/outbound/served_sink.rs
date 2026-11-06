@@ -33,6 +33,7 @@ use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
+use super::send_lookup::{EngineSendId, SentLookup, SentLookupTarget};
 use crate::channel_identity_autonomy::FrozenSpacePosting;
 use crate::channel_identity_provider::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, EMAIL_CHANNEL, LINE_CHANNEL, SLACK_CHANNEL,
@@ -451,9 +452,13 @@ impl<'a> ServedChannelSink<'a> {
             return OutboundExecutionOutcome::failed("line_target_unrecognized");
         };
         self.line_count_push(token);
+        // FIX 4747: a connector-send TASK's push carries the retry key its
+        // engine send id derives, the same from every machine.
         let retry_key = line_retry_key(
             request
-                .idempotency_key
+                .engine_send_id
+                .map(EngineSendId::as_str)
+                .or(request.idempotency_key)
                 .or(request.intent.idempotency_key.as_deref())
                 .unwrap_or(request.intent_ref),
         );
@@ -709,6 +714,24 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }
+
+    /// FIX 4747: native mail looks the send's submission up by its
+    /// Message-ID. A LINE push carries the retry key the engine send id
+    /// derives, and LINE drops a resend under a key it already accepted, so
+    /// its resend is safe and stands as not sent. A LINE reply carries no
+    /// key, and Slack and Telegram keep no id of ours: they cannot tell.
+    /// Engine call (CALLS, FIX 4747): a LINE push's lookup is not sent.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        match (target.intent.channel.as_str(), target.intent.verb.as_str()) {
+            (LINE_CHANNEL, "push") => SentLookup::NotSent,
+            (EMAIL_CHANNEL, "send") => self.email_lookup_sent(engine_send_id, target),
+            _ => SentLookup::CannotTell,
+        }
+    }
 }
 
 /// The served sink a host keeps past one borrow of its vault: a connector
@@ -747,5 +770,27 @@ impl OutboundExecutionSink for OwnedServedChannelSink {
         .unwrap_or_else(|_| {
             OutboundExecutionOutcome::failed("served_send_panicked").with_possible_delivery()
         })
+    }
+
+    /// The served sink's lookup (FIX 4747), on a thread of its own as a
+    /// send is; a lookup that panicked cannot tell.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        let vault = self.vault.as_ref();
+        let allowance = self.line_push_allowance;
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink
+                        .with_line_push_allowance(allowance)
+                        .lookup_sent(engine_send_id, target),
+                    Err(_) => SentLookup::CannotTell,
+                })
+                .join()
+        })
+        .unwrap_or(SentLookup::CannotTell)
     }
 }

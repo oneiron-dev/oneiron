@@ -595,6 +595,38 @@ pub(crate) fn record_definite_non_delivery(
     )
 }
 
+/// A provider lookup answered that no earlier call of this outcome-free
+/// Pending row reached it (FIX 4747): the explicit reconciliation that
+/// resolves its possible-delivery mark. The row becomes a definite
+/// non-delivery with the mark cleared, so its resend retries as one, and a
+/// definite refusal of that resend reads as one.
+pub(crate) fn record_looked_up_non_delivery(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("looked-up non-delivery target is missing"),
+    )?;
+    if record.state != IntentState::Pending || record.recorded_outcome.is_some() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "looked-up non-delivery requires outcome-free Pending",
+        ));
+    }
+    record.recorded_outcome = Some(RecordedOutboundOutcome::DefiniteNonDelivery);
+    record.delivery_uncertain = false;
+    record.updated_ms = now_ms.max(record.created_ms);
+    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    wtxn.commit().map_err(Error::from)?;
+    force_sync(vault)?;
+    // Open only after the state write is durable (FIX 10959), as in
+    // `record_possible_delivery`.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
+    Ok(record)
+}
+
 /// A provider's rate or quota refusal (FIX 8818): the send certainly did not
 /// go, as [`record_definite_non_delivery`] records, and the provider's wait
 /// is kept with it in the same writer, so no attempt goes before its edge.
