@@ -340,10 +340,13 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let target_scope =
-            crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+        // The target's code-document identity, as its writers key it (FIX
+        // 12761).
+        let target_scope = self.resolve_repo_identity(
+            &crate::git_wire::mutation_commands::canonical_mutation_repo_ref(repo.repo_root())?,
+        )?;
         for frontier in revision.file_frontiers.values() {
-            if frontier.repo != target_scope {
+            if frontier.repo != target_scope.as_str() {
                 return Err(Error::InvariantViolation(
                     "engine commit belongs to another repository",
                 ));
