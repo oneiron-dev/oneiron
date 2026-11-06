@@ -455,6 +455,9 @@ impl Vault {
                 entered_at: record.entered_at,
             },
         );
+        // The caller bindings its sealed held calls kept for a code consent
+        // ask go the same way (FIX 4520).
+        entry.code_consent_asks.clear();
         // PRE-CLOSE CENSUS (K8). Session-local retrieval-run receipts and
         // witnessed transcript entities live in the overlay, so close does not
         // delete them — the overlay's evaporation does. They are unobservable

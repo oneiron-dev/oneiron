@@ -286,7 +286,9 @@ impl Vault {
 
     /// Opens the owner's question for the code consent wait a fresh hold
     /// bound, as the call's own caller. An ask that does not open leaves the
-    /// generic held-call ask to stand in, so the owner still hears of it.
+    /// generic held-call ask to stand in, so the owner still hears of it. A
+    /// sealed call's session then keeps the caller's live binding, so the
+    /// repair pass can ask again as that caller (FIX 4520).
     pub(super) fn ask_code_consent_for_hold(
         &self,
         memory: &Memory<'_>,
@@ -307,17 +309,27 @@ impl Vault {
             .read_txn()
             .map_err(Error::from)
             .and_then(|txn| {
-                PENDING_CALLS
-                    .get(&self.store, &txn, &call_ref)
-                    .map(|row| row.and_then(|row| row.code_consent_wait))
+                PENDING_CALLS.get(&self.store, &txn, &call_ref).map(|row| {
+                    row.and_then(|row| {
+                        row.code_consent_wait
+                            .map(|wait_id| (wait_id, row.sealed_arguments.is_some()))
+                    })
+                })
             });
-        let wait_id = match wait {
-            Ok(Some(wait_id)) => wait_id,
+        let (wait_id, sealed) = match wait {
+            Ok(Some(wait)) => wait,
             Ok(None) => return outcome,
             Err(error) => {
                 tracing::warn!(call_ref = %call_ref.to_hex(), %error, "code consent wait not read");
                 return outcome;
             }
+        };
+        // FIX 4520: a sealed call's live caller binding, captured before its
+        // first ask can fail. Its session keeps it only when that ask fails.
+        let caller = if sealed {
+            ask_repair::capture_caller_binding(memory, wait_id)
+        } else {
+            None
         };
         let asked = self
             .code_consent_question_text(wait_id)
@@ -336,6 +348,9 @@ impl Vault {
                     %error,
                     "connector call owner ask not queued"
                 );
+            }
+            if let Some(caller) = caller {
+                self.retain_code_consent_caller(caller, wait_id, call_ref);
             }
         }
         outcome

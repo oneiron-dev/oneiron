@@ -61,6 +61,7 @@
 //! persisted by a caller during a session are overlay rows like any other, so
 //! they evaporate with the room without the seam knowing their type.
 
+mod code_consent_asks;
 mod creator;
 mod executor;
 mod note_reads;
