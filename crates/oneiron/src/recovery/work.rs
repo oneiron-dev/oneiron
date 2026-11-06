@@ -11,8 +11,10 @@
 //! Artifact validation yields between ordered groups, rows and nested history
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
-//! retained-parent and workflow checks, and encoding still run whole. The
-//! envelope checksum and outer canonical digest yield between BLAKE3 chunks.
+//! retained-parent and workflow checks still run whole. Encoding yields between
+//! top-level named fields and source rows; each scalar and nested row serializer
+//! still runs whole. The envelope checksum and outer canonical digest yield
+//! between BLAKE3 chunks.
 //! NOTE scope and immutable plan lookups yield between source rows; store-bound
 //! workflow checks and the aborted-transaction preflight still run whole. Manifest construction
 //! yields between whole packs and within each chunk hash.
@@ -36,8 +38,8 @@ use std::time::Instant;
 use loro::LoroDoc;
 
 use super::canonical::{
-    CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalSnapshot, CanonicalValidation,
-    RebuildAt, StoreCapturedCanonical, invalid, rebuild_page, rebuild_start,
+    CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalCapture, CanonicalEncoding, CanonicalSnapshot,
+    CanonicalValidation, RebuildAt, StoreCapturedCanonical, invalid, rebuild_page, rebuild_start,
 };
 use super::document::{NotePlanRows, NoteScopeRows};
 use super::ladder::{
@@ -133,6 +135,7 @@ pub(crate) struct RecoveryWork {
     digest: [u8; 32],
     phase: RecoveryPhase,
     validation: Option<CanonicalValidation>,
+    encoding: Option<CanonicalEncoding>,
     encoded_digest: Option<EncodedDigest>,
     preflight_manifest: Option<ManifestChunks>,
     preflight_note_scope: Option<NoteScopeRows>,
@@ -190,6 +193,7 @@ impl RecoveryWork {
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
             validation: None,
+            encoding: None,
             encoded_digest: None,
             preflight_manifest: None,
             preflight_note_scope: None,
@@ -223,6 +227,7 @@ impl RecoveryWork {
             let result = self.page(vault, materializer);
             if result.is_err() && self.phase == RecoveryPhase::Validate {
                 self.validation = None;
+                self.encoding = None;
                 self.encoded_digest = None;
             }
             if result.is_err() && self.phase == RecoveryPhase::Preflight {
@@ -264,9 +269,14 @@ impl RecoveryWork {
     pub(crate) fn cursor(&self) -> RecoveryCursor {
         let next_key = match self.phase {
             RecoveryPhase::Validate => self
-                .validation
+                .encoding
                 .as_ref()
-                .map(|validation| format!("validate {}", validation.position())),
+                .map(CanonicalEncoding::position)
+                .or_else(|| {
+                    self.validation
+                        .as_ref()
+                        .map(|validation| format!("validate {}", validation.position()))
+                }),
             RecoveryPhase::Rebuild => Some(self.rebuilt.position()),
             RecoveryPhase::Replay => self.forward.as_ref().map(|forward| {
                 let (pass, key) = forward.position();
@@ -303,23 +313,36 @@ impl RecoveryWork {
         match self.phase {
             RecoveryPhase::Validate => {
                 if self.encoded_digest.is_none() {
-                    // An actor this vault erased reads as no one in the artifact
-                    // too (FIX 3878): the recovery checks, installs and compares
-                    // only that form. Full domain validation precedes quarantine
-                    // and every durable write.
-                    if self.validation.is_none() {
-                        self.source.erase_actors_here(vault)?;
+                    if self.encoding.is_none() {
+                        // An actor this vault erased reads as no one in the artifact
+                        // too (FIX 3878): the recovery checks, installs and compares
+                        // only that form. Full domain validation precedes quarantine
+                        // and every durable write.
+                        if self.validation.is_none() {
+                            self.source.erase_actors_here(vault)?;
+                        }
+                        if !self
+                            .validation
+                            .get_or_insert_with(CanonicalValidation::default)
+                            .advance(&self.source, page)?
+                        {
+                            return Ok(());
+                        }
+                        self.encoding = Some(CanonicalEncoding::new(CANONICAL_SNAPSHOT_MAX_BYTES)?);
                     }
                     if !self
-                        .validation
-                        .get_or_insert_with(CanonicalValidation::default)
+                        .encoding
+                        .as_mut()
+                        .expect("validated source encoding is retained")
                         .advance(&self.source, page)?
                     {
                         return Ok(());
                     }
                     let encoded = self
-                        .source
-                        .encode_validated_payload_within(CANONICAL_SNAPSHOT_MAX_BYTES)?;
+                        .encoding
+                        .take()
+                        .expect("completed canonical encoding")
+                        .into_bytes();
                     limit(encoded.len(), self.budget.max_bytes)?;
                     self.encoded_digest = Some(EncodedDigest::new(encoded));
                 }

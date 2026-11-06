@@ -18,6 +18,7 @@ mod asset_body_refs;
 mod budget;
 mod capture;
 mod containers;
+mod encoding;
 mod peer_origins;
 mod rebuild;
 mod row_births;
@@ -36,6 +37,7 @@ pub(crate) use capture::{
     capture_canonical_window_within, prepare_artifact_pads,
 };
 pub(super) use containers::ExpectedContainers;
+pub(crate) use encoding::CanonicalEncoding;
 pub use peer_origins::CanonicalPeerOrigin;
 pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
