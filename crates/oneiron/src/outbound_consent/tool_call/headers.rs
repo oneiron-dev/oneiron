@@ -72,8 +72,8 @@ pub(super) fn declared_headers<'a>(
 /// `additionalProperties` of the object schema `fields` governs, with that
 /// rule, as the validator applies them: patterns unanchored, and
 /// `additionalProperties` for a key no property or pattern there names. A
-/// pattern this host cannot compile governs no key it can name, and leaves
-/// none additional (FIX 9284).
+/// pattern this host cannot compile governs no key, so keys no property or
+/// compiled pattern names fall to `additionalProperties` (FIX 12530).
 fn governed_keys<'a>(
     fields: &'a serde_json::Map<String, Value>,
     properties: Option<&serde_json::Map<String, Value>>,
@@ -84,7 +84,9 @@ fn governed_keys<'a>(
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .map(|(pattern, rule)| (super::super::tool_schema::key_pattern(pattern), rule))
+        .filter_map(|(pattern, rule)| {
+            super::super::tool_schema::key_pattern(pattern).map(|pattern| (pattern, rule))
+        })
         .collect();
     let additional = fields
         .get("additionalProperties")
@@ -99,18 +101,13 @@ fn governed_keys<'a>(
         .flat_map(serde_json::Map::keys)
     {
         let mut named = properties.is_some_and(|properties| properties.contains_key(key));
-        let mut unknown = false;
         for (pattern, rule) in &patterns {
-            match pattern {
-                Some(pattern) if pattern.is_match(key) => {
-                    named = true;
-                    governed.push((key.as_str(), *rule));
-                }
-                Some(_) => {}
-                None => unknown = true,
+            if pattern.is_match(key) {
+                named = true;
+                governed.push((key.as_str(), *rule));
             }
         }
-        if let Some(rule) = additional.filter(|_| !named && !unknown) {
+        if let Some(rule) = additional.filter(|_| !named) {
             governed.push((key.as_str(), rule));
         }
     }
