@@ -10,6 +10,7 @@ use super::artifact_question::{
 use super::judgment::{SheetAnswerBundle, SheetCellAnswer};
 use super::judgment_cells::named_sheet_cells;
 use super::{CellRef, CellValue, OfficeFormat, RangeRef};
+use crate::edit_settle::{DecidedSheetAnswers, DecidedSheetRequest, DecidedSheetShape};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionImage, EvidenceVersion, MAX_DECISION_IMAGE_BYTES};
 use crate::llm::image::ImageBytes;
@@ -20,11 +21,12 @@ use oneiron_docedit::deck::DeckView;
 use oneiron_docedit::docx_body::read_docx_blocks;
 use oneiron_docedit::retained_opc::{Limits, Package};
 use oneiron_docedit::xlsx_body::{XlsxValue, read_xlsx_cells};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeSet;
 
 /// One file and the result row its answer fills.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FolderItem {
     pub artifact: EntityId,
     pub row: u32,
@@ -72,6 +74,19 @@ impl Vault {
             || files.contains(output)
         {
             return Err(invalid("invalid folder ask selection"));
+        }
+        let identity = DecidedSheetRequest::new(
+            ask,
+            DecidedSheetShape::FolderItems {
+                sheet: request.sheet.to_owned(),
+                items: request.items.to_vec(),
+                answer_col,
+                max_count_override: request.max_count_override,
+            },
+        );
+        let unmasked = request.sight != crate::secret_custody::SecretSight::Masked;
+        if let Some(row) = self.decided_sheet_answers(output, &identity, unmasked)? {
+            return self.stage_decided_sheet_answers(output, &row, ask.deadline);
         }
         let base_live = self.office_body_pin(output)?;
         let (version, bytes, mut read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
@@ -213,19 +228,20 @@ impl Vault {
             reads: None,
             base_live,
         };
-        Ok(ArtifactAskRun {
-            proposal: self.stage_sheet_answers(
-                output,
+        let row = self.retain_decided_sheet_answers(
+            output,
+            DecidedSheetAnswers {
+                request: identity,
                 bundle,
-                ask.run_ref,
                 version,
                 frontier,
-                Some(ask.deadline),
-            )?,
-            abstained,
-            refused,
-            read_rows,
-        })
+                read_rows,
+                abstained,
+                refused,
+                unmasked,
+            },
+        )?;
+        self.stage_decided_sheet_answers(output, &row, ask.deadline)
     }
 }
 

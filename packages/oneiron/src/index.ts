@@ -2170,6 +2170,8 @@ export class Oneiron {
       waits: (request: Facade.ArtifactRefRequest): Facade.OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as Facade.OrganWaitView[]; return result.map(item => item) }),
       /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
       release_wait: (request: Facade.ProposalSettleRequest): Facade.ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as Facade.ReleasedWait; return result }),
+      /** Releases completed sheet answers by run ref under Discard consent. */
+      release_answers: (request: Facade.ProposalSettleRequest): Facade.ReleasedAnswers => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseAnswers(keyedJson(request))) as Facade.ReleasedAnswers; return result }),
       /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
       review_slides: (request: Facade.SlideReviewSubmit): Facade.ActAnswer<Facade.SlideReviewOutcome> => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.ActAnswer<Facade.SlideReviewOutcome>; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */

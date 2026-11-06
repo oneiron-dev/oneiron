@@ -767,7 +767,8 @@ impl Vault {
         if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
             return Err(Error::EntityNotFound);
         }
-        PENDING.put(&self.store, wtxn, &key, row)
+        PENDING.put(&self.store, wtxn, &key, row)?;
+        super::decided::drop_in_txn(&self.store, wtxn, &key)
     }
 
     fn pending_row(

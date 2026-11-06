@@ -26048,6 +26048,28 @@ async fn vault_artifacts_release_wait(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_artifacts_release_answers(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.release_answers",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41635,6 +41657,9 @@ async fn call_verb_row(
         "vault.artifacts.waits" => Box::pin(vault_artifacts_waits(server, call, input)).await,
         "vault.artifacts.release_wait" => {
             Box::pin(vault_artifacts_release_wait(server, call, input)).await
+        }
+        "vault.artifacts.release_answers" => {
+            Box::pin(vault_artifacts_release_answers(server, call, input)).await
         }
         "vault.artifacts.review_slides" => {
             Box::pin(vault_artifacts_review_slides(server, call, input)).await

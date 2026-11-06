@@ -957,6 +957,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.waits" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.release_wait" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.release_answers" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.review_slides" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.ask" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.admit" => a.spec.clone().ok_or_else(invalid),
@@ -4001,6 +4002,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.release_wait" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.release_answers" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.review_slides" => {
@@ -19948,6 +19952,14 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::blob_artifact::ProposalSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_release_wait(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.release_answers" => {
+            let input: oneiron::blob_artifact::ProposalSettleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_release_answers(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

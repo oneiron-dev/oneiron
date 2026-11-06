@@ -4515,6 +4515,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.release_answers",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.review_slides",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::SlideReviewSubmit,
@@ -16470,6 +16476,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.release_answers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.review_slides" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22403,6 +22416,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.release_wait" => {
             let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
         }
+        "vault.artifacts.release_answers" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
         "vault.artifacts.review_slides" => {
             let _input: crate::blob_artifact::SlideReviewSubmit = decode(value.clone())?;
         }
@@ -25659,6 +25675,9 @@ pub fn invoke(
         "vault.artifacts.waits" => encode(vault_artifacts_waits(memory, decode(value)?)?),
         "vault.artifacts.release_wait" => {
             encode(vault_artifacts_release_wait(memory, decode(value)?)?)
+        }
+        "vault.artifacts.release_answers" => {
+            encode(vault_artifacts_release_answers(memory, decode(value)?)?)
         }
         "vault.artifacts.review_slides" => {
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
@@ -33468,6 +33487,18 @@ pub fn vault_artifacts_release_wait(
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::ReleasedWait> {
     memory.artifacts_release_wait(&input)
+}
+pub fn vault_artifacts_release_answers(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::ReleasedAnswers> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.release_answers",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_release_answers(&input)
 }
 pub fn vault_artifacts_review_slides(
     memory: &Memory<'_>,

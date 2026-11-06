@@ -12618,6 +12618,33 @@
       }
     },
     {
+      "name": "vault.artifacts.release_answers",
+      "description": "Releases completed sheet answers by run ref under Discard consent, without fabricating a proposal or settlement receipt.",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::ReleasedAnswers",
+      "call": "memory.artifacts_release_answers(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Releases completed sheet answers by run ref under Discard consent.\n",
+          "ts": "/** Releases completed sheet answers by run ref under Discard consent. */",
+          "py": "Releases completed sheet answers by run ref under Discard consent."
+        }
+      },
+      "refs": [
+        "/artifact_ref"
+      ]
+    },
+    {
       "name": "vault.artifacts.review_slides",
       "description": "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard.",
       "input": "crate::blob_artifact::SlideReviewSubmit",

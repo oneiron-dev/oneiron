@@ -900,6 +900,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.proposals", post(facade_route))
         .route("/vault.artifacts.waits", post(facade_route))
         .route("/vault.artifacts.release_wait", post(facade_route))
+        .route("/vault.artifacts.release_answers", post(facade_route))
         .route("/vault.artifacts.review_slides", post(facade_route))
         .route("/vault.artifacts.ask", post(facade_route))
         .route("/vault.artifacts.admit", post(facade_route))

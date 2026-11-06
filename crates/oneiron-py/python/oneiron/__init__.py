@@ -3860,6 +3860,9 @@ class Oneiron:
         def release_wait(self, request: dict[str, Any]) -> dict[str, Any]:
             """Lets one held organ call go, by its run ref, under the consent a Discard needs."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_release_wait(json.dumps(request, allow_nan=False))))
+        def release_answers(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Releases completed sheet answers by run ref under Discard consent."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_release_answers(json.dumps(request, allow_nan=False))))
         def review_slides(self, request: dict[str, Any]) -> dict[str, Any]:
             """Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_review_slides(json.dumps(request, allow_nan=False))))

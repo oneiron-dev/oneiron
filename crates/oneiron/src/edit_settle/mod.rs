@@ -99,6 +99,7 @@
 
 mod carry;
 mod codec;
+mod decided;
 mod keys;
 mod organ_wait;
 mod pending;
@@ -108,6 +109,7 @@ mod settle;
 mod stranded;
 mod undo;
 pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit};
+pub(crate) use decided::{DecidedSheetAnswers, DecidedSheetRequest, DecidedSheetShape};
 pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub(crate) use pending::DeckExportHold;
 pub use pending::{
@@ -142,10 +144,10 @@ pub(crate) fn purge_artifact_retention_in_txn(
     artifact_id: &crate::entity_id::EntityId,
 ) -> crate::error::Result<()> {
     pending::purge_artifact_in_txn(store, txn, artifact_id)?;
+    decided::purge_artifact_in_txn(store, txn, artifact_id)?;
     stranded::purge_artifact_in_txn(store, txn, artifact_id)?;
     organ_wait::purge_artifact_in_txn(store, txn, artifact_id)
 }
-
 #[cfg(test)]
 mod tests;
 

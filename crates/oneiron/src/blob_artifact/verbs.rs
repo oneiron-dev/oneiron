@@ -382,6 +382,12 @@ pub struct ReleasedWait {
     pub released: bool,
 }
 
+/// Whether completed, not-yet-retained sheet answers were released.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleasedAnswers {
+    pub released: bool,
+}
+
 /// A kept proposal: the version it became, the threads it moved, its
 /// receipt and the review it settled.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -978,6 +984,16 @@ impl Memory<'_> {
             run_ref: &input.run_ref,
         };
         let vault = self.vault();
+        if matches!(
+            &input.units,
+            ArtifactAskUnits::SheetRows { .. } | ArtifactAskUnits::FolderItems { .. }
+        ) {
+            self.require_credential_reads(&vault.decided_sheet_answer_read_rows(
+                &artifact,
+                &input.run_ref,
+                actor.entity_ref(),
+            )?)?;
+        }
         let run = match &input.units {
             ArtifactAskUnits::SheetRows {
                 sheet,
@@ -1069,6 +1085,7 @@ impl Memory<'_> {
         // What the ask read beside its base and its evidence waits with its
         // proposal for that proposal's readers (FIX 9312).
         let read: Vec<EntityId> = run.read_rows.iter().chain(&evidence).copied().collect();
+        self.require_credential_reads(&read)?;
         let proposed = match &run.proposal {
             Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
                 &artifact,
@@ -1145,6 +1162,23 @@ impl Memory<'_> {
             .vault()
             .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
         Ok(ReleasedWait { released })
+    }
+
+    /// `vault.artifacts.release_answers`: releases completed sheet answers
+    /// by run ref under the same consent as Discard. No proposal or receipt
+    /// is fabricated; a held proposal still uses `vault.artifacts.discard`.
+    pub fn artifacts_release_answers(
+        &self,
+        input: &ProposalSettleRequest,
+    ) -> MemoryResult<ReleasedAnswers> {
+        let consent = self.artifact_consent(input.brief_ref.clone())?;
+        let released = self.vault().release_decided_sheet_answers(
+            &entity(&input.artifact_ref)?,
+            &input.proposal_ref,
+            &consent,
+            self.artifact_actor(),
+        )?;
+        Ok(ReleasedAnswers { released })
     }
 
     /// `vault.artifacts.propose_deck`: runs one native deck transaction over

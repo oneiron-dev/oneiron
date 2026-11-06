@@ -332,6 +332,7 @@ impl Vault {
                         deck: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
+                    super::decided::drop_in_txn(&self.store, wtxn, &key)?;
                     return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
                 }
                 // Replay every PPTX comment operation against the pinned in-transaction
@@ -486,6 +487,7 @@ impl Vault {
                     deck: checked_deck.map(|checked| Box::new(checked.evidence)),
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
+                super::decided::drop_in_txn(&self.store, wtxn, &key)?;
                 if let Some(Some(withdrawal)) = carry {
                     self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
                 }
@@ -572,6 +574,7 @@ impl Vault {
                 return Err(already_settled(&existing));
             }
             RECORD.put(&self.store, wtxn, &key, &record)?;
+            super::decided::drop_in_txn(&self.store, wtxn, &key)?;
             Ok(())
         })?;
 

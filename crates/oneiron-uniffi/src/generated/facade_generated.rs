@@ -4041,6 +4041,11 @@ export_facade! {
     let output = client.vault_artifacts_release_wait(&input)?;
     crate::codec::lift_record("vault.artifacts.release_wait", &output)
 };
+"vault.artifacts.release_answers" => fn vault_artifacts_release_answers(&self, input: ProposalSettleRequest) -> ReleasedAnswers = |client| {
+    let input: oneiron::blob_artifact::ProposalSettleRequest = crate::codec::lower_record("vault.artifacts.release_answers", input)?;
+    let output = client.vault_artifacts_release_answers(&input)?;
+    crate::codec::lift_record("vault.artifacts.release_answers", &output)
+};
 "vault.artifacts.review_slides" => fn vault_artifacts_review_slides(&self, input: SlideReviewSubmit) -> ActAnswerSlideReviewOutcome = |client| {
     let input: oneiron::blob_artifact::SlideReviewSubmit = crate::codec::lower_record("vault.artifacts.review_slides", input)?;
     let output = client.vault_artifacts_review_slides(&input)?;

@@ -812,6 +812,7 @@ pub enum AgentVerb {
     VaultArtifactsProposals,
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
+    VaultArtifactsReleaseAnswers,
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
     VaultArtifactsAdmit,
@@ -2099,6 +2100,7 @@ impl AgentVerb {
         Self::VaultArtifactsProposals,
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
+        Self::VaultArtifactsReleaseAnswers,
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
         Self::VaultArtifactsAdmit,
@@ -3413,6 +3415,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
+            Self::VaultArtifactsReleaseAnswers => "vault.artifacts.release_answers",
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
             Self::VaultArtifactsAdmit => "vault.artifacts.admit",
@@ -4712,6 +4715,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReleaseAnswers
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultArtifactsAdmit
@@ -6028,6 +6032,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReleaseAnswers
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultArtifactsAdmit
@@ -7462,6 +7467,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReleaseAnswers
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultArtifactsAdmit
@@ -8379,6 +8385,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReleaseAnswers
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultArtifactsAdmit
@@ -9511,6 +9518,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReleaseAnswers => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultArtifactsAdmit => &["spec"],
@@ -10799,6 +10807,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReleaseAnswers => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultArtifactsAdmit => &["spec"],
@@ -13665,6 +13674,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsReleaseWait => {
                 "Lets one held organ call go, by its run ref, under the consent a Discard needs."
+            }
+            Self::VaultArtifactsReleaseAnswers => {
+                "Releases completed sheet answers by run ref under Discard consent, without fabricating a proposal or settlement receipt."
             }
             Self::VaultArtifactsReviewSlides => {
                 "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard."
