@@ -42,17 +42,7 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
     }
 
     fn port_deletion_state(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<DeletionState> {
-        let kept = deletion_memo_key(self, txn);
-        if let Some(key) = kept
-            && let Some(state) = DELETION_MEMO.with(|memo| memo.borrow().get(key, id))
-        {
-            return Ok(state);
-        }
-        let state = deletion_state_read(self, txn, id)?;
-        if let Some(key) = kept {
-            DELETION_MEMO.with(|memo| memo.borrow_mut().put(key, *id, state));
-        }
-        Ok(state)
+        deletion_state_observed_in_txn(self, txn, id, None)
     }
 
     fn port_deletion_marker(
@@ -72,6 +62,44 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
     ) -> Result<bool> {
         marker_table(marker).contains(self, txn, &HexId(*id))
     }
+}
+
+/// The original memoized read, with an optional successful-state observer.
+/// The callback runs after all memo borrows end. It must not reenter the
+/// store, change recall scopes or panic. It receives no canonical row evidence.
+pub(crate) fn deletion_state_observed_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    mut observer: Option<&mut super::DeletionStateObserver<'_>>,
+) -> Result<DeletionState> {
+    use super::{DeletionStateOrigin, DeletionStateRead};
+
+    let kept = deletion_memo_key(dbs, txn);
+    if let Some(key) = kept
+        && let Some(state) = DELETION_MEMO.with(|memo| memo.borrow().get(key, id))
+    {
+        if let Some(observer) = observer.as_deref_mut() {
+            observer(DeletionStateRead {
+                id: *id,
+                state,
+                origin: DeletionStateOrigin::Memo,
+            });
+        }
+        return Ok(state);
+    }
+    let state = deletion_state_read(dbs, txn, id)?;
+    if let Some(key) = kept {
+        DELETION_MEMO.with(|memo| memo.borrow_mut().put(key, *id, state));
+    }
+    if let Some(observer) = observer {
+        observer(DeletionStateRead {
+            id: *id,
+            state,
+            origin: DeletionStateOrigin::Computed,
+        });
+    }
+    Ok(state)
 }
 
 /// Every hard-delete marker id in this transaction, including marker-only erasures.
