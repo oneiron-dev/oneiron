@@ -195,7 +195,7 @@ async fn take_backup(
     }
     let host = owner_routes::host(&server)?;
     Ok(Json(
-        owner_routes::blocking(move || host.take(server.vault(), None)).await?,
+        owner_routes::blocking(move || host.take_unless_deleted(server.vault())).await?,
     ))
 }
 

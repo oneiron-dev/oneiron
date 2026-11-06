@@ -201,7 +201,31 @@ pub(crate) fn take_as(
 ) -> anyhow::Result<BackupOutcome> {
     let produced =
         finalize::produce(vault, plan, owner).map_err(finalize::Unproduced::into_error)?;
-    finish_take(vault, plan, produced)
+    finish_take(vault, plan, produced, false)
+}
+
+/// [`take`] for the host operator (FIX 11432): never of a shared vault its
+/// Owners deleted, whose backups stay as they were until their retention
+/// ends. The caller holds the backup lock. A deletion read before the
+/// snapshot refuses it; one that landed while the image was taken lets the
+/// image go and refuses it; and its prune reads the deletion again, so a
+/// take that lands beside a deletion unlinks none of the backups it keeps.
+/// `None`: refused, for a deletion.
+pub(crate) fn take_unless_deleted(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> anyhow::Result<Option<BackupOutcome>> {
+    if vault.shared_vault_deletion()?.is_some() {
+        return Ok(None);
+    }
+    let produced =
+        finalize::produce(vault, plan, None).map_err(finalize::Unproduced::into_error)?;
+    if vault.shared_vault_deletion()?.is_some() {
+        // Orphaned facts and inventories go with the next prune's sweeps.
+        let _ = std::fs::remove_file(&produced.path);
+        return Ok(None);
+    }
+    finish_take(vault, plan, produced, true).map(Some)
 }
 
 /// Takes the scheduled automatic selection, never an explicit whole-vault request.
@@ -211,13 +235,17 @@ pub(crate) fn take_automatic(
 ) -> anyhow::Result<BackupOutcome> {
     let produced =
         finalize::produce_automatic(vault, plan).map_err(finalize::Unproduced::into_error)?;
-    finish_take(vault, plan, produced)
+    finish_take(vault, plan, produced, false)
 }
 
+/// Lands `produced` and prunes beyond `plan.keep`; with `spare_on_deletion`,
+/// prunes nothing once the vault's Owners have deleted it (the operator's
+/// take, [`take_unless_deleted`]). The schedule's takes prune as before.
 fn finish_take(
     vault: &oneiron::Vault,
     plan: &BackupPlan,
     produced: finalize::Produced,
+    spare_on_deletion: bool,
 ) -> anyhow::Result<BackupOutcome> {
     // What it covered, beside it now that it landed. A marker that fails
     // leaves the one before, which only reads as changed.
@@ -232,7 +260,11 @@ fn finish_take(
     // background publisher does the anchor reads and advances.
     custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&produced.path)?.len();
-    let pruned = prune(vault, plan, Some(&produced.file))?;
+    let pruned = if spare_on_deletion && vault.shared_vault_deletion()?.is_some() {
+        Vec::new()
+    } else {
+        prune(vault, plan, Some(&produced.file))?
+    };
     Ok(produced.into_outcome(bytes, pruned))
 }
 
