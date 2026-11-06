@@ -133,8 +133,9 @@ impl ContributionReplayHost for HostContributionReplay {
     }
 }
 
-/// A fork's call: the capsule's model alone, by its own one-model ladder,
-/// under the route prompt the capsule was answered under, paid by the Coach.
+/// A fork's call: the capsule's model alone, on the one rung that answered
+/// it (the role's rung, else the model's raw rung, FIX 18546), under the
+/// route prompt the capsule was answered under, paid by the Coach.
 /// The prompt sent is the one the capsule's body holds, each secret in it
 /// its custody handle (FIX 6255), once the configured route is the one the
 /// capsule's call was sent on, by its prompt digest (FIX 6356).
@@ -160,21 +161,26 @@ impl ContributionForkModel for ExactFork<'_> {
         // own server that batches (INF 1). The fork's request hash is its
         // unmarked request's.
         mark_solo(&mut request);
-        // The model a raw call naming it meets, never swapped for the
-        // role's route, which still clamps it: a model not served here now
-        // is no replay, and no other model stands in. The role is the one
-        // whose admission sent the capsule's call (FIX 6359).
-        let Ok(call) = runtime.admit_seat_bound(self.vault, rung.role, request) else {
+        // The capsule's model, never swapped for the role's pick. The role's
+        // route still clamps it: a model not served here now is no replay,
+        // and no other model stands in. The role is the one whose admission
+        // sent the capsule's call (FIX 6359).
+        let Ok(admission) = runtime.admit_replay(self.vault, rung.role, request) else {
             return Ok(None);
         };
+        let (request, routes) = (admission.request, admission.routes);
         // The rung that answered the capsule's call, as it is configured
-        // now. The replay runs only while its configured prompt is the one
-        // the call was answered under, by its digest; the stored prompt then
-        // takes its place, put first once.
-        let Some(ladder) = call
-            .ladder
-            .for_replay_binding(&rung.binding.model, rung.binding.locality)
-            .filter(|ladder| ladder.exact_prompt_digest() == rung.prompt_digest)
+        // now: on the role's route, else on the model's raw route (FIX
+        // 18546). The replay runs only while its configured prompt is the
+        // one the call was answered under, by its digest; the stored prompt
+        // then takes its place, put first once.
+        let Some((_, ladder)) = routes
+            .exact_rung(
+                &rung.binding.model,
+                rung.binding.locality,
+                rung.prompt_digest,
+            )
+            .filter(|(_, ladder)| ladder.exact_prompt_digest() == rung.prompt_digest)
         else {
             return Ok(None);
         };
@@ -192,7 +198,7 @@ impl ContributionForkModel for ExactFork<'_> {
             .handle
             .block_on(ladder.generate_exact_within(
                 &run,
-                call.request,
+                request,
                 None,
                 rung.binding.prompt.as_deref(),
                 &may_send,

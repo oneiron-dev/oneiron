@@ -323,43 +323,50 @@ impl<'a> HostModels<'a> {
     /// the configured prompt is the one first sent, by its digest (FIX 6255,
     /// 6356). Its answer's text, and each tool call it names as data; no
     /// tool runs. A captured rung's call is admitted on the role whose
-    /// admission sent it (FIX 6359); a kept request with no rung is admitted
-    /// on the chat role. `None` when that model or prompt is not served now,
-    /// or the call fails: the replay then rebuilds the call.
+    /// admission sent it (FIX 6359), and sent on that role's rung, else on
+    /// the model's raw rung (FIX 18546). A kept request with no rung is
+    /// admitted on the chat role. `None` when that model or prompt is not
+    /// served now, or the call fails: the replay then rebuilds the call.
     fn send_exact(&self, exact: &ExactReplayRequest) -> Option<String> {
         let mut request = exact.request.clone();
-        if let Some(rung) = &exact.rung {
-            request.model = rung.binding.model.clone();
-            request.envelope.locality = rung.binding.locality;
-        }
-        let role = exact.rung.as_ref().map_or(CHAT_ROLE, |rung| rung.role);
         // Its answer is compared with the kept call's: it runs alone on an
         // own server that batches (INF 1). The kept request stays as it was.
         mark_solo(&mut request);
-        let call = self
-            .runtime
-            .admit_seat_bound(self.vault, role, request)
-            .ok()?;
         let sent = match &exact.rung {
             Some(rung) => {
-                let replay = call
-                    .ladder
-                    .for_replay_binding(&rung.binding.model, rung.binding.locality)
-                    .filter(|replay| replay.exact_prompt_digest() == rung.prompt_digest)?;
+                request.model = rung.binding.model.clone();
+                request.envelope.locality = rung.binding.locality;
+                let admission = self
+                    .runtime
+                    .admit_replay(self.vault, rung.role, request)
+                    .ok()?;
+                let (request, routes) = (admission.request, admission.routes);
+                let (ladder, replay) = routes
+                    .exact_rung(
+                        &rung.binding.model,
+                        rung.binding.locality,
+                        rung.prompt_digest,
+                    )
+                    .filter(|(_, replay)| replay.exact_prompt_digest() == rung.prompt_digest)?;
                 let prompt = rung.binding.prompt.as_deref();
-                let wait = call.ladder.exact_replay_wait();
+                let wait = ladder.exact_replay_wait();
                 self.handle.block_on(replay.generate_exact_within(
                     &self.run,
-                    call.request,
+                    request,
                     None,
                     prompt,
                     &|| true,
                     wait,
                 ))
             }
-            None => self
-                .handle
-                .block_on(call.ladder.generate_exact(&self.run, call.request, None)),
+            None => {
+                let call = self
+                    .runtime
+                    .admit_seat_bound(self.vault, CHAT_ROLE, request)
+                    .ok()?;
+                self.handle
+                    .block_on(call.ladder.generate_exact(&self.run, call.request, None))
+            }
         };
         match sent {
             Ok(response) => Some(answer_text(&response)),
