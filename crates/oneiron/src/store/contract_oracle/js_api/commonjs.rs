@@ -53,6 +53,21 @@ pub(super) fn collect(
                     continue;
                 }
                 if binding.name == "exports" {
+                    if let Some(values) = current_final_sequence_values(
+                        value,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        commonjs = true;
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        alias = true;
+                        continue;
+                    }
                     alias = (native_module && whole_value(value, semantic, &mut accounted))
                         || (alias && wrapper(value, "exports", semantic, &mut accounted));
                 } else if binding.name == "module" {
@@ -156,12 +171,7 @@ pub(super) fn collect(
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
                 if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
                     if assignment.operator.is_assign()
-                        && native_module
-                        && let Expression::SequenceExpression(sequence) =
-                            assignment.right.get_inner_expression()
-                        && let Some(last) = sequence.expressions.last()
-                        && whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new())
-                        && let Some(values) = whole_sequence_values(
+                        && let Some(values) = current_final_sequence_values(
                             &assignment.right,
                             semantic,
                             alias,
@@ -282,6 +292,26 @@ pub(super) fn collect(
             ));
         }
     }
+}
+
+fn current_final_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let last = sequence.expressions.last()?;
+    if !whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new()) {
+        return None;
+    }
+    whole_sequence_values(value, semantic, alias, native_module, accounted)
 }
 
 fn whole_sequence_values<'ast, 'src>(
