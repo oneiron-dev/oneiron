@@ -21,6 +21,12 @@ apply. No owner authority is fabricated and the owner resolution doors are
 unchanged. A missing host model-request witness retains the existing
 `repo_provenance_required` answer.
 
+Resolution and ordinary submission use the same native source preparation.
+The selected sitting, full provenance candidate and proposal land in one writer.
+If the sitting changes before that writer, the call prepares fresh sources and
+tries again without saving a partial attempt. Only the winning attempt finishes
+the native sitting open and publishes its notification.
+
 The host records the actual `self.code.proposal_resolve` effect and
 `self.code.proposal_resolve.v1` derivation in the provenance claim. Ordinary
 submit provenance remains `self.code.proposal_submit.v1`.
