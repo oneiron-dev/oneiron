@@ -378,7 +378,7 @@ impl SyncClient {
     }
 
     /// One window frame of `key` from the home under `sub_tag`: a notice as it
-    /// is, or an envelope's payload once the envelope is whole and its pads
+    /// is, or an envelope's payload once its required fields are whole and its pads
     /// are installed here, under the sub-tag its first frame came under.
     /// `Break` carries what answers a frame that is done with here: a part
     /// still to come, a receipt, or a `NotReady` and the ask for the window
@@ -418,6 +418,10 @@ impl SyncClient {
                         self.schedule_world_pad_repair(key);
                     }
                 }
+                return Ok(ControlFlow::Break(Vec::new()));
+            }
+            WindowPadArrival::Copies(envelope) => {
+                self.retain_late_window_home_claim_copies(key, envelope);
                 return Ok(ControlFlow::Break(Vec::new()));
             }
             WindowPadArrival::Envelope(sub_tag, envelope) => (sub_tag, envelope),

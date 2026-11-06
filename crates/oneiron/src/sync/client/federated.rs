@@ -100,6 +100,20 @@ impl SyncClient {
         >,
         answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
+        self.import_own_device_window_update_with_delivery(
+            window_key, update, from, copies, None, answers,
+        )
+    }
+
+    pub(super) fn import_own_device_window_update_with_delivery(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        from: PeerMachine,
+        copies: super::home_claim_copies::HomeClaimCopies,
+        copy_delivery: Option<[u8; 32]>,
+        answers: Option<&mut Vec<Vec<u8>>>,
+    ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
         if update.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
@@ -125,6 +139,7 @@ impl SyncClient {
                     bytes: update.to_vec(),
                     from,
                     copies,
+                    copy_delivery,
                 });
             // An update joined from its envelope's parts may pass the bound
             // alone (FIX 8247): it waits while nothing else does, and beside
