@@ -632,19 +632,57 @@ pub(super) fn text_document_in_txn(
     text_document_in(vault, &vault.store, txn, id)
 }
 
-/// The actual current text input and every native row it reads.
+/// The current input of `kind` and every native source row it reads.
 #[cfg(feature = "sync")]
-pub(crate) fn text_vector_sources_in_txn(
+pub(crate) fn media_vector_input_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
+    kind: InputKind,
+    kinds: &BTreeSet<InputKind>,
 ) -> Result<Option<([u8; 32], Vec<EntityId>)>> {
-    let Some((text, _, mut rows)) = text_row_in(vault, &vault.store, txn, id)? else {
+    let input_hash = if kind == InputKind::Text {
+        let Some(text) = text_document_in_txn(vault, txn, id)? else {
+            return Ok(None);
+        };
+        text_hash(&text)
+    } else {
+        let Some(row) = vault.store.port_entity_record(txn, id)? else {
+            return Ok(None);
+        };
+        if row.entity_type != ENTITY_TYPE_ASSET {
+            return Ok(None);
+        }
+        let Some(document) = super::repo_projection::asset_document_projected_in(
+            vault,
+            &vault.store,
+            txn,
+            *id,
+            kinds,
+            &mut MediaEmbedReport::default(),
+        )?
+        else {
+            return Ok(None);
+        };
+        if document.kind != kind {
+            return Ok(None);
+        }
+        *blake3::hash(&document.bytes).as_bytes()
+    };
+    Ok(media_vector_source_rows_in_txn(vault, txn, id)?.map(|rows| (input_hash, rows)))
+}
+
+/// Native source IDs for residence preflight, independent of the input's media kind.
+#[cfg(feature = "sync")]
+pub(crate) fn media_vector_source_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(row) = vault.store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    if let Some(row) = vault.store.port_entity_record(txn, id)?
-        && row.entity_type == ENTITY_TYPE_ASSET
-    {
+    let mut rows = if row.entity_type == ENTITY_TYPE_ASSET {
         let filed =
             super::repo_projection::repo_file_body_in(vault, &vault.store, txn, id, &row.body)?;
         let Some(blob) =
@@ -652,12 +690,17 @@ pub(crate) fn text_vector_sources_in_txn(
         else {
             return Ok(None);
         };
-        rows.push(blob);
-    }
+        vec![blob]
+    } else {
+        let Some((_, _, rows)) = text_row_in(vault, &vault.store, txn, id)? else {
+            return Ok(None);
+        };
+        rows
+    };
     rows.push(*id);
     rows.sort_unstable();
     rows.dedup();
-    Ok(Some((text_hash(&text), rows)))
+    Ok(Some(rows))
 }
 
 /// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
@@ -722,16 +765,16 @@ pub(super) fn asset_text(
 }
 
 impl Vault {
-    /// Reuses one batch of the opened device's home's current text media vectors.
+    /// Reuses one batch of the opened device's home's current media vectors.
     /// Missing home rows leave the existing local backfill unchanged.
-    pub async fn reuse_home_text_media_vectors(
+    pub async fn reuse_home_media_vectors(
         &self,
         space_id: &str,
         max_items: usize,
     ) -> Result<usize> {
         #[cfg(feature = "sync")]
         {
-            super::space::reuse_home_text_media_vectors(self, space_id, max_items).await
+            super::space::reuse_home_media_vectors(self, space_id, max_items).await
         }
         #[cfg(not(feature = "sync"))]
         {

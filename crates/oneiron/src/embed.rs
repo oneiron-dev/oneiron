@@ -43,7 +43,7 @@ pub(crate) use eligibility::{
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use media::text_vector_sources_in_txn;
+pub(crate) use media::media_vector_source_rows_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{

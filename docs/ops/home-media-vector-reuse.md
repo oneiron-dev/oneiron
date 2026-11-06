@@ -1,19 +1,22 @@
-# Reusing home text media vectors
+# Reusing home media vectors
 
 An opened-item device with a live own-device sync connection can reuse a
-compatible text vector already stored on its home before the existing media
-backfill calls its model. The native call is `Vault::reuse_home_text_media_vectors`.
+compatible text, image or audio vector already stored on its home before the
+existing media backfill calls its model. The native call is `Vault::reuse_home_media_vectors`.
 The private residence RPC is `residence.media_vectors`; it is not an SDK verb.
 
 ## What this slice carries
 
-- Text rows for CLAIMs, strictly decoded epoch SUMMARYs, TURNs and text ASSETs
-  in a declared media embedding space. A TURN uses its visible MESSAGE text in
-  native message order. A text ASSET uses its current native projected blob text.
-  The space keeps its complete `model@revision@where` identity.
-- The row's native text hash, stored vector bytes and optional device/runtime
-  provenance, with the complete native source-ID set and full source-carrier
-  digests. ASSET text includes both its metadata row and the referenced blob's
+- Text rows for CLAIMs, strictly decoded epoch SUMMARYs, TURNs and text ASSETs,
+  and image/audio ASSET rows in a declared media embedding space. A TURN uses
+  its visible MESSAGE text in native message order. A text ASSET uses its
+  current native projected blob text. Image/audio reuse checks the kind and
+  exact projected bytes that the native media reader would send now. An opaque
+  text placeholder cannot qualify as image or audio input. The space keeps its
+  complete `model@revision@where` identity and current kind-slot bindings.
+- The row's kind and original input hash, stored vector bytes and optional
+  device/runtime provenance, with the complete native source-ID set and full source-carrier
+  digests. Every ASSET includes both its metadata row and the referenced blob's
   own row. A file-backed source is measured as its original metadata header and
   checked full body, not its storage manifest; an inline source keeps its bytes.
   A carrier digest is not release permission or a claim about the model's runtime.
@@ -27,9 +30,9 @@ A headed MESSAGE also passes the document export's eligibility, read and
 withhold checks. If that text would leave as a masked or sealed copy, its
 original vector is not reused. These checks do not export a document or change
 its lineage or disclosure floor. A final native re-read must match the captured
-replica, including its text hash: a document edit need not change its pointer row.
-The receiver re-reads the current text and complete source set in its write
-transaction. It reuses the row only when its own declared space, slot, width,
+replica, including its kind and input hash: a document edit need not change its
+pointer row. The receiver re-reads the current input and complete source set
+in its write transaction. It reuses the row only when its own declared space, slot, width,
 finite-value and source-image checks pass. The native put retains the mark and
 clears the same row's previous media refusal.
 
@@ -48,11 +51,13 @@ Image/audio model results now keep the hash of the exact projected bytes sent
 at the native base or room landing. Room replay preserves that hash. A vector
 supplied by a caller without an input binding remains unbound and still works;
 its current body is never used to invent an original-input claim. This binding
-alone does not enable image/audio residence reuse. Text hashes keep their
-existing meaning. The internal media-row codec stores an explicit hash-presence
-byte under storage ABI 29; no old-format reader or migration is added.
+alone is not enough for image/audio residence reuse: both ends must match its
+kind, current input and full source image. An unbound row cannot qualify.
+Neither endpoint substitutes the current body hash for a missing original hash.
+Text reuse keeps its existing input eligibility and text-hash meaning. The
+internal media-row codec stores an explicit hash-presence byte under storage ABI 29; no old-format reader or migration is added.
 
-Image/audio rows, default text index vectors, other machine directions and
+Default text index vectors, other machine directions and
 devices without the live opened home-query path remain outside this slice.
 Matching device and home engine/server versions are needed to use the new private
 RPC; existing backfill still works when the home does not answer it. This is not
