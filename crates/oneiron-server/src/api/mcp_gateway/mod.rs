@@ -37,7 +37,7 @@ pub(crate) use self::actor_dispatch::{
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{
-    mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_tasks_section,
+    mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
     mcp_validated_call_args,
 };
 pub(crate) use self::board_observations::run_session_reads;
