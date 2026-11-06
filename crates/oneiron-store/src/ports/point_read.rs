@@ -48,4 +48,3 @@ impl<'r> PointRead<'r> {
         Self { mode, ..self }
     }
 }
-

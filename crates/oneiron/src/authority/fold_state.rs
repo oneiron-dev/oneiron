@@ -236,7 +236,7 @@ pub struct AuthorityFold {
 }
 
 /// What bounds this install's view beside the roster rule (Astra #1430).
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct InstallBound {
     /// The machine revisions, world edits and grant travel choices this
     /// install holds back: each revision that landed restriction only, and
@@ -247,7 +247,20 @@ pub(super) struct InstallBound {
     /// bounds this view changes (`install_fold::NoVouch`). A cached view
     /// lasts no longer.
     pub(super) no_vouch_deadline: Option<u64>,
+    /// Report-only vouch-only owner-work hashes (FIX 4633): `None` while no
+    /// report was computed, `Some` once `NoVouch::cap` compares the folds.
+    /// Runtime-only: never serialized, never compared, never an authority.
+    #[serde(skip)]
+    pub(super) vouch_only_owner_work: Option<BTreeSet<AuthorityEntryHash>>,
 }
+
+impl PartialEq for InstallBound {
+    fn eq(&self, other: &Self) -> bool {
+        self.held_back == other.held_back && self.no_vouch_deadline == other.no_vouch_deadline
+    }
+}
+
+impl Eq for InstallBound {}
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
