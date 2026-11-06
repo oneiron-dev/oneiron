@@ -65,7 +65,13 @@ use crate::wire_telemetry::{
     LimitQuestions, LimitRow, ObservedBody, PoolPressure, with_body_credential,
 };
 
+mod body_revocation;
 mod owner_admission;
+pub(crate) use body_revocation::{
+    BodyRevocation, attach_body_account_key, attach_body_slip, body_read_timeout,
+    current_body_revocation,
+};
+use body_revocation::{CredentialRevoked, revoked_response, with_body_revocation};
 use owner_admission::{Custody, OwnerGate, OwnerReserve, ProbeShed};
 
 /// The listener's bounds.
@@ -368,20 +374,36 @@ async fn serve_from_pool(
             CONNECTION.scope(
                 Arc::clone(&connection),
                 crate::api::call_receipt::on_connection(socket_id, async move {
-                    // On the owner's reserve, each request is judged before
-                    // it is routed (FIX 8274).
-                    let counted = match gate.as_ref().filter(|_| custody.on_reserve()) {
-                        Some(gate) => match gate.admit(&custody, &mut parts, ended).await {
-                            Ok(counted) => counted,
-                            Err(ProbeShed) => return Ok(shed_reply()),
-                        },
-                        None => custody.count_body(ended),
-                    };
-                    let (counted, credential) = counted.unzip();
-                    let body = Body::new(IdleBody::new(body, body_idle, counted));
-                    let request = hyper::Request::from_parts(parts, body);
-                    let routed = hyper::service::Service::call(&routes, request);
-                    with_body_credential(credential, routed).await
+                    // The reserve may admit the holder proof before routing.
+                    // Its attachment must reach the same body in either path.
+                    let revocation = (!ended).then(BodyRevocation::default);
+                    with_body_revocation(revocation.clone(), async move {
+                        // On the owner's reserve, each request is judged before
+                        // it is routed (FIX 8274).
+                        let counted = match gate.as_ref().filter(|_| custody.on_reserve()) {
+                            Some(gate) => match gate.admit(&custody, &mut parts, ended).await {
+                                Ok(counted) => counted,
+                                Err(ProbeShed) => return Ok(shed_reply()),
+                            },
+                            None => custody.count_body(ended),
+                        };
+                        let (counted, credential) = counted.unzip();
+                        // Only FIX 7656's counted TCP bodies enforce this act.
+                        let revocation = counted.as_ref().and(revocation);
+                        let body =
+                            Body::new(IdleBody::new(body, body_idle, counted, revocation.clone()));
+                        let request = hyper::Request::from_parts(parts, body);
+                        let routed = hyper::service::Service::call(&routes, request);
+                        let response = with_body_credential(credential, routed).await;
+                        if revocation
+                            .as_ref()
+                            .is_some_and(BodyRevocation::ended_revoked)
+                        {
+                            return response.map(|_| revoked_response());
+                        }
+                        response
+                    })
+                    .await
                 }),
             )
         });
@@ -547,7 +569,8 @@ fn shed_reply() -> axum::response::Response {
 /// for its next frame. The clock runs only while the body is awaited and
 /// restarts with every frame, so a slow reader costs the client nothing and a
 /// client that finished its headers and then went quiet gives its connection
-/// back.
+/// back. Counted TCP bodies also carry out an explicit revoke of their admitted
+/// credential before yielding the next frame.
 struct IdleBody {
     body: Incoming,
     idle: Duration,
@@ -555,24 +578,45 @@ struct IdleBody {
     /// Its record in the pool's pressure check, on this listener's own
     /// sockets, until it ends.
     counted: Option<ObservedBody>,
+    revocation: Option<BodyRevocation>,
+    frame: Option<Frame<Bytes>>,
+    checking: Option<tokio::task::JoinHandle<bool>>,
+    finished: bool,
 }
 
 impl IdleBody {
-    fn new(body: Incoming, idle: Duration, counted: Option<ObservedBody>) -> Self {
+    fn new(
+        body: Incoming,
+        idle: Duration,
+        counted: Option<ObservedBody>,
+        revocation: Option<BodyRevocation>,
+    ) -> Self {
         Self {
             body,
             idle,
             waiting: None,
             counted,
+            revocation,
+            frame: None,
+            checking: None,
+            finished: false,
         }
     }
 
-    /// Counts a frame's data in the body's record, and ends the record at
-    /// the body's last frame, its end or its error.
-    fn count(&mut self, frame: Option<&Result<Frame<Bytes>, hyper::Error>>) {
-        if let (Some(counted), Some(Ok(frame))) = (&self.counted, frame) {
-            counted.carried(frame.data_ref().map_or(0, Bytes::len));
+    fn revoked(&mut self) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        if let Some(revocation) = &self.revocation {
+            revocation.end_revoked();
         }
+        self.waiting = None;
+        self.frame = None;
+        self.counted = None;
+        self.finished = true;
+        Poll::Ready(Some(Err(Box::new(CredentialRevoked))))
+    }
+
+    /// Ends the record only once the buffered last frame is released, or
+    /// the incoming body ends or fails.
+    fn end_record(&mut self, frame: Option<&Result<Frame<Bytes>, hyper::Error>>) {
         if !matches!(frame, Some(Ok(_))) || hyper::body::Body::is_end_stream(&self.body) {
             self.counted = None;
         }
@@ -584,7 +628,7 @@ impl IdleBody {
 /// channels an embedded engine serves (FIX 2663), which meet the same
 /// idle limit and no connection floor or stranger share.
 pub(crate) fn idle_body(body: Incoming, idle: Duration) -> Body {
-    Body::new(IdleBody::new(body, idle, None))
+    Body::new(IdleBody::new(body, idle, None, None))
 }
 
 impl hyper::body::Body for IdleBody {
@@ -596,9 +640,56 @@ impl hyper::body::Body for IdleBody {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = self.get_mut();
-        if let Poll::Ready(frame) = Pin::new(&mut this.body).poll_frame(cx) {
-            this.waiting = None;
-            this.count(frame.as_ref());
+        if this.finished {
+            return Poll::Ready(None);
+        }
+        if this
+            .revocation
+            .as_ref()
+            .is_some_and(BodyRevocation::account_key_revoked)
+        {
+            return this.revoked();
+        }
+        if this.frame.is_none() {
+            if let Poll::Ready(frame) = Pin::new(&mut this.body).poll_frame(cx) {
+                this.waiting = None;
+                match frame {
+                    Some(Ok(frame)) => {
+                        if let Some(counted) = &this.counted {
+                            counted.carried(frame.data_ref().map_or(0, Bytes::len));
+                        }
+                        this.frame = Some(frame);
+                        this.checking = this
+                            .revocation
+                            .as_ref()
+                            .and_then(BodyRevocation::check_slip);
+                    }
+                    frame => {
+                        this.end_record(frame.as_ref());
+                        return Poll::Ready(frame.map(|frame| frame.map_err(BoxError::from)));
+                    }
+                }
+            }
+        }
+        if this.frame.is_some() {
+            // A single received frame waits for the native fold off-thread.
+            // No network-idle timer runs while our own read is pending.
+            if let Some(checking) = &mut this.checking {
+                match Pin::new(checking).poll(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(revoked) => {
+                        if let Some(revocation) = &this.revocation {
+                            revocation.read_finished();
+                        }
+                        this.checking = None;
+                        if matches!(revoked, Ok(true)) {
+                            return this.revoked();
+                        }
+                    }
+                }
+            }
+            let frame = this.frame.take().map(Ok);
+            this.end_record(frame.as_ref());
             return Poll::Ready(frame.map(|frame| frame.map_err(BoxError::from)));
         }
         let idle = this.idle;
@@ -617,11 +708,25 @@ impl hyper::body::Body for IdleBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.body.is_end_stream()
+        self.finished || (self.frame.is_none() && self.body.is_end_stream())
     }
 
     fn size_hint(&self) -> SizeHint {
-        self.body.size_hint()
+        if self.finished {
+            return SizeHint::with_exact(0);
+        }
+        let buffered = self
+            .frame
+            .as_ref()
+            .and_then(Frame::data_ref)
+            .map_or(0, |bytes| bytes.len() as u64);
+        let inner = self.body.size_hint();
+        let mut hint = SizeHint::new();
+        hint.set_lower(inner.lower().saturating_add(buffered));
+        if let Some(upper) = inner.upper() {
+            hint.set_upper(upper.saturating_add(buffered));
+        }
+        hint
     }
 }
 

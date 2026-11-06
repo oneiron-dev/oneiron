@@ -28,12 +28,12 @@ pub use crate::store::critical_confirm_record::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
     GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
-pub(crate) use crate::store::critical_confirm_record::{
-    critical_write_confirm_binding, pending_row_holds_critical_confirm,
-};
 pub(super) use crate::store::critical_confirm_record::{
     GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED,
     GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM,
+};
+pub(crate) use crate::store::critical_confirm_record::{
+    critical_write_confirm_binding, pending_row_holds_critical_confirm,
 };
 pub const GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED: &str =
     "gate.allow.critical_confirm_attached";
@@ -606,7 +606,6 @@ pub(crate) struct ConfirmExpiryPage {
     pub(crate) ended: bool,
 }
 
-
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -683,7 +682,6 @@ pub(crate) fn claim_critical_confirm_settled_in_txn(
             .is_some_and(|row| pending_row_holds_critical_confirm(&row)),
     )
 }
-
 
 /// Whether a critical claim write may land `Auto` with an attached owner
 /// confirmation instead of being floored.

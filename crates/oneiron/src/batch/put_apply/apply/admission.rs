@@ -7,6 +7,7 @@ pub(super) struct FixedPut<'a> {
     pub(super) entity_type: u8,
     pub(super) occurred: crate::temporal::TimeRange,
     pub(super) learned_at: u64,
+    pub(super) row_version: Option<u64>,
     pub(super) options: crate::batch::put_apply::request::PutOptions,
     pub(super) origin: crate::batch::BaseWriteOrigin<'a>,
     pub(super) write_policy: Option<&'a crate::gate::PolicyManifestResolution>,
@@ -90,6 +91,7 @@ pub(super) fn admit_put<'a>(
                 occurred,
                 learned_at,
                 data,
+                row_version,
             },
         options,
         context:
@@ -118,7 +120,7 @@ pub(super) fn admit_put<'a>(
     if let Some(refusal) = store.use_restricted_in_txn(wtxn, &id)? {
         return Err(refusal);
     }
-    crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
+    crate::store::base_agent::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
@@ -225,6 +227,7 @@ pub(super) fn admit_put<'a>(
             entity_type,
             occurred,
             learned_at,
+            row_version,
             options,
             origin,
             write_policy,

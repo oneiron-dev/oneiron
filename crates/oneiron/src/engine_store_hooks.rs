@@ -22,11 +22,15 @@ use crate::store::{
     GateDecisionId, GateDecisionRetentionPolicy, Store, StoreActorScrubs, StoreDeleteGuards,
     StoreGateHooks, StoreHooks, StoreProjectWrites, StoreRecordHooks, StoreScopeStamps,
 };
+#[cfg(unix)]
+use crate::store::{ResponseOwners, ResponseScan, StoreVoiceBankResponse};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::ClaimBody;
 #[cfg(feature = "sync")]
 use loro::LoroDoc;
+
+mod record_hooks;
 
 /// The hooks every vault's store opens with.
 pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
@@ -38,6 +42,10 @@ pub(crate) const ENGINE_STORE_HOOKS: StoreHooks = StoreHooks {
     gate_hooks: &EngineGateHooks,
     #[cfg(feature = "sync")]
     sync_hooks: &EngineSyncHooks,
+    attempt_operations: &EngineAttemptOperations,
+    #[cfg(unix)]
+    voice_bank_response: &EngineVoiceBankResponse,
+    core_write_operations: &EngineCoreWriteOperations,
 };
 
 /// The engine's delete guards.
@@ -117,8 +125,12 @@ impl StoreDeleteGuards for EngineDeleteGuards {
         store: &Store,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
+        deindex: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            &EntityId,
+        ) -> Result<(bool, bool, bool, Vec<EntityId>)>,
     ) -> Result<(bool, bool, Vec<EntityId>)> {
-        crate::workspace_roster::deindex_project_room(store, txn, id)
+        crate::workspace_roster::deindex_project_room(store, txn, id, deindex)
     }
 }
 
@@ -329,133 +341,6 @@ impl StoreProjectWrites for EngineProjectWrites {
         txn: &RoTxn<'_>,
     ) -> Result<HashSet<GateDecisionId>> {
         crate::workspace_roster::project_mint_gate_refs_in_txn(vault, txn)
-    }
-}
-
-impl StoreRecordHooks for EngineRecordHooks {
-    fn redact_actor_in_txn(
-        &self,
-        vault: &crate::Vault,
-        wtxn: &mut RwTxn<'_>,
-        actor: EntityId,
-        now: u64,
-    ) -> Result<Vec<EntityId>> {
-        crate::identity_topology::redact_actor_in_txn(vault, wtxn, actor, now)
-    }
-
-    fn redact_author_attribution_in_txn(
-        &self,
-        vault: &crate::Vault,
-        wtxn: &mut RwTxn<'_>,
-        target: EntityId,
-        now: u64,
-    ) -> Result<Vec<EntityId>> {
-        crate::identity_topology::redact_author_attribution_in_txn(vault, wtxn, target, now)
-    }
-
-    fn validate_identity_topology_event_body_bytes(&self, data: &[u8]) -> Result<()> {
-        crate::identity_topology::validate_identity_topology_event_body_bytes(data)
-    }
-
-    fn forget_claim_reassignments_in_txn(
-        &self,
-        store: &Store,
-        wtxn: &mut RwTxn<'_>,
-        claim: &EntityId,
-    ) -> Result<()> {
-        crate::identity_topology::forget_claim_reassignments_in_txn(store, wtxn, claim)
-    }
-
-    fn identity_topology_shell_sources_for_store_in_txn(
-        &self,
-        store: &Store,
-        rtxn: &RoTxn<'_>,
-        id: &EntityId,
-    ) -> Result<Option<BTreeSet<EntityId>>> {
-        crate::identity_topology::identity_topology_shell_sources_for_store_in_txn(store, rtxn, id)
-    }
-
-    fn actor_for_txn(&self, vault: &crate::Vault, txn: &RoTxn<'_>) -> Result<Option<WriteActor>> {
-        crate::federation::actor_for_txn(vault, txn)
-    }
-
-    fn split_recipient_copies_in_txn(
-        &self,
-        vault: &crate::Vault,
-        txn: &RoTxn<'_>,
-        pact_id: &[u8; 32],
-        worlds: &[EntityId],
-        epoch_cutoff: u64,
-        records: &[EntityId],
-    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
-        crate::federation::courtesy_scope::split_recipient_copies_in_txn(
-            vault,
-            txn,
-            pact_id,
-            worlds,
-            epoch_cutoff,
-            records,
-        )
-    }
-
-    fn validate_federation_grant_body_bytes(&self, bytes: &[u8]) -> Result<()> {
-        crate::federation::validate_federation_grant_body_bytes(bytes)
-    }
-
-    fn guard_ruling_overwrite(
-        &self,
-        store: &Store,
-        txn: &RoTxn<'_>,
-        id: &EntityId,
-        kind: u8,
-        occurred: TimeRange,
-        learned_at: u64,
-        data: &[u8],
-    ) -> Result<()> {
-        crate::federation::guard_ruling_overwrite(store, txn, id, kind, occurred, learned_at, data)
-    }
-
-    fn note_authority_row(&self) {
-        crate::federation::note_authority_row()
-    }
-
-    fn reject_audience_edit_unlink(
-        &self,
-        store: &Store,
-        txn: &RoTxn<'_>,
-        src: &EntityId,
-        kind: EdgeKind,
-        tgt: &EntityId,
-    ) -> Result<()> {
-        crate::workspace_roster::reject_audience_edit_unlink(store, txn, src, kind, tgt)
-    }
-
-    fn record_thread_admits_in(
-        &self,
-        vault: &crate::Vault,
-        txn: &RoTxn<'_>,
-        id: EntityId,
-        actor: EntityId,
-    ) -> Result<bool> {
-        crate::workspace_roster::record_thread_admits_in(vault, txn, id, actor)
-    }
-
-    fn erase_room_side_rows(
-        &self,
-        store: &Store,
-        txn: &mut RwTxn<'_>,
-        id: &EntityId,
-    ) -> Result<()> {
-        crate::workspace_roster::erase_room_side_rows(store, txn, id)
-    }
-
-    fn erase_audience_actor_in_txn(
-        &self,
-        vault: &crate::Vault,
-        wtxn: &mut RwTxn<'_>,
-        actor: &EntityId,
-    ) -> Result<()> {
-        crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)
     }
 }
 
@@ -712,6 +597,108 @@ impl StoreActorScrubs for EngineActorScrubs {
     }
 }
 
+/// The engine's attempt queue operations.
+pub(crate) struct EngineAttemptOperations;
+
+impl crate::store::StoreAttemptOperations for EngineAttemptOperations {
+    fn erase_attempt_payload_actor_in_txn(
+        &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
+        txn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(write, txn, actor)
+    }
+
+    fn erase_attempt_payload_actors_in_txn(
+        &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
+        txn: &mut RwTxn<'_>,
+        actors: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_attempt_payload_actors_in_txn(write, txn, actors)
+    }
+
+    fn erase_model_step_failure_reasons_in_txn(
+        &self,
+        store: &Store,
+        wtxn: &mut RwTxn<'_>,
+        owner: &EntityId,
+    ) -> Result<()> {
+        crate::attempt_queue::erase_model_step_failure_reasons_in_txn(store, wtxn, owner)
+    }
+
+    fn claim_kind(
+        &self,
+        vault: &crate::Vault,
+        kind: &str,
+        input: crate::store::attempt_inputs::ClaimAttempt,
+    ) -> Result<crate::store::attempt_outcomes::ClaimOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).claim_kind(kind, input)
+    }
+
+    fn fail(
+        &self,
+        vault: &crate::Vault,
+        input: crate::store::attempt_inputs::FailAttempt,
+    ) -> Result<crate::store::attempt_outcomes::FailOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).fail(input)
+    }
+
+    fn retry_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        input: crate::store::attempt_inputs::RetryAttempt,
+    ) -> Result<crate::store::attempt_outcomes::RetryOutcome> {
+        crate::attempt_queue::AttemptQueue::new(vault).retry_in_txn(wtxn, input)
+    }
+
+    fn erase_dispatch_payload_text_target(
+        &self,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) -> Result<bool> {
+        crate::attempt_queue::erase_dispatch_payload_text_target(record)
+    }
+
+    fn dispatch_payload_actor(
+        &self,
+        record: &crate::store::attempt_record::AttemptRecord,
+    ) -> Option<EntityId> {
+        crate::attempt_queue::dispatch_payload_actor(record)
+    }
+
+    fn scrub_hard_erased_payload_in_txn(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        record: &mut crate::store::attempt_record::AttemptRecord,
+    ) {
+        crate::attempt_queue::scrub_hard_erased_payload_in_txn(store, txn, record);
+    }
+}
+
+/// The engine's voice bank response operations.
+#[cfg(unix)]
+struct EngineVoiceBankResponse;
+
+#[cfg(unix)]
+impl StoreVoiceBankResponse for EngineVoiceBankResponse {
+    fn voice_bank_scan(&self, key: &[u8], value: &[u8]) -> ResponseScan {
+        crate::voice_identity::ref_bank::voice_bank_scan(key, value)
+    }
+
+    fn voice_bank_owners(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<ResponseOwners> {
+        crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value)
+    }
+}
+
 impl StoreGateHooks for EngineGateHooks {
     fn default_policy_manifest(&self) -> Result<Vec<u8>> {
         crate::gate::default_policy_manifest()
@@ -876,9 +863,16 @@ impl StoreGateHooks for EngineGateHooks {
         store: &Store,
         txn: &RoTxn<'_>,
         machine: EntityId,
+        authored_by: Option<EntityId>,
         body: &[u8],
     ) -> Result<()> {
-        crate::gate::validate_own_device_witness_message_body(store, txn, machine, body)
+        crate::gate::validate_own_device_witness_message_body(
+            store,
+            txn,
+            machine,
+            authored_by,
+            body,
+        )
     }
 
     fn claim_consolidation_eligible_in_txn(
@@ -944,5 +938,44 @@ impl StoreGateHooks for EngineGateHooks {
         actor: &EntityId,
     ) -> Result<()> {
         crate::gate::proposal_observation::erase_submission_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn campaign_compliance_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+        now_utc: u64,
+    ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>> {
+        crate::campaign::compliance::campaign_compliance_gate(store, txn, effect, now_utc)
+    }
+}
+
+/// The engine's core write operations.
+pub(crate) struct EngineCoreWriteOperations;
+
+impl crate::store::StoreCoreWriteOperations for EngineCoreWriteOperations {
+    fn create_conversation_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        body: &crate::store::conversation_body::ConversationBody,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        text: &[(&str, &str)],
+    ) -> Result<()> {
+        crate::conversation::create_in_txn(vault, txn, id, body, actor, occurred, learned_at, text)
+    }
+
+    fn actor_is_vault_owner_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &RoTxn<'_>,
+        actor: EntityId,
+        actor_class: crate::edge::EdgeActorClass,
+    ) -> oneiron_contracts::memory::MemoryResult<bool> {
+        crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, actor_class)
     }
 }

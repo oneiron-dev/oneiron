@@ -128,9 +128,13 @@ pub async fn run_task_realize(
             step_hashes: Vec::new(),
         });
     };
-    let spec =
-        serde_json::to_string_pretty(&crate::msgpack_value_to_json(&attempt.status.payload.input))
+    // FIX 11687: the queued input carries who queued it; the spec passed
+    // on is identical after the unwrap.
+    let (spec_value, _) =
+        crate::task_verb::decode_task_realization_input(&attempt.status.payload.input)
             .map_err(|_| invalid("the spec is not JSON"))?;
+    let spec = serde_json::to_string_pretty(&crate::msgpack_value_to_json(&spec_value))
+        .map_err(|_| invalid("the spec is not JSON"))?;
     let mut text = format!(
         "Task: {}\n\n## Spec\n\n```json\n{spec}\n```\n",
         task.to_hex()

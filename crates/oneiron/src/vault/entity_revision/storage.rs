@@ -10,10 +10,20 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
-mod retained;
-pub(super) use retained::{
-    retained_rows_in_txn, row_aliases_in_txn, row_revisions_starting_with_in_txn,
+mod history;
+use history::{
+    RevisionDocument, common_binding, generic_binding, generic_revision_raw, revision_document,
+    revision_raw,
 };
+pub(super) use history::{
+    RevisionNamespace, common_binding_in_txn, fork_revision_with_namespace,
+    retained_row_sources_in_txn,
+};
+mod redact;
+mod retained;
+pub use redact::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
+pub(crate) use redact::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
+pub(super) use retained::{retained_rows_in_txn, row_revisions_starting_with_in_txn};
 
 pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_STATE);
@@ -101,9 +111,16 @@ pub(super) fn revision_text_fields(
         let frontier = FRONTIER
             .get(store, txn, &(*id, revision.0))?
             .ok_or(Error::EntityNotFound)?;
-        let doc = crate::entity_doc::record_document(store, txn, id, Some(&frontier))?
-            .ok_or(Error::EntityNotFound)?;
-        return crate::entity_doc::document_text_fields(&doc, &field);
+        return match revision_document(store, txn, id, revision, &frontier)? {
+            RevisionDocument::Common(doc) => crate::entity_doc::document_text_fields(&doc, &field),
+            RevisionDocument::Generic(doc) => {
+                let raw = generic_revision_raw(id, revision, &frontier, &doc)?;
+                Ok(text_fields(
+                    raw.get(ENTITY_METADATA_HEADER_LEN..)
+                        .ok_or(Error::CorruptedIndex("entity revision header"))?,
+                ))
+            }
+        };
     }
     Ok(text_fields(body))
 }
@@ -193,60 +210,7 @@ pub(crate) fn fork_revision(
     id: &EntityId,
     revision: RevisionRef,
 ) -> Result<LoroDoc> {
-    let raw = FRONTIER
-        .get(store, txn, &(*id, revision.0))?
-        .ok_or(Error::EntityNotFound)?;
-    if let Some(doc) = crate::entity_doc::record_document(store, txn, id, Some(&raw))? {
-        return Ok(doc.doc);
-    }
-    let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
-    let loaded = load_doc(store, txn, id)?;
-    // A revision at the live frontier is the loaded document itself: no
-    // snapshot export and import (FIX 11647).
-    let doc = if loaded.oplog_frontiers() == frontier {
-        loaded
-    } else {
-        loaded
-            .fork_at(&frontier)
-            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?
-    };
-    if reference(id, &raw) != revision && reference(id, &doc_raw(&doc)?) != revision {
-        return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
-    }
-    Ok(doc)
-}
-
-/// The record bytes of `id` at `revision`, as [`fork_revision`]'s document
-/// holds them, read on the private copy [`load_doc`] loads for this read: at
-/// the live frontier as loaded, at an older one checked out there, so a read
-/// exports and imports no snapshot (FIX 11647). A shallow document, whose
-/// checkout may not reach a retained frontier, reads through the fork.
-fn revision_raw(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-    revision: RevisionRef,
-) -> Result<Vec<u8>> {
-    let raw = FRONTIER
-        .get(store, txn, &(*id, revision.0))?
-        .ok_or(Error::EntityNotFound)?;
-    if let Some(doc) = crate::entity_doc::record_document(store, txn, id, Some(&raw))? {
-        return doc_raw(&doc.doc);
-    }
-    let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
-    let doc = load_doc(store, txn, id)?;
-    if doc.oplog_frontiers() != frontier {
-        if doc.is_shallow() {
-            return doc_raw(&fork_revision(store, txn, id, revision)?);
-        }
-        doc.checkout(&frontier)
-            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?;
-    }
-    let bytes = doc_raw(&doc)?;
-    if reference(id, &raw) != revision && reference(id, &bytes) != revision {
-        return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
-    }
-    Ok(bytes)
+    fork_revision_with_namespace(store, txn, id, revision).map(|(doc, _)| doc)
 }
 
 pub(super) fn doc_raw(doc: &LoroDoc) -> Result<Vec<u8>> {
@@ -388,29 +352,51 @@ pub(crate) fn capture_entity_document(
             .into());
         }
     }
+    let frozen = DOC
+        .get(store, txn, id)?
+        .map(|bytes| {
+            LoroDoc::from_snapshot(&bytes).map_err(|_| Error::CorruptedIndex("entity document"))
+        })
+        .transpose()?;
     if doc.is_shallow() {
         let floor = doc.shallow_since_vv().to_vv();
+        let mut frozen_referenced = false;
         let mut purged = Vec::new();
         for (key, encoded) in FRONTIER.scan_from(store, txn, id.as_bytes())? {
             let frontier = Frontiers::decode(&encoded)
                 .map_err(|_| Error::CorruptedIndex("entity frontier"))?;
+            let generic = match frozen.as_ref() {
+                Some(frozen) => generic_binding(id, frozen, RevisionRef(key.1), &encoded)?,
+                None => false,
+            };
+            // A shallow birth is not an owner purge of the pre-birth ledger.
+            if birth && generic {
+                frozen_referenced = true;
+                continue;
+            }
             if !doc
                 .frontiers_to_vv(&frontier)
                 .is_some_and(|vv| vv.includes_vv(&floor))
             {
                 purged.push(key);
+            } else if generic {
+                frozen_referenced = true;
             }
         }
         for key in purged {
             FRONTIER.delete(store, txn, &key)?;
             IDENTITY.delete(store, txn, &key.1)?;
         }
+        if frozen.is_some() && !frozen_referenced {
+            DOC.delete(store, txn, id)?;
+        }
     }
     if birth {
-        // Birth-only row references now name the birth operations themselves.
-        retain_frontier(store, txn, id, current.live, doc)?;
-        retain_frontier(store, txn, id, current.indexed, doc)?;
-        DOC.delete(store, txn, id)?;
+        if frozen.is_none() {
+            // A lightweight birth-only row already names the birth operations.
+            retain_frontier(store, txn, id, current.live, doc)?;
+            retain_frontier(store, txn, id, current.indexed, doc)?;
+        }
         current.indexed = next;
     }
     if current.live != next {
@@ -435,13 +421,20 @@ fn raw_for_revision(
                 let frontier = FRONTIER
                     .get(store, txn, &(*id, revision.0))?
                     .ok_or(Error::EntityNotFound)?;
-                crate::entity_doc::record_body_at(
-                    store,
-                    txn,
-                    id,
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                    &frontier,
-                )?
+                match revision_document(store, txn, id, revision, &frontier)? {
+                    RevisionDocument::Common(doc) => {
+                        let field = crate::entity_doc::pointer_field_in(store, txn, id)?
+                            .ok_or(Error::EntityNotFound)?;
+                        crate::entity_doc::body_with_document(
+                            &field,
+                            &raw[ENTITY_METADATA_HEADER_LEN..],
+                            &doc,
+                        )?
+                    }
+                    RevisionDocument::Generic(doc) => {
+                        return generic_revision_raw(id, revision, &frontier, &doc);
+                    }
+                }
             }
             None => crate::entity_doc::resolve_record_body(
                 store,

@@ -32,15 +32,14 @@ use super::lane_scope::{self, EsignScope};
 use super::model::{DocumentStatus, EsignDocument};
 use super::outbound::{EsignActScope, EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
-use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use crate::memory::Memory;
-use crate::outbound::{
-    OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchRequest, OutboundIntent,
-    OutboundIntentDraft,
-};
+use crate::outbound::{OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft};
+use crate::store::outbound_actor::OutboundDispatchActor;
+use crate::store::outbound_actor::OutboundDispatchGate;
 use crate::store::outbound_trigger::OutboundIntentTrigger;
 use crate::{EntityId, Vault};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
+use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 use serde::{Deserialize, Serialize};
 
 mod draft;
@@ -286,6 +285,8 @@ pub struct EsignSealedItemView {
     pub sealed_artifact: String,
     pub sealed_version: u64,
     pub sha256: String,
+    /// Actual profiles and every native degradation reason from this item's seal.
+    pub profile: super::sealer::SealProfileEvidence,
 }
 
 /// A sealed document's manifest: which attempt sealed it, over which
@@ -370,22 +371,23 @@ impl Memory<'_> {
         let caller = self.signing_caller();
         let vault = self.vault();
         let verified_actor = Some(self.actor());
+        let (ip, user_agent) = self.signing_request_transport();
         Ok(match self.esign_scope()? {
             EsignScope::Unrestricted => vault.execute_signing_action_as(
                 &token,
                 &input.action,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
             )?,
             EsignScope::Credential(lane) => vault.execute_signing_action_within(
                 &token,
                 &input.action,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
                     lane_scope::reaches(&lane, txn, document)
                 },
@@ -408,6 +410,7 @@ impl Memory<'_> {
         let token = super::EsignCapability::parse(&input.token)?;
         let caller = self.signing_caller();
         let verified_actor = Some(self.actor());
+        let (ip, user_agent) = self.signing_request_transport();
         let vault = self.vault();
         let bytes = match self.esign_scope()? {
             EsignScope::Unrestricted => vault.esign_pdf_for_capability_as(
@@ -415,16 +418,16 @@ impl Memory<'_> {
                 input.item,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
             )?,
             EsignScope::Credential(lane) => vault.esign_pdf_for_capability_within(
                 &token,
                 input.item,
                 caller,
                 verified_actor,
-                None,
-                None,
+                ip,
+                user_agent,
                 &|txn: &heed::RoTxn<'_>, document: EntityId| {
                     lane_scope::reaches(&lane, txn, document)
                 },
@@ -735,9 +738,11 @@ fn admitted_signature_image(
     encoded: &str,
 ) -> MemoryResult<(oneiron_docedit::resource::Hold, Vec<u8>)> {
     use base64::Engine;
-    let refused = |refusal| MemoryError::from(crate::office_body::machine_memory_refused(refusal));
+    let refused = |refusal| {
+        MemoryError::from(crate::entity_doc::document_resources::machine_memory_refused(refusal))
+    };
     let decoded = u64::try_from(base64::decoded_len_estimate(encoded.len())).unwrap_or(u64::MAX);
-    let mut hold = crate::office_body::document_resources()
+    let mut hold = crate::entity_doc::document_resources::document_resources()
         .reserve(decoded)
         .map_err(refused)?;
     let bytes = base64::engine::general_purpose::STANDARD

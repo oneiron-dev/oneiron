@@ -40,6 +40,7 @@ mod lifetime;
 // Residual clustering in bounded tiles over one union-find (FIX 10216).
 mod match_work;
 mod math_keys;
+mod metadata;
 // The owner's typed question a third party's print owes (FIX 10789).
 mod print_ask;
 // Recognition bound to its world and consented purpose (FIX 10215, FIX 10217).
@@ -47,13 +48,16 @@ mod recognition;
 pub mod ref_bank;
 pub(crate) mod ref_limits;
 mod storage_admission;
+mod stored;
 mod types;
 mod vault;
 
 pub use self::enrollment_law::{
     VoiceEnrollmentLegalContext, VoiceJurisdiction, VoicePrintLegalEvidence, WrittenReleaseRef,
 };
-pub(crate) use self::lifetime::erase_recognition_for_subject_in_txn;
+pub(crate) use self::lifetime::{
+    discard_print_payload_in_txn, erase_recognition_for_subject_in_txn,
+};
 
 pub use self::types::{
     VOICE_MATCH_THRESHOLD_DEFAULT, VOICE_MATCH_THRESHOLD_MAX, VOICE_MATCH_THRESHOLD_MIN,

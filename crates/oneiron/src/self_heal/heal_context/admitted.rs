@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 
-use super::records::{code_run_value, source_order};
+use super::records::{code_run_value, raw_output_body_value, source_order};
 use super::{Gather, HealLink, kind};
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt};
@@ -150,6 +150,23 @@ impl Gather<'_> {
     /// window's runs, each report's replay source, the cause walk with every attempt's
     /// kept step requests, every code run named and each reached attempt's pack receipt.
     pub(super) fn recorded(&mut self, lane: &ScopedRead<'_>) {
+        // The code-run bodies below are found inside the snapshot this read
+        // opens, so the whole set is pinned and custody is guarded before it
+        // opens, held through the last body read and file close.
+        let _bodies = self.vault.pin_all_result_bodies();
+        let _custody = match self.vault.store.gate_custody_read_guard() {
+            Ok(guard) => guard,
+            Err(error) => {
+                let why = kind(&error);
+                if let Some(runs) = self.runs.take() {
+                    for run in runs {
+                        self.unavailable(format!("run:{}", run.run_id.to_hex()), why.clone());
+                    }
+                }
+                self.unavailable("records".into(), why);
+                return;
+            }
+        };
         let read = lane.read_projected(&[], None, |txn, _| {
             let admit = Admit {
                 lane,
@@ -279,42 +296,75 @@ impl Gather<'_> {
     /// The complete stored ancestry of the roots, in source order. An attempt's record
     /// is admitted against the complete source rows it recorded, else it is the owner's
     /// alone; each kept step request is admitted on its own.
+    ///
+    /// The topology names only attempts the reader may know of (FIX 10814): those whose
+    /// record it admits, and the roots its own request named. Order, cycles and links
+    /// are drawn over that set, each link from an admitted attempt, the one it is stored
+    /// on. Any other attempt is `unavailable` without its id, and so is a gap only a
+    /// withheld attempt names.
     fn ancestry_in(&mut self, admit: &Admit<'_, '_, '_>) {
         let vault = self.vault;
         let walk = DreamerRunnerStore::new(vault).cause_ancestry_in_txn(admit.txn, &self.roots);
         self.walked += walk.reached.len() + walk.gaps.len();
-        for (id, why) in walk.gaps {
-            self.unavailable(
-                format!("attempt:{}", bytes_to_hex_lower(id.as_bytes())),
-                why,
-            );
-        }
-        let ids: Vec<AttemptId> = walk.reached.iter().map(|record| record.id).collect();
-        let (order, cyclic) = source_order(&ids, &walk.links);
         let hex = |id: &AttemptId| bytes_to_hex_lower(id.as_bytes());
+        let mut records: BTreeMap<AttemptId, (AttemptRecord, Option<String>)> = walk
+            .reached
+            .into_iter()
+            .map(|record| {
+                let rows = record.source_rows();
+                let refused = match admit.part(rows.unwrap_or_default(), rows.is_some(), &[]) {
+                    Ok(None) => None,
+                    Ok(Some(why)) => Some(why.to_owned()),
+                    Err(error) => Some(kind(&error)),
+                };
+                (record.id, (record, refused))
+            })
+            .collect();
+        let admitted: BTreeSet<AttemptId> = records
+            .iter()
+            .filter(|(_, (_, refused))| refused.is_none())
+            .map(|(id, _)| *id)
+            .collect();
+        let roots: BTreeSet<AttemptId> = self.roots.iter().copied().collect();
+        let known = |id: &AttemptId| admitted.contains(id) || roots.contains(id);
+        for (id, why) in walk.gaps {
+            let named = roots.contains(&id)
+                || walk
+                    .links
+                    .iter()
+                    .any(|(from, to, _)| *to == id && admitted.contains(from));
+            let part = if named {
+                format!("attempt:{}", hex(&id))
+            } else {
+                "attempt".to_owned()
+            };
+            self.unavailable(part, why);
+        }
+        let links: Vec<(AttemptId, AttemptId, &'static str)> = walk
+            .links
+            .iter()
+            .copied()
+            .filter(|(from, to, _)| admitted.contains(from) && known(to))
+            .collect();
+        let ids: Vec<AttemptId> = records.keys().copied().filter(known).collect();
+        let (order, cyclic) = source_order(&ids, &links);
         self.context.attempts = order.iter().map(hex).collect();
         self.context.cyclic.extend(cyclic.iter().map(hex));
         self.context
             .links
-            .extend(walk.links.iter().map(|&(from, to, kind)| HealLink {
+            .extend(links.iter().map(|&(from, to, kind)| HealLink {
                 from: hex(&from),
                 to: hex(&to),
                 kind,
             }));
-        let mut records: BTreeMap<AttemptId, AttemptRecord> = walk
-            .reached
-            .into_iter()
-            .map(|record| (record.id, record))
-            .collect();
         for id in order {
-            let Some(record) = records.remove(&id) else {
+            let Some((record, refused)) = records.remove(&id) else {
                 continue;
             };
             let attempt = hex(&id);
             let mut entry = Map::new();
-            let rows = record.source_rows();
-            match admit.part(rows.unwrap_or_default(), rows.is_some(), &[]) {
-                Ok(None) => {
+            match refused {
+                None => {
                     if let Some(task) = &record.task_ref {
                         self.refer_hex(&format!("task:{attempt}"), task);
                     }
@@ -326,12 +376,18 @@ impl Gather<'_> {
                         serde_json::to_value(&record).unwrap_or_default(),
                     );
                 }
-                Ok(Some(why)) => self.unavailable(format!("attempt_record:{attempt}"), why),
-                Err(error) => self.unavailable(format!("attempt_record:{attempt}"), kind(&error)),
+                Some(why) => self.unavailable(format!("attempt_record:{attempt}"), why),
             }
             self.kept_requests_in(admit, id, &attempt, &mut entry);
             entry.insert("attempt".into(), Value::String(attempt));
             self.attempts.push((id, entry));
+        }
+        // Left: attempts the reader may not know of, each withheld or unprovable.
+        for (_, refused) in records.into_values() {
+            self.unavailable(
+                "attempt_record".to_owned(),
+                refused.unwrap_or_else(|| WITHHELD.to_owned()),
+            );
         }
     }
 
@@ -381,8 +437,10 @@ impl Gather<'_> {
     }
 
     /// Every code run named. A replay record keeps its bridge calls, checkpoints and
-    /// output previews with no rows they were read from: the owner's alone. Output bodies
-    /// are read only through the owner's result doors.
+    /// output previews with no rows they were read from: the owner's alone. Each output
+    /// body is read through the reader's lane in the same snapshot, admitted against
+    /// its occurrence's and its run's recorded source rows; an unavailable body keeps its
+    /// manifest and preview, with only its reason recorded.
     fn code_runs_in(&mut self, admit: &Admit<'_, '_, '_>) {
         let vault = self.vault;
         let mut runs = BTreeSet::new();
@@ -403,13 +461,28 @@ impl Gather<'_> {
             }
             match vault.get_code_run_replay_record_in_txn(admit.txn, &run) {
                 Ok(Some(record)) => {
-                    for output in &record.outputs {
-                        self.unavailable(
-                            format!("output_body:{id}:{}", output.handle),
-                            "owner_door_only",
-                        );
+                    let mut value = code_run_value(&record);
+                    if let Some(outputs) = value.get_mut("outputs").and_then(Value::as_array_mut) {
+                        for (output, rendered) in record.outputs.iter().zip(outputs.iter_mut()) {
+                            let part = format!("output_body:{id}:{}", output.handle);
+                            match vault
+                                .code_run_context_body_in_txn(admit.txn, admit.lane, run, output)
+                            {
+                                Ok(Ok(Some(body))) => {
+                                    if let Some(rendered) = rendered.as_object_mut() {
+                                        rendered.insert(
+                                            "body".into(),
+                                            raw_output_body_value(output, &body),
+                                        );
+                                    }
+                                }
+                                Ok(Ok(None)) => self.unavailable(part, "missing"),
+                                Ok(Err(why)) => self.unavailable(part, why),
+                                Err(error) => self.unavailable(part, kind(&error)),
+                            }
+                        }
                     }
-                    shown.push(code_run_value(&record));
+                    shown.push(value);
                 }
                 Ok(None) => self.unavailable(format!("code_run:{id}"), "unrecorded"),
                 Err(error) => self.unavailable(format!("code_run:{id}"), kind(&error)),

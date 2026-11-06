@@ -21,8 +21,9 @@ pub(super) const LANDED: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::WORLD_KEY_SEALED_MIRROR_LANDED);
 
 /// Purges every mirror of `world`, and every mark of what landed from one,
-/// in the caller's write transaction: the erase's share here.
-pub(super) fn purge_world_mirrors_in_txn(
+/// in the caller's write transaction: the erase's share here, and a world
+/// placed on one other machine leaving this one (FIX 14534).
+pub(crate) fn purge_world_mirrors_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     world: EntityId,

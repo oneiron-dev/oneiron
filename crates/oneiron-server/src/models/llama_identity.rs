@@ -38,6 +38,42 @@ use super::http::{MAX_REPLY_BYTES, ProviderHttp};
 const SCHEMA_VERSION: u64 = 1;
 /// The backend a llama.cpp manifest names.
 const BACKEND: &str = "llama_cpp";
+
+/// The 4 header fields every llama.cpp launch manifest names. Body sections
+/// are NOT carried here.
+#[derive(Deserialize)]
+struct LlamaHeader {
+    schema_version: u64,
+    backend: String,
+    backend_epoch: CacheEpoch,
+    configured_wire_id: String,
+}
+
+/// The manifest's digest + shared header on its exact bytes: `Some(())` when
+/// the bytes' SHA-256 hex is `digest` and the manifest names schema 1, the
+/// llama.cpp backend, `epoch` and `wire`. Each caller keeps its own payload
+/// parser from the same bytes because qualification and serving accept
+/// different optional fields.
+pub(super) fn verify_llama_header(
+    bytes: &[u8],
+    digest: &str,
+    epoch: &CacheEpoch,
+    wire: &str,
+) -> Option<()> {
+    if format!("{:x}", Sha256::digest(bytes)) != digest {
+        return None;
+    }
+    let header: LlamaHeader = serde_json::from_slice(bytes).ok()?;
+    if header.schema_version != SCHEMA_VERSION
+        || header.backend != BACKEND
+        || header.backend_epoch != *epoch
+        || header.configured_wire_id != wire
+    {
+        return None;
+    }
+    Some(())
+}
+
 /// The request keys that set how one llama.cpp call runs (FIX 8329): its
 /// chat template's arguments, its reasoning settings, its sampler chain, the
 /// constraints on what it may sample and its seed, and its own prompt-cache
@@ -125,19 +161,41 @@ pub(super) struct LlamaIdentityManifest {
     /// The launch's explicit cache settings.
     #[serde(default)]
     cache_mode: Option<CacheDigest>,
+    /// The target's observed architecture facts, parsed from the manifest's
+    /// top-level `architecture` section only after the manifest verifies;
+    /// never read from the `identity` section.
+    #[serde(skip)]
+    target_architecture: Option<TargetArchitecture>,
 }
 
-/// The manifest's fields this reader checks, beside its digests. Its other
-/// sections are the record the digests were taken of.
+/// The target's observed architecture facts (FIX 12383): the manifest's
+/// top-level `architecture` section, strictly typed. A missing or mistyped
+/// name, or any non-`u32` count, leaves the whole section unknown. Raw
+/// observed facts only: no derived widths, no admission bound.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(super) struct TargetArchitecture {
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) block_count: Option<u32>,
+    #[serde(default)]
+    pub(super) head_count_kv: Option<u32>,
+    #[serde(default)]
+    pub(super) embedding_length: Option<u32>,
+    #[serde(default)]
+    pub(super) head_count: Option<u32>,
+}
+
+/// The serving manifest's payload: its identity and the sections those
+/// digests describe.
 #[derive(Deserialize)]
 struct ManifestWire {
-    schema_version: u64,
-    backend: String,
-    backend_epoch: CacheEpoch,
-    configured_wire_id: String,
     #[serde(default)]
     draft: Option<ManifestDraft>,
     identity: LlamaIdentityManifest,
+    /// The optional architecture facts as unparsed JSON, so a malformed
+    /// optional section never invalidates the manifest's digests.
+    #[serde(default)]
+    architecture: Option<JsonValue>,
 }
 
 /// The launch's draft GGUF, as its manifest lists it.
@@ -176,6 +234,16 @@ impl AnsweringIdentity {
             Some(manifest) if manifest.runtime.is_some() => WorkerBuildEvidence::VerifiedArtifacts,
             _ => WorkerBuildEvidence::Unknown,
         }
+    }
+
+    /// The answering launch's observed target architecture, when its
+    /// manifest verified and names the target model. Raw facts only; no
+    /// consumer reads capacity or geometry from it yet.
+    pub(super) fn target_architecture(&self) -> Option<&TargetArchitecture> {
+        self.manifest
+            .as_deref()
+            .filter(|manifest| manifest.model.is_some())
+            .and_then(|manifest| manifest.target_architecture.as_ref())
     }
 
     /// A chat answer's identity: the server rendered its prompt with the
@@ -325,21 +393,16 @@ async fn fetch(
 /// The manifest's digests, when its exact bytes hash to the alias's digest
 /// and it names the alias's epoch and the route's configured wire id.
 fn verify(bytes: &[u8], alias: &LlamaAlias, target: &str) -> Option<LlamaIdentityManifest> {
-    if format!("{:x}", Sha256::digest(bytes)) != alias.manifest.as_str() {
-        return None;
-    }
+    verify_llama_header(bytes, alias.manifest.as_str(), &alias.epoch, target)?;
     let manifest: ManifestWire = serde_json::from_slice(bytes).ok()?;
-    if manifest.schema_version != SCHEMA_VERSION
-        || manifest.backend != BACKEND
-        || manifest.backend_epoch != alias.epoch
-        || manifest.configured_wire_id != target
-    {
-        return None;
-    }
     let mut identity = manifest.identity;
     identity.draft_weights_digest = manifest
         .draft
         .and_then(|draft| draft.sha256)
         .filter(|digest| !digest.is_empty());
+    identity.target_architecture = manifest
+        .architecture
+        .and_then(|section| serde_json::from_value::<TargetArchitecture>(section).ok())
+        .filter(|arch| !arch.name.is_empty());
     Some(identity)
 }

@@ -230,8 +230,12 @@ impl Store {
             let Some(state) = self.pending_gate_consent_index_state_in_txn(&*wtxn, &record)? else {
                 return Err(Error::CorruptedIndex("pending gate consent run index"));
             };
-            if state.run_id != run_id {
-                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            if !super::keys::hashed_string_index_matches(
+                Some(&state.run_id),
+                run_id,
+                "pending gate consent run index",
+            )? {
+                continue;
             }
             records.push(record);
         }
@@ -320,7 +324,13 @@ impl Store {
             RUN_INDEX,
             &scan_prefix,
             "pending gate consent run index",
-            |state| state.run_id == run_id,
+            |state| {
+                super::keys::hashed_string_index_matches(
+                    Some(&state.run_id),
+                    run_id,
+                    "pending gate consent run index",
+                )
+            },
         )
     }
 
@@ -341,7 +351,13 @@ impl Store {
             GROUP_INDEX,
             &scan_prefix,
             "pending gate consent group index",
-            |state| state.group_key == group_key,
+            |state| {
+                super::keys::hashed_string_index_matches(
+                    Some(&state.group_key),
+                    group_key,
+                    "pending gate consent group index",
+                )
+            },
         )
     }
 
@@ -382,7 +398,7 @@ impl Store {
         state_matches: F,
     ) -> Result<Vec<PendingGateConsentRecord>>
     where
-        F: Fn(&PendingGateConsentIndexState) -> bool,
+        F: Fn(&PendingGateConsentIndexState) -> Result<bool>,
     {
         let mut records = Vec::new();
         for key in table.scan_keys(self, txn, scan_prefix)? {
@@ -395,8 +411,8 @@ impl Store {
             let Some(state) = state else {
                 return Err(Error::CorruptedIndex(index_name));
             };
-            if !state_matches(&state) {
-                return Err(Error::CorruptedIndex(index_name));
+            if !state_matches(&state)? {
+                continue;
             }
             records.push(record);
         }
@@ -412,7 +428,9 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
-        let Ok(binding) = crate::store::critical_confirm_record::critical_write_confirm_binding(record) else {
+        let Ok(binding) =
+            crate::store::critical_confirm_record::critical_write_confirm_binding(record)
+        else {
             return Ok(());
         };
         let claim_id = EntityId::from_bytes(record.claim_id)
@@ -425,7 +443,7 @@ impl Store {
         CRITICAL_CONFIRM_INDEX.put(self, wtxn, &binding.confirm_id, &claim_id)?;
         // A vault that is not running wakes when the window closes, so the
         // expiry sweep can demote a write still waiting on its confirm.
-        crate::housekeeping::note_wake_in_txn(
+        crate::store::housekeeping_wake::note_wake_in_txn(
             self,
             wtxn,
             crate::store::housekeeping_schedule::HousekeepingSweep::CriticalConfirmExpiry,
@@ -438,7 +456,9 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
-        let Ok(binding) = crate::store::critical_confirm_record::critical_write_confirm_binding(record) else {
+        let Ok(binding) =
+            crate::store::critical_confirm_record::critical_write_confirm_binding(record)
+        else {
             return Ok(());
         };
         CRITICAL_CONFIRM_INDEX.delete(self, wtxn, &binding.confirm_id)?;

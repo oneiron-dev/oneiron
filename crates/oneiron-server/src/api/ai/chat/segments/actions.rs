@@ -4,11 +4,13 @@ use oneiron::prompt::PromptLayout;
 
 use super::*;
 use crate::ai_host::AiHandle;
-use crate::api::ai::chat::compaction::ChatReused;
+use crate::api::ai::chat::compaction::{self, ChatReused};
 
 pub(crate) struct ActionSession {
     reader: Reader,
     segments: TurnSegments,
+    /// The agent the reused call answers as.
+    agent: EntityId,
 }
 
 impl ActionSession {
@@ -26,6 +28,7 @@ impl ActionSession {
         let (chat, borrowed, captured) =
             reused.breakpoint.action_chat(ai, vault, &memory, action)?;
         let (actor, class) = action.requester().ok()?;
+        let agent = reused.breakpoint.agent()?;
         let reader = Reader {
             vault: Arc::clone(vault),
             credential: TurnCredential::Action {
@@ -43,6 +46,16 @@ impl ActionSession {
         let request = &reused.live.request;
         let prompt = ai.prompt_layout();
         let craft = !reused.craft.is_empty();
+        // A captured call may close with its opener right after the user's
+        // turn (FIX 14676); the turn's own messages end before it.
+        let user_text = captured
+            .len()
+            .checked_sub(2)
+            .and_then(|at| captured.get(at))
+            .map(compaction::message_text)
+            .unwrap_or_default();
+        let opened = compaction::captured_opener(&captured, &user_text);
+        let captured = &captured[..captured.len() - usize::from(opened)];
         let system_end = captured
             .len()
             .checked_sub(chat.log().lines.len().checked_add(1 + usize::from(craft))?)?;
@@ -69,6 +82,27 @@ impl ActionSession {
                 captured.get(index)?.clone(),
             );
         }
+        // The opener the reused call closes with: the captured one a
+        // Continue keeps, or the one a Retry samples now, where the request
+        // holds one right after the user's turn.
+        let tail = request
+            .messages
+            .get(captured.len())
+            .filter(|message| {
+                message.role == LlmMessageRole::User
+                    && oneiron::context_board::is_turn_opener_line(&compaction::message_text(
+                        message,
+                    ))
+            })
+            .map(|opener| BoardView {
+                state: None,
+                tail: Some(TurnTail {
+                    text: compaction::message_text(opener),
+                    sections: Vec::new(),
+                    opener: true,
+                }),
+            });
+        let ends = captured.len() + usize::from(tail.is_some());
         let segments = admitted_with_sources(
             &reader,
             Assembled {
@@ -79,16 +113,20 @@ impl ActionSession {
                 },
                 self_chat: Some(&chat),
                 messages: &messages,
-                board: None,
-                agent: reused.breakpoint.agent()?,
+                board: tail.as_ref(),
+                agent,
                 craft: craft.then_some(reused.craft.as_slice()),
             },
             &request.messages,
             &borrowed,
-            (continuing && request.messages.len() != captured.len()).then_some(action.message),
+            (continuing && request.messages.len() != ends).then_some(action.message),
         )?;
         segments.manifest.anchor()?;
-        Some(Self { reader, segments })
+        Some(Self {
+            reader,
+            segments,
+            agent,
+        })
     }
 
     pub(crate) fn manifest(&self) -> Arc<SegmentManifest> {
@@ -97,9 +135,31 @@ impl ActionSession {
 
     /// A Retry saves a new whole reply; a Continue appends to its existing
     /// MESSAGE. Only that generation's full persisted text can advance the
-    /// captured request. A fallback publishes no successor for it.
-    pub(crate) fn commit_on_answer(self, answering: Answering) -> Answering {
-        let Self { reader, segments } = self;
+    /// captured request. A fallback publishes no successor for it. With
+    /// `preparing`, the session then prepares beside the successor what the
+    /// conversation's next turn, its requester's, puts right after the
+    /// history (I1 = C, FIX 14677).
+    pub(crate) fn commit_on_answer(
+        self,
+        answering: Answering,
+        preparing: Option<Arc<crate::server::SyncServer>>,
+    ) -> Answering {
+        let Self {
+            reader,
+            segments,
+            agent,
+        } = self;
+        let next = preparing.and_then(|server| {
+            let TurnCredential::Action { action, .. } = &reader.credential else {
+                return None;
+            };
+            Some(Arc::new(crate::api::ai::chat::next_turn::ChatNextTurn {
+                server,
+                reader: reader.clone(),
+                agent,
+                conversation: Some(action.conversation),
+            }) as Arc<dyn NextTurnSource>)
+        });
         let authority = segments
             .authority
             .as_ref()
@@ -155,15 +215,20 @@ impl ActionSession {
                     Some(*turn)
                 });
                 if let Some(head) = turn {
-                    reply_committed(
-                        &segments.manifest,
-                        ReplyCommit {
-                            head,
-                            message,
-                            text,
-                        },
-                        Arc::new(authority),
-                    );
+                    let commit = ReplyCommit {
+                        head,
+                        message,
+                        text,
+                    };
+                    match next {
+                        Some(next) => reply_committed_preparing(
+                            &segments.manifest,
+                            commit,
+                            Arc::new(authority),
+                            next,
+                        ),
+                        None => reply_committed(&segments.manifest, commit, Arc::new(authority)),
+                    }
                 }
             }
         });

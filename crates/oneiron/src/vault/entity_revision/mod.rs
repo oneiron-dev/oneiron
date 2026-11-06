@@ -3,6 +3,8 @@
 //! born at its first edit or citation, and retains its full operation history.
 
 mod citations;
+mod document_version;
+pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
 pub(crate) use idle::drop_vector_state;
 mod pending_index;
@@ -30,6 +32,8 @@ pub(crate) use vector_refill::schedule_vector_refills;
 pub(crate) use storage::capture_entity_document;
 #[cfg(feature = "sync")]
 pub(crate) use storage::entity_has_pending_revision;
+pub use storage::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
+pub(crate) use storage::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
 pub(crate) use storage::{
     capture_entity_revision, ensure_document, entity_owns_revision_in_txn, fork_revision,
     publish_room_revision, read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,

@@ -91,7 +91,14 @@ def unpack(body):
     meta = json.loads(body[4:4+n])
     if not isinstance(meta, dict):
         raise ValueError("invalid metadata")
-    return meta, body[4+n:]
+    rest = body[4+n:]
+    if "transcript_bytes" not in meta:
+        return meta, rest
+    count = meta["transcript_bytes"]
+    if type(count) is not int or not 0 <= count <= len(rest):
+        raise ValueError("invalid transcript framing")
+    meta["transcript"] = rest[:count].decode("utf-8")
+    return meta, rest[count:]
 
 
 class UnsupportedEncoding(ValueError):
@@ -287,7 +294,7 @@ def handler_for(worker):
             if self.path != "/ready":
                 self.send_error(404)
                 return
-            data = json.dumps(worker.target()).encode()
+            data = json.dumps({**worker.target(), "transcript_frame": True}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))

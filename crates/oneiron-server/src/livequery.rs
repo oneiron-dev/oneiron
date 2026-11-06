@@ -20,7 +20,9 @@ mod budget;
 mod error;
 mod history;
 mod residence;
-pub(crate) use residence::{ResidenceIndexCache, ResidenceTouchStage};
+pub(crate) use residence::{
+    ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
+};
 mod routing;
 mod rpc;
 pub(crate) use rpc::SocketCallContext;
@@ -264,8 +266,8 @@ impl RpcReply {
         })
     }
 
-    /// [`Self::answer`] for a call no bound credential carries: a home
-    /// handoff call on a socket that bound no actor (FIX 6458). Its receipt
+    /// [`Self::answer`] for a machine-only home handoff or exact pad call
+    /// on a socket that bound no actor. Its receipt
     /// is the connection's, as a ping's is, with the call's outcome and
     /// digests.
     fn answer_unbound(
@@ -322,6 +324,30 @@ impl RpcReply {
         self.frames
             .into_iter()
             .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
+            .collect()
+    }
+}
+
+impl RpcReply {
+    pub(crate) fn queued_for_machine(self, conn: u32, own_machine_only: bool) -> Vec<Vec<u8>> {
+        if !own_machine_only {
+            return self.queued(conn);
+        }
+        let Some(rows) = self.rows else {
+            return self.frames;
+        };
+        self.frames
+            .into_iter()
+            .map(|frame| {
+                // Request incarnations are otherwise zero. Subscriptions use TAG_SUB.
+                routing::wrap(
+                    conn,
+                    self.request_id,
+                    routing::OWN_MACHINE_RPC_INCARNATION,
+                    rows.as_deref(),
+                    frame,
+                )
+            })
             .collect()
     }
 }
@@ -398,13 +424,13 @@ pub(crate) fn residence_rpc(
     )
 }
 
-/// FIX 6458: whether `method` is one of the home handoff's own calls, the
-/// only ones a socket that bound no actor makes.
+/// Whether `method` is a home handoff or exact pad call that a socket may
+/// make with its machine proof and no bound actor.
 pub(crate) fn machine_handoff_method(method: &str) -> bool {
     residence::machine_method(method)
 }
 
-/// FIX 6458: one home handoff call on a socket that bound no actor. Its
+/// One machine-only residence call on a socket that bound no actor. Its
 /// owner-grade upgrade's machine, `peer`, judged again now, is the caller;
 /// the reply carries its rows to the send door, and its receipt is the
 /// connection's ([`RpcReply::answer_unbound`]).
@@ -501,9 +527,9 @@ fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppEr
     Ok(limit)
 }
 
-/// A count a receipt or pending-consent subscription asks for, or `default`
-/// (FIX 8859): read in scoped pages ([`scoped_pages`]), so no count past the
-/// list page is refused.
+/// A positive subscription count, or `default`, without the facade's list-page
+/// ceiling. Receipts and pending-consent read in scoped pages ([`scoped_pages`])
+/// (FIX 8859).
 fn facade_count(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
     let limit = requested.unwrap_or(default);
     if limit == 0 {

@@ -13,14 +13,14 @@ use oneiron::memory::WitnessReceipt;
 use oneiron::skill_optimize::union_source_rows;
 
 /// What a turn's call has been read from so far, with completeness kept apart.
-pub(super) struct TurnSources {
+pub(crate) struct TurnSources {
     rows: Vec<EntityId>,
     complete: bool,
 }
 
 impl TurnSources {
     /// The answering agent's definition, its instructions' row.
-    pub(super) fn of_agent(agent: EntityId) -> Self {
+    pub(crate) fn of_agent(agent: EntityId) -> Self {
         Self {
             rows: vec![agent],
             complete: true,
@@ -29,7 +29,7 @@ impl TurnSources {
 
     /// The rows one part of the call was read from: `None`, a part whose
     /// rows are unknown, leaves the set unknown.
-    pub(super) fn add(&mut self, rows: Option<&[EntityId]>) {
+    pub(crate) fn add(&mut self, rows: Option<&[EntityId]>) {
         match rows {
             Some(rows) => self.rows.extend_from_slice(rows),
             None => self.complete = false,
@@ -37,7 +37,7 @@ impl TurnSources {
     }
 
     /// The craft notes the call is shown, each by its claim.
-    pub(super) fn craft(&mut self, entries: &[ManifestEntry]) {
+    pub(crate) fn craft(&mut self, entries: &[ManifestEntry]) {
         for entry in entries {
             match EntityId::from_hex(&entry.reference) {
                 Ok(row) => self.rows.push(row),
@@ -52,7 +52,7 @@ impl TurnSources {
     }
 
     /// The complete set, sorted and deduplicated; `None` when unknown.
-    pub(super) fn rows(self) -> Option<Vec<EntityId>> {
+    pub(crate) fn rows(self) -> Option<Vec<EntityId>> {
         union_source_rows([self.complete.then_some(self.rows)])
     }
 }
