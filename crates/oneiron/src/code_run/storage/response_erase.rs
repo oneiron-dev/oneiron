@@ -25,8 +25,10 @@
 //! Every later write of a record meets the erase in its own writer
 //! ([`fence_replay_in_txn`]): a record whose owner row is erased, or whose
 //! actor is gone, is written in its erased form, and the reply bodies it
-//! names are released. Its row says Deleted for a soft-deleted actor and
-//! Erased for a hard-erased one, which no later erase reaches (FIX 6591).
+//! names are released. Its row says Erased once the actor's hard erasure is
+//! complete (its hard-delete marker), since no later erase reaches it, and
+//! Deleted for any other gone actor, keeping the bodies released for the
+//! retirement still to come (FIX 6591).
 //!
 //! The same scrub reaches the replies the actor's runs were delivered by
 //! their waits (part 2, Engine ruling 2, `wait_holders`): the runs a wait's
@@ -162,13 +164,16 @@ fn scrub_actor_responses_in_txn(
 /// its owner row says so, or once the actor that row or its live run
 /// binding names is gone. A row that names an actor, a soft delete's or the
 /// gone one, says Deleted and keeps the bodies released here for that
-/// actor's later erase (FIX 6591). A hard-erased actor has no later erase,
-/// so its row says Erased, the bodies released all the same, and a Deleted
-/// row of it turns Erased here; an erased row stays erased.
+/// actor's later erase (FIX 6591). An actor whose hard erasure is complete
+/// (its hard-delete marker) has no later erase, so its row says Erased, the
+/// bodies released all the same, and a Deleted row of it turns Erased here;
+/// an erased row stays erased. A removed row or a pending `df:` or `pt:`
+/// fence without that marker is no completed erasure: the row stays
+/// Deleted, with its bodies, for the retirement still to come.
 ///
 /// # Errors
 ///
-/// Storage and custody errors.
+/// Storage and custody errors, and a hard-delete marker read error.
 pub(crate) fn fence_replay_in_txn<'r>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -192,17 +197,15 @@ pub(crate) fn fence_replay_in_txn<'r>(
     let run = owner.as_ref().map_or(record.run_id, |owner| owner.run);
     let released = release_reply_outputs_in_txn(&vault.store, wtxn, &record)?;
     erase_replies(record.to_mut())?;
-    let txn: &heed::RoTxn<'_> = wtxn;
     let kept = owner
         .as_ref()
         .and_then(ResponseOwner::retirement_actor)
-        .or(gone)
-        .filter(|actor| !actor_hard_erased_in_store(&vault.store, txn, actor));
+        .or(gone);
     match kept {
-        Some(actor) => {
+        Some(actor) if !actor_hard_erased_in_store(&vault.store, wtxn, &actor)? => {
             mark_response_deleted_in_txn(&vault.store, wtxn, record.run_id, run, actor, released)?;
         }
-        None => mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?,
+        _ => mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?,
     }
     Ok(record)
 }
