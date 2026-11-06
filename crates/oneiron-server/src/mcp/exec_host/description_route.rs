@@ -56,8 +56,15 @@ fn routed_task(
     }
     let id = run_id.to_hex();
     // A run routed once keeps its route on resume, whatever the policy is now.
+    let routed_before = vault.routed_seat(&id).ok().flatten().is_some();
+    // FIX 4543 (owner ruling FIX 4472): an agent with its own model list picks
+    // among it by the list's own descriptions, which the seat birth reads; the
+    // vault-wide description route never decides for it.
+    if !task.listed.is_empty() && !routed_before {
+        return None;
+    }
     let policy = vault.description_policy().ok().flatten();
-    if policy.is_none() && vault.routed_seat(&id).ok().flatten().is_none() {
+    if policy.is_none() && !routed_before {
         return None;
     }
     let settings = SeatSettings {
