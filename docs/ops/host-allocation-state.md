@@ -2,9 +2,12 @@
 
 `llm::run_admission::VaultAllocationLedger` is the vault-bound persistent
 allocation backend. It is not installed by the current `HostAccount` constructors.
-Those constructors and the current run admission path still use their existing
-in-memory allocation meters. No Cloud wallet or price conversion is implemented
-by this backend.
+Those constructors and their run admission path still use their existing
+in-memory allocation meters. `RunAdmission::with_persistent_allocation` explicitly
+selects the native ledger with a required `AllocationProducer`. It uses no
+reflected allocation meter for admission. The server has not selected this
+constructor yet. No Cloud wallet or price conversion is implemented by this
+backend.
 
 ## Authority and state
 
@@ -65,11 +68,22 @@ resident-share family and its whole-row erase remain unchanged in ownership.
 
 ## Remaining runtime work
 
-The live `HostAccount` / `RunInner` admission, actual dispatch and terminal path
-are not connected to this backend yet. The server still needs the original
-`AdmittedCall` durable freeze with its actual custody/erase contract, the
-original terminal producer join and the existing usage.pending drain. The
-callback API alone is not evidence that those runtime joins exist.
+The opt-in run path reserves and freezes its admitted receipt in the native
+writer before returning its permit. The real `RunInner::begin_dispatch` hook
+commits the native start before `GatedBackend` releases bytes. Settlement builds
+one original receipt and passes that same value to the native hold-terminal
+transition, its producer callback and, after commitment, its receipt sink.
+Native resident settlement uses only the hold's once-selected writer transition.
+Storage errors have a distinct typed denial and a host-storage model error,
+not an exhausted-budget or provider-health result. No native commit failure
+publishes a terminal into a legacy sink that could settle it independently.
+
+This is not server activation. The server still needs an `AllocationProducer`
+that freezes its original `AdmittedCall` under its actual custody/erase contract,
+preserves service-cost updates, and stages the original event into the existing
+usage.pending pipeline. A receipt sink is an observer on the native path, not
+that producer. Crash recovery and accepted-terminal reconciliation remain open;
+a false dispatch observation is never permission to release an old hold.
 
 Cloud accepted-terminal identity, serving-retirement reconciliation and backing
 return remain the hosted control plane's responsibility. Native revisions,

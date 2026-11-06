@@ -1,7 +1,8 @@
 //! Durable native allocation state. The explicit current selection and every
 //! original hold share the vault writer; no reflected BudgetGuard admits here.
 //! Server producer callbacks must use this same writer and persist their original
-//! admitted/terminal material. This module does not install a runtime adapter.
+//! admitted/terminal material. PersistentAllocation explicitly binds this backend
+//! to a run; existing memory-account constructors remain unchanged.
 
 use std::sync::Arc;
 
@@ -12,7 +13,10 @@ use super::host::{Allocation, AllocationRef, AllocationRefusal};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod runtime;
 mod store;
+
+pub use runtime::{AllocationProducer, PersistentAllocation};
 
 const ACCOUNT: SideTable<(), AccountRow, Named> = SideTable::new(&side_table::BUDGET_HOST_ACCOUNT);
 
@@ -93,8 +97,10 @@ pub enum AllocationStoreError {
     Closed,
     #[error("the allocation is spent")]
     Exhausted,
-    #[error("no rate converts the call into the allocation unit")]
-    UnitMismatch,
+    #[error("the host refused a fresh allocation: {reason:?}")]
+    AllocationRefused { reason: AllocationRefusal },
+    #[error("no rate converts {from:?} into allocation unit {to:?}")]
+    UnitMismatch { from: LeaseUnit, to: LeaseUnit },
     #[error("the owner's pinned share for this resident is spent")]
     ResidentShareSpent { resident: EntityId },
     #[error("the original call already has a durable hold")]

@@ -34,8 +34,9 @@ pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
 };
 pub use allocation::{
-    AllocationCallKey, AllocationCommit, AllocationServingFence, AllocationStoreError,
-    AllocationTerminal, DurableAllocationHold, DurableAllocationRead, VaultAllocationLedger,
+    AllocationCallKey, AllocationCommit, AllocationProducer, AllocationServingFence,
+    AllocationStoreError, AllocationTerminal, DurableAllocationHold, DurableAllocationRead,
+    PersistentAllocation, VaultAllocationLedger,
 };
 pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{
@@ -67,6 +68,5 @@ pub use work_context::{
     WorkCancel, WorkContext, WorkId, WorkPhysical, forget_work_parent, lookup_work_parent,
     record_work_parent, take_work_parent,
 };
-
 #[cfg(test)]
 mod tests;

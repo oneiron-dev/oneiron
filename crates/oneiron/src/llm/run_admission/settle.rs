@@ -98,6 +98,21 @@ impl RunInner {
                 None => (0, hold.meter.abort(&hold.lease)),
             }
         });
+        let persistent_units = permit
+            .persistent_allocation
+            .as_ref()
+            .map(|hold| match native {
+                Some(_) if kept => 0,
+                Some(native) => charge(
+                    native,
+                    &permit.native,
+                    &hold.unit,
+                    &permit.rates,
+                    hold.reserved_units,
+                ),
+                None if started => hold.reserved_units,
+                None => 0,
+            });
         // The resident's share is charged what the allocation was (FIX 7767).
         if let (Some(hold), Some((units, _))) = (&permit.allocation, &allocation)
             && let Some(draw) = &hold.resident
@@ -146,7 +161,7 @@ impl RunInner {
         reported.extend(provided);
         let inference_calls =
             settled_inference_calls(reported, permit.lease.inference_observations());
-        self.record(
+        let receipt = self.receipt(
             permit.revision,
             RunEvent::Settled {
                 lease: permit.lease.id().to_owned(),
@@ -169,11 +184,22 @@ impl RunInner {
                 overage,
                 units: charged,
                 unit: line_unit.clone(),
-                allocation_units: allocation.as_ref().map(|(units, _)| *units),
+                allocation_units: allocation
+                    .as_ref()
+                    .map(|(units, _)| *units)
+                    .or(persistent_units),
                 error: settled.as_ref().err().cloned(),
                 allocation_error: allocation_error.clone(),
             },
         );
+        let persistent_settled = match (&permit.persistent_allocation, persistent_units) {
+            (Some(hold), Some(units)) => self.settle_allocation(hold, &receipt, units, started),
+            _ => Ok(()),
+        };
+        // A failed native commit must not let a legacy sink settle money
+        // independently of the original hold/resident transaction.
+        persistent_settled?;
+        self.publish_receipt(receipt);
         match (settled, allocation_error) {
             (Err(denied), _) | (Ok(_), Some(denied)) => Err(RunDenied::Budget { denied }),
             (Ok(settlement), None) => Ok(settlement),

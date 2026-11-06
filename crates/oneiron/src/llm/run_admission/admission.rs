@@ -15,13 +15,14 @@ use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
 use super::host::{HostAccount, OfferBinding, PaidConnector, PayerPerson};
 use super::permit::RunPermit;
-use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
+use super::receipt::{CalledTeacher, RunEvent, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
 use super::work_context::WorkContext;
 
 mod denied;
 mod media;
 mod origin;
+mod receipts;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
@@ -77,6 +78,8 @@ pub(super) struct RunInner {
     declaration: Mutex<Revisioned>,
     pub(super) guard: BudgetGuard,
     pub(super) host: Option<Arc<HostAccount>>,
+    pub(super) persistent_allocation: Option<Arc<super::allocation::PersistentAllocation>>,
+    pub(super) persistent_calls: Mutex<BTreeSet<String>>,
     /// Who funds the run's calls when a room's root spend scope pays for
     /// them (OF-531), fixed when the run starts.
     pub(super) payer: Option<PayerPerson>,
@@ -159,7 +162,16 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
     ) -> Self {
-        Self::start(run.into(), declaration, meter, host, receipts, payer, None)
+        Self::start(
+            run.into(),
+            declaration,
+            meter,
+            host,
+            receipts,
+            payer,
+            None,
+            None,
+        )
     }
 
     /// Starts a run as [`Self::with_payer`] does, bound to `attribution`: the
@@ -183,6 +195,32 @@ impl RunAdmission {
             receipts,
             payer,
             Some(attribution),
+            None,
+        )
+    }
+
+    /// Starts a run against the explicitly selected native ledger and its
+    /// original producer. No HostAccount/LiveAllocation meter admits native
+    /// holds. Existing constructors keep their in-memory allocation path.
+    #[must_use]
+    pub fn with_persistent_allocation(
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        allocation: Arc<super::allocation::PersistentAllocation>,
+        receipts: Arc<dyn RunReceiptSink>,
+        payer: Option<PayerPerson>,
+        attribution: Option<RunAttribution>,
+    ) -> Self {
+        Self::start(
+            run.into(),
+            declaration,
+            meter,
+            None,
+            receipts,
+            payer,
+            attribution,
+            Some(allocation),
         )
     }
 
@@ -194,6 +232,7 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
         attribution: Option<RunAttribution>,
+        persistent_allocation: Option<Arc<super::allocation::PersistentAllocation>>,
     ) -> Self {
         Self {
             inner: Arc::new(RunInner {
@@ -205,6 +244,8 @@ impl RunAdmission {
                 }),
                 guard: meter,
                 host,
+                persistent_allocation,
+                persistent_calls: Mutex::new(BTreeSet::new()),
                 payer,
                 attribution,
                 memory_work: AtomicBool::new(false),
@@ -605,7 +646,15 @@ impl RunInner {
             let reason = RunDenied::Dispatch { refused };
             self.refuse(Some(&call.subject), Some(lease), reason.clone());
             reason
-        })
+        })?;
+        if let Err(reason) = self.start_allocation(lease.id()) {
+            // This hook returned before GatedBackend releases any bytes.
+            // Only this live physical boundary proves the local mark unsent.
+            self.guard.mark_unsent(lease).ok();
+            self.refuse(Some(&call.subject), Some(lease), reason.clone());
+            return Err(reason);
+        }
+        Ok(())
     }
 
     pub(super) fn refuse(
@@ -673,75 +722,6 @@ impl RunInner {
     /// `host.budget.hit` through the run's sink, once `guard` refused.
     pub(super) fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.receipts.budget_hit(seat, guard, denied);
-    }
-
-    fn receipt_for(
-        &self,
-        revision: u32,
-        selector: Option<&str>,
-        subject: &str,
-        admitted: Result<RunPermit, RunDenied>,
-        model: Option<ModelId>,
-    ) -> Result<RunPermit, RunDenied> {
-        match admitted {
-            Ok(permit) => {
-                if let Some(model) = model {
-                    self.lock_calls().insert(
-                        permit.lease.id().to_owned(),
-                        CallFacts {
-                            revision,
-                            model,
-                            request_digest: None,
-                            served_model: None,
-                            settled_units: None,
-                        },
-                    );
-                } else {
-                    self.lock_paid().insert(permit.lease.id().to_owned());
-                }
-                self.record(revision, RunEvent::Admitted(Box::new(permit.facts.clone())));
-                Ok(permit)
-            }
-            Err(reason) => {
-                self.record(
-                    revision,
-                    RunEvent::Denied {
-                        selector: selector.map(str::to_owned),
-                        subject: Some(subject.to_owned()),
-                        lease: None,
-                        reason: reason.clone(),
-                    },
-                );
-                if let RunDenied::Budget { denied } = &reason {
-                    self.budget_hit(subject, &self.guard, denied);
-                }
-                Err(reason)
-            }
-        }
-    }
-
-    pub(super) fn record(&self, revision: u32, event: RunEvent) {
-        let receipt = RunReceipt {
-            instance: self.instance,
-            occurred_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs()),
-            run: self.run.clone(),
-            revision,
-            event,
-        };
-        if !std::thread::panicking() {
-            self.receipts.record(receipt);
-            return;
-        }
-        // A permit's or a dispatch's drop during an unwind: a sink that
-        // panics again must not abort the host. The meters are settled by now.
-        let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.receipts.record(receipt);
-        }));
-        if recorded.is_err() {
-            tracing::error!(run = %self.run, "run receipt sink panicked during an unwind");
-        }
     }
 
     fn lock_declaration(&self) -> MutexGuard<'_, Revisioned> {
