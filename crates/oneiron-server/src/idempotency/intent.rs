@@ -76,7 +76,7 @@ impl IdempotencyStore {
     ) -> Result<bool, IdempotencyStoreError> {
         let stored = response.into_stored(self.now_secs(), request_target, request_body, stamp);
         self.vault
-            .http_idempotency_settle(store_key, &stored)
+            .http_idempotency_settle(store_key, &stored.entry)
             .map_err(IdempotencyStoreError::storage)
     }
 

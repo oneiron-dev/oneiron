@@ -54,7 +54,14 @@ pub(super) fn admit_action(
     text: ActionText,
     messages: Vec<LlmMessage>,
     board: Option<PromptBoard>,
-) -> Result<(RoleCall, Option<ChatContextCapture>, Option<Vec<EntityId>>), String> {
+) -> Result<
+    (
+        RoleCall,
+        Option<ChatContextCapture>,
+        Option<crate::idempotency::RetainedRowIds>,
+    ),
+    String,
+> {
     let admit = |messages| {
         ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages))
             .map_err(|refusal| refusal.to_string())

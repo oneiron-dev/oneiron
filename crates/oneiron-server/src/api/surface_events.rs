@@ -626,11 +626,12 @@ pub(crate) async fn submit_core_surface_event(
             let identity: Vec<_> = oneiron::EntityId::from_hex(&ack.receiving_identity_ref)
                 .into_iter()
                 .collect();
-            let served = crate::idempotency::ServedRows {
-                rows: identity.clone(),
-                admit: Some(identity),
-                sources: Vec::new(),
-            };
+            let served = crate::idempotency::ServedRows::new(
+                identity.clone(),
+                Some(identity),
+                Vec::new(),
+                &server.memory,
+            );
             (
                 axum::Extension(served),
                 SurfaceEventSubmitOutcome::Accepted(ack.into()),

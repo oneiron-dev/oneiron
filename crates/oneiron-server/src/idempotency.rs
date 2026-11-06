@@ -19,6 +19,9 @@ use crate::config::SyncServerConfig;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
+mod row_ids;
+pub(crate) use row_ids::RetainedRowIds;
+
 pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 pub(crate) const IDEMPOTENCY_TTL: Duration = Duration::from_secs(86_400);
 
@@ -84,6 +87,7 @@ impl IdempotencyStore {
         store_key: &str,
         request_target: &str,
         request_body: &[u8],
+        memory: &crate::machine::MachineMemory,
     ) -> Result<IdempotencyLookup, IdempotencyStoreError> {
         let Some(raw) = self
             .vault
@@ -139,7 +143,7 @@ impl IdempotencyStore {
                 committed_writes: stored.committed_writes,
             });
         }
-        let response = CachedHttpResponse::of_stored(stored)?;
+        let response = CachedHttpResponse::of_stored(stored, memory)?;
         Ok(IdempotencyLookup::Replay(response))
     }
 }
@@ -215,11 +219,11 @@ struct CachedHttpResponse {
     headers: HeaderMap,
     body: Vec<u8>,
     /// The rows the handler derived `body` from ([`ServedRows`]).
-    rows: Vec<oneiron::EntityId>,
+    rows: RetainedRowIds,
     /// The rows a replay re-admits ([`ServedRows::admit`]).
-    admit: Option<Vec<oneiron::EntityId>>,
+    admit: Option<RetainedRowIds>,
     /// [`ServedRows::sources`], kept as the entry's source stamps.
-    sources: Vec<oneiron::EntityId>,
+    sources: RetainedRowIds,
 }
 
 /// The rows a response was derived from, as its handler listed them while it
@@ -227,18 +231,33 @@ struct CachedHttpResponse {
 /// bytes, and a replay's release judges them (DEC-0005).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ServedRows {
-    pub(crate) rows: Vec<oneiron::EntityId>,
+    pub(crate) rows: RetainedRowIds,
     /// The rows the response named beyond its documents: an identity it
     /// addressed, a notification it delivered, a rider outcome or a pack
     /// source. A replay goes out only while the caller's read, as it stands
     /// then, still reads each of them. `None` when the handler could not list
     /// them all: a route that keeps them never replays such a response.
-    pub(crate) admit: Option<Vec<oneiron::EntityId>>,
+    pub(crate) admit: Option<RetainedRowIds>,
     /// The rows whose words the response carries without naming them, such
     /// as the CLAIMs a board's standing block was compiled from (FIX 8148).
     /// They are kept as the entry's source stamps, so an erase of one retires
     /// the response, and the route's release admits each again.
-    pub(crate) sources: Vec<oneiron::EntityId>,
+    pub(crate) sources: RetainedRowIds,
+}
+
+impl ServedRows {
+    pub(crate) fn new(
+        rows: Vec<oneiron::EntityId>,
+        admit: Option<Vec<oneiron::EntityId>>,
+        sources: Vec<oneiron::EntityId>,
+        memory: &crate::machine::MachineMemory,
+    ) -> Self {
+        Self {
+            rows: RetainedRowIds::new(rows, memory),
+            admit: admit.map(|ids| RetainedRowIds::new(ids, memory)),
+            sources: RetainedRowIds::new(sources, memory),
+        }
+    }
 }
 
 /// A cached success as its release judges it.
@@ -302,12 +321,13 @@ impl CachedHttpResponse {
         request_target: String,
         request_body: Vec<u8>,
         stamp: caller::EntryStamp,
-    ) -> StoredIdempotencyEntry {
+    ) -> RetainedStoredResponse {
         let mut headers = Vec::with_capacity(self.headers.len());
         for (name, value) in &self.headers {
             headers.push((name.as_str().to_owned(), value.as_bytes().to_vec()));
         }
-        StoredIdempotencyEntry {
+        let sources = self.sources;
+        let entry = StoredIdempotencyEntry {
             created_at_secs,
             request_body,
             status: self.status.as_u16(),
@@ -320,17 +340,24 @@ impl CachedHttpResponse {
                 .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
             stamps: oneiron::store::ResponseStamps {
                 actor: stamp.caller,
-                sources: self.sources,
+                sources: sources.ids,
                 ..Default::default()
             },
             erased: false,
             committed_writes: 0,
             erase_drops: stamp.erase_drops,
+        };
+        RetainedStoredResponse {
+            entry,
+            _sources_storage: sources.storage,
         }
     }
 
     /// The response a kept entry replays.
-    fn of_stored(stored: StoredIdempotencyEntry) -> Result<Self, IdempotencyStoreError> {
+    fn of_stored(
+        stored: StoredIdempotencyEntry,
+        memory: &crate::machine::MachineMemory,
+    ) -> Result<Self, IdempotencyStoreError> {
         let mut headers = HeaderMap::new();
         for (name, value) in stored.headers {
             let name =
@@ -343,12 +370,15 @@ impl CachedHttpResponse {
             status: StatusCode::from_u16(stored.status).map_err(IdempotencyStoreError::status)?,
             headers,
             body: stored.response_body,
-            rows: stored
-                .served_rows
-                .iter()
-                .map(|id| oneiron::EntityId::from_hex(id))
-                .collect::<Result<_, _>>()
-                .map_err(IdempotencyStoreError::rows)?,
+            rows: RetainedRowIds::new(
+                stored
+                    .served_rows
+                    .iter()
+                    .map(|id| oneiron::EntityId::from_hex(id))
+                    .collect::<Result<_, _>>()
+                    .map_err(IdempotencyStoreError::rows)?,
+                memory,
+            ),
             admit: stored
                 .replay_admits
                 .map(|admit| {
@@ -356,12 +386,19 @@ impl CachedHttpResponse {
                         .iter()
                         .map(|id| oneiron::EntityId::from_hex(id))
                         .collect::<Result<_, _>>()
+                        .map(|ids| RetainedRowIds::new(ids, memory))
                 })
                 .transpose()
                 .map_err(IdempotencyStoreError::rows)?,
-            sources: stored.stamps.sources,
+            sources: RetainedRowIds::new(stored.stamps.sources, memory),
         })
     }
+}
+
+/// The native stored entry drops its moved source buffer before its holder.
+struct RetainedStoredResponse {
+    entry: StoredIdempotencyEntry,
+    _sources_storage: Option<row_ids::RetainedRowStorage>,
 }
 
 trait IdempotencyClock: Send + Sync {
