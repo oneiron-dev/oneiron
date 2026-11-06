@@ -64333,6 +64333,8 @@ pub struct DeckExportRequest {
     pub run_ref: String,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<crate::WireJson>,
+    #[serde(rename = "graphics", default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckExportView`.
