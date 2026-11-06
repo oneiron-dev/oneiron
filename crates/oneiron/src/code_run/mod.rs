@@ -105,7 +105,8 @@ pub(crate) use self::contribution::{
     settle_owner_pair_in_txn,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
+    ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, check_write_gate_against_vault,
+    recorded_verb_call,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,

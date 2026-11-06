@@ -380,7 +380,7 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
     })
 }
 
-fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
+pub(super) fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
     Value::Map(vec![
         (Value::from(KEY_HANDLE), Value::from(output.handle.as_str())),
         (Value::from(KEY_PATH), Value::from(output.path.as_str())),
@@ -403,7 +403,7 @@ fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
     ])
 }
 
-fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
+pub(super) fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
     let fields = pinned_map(value, &CODE_RUN_RAW_OUTPUT_KEYS, "code-run raw output")?;
     let output = CodeRunRawOutput {
         handle: str_value(required(fields[0], "missing output handle")?)?.to_owned(),

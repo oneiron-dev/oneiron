@@ -67,6 +67,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write
@@ -132,6 +133,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write
@@ -192,6 +194,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write

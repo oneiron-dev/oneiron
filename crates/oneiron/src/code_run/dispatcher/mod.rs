@@ -11,6 +11,7 @@ mod coordination;
 mod dispatch;
 mod emission;
 mod envelope;
+mod executor_reply;
 mod fold_verbs;
 mod host_doors;
 mod human_speech;
@@ -59,6 +60,7 @@ pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
+pub(crate) use self::executor_reply::{ExecutorReply, ExecutorReplyPublisher};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
@@ -208,6 +210,7 @@ pub(crate) struct ExecutorCallSite<'h> {
     pub(crate) step_start: u64,
     /// This attempt's earlier calls in the step, as recorded.
     pub(crate) earlier: &'h [CodeRunBridgeCall],
+    pub(crate) reply_publisher: Option<&'h dyn ExecutorReplyPublisher>,
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
