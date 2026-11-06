@@ -25,7 +25,10 @@ impl HouseGate {
         &self,
         deadline: &RetrievalDeadline,
         source: Option<&oneiron::llm::decision::DecisionCallSource<'_>>,
-        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&oneiron::llm::decision::DecisionCallAdmission>,
+        ) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
         let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
         // The host's own work: its turn comes while no caller waits for one,
@@ -65,7 +68,7 @@ impl HouseGate {
         {
             tracing::warn!(%error, "native decision source was not captured");
         }
-        let gated = read(permit.lease());
+        let gated = read(permit.lease(), permit.native_decision_admission());
         let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
         let outcome = match &gated {
@@ -98,7 +101,7 @@ impl DecisionReadGate for HouseGate {
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
-        self.read_with_source(deadline, None, read)
+        self.read_with_source(deadline, None, &mut |lease, _| read(lease))
     }
 }
 
@@ -112,6 +115,18 @@ impl DecisionReadGate for SourcedHouseGate<'_, '_> {
         &self,
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.gate
+            .read_with_source(deadline, self.source, &mut |lease, _| read(lease))
+    }
+
+    fn read_with_native_admission(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&oneiron::llm::decision::DecisionCallAdmission>,
+        ) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
         self.gate.read_with_source(deadline, self.source, read)
     }
@@ -136,6 +151,17 @@ impl DecisionReadGate for RunHouseGate<'_, '_> {
         &self,
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
+        self.read_with_native_admission(deadline, &mut |lease, _| read(lease))
+    }
+
+    fn read_with_native_admission(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(
+            &BudgetLease,
+            Option<&oneiron::llm::decision::DecisionCallAdmission>,
+        ) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
         super::run_native_read(&self.run, || {
             let refused =
@@ -169,7 +195,7 @@ impl DecisionReadGate for RunHouseGate<'_, '_> {
             {
                 tracing::warn!(%error, "native decision source was not captured");
             }
-            let gated = read(permit.lease());
+            let gated = read(permit.lease(), permit.native_decision_admission());
             let unread = oneiron::llm::LlmUsage::zero();
             // A read that went out and failed keeps its reservation as spend.
             let outcome = match &gated {
@@ -317,7 +343,7 @@ impl oneiron::llm::decision::DecisionReadPreparer for HouseExtractionPreparer<'_
         &self,
         request: &oneiron::llm::LabelReadRequest<'request>,
     ) -> oneiron::Result<Box<dyn oneiron::llm::decision::PreparedDecisionRead + 'request>> {
-        self.reader.prepare_extraction(
+        self.reader.prepare_captured(
             request,
             &self.house.vault,
             self.context,
@@ -368,9 +394,10 @@ impl HouseRead {
             .native
             .as_ref()
             .filter(|_| {
-                *oneiron::inference_context::admitted_as(context.purpose)
-                    == oneiron::llm::CallPurpose::Extraction
-                    && self.gate.connector.locality != oneiron::ModelLocality::OnDevice
+                context.native_source.is_some()
+                    || (*oneiron::inference_context::admitted_as(context.purpose)
+                        == oneiron::llm::CallPurpose::Extraction
+                        && self.gate.connector.locality != oneiron::ModelLocality::OnDevice)
             })
             .map(|reader| HouseExtractionPreparer {
                 house: self,

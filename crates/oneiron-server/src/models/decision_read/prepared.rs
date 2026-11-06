@@ -87,15 +87,17 @@ impl DecisionReader {
 /// The reader owns the rendered prompts; only the core's question slice is borrowed.
 struct PreparedHouseRead<'request> {
     reader: std::sync::Arc<DecisionReader>,
+    vault: std::sync::Arc<oneiron::Vault>,
+    input_plan_hash: [u8; 32],
     prompts: Vec<String>,
     questions: &'request [LabelReadout<'request>],
 }
 
 impl DecisionReader {
-    pub(crate) fn prepare_extraction<'request>(
+    pub(crate) fn prepare_captured<'request>(
         self: &std::sync::Arc<Self>,
         request: &LabelReadRequest<'request>,
-        vault: &oneiron::Vault,
+        vault: &std::sync::Arc<oneiron::Vault>,
         context: &oneiron::llm::decision::DecisionCallContext<'_>,
         locality: oneiron::ModelLocality,
     ) -> oneiron::Result<Box<dyn oneiron::llm::decision::PreparedDecisionRead + 'request>> {
@@ -122,9 +124,8 @@ impl DecisionReader {
             }),
             "forced_end": {"token": self.recipe.eos(), "bias": super::EOS_BIAS},
         });
-        let text = serde_json::to_string(&plan).map_err(|_| {
-            oneiron::Error::InvalidConfig("decision read: native input plan encoding failed".into())
-        })?;
+        let text = plan.to_string();
+        let input_plan_hash = *blake3::hash(text.as_bytes()).as_bytes();
         let admission = oneiron::LlmRequest {
             model: self.engine.clone(),
             envelope: oneiron::CallEnvelope {
@@ -160,19 +161,26 @@ impl DecisionReader {
             )]),
             host_segments: None,
         };
-        vault.authorize_raw_inference(
-            admission,
-            &oneiron::llm::HostInferenceContext {
-                binding: oneiron::llm::HostInferenceBinding::Advertised {
-                    model: self.engine.clone(),
-                    locality,
-                    keyless: false,
+        if *oneiron::inference_context::admitted_as(context.purpose)
+            == oneiron::llm::CallPurpose::Extraction
+            && locality != oneiron::ModelLocality::OnDevice
+        {
+            vault.authorize_raw_inference(
+                admission,
+                &oneiron::llm::HostInferenceContext {
+                    binding: oneiron::llm::HostInferenceBinding::Advertised {
+                        model: self.engine.clone(),
+                        locality,
+                        keyless: false,
+                    },
+                    extraction_egress: context.extraction_egress,
                 },
-                extraction_egress: context.extraction_egress,
-            },
-        )?;
+            )?;
+        }
         Ok(Box::new(PreparedHouseRead {
             reader: std::sync::Arc::clone(self),
+            vault: std::sync::Arc::clone(vault),
+            input_plan_hash,
             prompts: prepared.prompts,
             questions: prepared.questions,
         }))
@@ -187,6 +195,26 @@ impl oneiron::llm::decision::PreparedDecisionRead for PreparedHouseRead<'_> {
         may_send: Option<&(dyn Fn() -> bool + Sync)>,
         admit_next: Option<&(dyn Fn() -> bool + Sync)>,
     ) -> LlmResult<LabelReadGenerationOutcome> {
+        self.read_with_native_admission(work_until, lease, may_send, admit_next, None)
+    }
+
+    fn read_with_native_admission(
+        &self,
+        work_until: Option<std::time::Instant>,
+        lease: &oneiron::BudgetLease,
+        may_send: Option<&(dyn Fn() -> bool + Sync)>,
+        admit_next: Option<&(dyn Fn() -> bool + Sync)>,
+        admission: Option<&oneiron::llm::decision::DecisionCallAdmission>,
+    ) -> LlmResult<LabelReadGenerationOutcome> {
+        let invoice = admission.and_then(|admission| {
+            match admission.retain_native_input(&self.vault, self.input_plan_hash) {
+                Ok(invoice) => Some(invoice),
+                Err(error) => {
+                    tracing::warn!(%error, "native decision input was not retained");
+                    None
+                }
+            }
+        });
         let release = || {
             if may_send.is_none_or(|may_send| may_send()) {
                 Ok(())
@@ -194,13 +222,23 @@ impl oneiron::llm::decision::PreparedDecisionRead for PreparedHouseRead<'_> {
                 Err(FatalLlmError::Auth.into())
             }
         };
-        self.reader.read_prepared(
+        let read = self.reader.read_prepared(
             &self.prompts,
             self.questions,
             work_until,
             lease.work_context().map(|context| context.physical),
             may_send.map(|_| (&release as oneiron::llm::DispatchRelease<'_>, lease)),
             admit_next,
-        )
+        );
+        if let (Some(invoice), Ok(outcome)) = (invoice, &read) {
+            let usage = match outcome {
+                LabelReadGenerationOutcome::Complete(read) => &read.usage,
+                LabelReadGenerationOutcome::StoppedPaidPrefix { usage } => usage,
+            };
+            if let Err(error) = invoice.record_usage(usage) {
+                tracing::warn!(%error, "native decision quantity was not retained");
+            }
+        }
+        read
     }
 }
