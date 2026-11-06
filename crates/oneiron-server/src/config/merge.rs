@@ -359,6 +359,7 @@ struct FileServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
+    apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -432,6 +433,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             embedding: value.embedding,
             line: value.line,
             channel_endpoints: value.channel_endpoints,
+            apns: value.apns,
             linear: value.linear,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -524,6 +526,8 @@ struct PartialServeConfig {
     line: Option<super::LineConfig>,
     /// `[channel_endpoints]` is file-only, as `[line]` is.
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
+    /// `[apns]` is file-only, as `[channel_endpoints]` is.
+    apns: Option<super::ApnsConfig>,
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
@@ -624,6 +628,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -726,6 +731,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             embedding: None,
             line: None,
             channel_endpoints: None,
+            apns: None,
             linear: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
