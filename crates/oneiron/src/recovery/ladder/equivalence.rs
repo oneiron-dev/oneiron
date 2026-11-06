@@ -2,6 +2,7 @@
 //! Payload bytes, titles and fields resume one byte per existing work unit.
 
 use crate::error::Result;
+use crate::note::NoteFork;
 use crate::recovery::canonical::{
     CanonicalEntity, CanonicalEntityDocument, CanonicalSnapshot, invalid,
 };
@@ -19,6 +20,7 @@ pub(in crate::recovery) struct CanonicalComparison {
 enum PayloadPart {
     First,
     Second,
+    Third,
 }
 
 enum Group {
@@ -157,7 +159,13 @@ impl CanonicalComparison {
                 Group::NoteForks,
             ),
             Group::NoteForks => (
-                compare_rows(note_forks, &wanted.note_forks, &mut self.next)?,
+                compare_note_forks(
+                    note_forks,
+                    &wanted.note_forks,
+                    &mut self.next,
+                    &mut self.byte,
+                    &mut self.payload,
+                )?,
                 Group::NoteProposals,
             ),
             Group::NoteProposals => (
@@ -360,6 +368,80 @@ fn compare_entity_documents(
         *byte = 0;
         *payload = PayloadPart::First;
     }
+    Ok(false)
+}
+
+fn compare_note_forks(
+    actual: &[NoteFork],
+    wanted: &[NoteFork],
+    next: &mut usize,
+    byte: &mut usize,
+    payload: &mut PayloadPart,
+) -> Result<bool> {
+    compare_value(&actual.len(), &wanted.len())?;
+    let Some(NoteFork {
+        note,
+        fork,
+        parent,
+        frontier,
+        recovery_merge,
+        actor,
+        rewrite,
+        proposal,
+        decided,
+    }) = actual.get(*next)
+    else {
+        return Ok(true);
+    };
+    let NoteFork {
+        note: expected_note,
+        fork: expected_fork,
+        parent: expected_parent,
+        frontier: expected_frontier,
+        recovery_merge: expected_recovery_merge,
+        actor: expected_actor,
+        rewrite: expected_rewrite,
+        proposal: expected_proposal,
+        decided: expected_decided,
+    } = &wanted[*next];
+    if *payload == PayloadPart::First {
+        if *byte == 0 {
+            compare_value(note, expected_note)?;
+            compare_value(fork, expected_fork)?;
+            compare_value(parent, expected_parent)?;
+        }
+        if compare_bytes(frontier, expected_frontier, byte)? {
+            *payload = PayloadPart::Second;
+            *byte = 0;
+        }
+        return Ok(false);
+    }
+    match (recovery_merge, expected_recovery_merge) {
+        (Some((parent, merged)), Some((expected_parent, expected_merged))) => {
+            if *payload == PayloadPart::Second {
+                if compare_bytes(parent.as_bytes(), expected_parent.as_bytes(), byte)? {
+                    *payload = PayloadPart::Third;
+                    *byte = 0;
+                }
+                return Ok(false);
+            }
+            if !compare_bytes(merged.as_bytes(), expected_merged.as_bytes(), byte)? {
+                return Ok(false);
+            }
+        }
+        (None, None) => {}
+        _ => compare_value(
+            &recovery_merge.is_some(),
+            &expected_recovery_merge.is_some(),
+        )?,
+    }
+    compare_value(actor, expected_actor)?;
+    compare_value(rewrite, expected_rewrite)?;
+    compare_value(proposal, expected_proposal)?;
+    compare_value(decided, expected_decided)?;
+    *next += 1;
+    *byte = 0;
+    *payload = PayloadPart::First;
     Ok(false)
 }
 
