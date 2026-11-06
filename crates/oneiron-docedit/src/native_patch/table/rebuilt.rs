@@ -32,10 +32,13 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// Zero-text whole direct children with zero actual DrawingML `fld` (own or
 /// descendant) strictly inside a retained head/tail interval carry their original
 /// span bytes as-is under the same rebuilt paragraph tag and body ancestors;
-/// edited, boundary, leading, trailing or field-holding empties keep the existing drop.
-/// Field-free paragraph edge gaps carry only beside actually emitted original
-/// neighbors: positive retained text at the first/last nonempty direct child,
-/// and an original first pPr or last endParaRPr. Skipped children block bridges.
+/// edited, internal-boundary or field-holding empties keep the existing drop.
+/// Field-free paragraph edges carry zero-text child clusters and their gaps beside
+/// positive retained text at the first/last nonempty direct child, bounded by
+/// an original first pPr or last endParaRPr. Skipped children block bridges.
+/// A second render knows the exact newly carried raw source spans; fresh rPr
+/// template copies omit only XML-namespace id attributes whose original rPr
+/// survives in those spans. Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
 /// attributes only when it contributes to exactly one retained head/tail piece;
@@ -50,6 +53,23 @@ pub(super) fn rebuilt(
     paragraphs: &[(usize, &Node)],
     value: &str,
 ) -> Result<Vec<u8>, NativeRefusal> {
+    let (out, retained_edges) = rebuilt_pass(bytes, tree, body, paragraphs, value, &[])?;
+    if retained_edges.is_empty() {
+        Ok(out)
+    } else {
+        rebuilt_pass(bytes, tree, body, paragraphs, value, &retained_edges).map(|(out, _)| out)
+    }
+}
+
+fn rebuilt_pass(
+    bytes: &[u8],
+    tree: &XmlTree,
+    body: usize,
+    paragraphs: &[(usize, &Node)],
+    value: &str,
+    retained_edges: &[std::ops::Range<usize>],
+) -> Result<(Vec<u8>, Vec<std::ops::Range<usize>>), NativeRefusal> {
+    let mut emitted_edges = Vec::new();
     let (first, first_node) = paragraphs[0];
     let last_node = paragraphs[paragraphs.len() - 1].1;
     let piece = |node: Option<(usize, &Node)>| {
@@ -64,12 +84,20 @@ pub(super) fn rebuilt(
                    para_node: &Node,
                    text: &str|
      -> Result<String, NativeRefusal> {
-        let r_pr = piece(
-            selected
-                .map(|(run, _)| tree.child(run, DML, "rPr"))
-                .transpose()?
-                .flatten(),
-        );
+        let property = selected
+            .map(|(run, _)| tree.child(run, DML, "rPr"))
+            .transpose()?
+            .flatten();
+        let r_pr = match property {
+            Some((at, node))
+                if retained_edges
+                    .iter()
+                    .any(|span| span.start <= node.span.start && node.span.end <= span.end) =>
+            {
+                copied_properties(bytes, tree, at)
+            }
+            _ => piece(property).to_owned(),
+        };
         let (r, t, run_bindings) = match selected {
             Some((at, node)) => (
                 node.child_name("r"),
@@ -126,9 +154,9 @@ pub(super) fn rebuilt(
         let p_bindings = crate::edit::xml::own_bindings(bytes, para_node);
         Ok(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>"))
     };
-    let styled = |paragraph: (usize, &Node),
-                  selected: Option<(usize, &Node)>,
-                  line: &str|
+    let mut styled = |paragraph: (usize, &Node),
+                      selected: Option<(usize, &Node)>,
+                      line: &str|
      -> Option<String> {
         let (para, para_node) = paragraph;
         let p_pr_node = tree.child(para, DML, "pPr").ok()?;
@@ -303,8 +331,10 @@ pub(super) fn rebuilt(
             }
             _ => "",
         };
-        let leading = match segments.first() {
-            Some((ordinal, _, node, text)) if field_free && prefix > 0 && !text.is_empty() => {
+        let mut edges = Vec::new();
+        let leading = match segments.iter().position(|(_, _, _, text)| !text.is_empty()) {
+            Some(index) if field_free && prefix > 0 => {
+                let (ordinal, _, _, _) = segments.first()?;
                 let start = match p_pr_node {
                     Some((at, property))
                         if para_node.children.first() == Some(&at) && *ordinal == 1 =>
@@ -314,12 +344,30 @@ pub(super) fn rebuilt(
                     None if *ordinal == 0 => Some(para_node.content.start),
                     _ => None,
                 };
-                start.map_or(Some(""), |start| raw_gap(start, node.span.start))?
+                match start {
+                    Some(start)
+                        if segments[..=index]
+                            .windows(2)
+                            .all(|pair| pair[0].0 + 1 == pair[1].0) =>
+                    {
+                        let span = start..segments[index].2.span.start;
+                        let raw = raw_gap(span.start, span.end)?;
+                        if index > 0 {
+                            edges.push(span);
+                        }
+                        raw
+                    }
+                    _ => "",
+                }
             }
             _ => "",
         };
-        let trailing = match segments.last() {
-            Some((ordinal, _, node, text)) if field_free && suffix > 0 && !text.is_empty() => {
+        let trailing = match segments
+            .iter()
+            .rposition(|(_, _, _, text)| !text.is_empty())
+        {
+            Some(index) if field_free && suffix > 0 => {
+                let (ordinal, _, _, _) = segments.last()?;
                 let end = match end_node {
                     Some((at, property))
                         if para_node.children.last() == Some(&at)
@@ -330,7 +378,21 @@ pub(super) fn rebuilt(
                     None if *ordinal + 1 == para_node.children.len() => Some(para_node.content.end),
                     _ => None,
                 };
-                end.map_or(Some(""), |end| raw_gap(node.span.end, end))?
+                match end {
+                    Some(end)
+                        if segments[index..]
+                            .windows(2)
+                            .all(|pair| pair[0].0 + 1 == pair[1].0) =>
+                    {
+                        let span = segments[index].2.span.end..end;
+                        let raw = raw_gap(span.start, span.end)?;
+                        if index + 1 < segments.len() {
+                            edges.push(span);
+                        }
+                        raw
+                    }
+                    _ => "",
+                }
             }
             _ => "",
         };
@@ -342,6 +404,7 @@ pub(super) fn rebuilt(
             run_xml(selected, para_node, &text).ok()?
         };
         let tail = retained_runs(old.len() - suffix, old.len())?;
+        emitted_edges.extend(edges);
         Some(format!(
             "<{p}{p_attributes}>{opening}{p_pr}{leading}{head}{middle}{tail}{trailing}{end}{closing}</{p}>"
         ))
@@ -450,7 +513,36 @@ pub(super) fn rebuilt(
         out.extend_from_slice(rendered.as_bytes());
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
-    Ok(out)
+    Ok((out, emitted_edges))
+}
+
+/// A fresh template copy borrows style, not an identity carried by its raw source.
+fn copied_properties(bytes: &[u8], tree: &XmlTree, property: usize) -> String {
+    let original = &tree.nodes[property];
+    let mut identities = Vec::new();
+    for (at, node) in std::iter::once((property, original)).chain(within(tree, property)) {
+        for (name, span) in &node.attr_spans {
+            let Some((prefix, "id")) = name.split_once(':') else {
+                continue;
+            };
+            let binding = format!("xmlns:{prefix}");
+            let namespace = std::iter::successors(Some(at), |&at| tree.nodes[at].parent)
+                .find_map(|at| tree.nodes[at].attr(&binding))
+                .or_else(|| (prefix == "xml").then_some("http://www.w3.org/XML/1998/namespace"));
+            if namespace == Some("http://www.w3.org/XML/1998/namespace") {
+                identities.push(span.clone());
+            }
+        }
+    }
+    identities.sort_by_key(|span| span.start);
+    let mut out = Vec::new();
+    let mut start = original.span.start;
+    for span in identities {
+        out.extend_from_slice(&bytes[start..span.start]);
+        start = span.end;
+    }
+    out.extend_from_slice(&bytes[start..original.span.end]);
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// Trim each text element to its own part of one retained original run interval.
