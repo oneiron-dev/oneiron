@@ -47,8 +47,19 @@ retry keeps the same check. A failed check retains its original model error,
 separate from socket I/O faults. Its HTTP fallback preserves the launch tie and
 uses the same released HTTP path.
 
-Session setup can still send the conversation before `generate`. That separate
-session-operation boundary is not covered, so these changes do not complete
+The native session `Fork` sends the full conversation before `generate`. Its
+released path now carries the same borrowed callback and budget lease through
+session selection, connection and writer readiness to that first descriptor
+write. A release failure returns the original `LlmError`; it does not evict the
+session or fall back to an ordinary generate. A worker refusal or socket fault
+keeps the existing session invalidation and plain fallback. Unguarded calls keep
+the original session send path.
+
+This covers the call's `Fork` input, not all session traffic. Snapshot import
+also sends an input region. Create, resident restore and checkpoint publication
+carry session metadata even without an input region. Background Prepare owns a
+separate task and conversation; it cannot borrow a foreground call's callback.
+Those boundaries remain separate engineering work. These changes do not complete
 private-send coverage or activate a private producer. Other configured backends
 need their own native qualification; a LocalVision seat name does not prove it
 uses the in-process local runtime.
