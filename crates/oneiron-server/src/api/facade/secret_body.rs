@@ -23,6 +23,10 @@
 //! (`lift_custody_secret`, FIX 11665), and scoped for the door
 //! (`with_custody_secret`).
 
+mod stream;
+
+pub(super) use self::stream::read as read_recorded_body;
+
 use std::future::Future;
 
 use axum::body::{Body, Bytes, HttpBody as _};

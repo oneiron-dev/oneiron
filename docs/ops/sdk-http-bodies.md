@@ -14,7 +14,12 @@ stages the encoded body, decodes it into a second temporary file, then streams
 that decoded file to the existing receipt and JSON readers. Both the encoded
 and decoded lengths keep their existing limits. The decoder finishes before
 dispatch, so malformed or over-limit compressed input still reaches no handler.
-Unencoded requests and the final JSON extraction still buffer their bodies.
+For the same ordinary calls, receipt middleware stages the input bytes and
+parses its receipt input from a file reader. After capturing the receipt's
+inputs and digest, it drops that parsed value before dispatch. It replays the
+original bytes to the unchanged handler JSON extractor, which still buffers
+and parses the final input. Compressed calls currently stage the decoded file
+again for this receipt read; this is not a single-pass disk-I/O claim.
 
 Requests at or above the codec threshold use zstd only when the encoded
 body is smaller. Compression uses the existing codec level. If compression
@@ -36,8 +41,11 @@ input verbs, and `vault.notes.editor.close` (a room-note hold can close without
 a session header). Other API routes keep their existing codec path. Staging
 files are anonymous temporary files owned by the request or its body reader;
 closing the reader drops the file. Staging I/O failures do not dispatch a
-partially decoded request. This does not add a vault record or a new disk or
-memory admission policy.
+partially decoded request. Receipt staging failures keep the ordinary refusal
+receipt path and return an internal error without running the handler. An
+input read failure or over-limit ordinary body still reaches that handler
+empty, as before. The staged payload adds no vault record beyond the ordinary
+call or refusal receipt. This adds no disk or memory admission policy.
 
 The receipt's existing canonical digest is carried to invocation admission,
 so it need not read and parse the same body again. A custody arrival keeps its
