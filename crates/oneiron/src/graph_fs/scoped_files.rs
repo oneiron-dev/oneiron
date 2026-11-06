@@ -58,7 +58,7 @@ impl GraphFsResolver<'_, '_> {
                             *body = crate::store::file_key_masks::sighted_bytes_in_txn_with_reader(
                                 &self.scoped_read.vault().store,
                                 txn,
-                                body.clone(),
+                                std::mem::take(body),
                                 None,
                                 crate::file_secret_marks::SecretSight::Masked,
                                 reader,
