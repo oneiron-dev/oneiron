@@ -28,6 +28,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::Store;
+use crate::store::witness_message_body::{IMPORT_KEY_SOURCE_IMPORT, METADATA_KEY_IMPORT};
 use crate::temporal::TimeRange;
 
 /// The import source an archive restore stamps on the MESSAGE rows and
@@ -46,16 +47,12 @@ const BODY_KEY_CONTENT: &str = "content";
 const BODY_KEY_METADATA: &str = "metadata";
 const BODY_KEY_IS_VISIBLE: &str = "is_visible";
 
-/// The MESSAGE metadata key an import's provenance rides under.
-const METADATA_KEY_IMPORT: &str = "import";
 const IMPORT_KEY_SOURCE: &str = "source";
 /// The type the source vault gave the row.
 const IMPORT_KEY_SOURCE_TYPE: &str = "source_type";
 /// The `AuthoredBy` targets the source vault linked the row to, as hex
 /// ids: provenance only, never a local author.
 const IMPORT_KEY_AUTHORED_BY: &str = "authored_by";
-/// A value the source's own metadata kept under `import`.
-const IMPORT_KEY_SOURCE_IMPORT: &str = "source_import";
 
 /// A native TURN's PERSON byline, and the inert key an archive restore
 /// keeps it under.

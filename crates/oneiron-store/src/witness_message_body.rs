@@ -52,12 +52,16 @@ const MAX_WITNESS_MESSAGE_TYPE_BYTES: usize = 128;
 const MAX_WITNESS_METADATA_DEPTH: usize = 8;
 
 /// Total metadata nodes (keys plus values, recursively), counted apart for
-/// the `import` entry and for the rest ([`valid_metadata_map`]).
+/// each part [`valid_metadata_map`] names.
 const MAX_WITNESS_METADATA_NODES: usize = 512;
 
 /// The metadata key an import's provenance rides under: the transcript
 /// importer's and an archive import's (ARCH-0027, FIX 7777).
-const METADATA_KEY_IMPORT: &str = "import";
+pub const METADATA_KEY_IMPORT: &str = "import";
+
+/// The key inside an archive import's provenance that carries the value the
+/// source row's own metadata kept under `import` (FIX 7777).
+pub const IMPORT_KEY_SOURCE_IMPORT: &str = "source_import";
 
 /// Metadata key length bound.
 const MAX_WITNESS_METADATA_KEY_BYTES: usize = 128;
@@ -66,8 +70,8 @@ const MAX_WITNESS_METADATA_KEY_BYTES: usize = 128;
 /// Counted as UTF-8 bytes, not Unicode scalar values.
 const MAX_WITNESS_METADATA_STRING_BYTES: usize = 16 * 1024;
 
-/// Canonical MessagePack bytes for the metadata map, counted apart for the
-/// `import` entry and for the rest ([`valid_metadata_map`]). The recursive
+/// Canonical MessagePack bytes for the metadata map, counted apart for each
+/// part [`valid_metadata_map`] names. The recursive
 /// validator first bounds every string and the aggregate key/value text, so
 /// checking the exact encoding never allocates in proportion to hostile input.
 const MAX_WITNESS_METADATA_BYTES: usize = 64 * 1024;
@@ -320,24 +324,43 @@ fn valid_message_type(message_type: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/' | '+'))
 }
 
-/// Whether `metadata` is a metadata map within its bounds. Its `import`
-/// entry, an import's provenance, is bounded on its own beside the other
-/// entries (FIX 7777): an archive import adds it to a source row whose own
-/// metadata may already fill the bounds, and neither pushes the other out.
-/// Each part keeps every bound [`valid_metadata`] and the encoded size set.
+/// Whether `metadata` is a metadata map within its bounds, in three parts
+/// each bounded on its own (FIX 7777): the entries other than `import`; the
+/// `import` entry, an import's provenance, without its `source_import`; and
+/// that `source_import` value, bounded as the `import` entry it was in the
+/// source row. An archive import adds its provenance to a source row whose
+/// own metadata, its own `import` value included, may already fill the
+/// bounds, and none of the three pushes another out. Each part keeps every
+/// bound [`valid_metadata`] and the encoded size set.
 fn valid_metadata_map(metadata: &Value) -> bool {
     let Value::Map(entries) = metadata else {
         return false;
     };
-    let (import, rest): (Vec<_>, Vec<_>) = entries
-        .iter()
-        .cloned()
-        .partition(|(key, _)| key.as_str() == Some(METADATA_KEY_IMPORT));
-    [Value::Map(import), Value::Map(rest)].iter().all(|part| {
+    let mut rest = Vec::new();
+    let mut import = Vec::new();
+    let mut carried = Vec::new();
+    for (key, value) in entries {
+        if key.as_str() != Some(METADATA_KEY_IMPORT) {
+            rest.push((key.clone(), value.clone()));
+            continue;
+        }
+        let Value::Map(provenance) = value else {
+            import.push((key.clone(), value.clone()));
+            continue;
+        };
+        let (source, own): (Vec<_>, Vec<_>) = provenance
+            .iter()
+            .cloned()
+            .partition(|(name, _)| name.as_str() == Some(IMPORT_KEY_SOURCE_IMPORT));
+        import.push((key.clone(), Value::Map(own)));
+        carried.extend(source.into_iter().map(|(_, value)| (key.clone(), value)));
+    }
+    [rest, import, carried].into_iter().all(|part| {
+        let part = Value::Map(part);
         let mut nodes = 0_usize;
         let mut text_bytes = 0_usize;
-        valid_metadata(part, 0, &mut nodes, &mut text_bytes)
-            && encoded_metadata_len(part).is_some_and(|len| len <= MAX_WITNESS_METADATA_BYTES)
+        valid_metadata(&part, 0, &mut nodes, &mut text_bytes)
+            && encoded_metadata_len(&part).is_some_and(|len| len <= MAX_WITNESS_METADATA_BYTES)
     })
 }
 
