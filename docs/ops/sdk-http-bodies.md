@@ -129,3 +129,19 @@ existing encoding. The plan card's generated UI stays on its original codec.
 Native producers, read projections, authority, writes, inputs, hooks and the
 separate UniFFI adapters are unchanged. This is not a general depth or memory
 bound.
+
+
+### Core skill-library output documents
+
+The core `vault.skills.get`, `vault.skills.list`, `vault.skills.archive`,
+`vault.skills.restore` and `vault.skills.fork` result adapters move the returned
+skill's provenance and each present call's argument and return contracts around
+the original whole-result codec. This includes each skill in a page and the
+skill in a `restored` receipt. The same native JSON values return at the same
+fields, including nulls. A missing call stays null. Empty pages, pagination,
+lineage, source evidence, files, receipts and the other restore outcomes keep
+their original encoding.
+Native projection of stored provenance, contract validation, storage, owner
+checks, lifecycle and restore admission, inputs, hooks and the separate UniFFI
+conversion are unchanged. This selected output conversion is not an end-to-end
+depth or memory bound.
