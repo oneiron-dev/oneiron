@@ -32,6 +32,13 @@ impl RetrievalReplayInputs {
     }
 }
 
+/// Known string and array backing of a replay value, including object keys.
+///
+/// Excludes object-map storage and number internals.
+pub fn known_value_backing_bytes(value: &serde_json::Value) -> u64 {
+    replay_config_bytes(value)
+}
+
 // Object map storage and number internals are not measured here.
 fn replay_config_bytes(value: &serde_json::Value) -> u64 {
     match value {
