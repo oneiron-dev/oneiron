@@ -40,6 +40,7 @@ use std::sync::Arc;
         (status = 400, description = "Malformed context-pack request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or the vault's inference policy refuses a media query's ai.embed call.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 408, description = "The explicit signals_deadline_ms expired; no signal page or advanced cursor was published.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -78,6 +79,14 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
+    oneiron::memory::caps::check_deadline_ms(req.signals_deadline_ms)
+        .map_err(|error| ApiError::bad_request(error.to_string(), Some("signals_deadline_ms")))?;
+    if req.signals_deadline_ms.is_some() && req.signals_since.is_none() {
+        return Err(ApiError::bad_request(
+            "signals_since is required for reaction signals",
+            Some("signals_since"),
+        ));
+    }
     // Every ref the request names resolves under the caller's own read: a
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
@@ -108,9 +117,8 @@ pub(crate) async fn run_context_pack(
         .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
         .transpose()?;
     let skill_reliability = req.skill_reliability_query(&server.vault)?;
-    let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
+    let (edge_hop, _, max_neighbors, _) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
-    validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
     let hydrate = req
         .policy
         .as_ref()
@@ -180,6 +188,7 @@ pub(crate) async fn run_context_pack(
     let mut builder = server
         .vault
         .context_pack()
+        .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
@@ -346,33 +355,6 @@ pub(crate) fn resolved_context_pack_depth(
     )
 }
 
-pub(crate) fn validate_context_pack_depth(
-    edge_hop: u32,
-    edge_hop_field: &'static str,
-    max_neighbors: usize,
-    max_neighbors_field: &'static str,
-) -> Result<(), ApiError> {
-    if edge_hop > oneiron::context_pack::MAX_EDGE_HOP {
-        return Err(ApiError::bad_request(
-            format!(
-                "edge_hop must be less than or equal to {}",
-                oneiron::context_pack::MAX_EDGE_HOP
-            ),
-            Some(edge_hop_field),
-        ));
-    }
-    if max_neighbors > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS {
-        return Err(ApiError::bad_request(
-            format!(
-                "max_neighbors must be less than or equal to {}",
-                oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-            ),
-            Some(max_neighbors_field),
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn default_true() -> bool {
     true
 }
@@ -495,19 +477,6 @@ pub(crate) fn apply_context_pack_budget<'a>(
         }
     }
     let retrieval = budget.and_then(|budget| budget.retrieval.as_ref());
-    if let Some(retrieval) = retrieval
-        && retrieval.selected_edges.is_some_and(|selected_edges| {
-            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-        })
-    {
-        return Err(ApiError::bad_request(
-            format!(
-                "selected_edges must be less than or equal to {}",
-                oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-            ),
-            Some("budget.retrieval.selected_edges"),
-        ));
-    }
     let (response_budget, internal_budget) = resolve_context_pack_retrieval_budgets(
         retrieval,
         result_limit,
@@ -593,6 +562,7 @@ fn read_reaction_signals(
         if req.signals_after.is_some()
             || req.signals_limit.is_some()
             || req.signals_person.is_some()
+            || req.signals_deadline_ms.is_some()
         {
             return Err(ApiError::bad_request(
                 "signals_since is required for reaction signals",
@@ -617,10 +587,28 @@ fn read_reaction_signals(
         .as_deref()
         .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
         .transpose()?;
+    let deadline = req.signals_deadline_ms.map(|ms| {
+        oneiron::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_millis(ms))
+    });
+    let signal_error = |error: oneiron::Error| match &error {
+        oneiron::Error::Io(error)
+            if error.get_ref().is_some_and(|source| {
+                source.is::<oneiron::reaction::ReactionSignalDeadlineExceeded>()
+            }) =>
+        {
+            ApiError::deadline_exceeded("signals_deadline_ms")
+        }
+        _ => core_engine_error("reaction signal read failed", error),
+    };
+    let checkpoint = || {
+        deadline.as_ref().map_or(Ok(()), |deadline| {
+            oneiron::reaction::check_reaction_signal_deadline(deadline).map_err(signal_error)
+        })
+    };
     let signals = server
         .vault
-        .reactions_since(person, since)
-        .map_err(|e| core_engine_error("reaction signal read failed", e))?;
+        .reactions_since_with_deadline(person, since, deadline.as_ref())
+        .map_err(signal_error)?;
     // A credential reads each signal under its own key, as the pack does, so
     // a full-scope slip that is not the owner's hears of nothing its key
     // withholds. Only an owner-grade caller with no slip keeps the raw feed
@@ -634,6 +622,7 @@ fn read_reaction_signals(
         || req.interlocutors.is_some();
     let mut kept = Vec::new();
     for signal in signals {
+        checkpoint()?;
         if scoped
             && !scoped_read
                 .is_reaction_signal_readable_under(&signal, disclosure)
@@ -658,6 +647,7 @@ fn read_reaction_signals(
         }
         kept.push(signal);
     }
+    checkpoint()?;
     let page = oneiron::reaction::page_reaction_signals(
         kept,
         req.signals_after.as_deref(),
@@ -665,8 +655,8 @@ fn read_reaction_signals(
             .unwrap_or(oneiron::reaction::MAX_REACTION_SIGNAL_PAGE),
     )
     .map_err(|e| core_engine_error("reaction signal page failed", e))?;
-    response.signals_next = page.next;
-    response.signals = page
+    checkpoint()?;
+    let signals = page
         .signals
         .into_iter()
         .map(|signal| CoreReactionSignal {
@@ -679,5 +669,8 @@ fn read_reaction_signals(
             recorded_at: signal.recorded_at,
         })
         .collect();
+    checkpoint()?;
+    response.signals_next = page.next;
+    response.signals = signals;
     Ok(())
 }

@@ -60,6 +60,10 @@ pub enum Refusal {
     /// The provider could not be reached; no request byte was written.
     #[error("provider unreachable")]
     Connect,
+    /// A git exchange's body could not be held for its send: the disk has
+    /// no room for it, or its spool failed.
+    #[error("request body could not be spooled")]
+    Spool,
 }
 
 /// Why a call that may have reached the provider has no answer. The call keeps
@@ -83,9 +87,10 @@ pub enum Failure {
     /// after the one redirect it follows.
     #[error("reply redirected where the shape does not follow")]
     Redirect,
-    /// A streamed reply held a form of the key. The stream now redacts each
-    /// form at its bytes and goes on (FIX 6103), so this build never sends
-    /// it.
+    /// A streamed reply held a form of the key. A model stream redacts each
+    /// form at its bytes and goes on (FIX 6103), so it never sends this; a
+    /// git reply, whose pkt-lines and pack checksums a rewrite would break,
+    /// is cut with it instead (OSH-3).
     #[error("streamed reply holds the key")]
     ReplyHoldsKey,
 }

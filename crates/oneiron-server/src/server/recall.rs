@@ -26,6 +26,7 @@ use std::time::Instant;
 use oneiron::authority::VerifiedSlip;
 use oneiron::claim::CallerLocality;
 use oneiron::embed::InputKind;
+use oneiron::host_memory::MemoryLease;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{
     Effort, HomeRecallAsk, HomeRecallCaller, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
@@ -66,7 +67,8 @@ impl SyncServer {
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
         let media = self.recall_media(&input)?;
-        let embed = self.recall_embed_media(input.effort, media, payer);
+        let mut query_memory = self.memory.empty_lease();
+        let embed = self.recall_embed_media(input.effort, media, payer, &mut query_memory);
         let arrived = Instant::now();
         let (_, budget) = oneiron::memory::resolve_recall_dial(
             input.effort,
@@ -122,10 +124,17 @@ impl SyncServer {
         effort: Option<RecallEffort>,
         media: Option<DecodedMediaQuery>,
         payer: Option<&'a PayerPerson>,
+        query_memory: &'a mut MemoryLease,
     ) -> impl FnOnce(&str) -> MemoryResult<RecallQueryVectors> + 'a {
         let embed = self.recall_embed(effort, payer);
         move |query| {
             let mut vectors = embed(query);
+            if let Some(vector) = vectors.text_index.as_ref() {
+                query_memory.materialized(
+                    0,
+                    (vector.capacity() as u64).saturating_mul(std::mem::size_of::<f32>() as u64),
+                );
+            }
             if let Some(media) = media {
                 let seeds = self.recall_media_vectors(media, payer)?;
                 vectors.media.extend(seeds);
@@ -351,7 +360,8 @@ impl SyncServer {
                     hyde: hyde.as_ref().map(|hyde| hyde.binding()),
                 };
                 // A door's own recall is the owner's: no run funds it.
-                let embed = server.recall_embed_media(input.effort, media, None);
+                let mut query_memory = server.memory.empty_lease();
+                let embed = server.recall_embed_media(input.effort, media, None, &mut query_memory);
                 match room {
                     Some(room) => memory
                         .for_room_turn(room)?
