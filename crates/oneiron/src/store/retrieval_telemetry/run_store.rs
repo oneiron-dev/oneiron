@@ -983,35 +983,14 @@ fn stage_context_pack_retrieval_run_finalize(
         return Ok(());
     };
     if let Some(memory) = memory.as_deref_mut() {
-        let bytes = (record.signals.capacity() as u64)
-            .saturating_mul(std::mem::size_of::<super::types::RetrievalSignal>() as u64)
-            .saturating_add((record.degradation.capacity() as u64).saturating_mul(
-                std::mem::size_of::<crate::retrieval_quality::RetrievalDegradation>() as u64,
-            ))
-            .saturating_add(
-                record
-                    .query_expander_id
-                    .as_ref()
-                    .map_or(0, |id| id.capacity() as u64),
-            );
-        let bytes = record.policy_trace.as_ref().map_or(bytes, |trace| {
-            bytes.saturating_add(
-                (trace.decisions.capacity() as u64)
-                    .saturating_mul(std::mem::size_of::<
-                        crate::store::retrieval_policy::RetrievalPolicyDecision,
-                    >() as u64),
-            )
-        });
-        memory.materialized(0, bytes);
+        record_decoded_retrieval_run_backing(&record, memory);
     }
     record.elapsed_us = elapsed_us;
     record.total_in_scope = total_in_scope;
     record.claims_suppressed = claims_suppressed;
-    let replaced_result_ids_bytes = memory.as_deref_mut().map_or(0, |memory| {
-        let bytes = (record.result_ids.capacity() as u64)
-            .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64);
-        memory.materialized(0, bytes);
-        bytes
+    let replaced_result_ids_bytes = memory.as_deref_mut().map_or(0, |_| {
+        (record.result_ids.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64)
     });
     record.result_ids = surfaced_result_ids.to_vec();
     if let Some(memory) = memory.as_deref_mut() {
@@ -1051,11 +1030,9 @@ fn stage_context_pack_retrieval_run_finalize(
         }
         bytes
     };
-    let replaced_score_breakdown_bytes = memory.as_deref_mut().map_or(0, |memory| {
-        let bytes = score_breakdown_bytes(&record.score_breakdown);
-        memory.materialized(0, bytes);
-        bytes
-    });
+    let replaced_score_breakdown_bytes = memory
+        .as_deref_mut()
+        .map_or(0, |_| score_breakdown_bytes(&record.score_breakdown));
     let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
     let mut surfaced_breakdown_bytes = memory.as_deref_mut().map_or(0, |memory| {
         let bytes = (surfaced_breakdown.capacity() as u64)
@@ -1084,11 +1061,9 @@ fn stage_context_pack_retrieval_run_finalize(
     if let Some(memory) = memory.as_deref_mut() {
         memory.shrink(replaced_score_breakdown_bytes);
     }
-    let replaced_trace_bytes = memory.as_deref_mut().map_or(0, |memory| {
-        let bytes = record.trace.as_ref().map_or(0, &trace_bytes);
-        memory.materialized(0, bytes);
-        bytes
-    });
+    let replaced_trace_bytes = memory
+        .as_deref_mut()
+        .map_or(0, |_| record.trace.as_ref().map_or(0, &trace_bytes));
     let allowed_bytes = if let Some(trace) = record.trace.as_mut() {
         // Finalization publishes only the caller's post-filter result set.
         // Earlier stages also reach the durable row and its fork index, so
@@ -1129,22 +1104,23 @@ fn stage_context_pack_retrieval_run_finalize(
         memory.shrink(replaced_trace_bytes);
         memory.shrink(surfaced_breakdown_bytes);
     }
-    let replaced_replay_bytes = memory.as_deref_mut().map_or(0, |memory| {
-        let mut bytes = record
+    let replaced_replay_bytes = memory.as_deref_mut().map_or(0, |_| {
+        let bytes = record
             .empty_reason
             .as_ref()
             .map_or(0, |reason| reason.capacity() as u64);
-        if pack_config.is_some() {
-            bytes = bytes.saturating_add(
-                record
-                    .replay_inputs
-                    .as_ref()
-                    .and_then(|inputs| inputs.config.get("pack"))
-                    .map_or(0, super::state::known_value_backing_bytes),
-            );
-        }
-        memory.materialized(0, bytes);
-        bytes
+        record.replay_inputs.as_ref().map_or(bytes, |inputs| {
+            [
+                inputs.query_ref.as_ref(),
+                inputs.corpus_snapshot_ref.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .fold(
+                bytes.saturating_add(inputs.known_config_backing_bytes()),
+                |bytes, value| bytes.saturating_add(value.capacity() as u64),
+            )
+        })
     });
     record.empty_reason = empty_reason;
     if let Some(pack_config) = pack_config
@@ -1153,7 +1129,6 @@ fn stage_context_pack_retrieval_run_finalize(
         inputs.config["pack"] = pack_config;
     }
     if let Some(memory) = memory.as_deref_mut() {
-        memory.shrink(replaced_replay_bytes);
         let bytes = record
             .empty_reason
             .as_ref()
@@ -1171,6 +1146,7 @@ fn stage_context_pack_retrieval_run_finalize(
             )
         });
         memory.materialized(0, bytes);
+        memory.shrink(replaced_replay_bytes);
         memory.shrink(input_backing_bytes);
     }
     if let Some(memory) = memory.as_deref_mut() {
