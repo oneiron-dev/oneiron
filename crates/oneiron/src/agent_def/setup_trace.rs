@@ -25,7 +25,6 @@ struct Trace {
     positions: Vec<Position>,
     mutated: BTreeSet<EntityId>,
     retired_positions: BTreeMap<EntityId, Option<Scope>>,
-    retires_keys: bool,
 }
 
 fn active(store: &impl ManifestDbs) -> Option<Rc<RefCell<Trace>>> {
@@ -57,7 +56,6 @@ impl<'store> SetupMutationTrace<'store> {
             positions: Vec::new(),
             mutated: BTreeSet::new(),
             retired_positions: BTreeMap::new(),
-            retires_keys: false,
         }));
         TRACES.with(|traces| traces.borrow_mut().push(Rc::clone(&state)));
         Self {
@@ -100,7 +98,6 @@ impl<'store> SetupMutationTrace<'store> {
                 .collect(),
             entities: std::mem::take(&mut trace.mutated),
             blast_radius,
-            retires_keys: trace.retires_keys,
         })
     }
 }
@@ -115,7 +112,6 @@ pub(crate) struct ObservedSetupMutations {
     positions: Vec<(EntityId, Option<Scope>)>,
     entities: BTreeSet<EntityId>,
     blast_radius: u64,
-    retires_keys: bool,
 }
 
 impl ObservedSetupMutations {
@@ -127,10 +123,6 @@ impl ObservedSetupMutations {
 
     pub(crate) fn entities(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.entities.iter().copied()
-    }
-
-    pub(crate) fn retires_keys(&self) -> bool {
-        self.retires_keys
     }
 
     pub(crate) fn blast_radius(&self) -> u64 {
@@ -241,12 +233,6 @@ pub(crate) fn observe_position(store: &impl ManifestDbs, id: EntityId, scope: Sc
             scope: Some(scope),
             unborn: false,
         });
-    }
-}
-
-pub(crate) fn observe_key_retirement(store: &impl ManifestDbs) {
-    if let Some(trace) = active(store) {
-        trace.borrow_mut().retires_keys = true;
     }
 }
 
