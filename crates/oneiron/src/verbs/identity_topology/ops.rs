@@ -36,8 +36,10 @@ fn event_receipt(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> MemoryResult<IdentityTopologyReceipt> {
+    // The decision read whole (FIX 10188): a large merge, split or facet is
+    // stored as a manifest plus parts, and its receipt shows all of it.
     let record = vault
-        .identity_topology_event_in_txn(txn, &event)?
+        .identity_topology_decision_in_txn(txn, &event)?
         .ok_or(Error::EntityNotFound)?;
     let action = match record.action {
         StoredIdentityOpAction::Merge { sources, survivor } => {
@@ -103,7 +105,9 @@ fn event_receipt(
         },
         StoredIdentityOpAction::AdmissionDisposition(_)
         | StoredIdentityOpAction::AuthorAttribution { .. }
-        | StoredIdentityOpAction::AuthorRedaction { .. } => {
+        | StoredIdentityOpAction::AuthorRedaction { .. }
+        | StoredIdentityOpAction::OperationManifest { .. }
+        | StoredIdentityOpAction::OperationPart { .. } => {
             return Err(MemoryError::bad_request(
                 "event must name a topology decision, not an admission or attribution sidecar",
             ));
