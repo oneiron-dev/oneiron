@@ -787,6 +787,16 @@ impl Bridge {
     }
 }
 
+fn reply_body_text(body: Vec<u8>) -> String {
+    match String::from_utf8(body) {
+        Ok(text) => text,
+        Err(error) => {
+            let body = error.into_bytes();
+            String::from_utf8_lossy(&body).into_owned()
+        }
+    }
+}
+
 /// What the server sent back for one request.
 struct Reply {
     /// The HTTP status, when there was one.

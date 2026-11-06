@@ -11,8 +11,10 @@ pub(super) enum ReplyBody {
 impl ReplyBody {
     pub(super) fn into_json(self) -> Value {
         match self {
-            Self::Owned(body) => serde_json::from_slice(&body)
-                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned())),
+            Self::Owned(body) => match serde_json::from_slice(&body) {
+                Ok(body) => body,
+                Err(_) => Value::String(super::reply_body_text(body)),
+            },
             Self::HttpChunks(chunks) => {
                 let reader = std::io::BufReader::new(HttpChunks::new(&chunks));
                 serde_json::from_reader(reader).unwrap_or_else(|_| {
@@ -20,7 +22,7 @@ impl ReplyBody {
                     for chunk in chunks {
                         body.extend_from_slice(&chunk);
                     }
-                    Value::String(String::from_utf8_lossy(&body).into_owned())
+                    Value::String(super::reply_body_text(body))
                 })
             }
         }
