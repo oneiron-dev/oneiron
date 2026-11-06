@@ -5071,7 +5071,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/validation.rs` | src | s | 8 crate-vis | — | Fail-closed whole-payload validation before a recovery mutation |
 | `src/recovery/validation/documents.rs` | src | m | 3 crate-vis | — | Ordered NOTE document row checks over one immutable canonical snapshot |
 | `src/recovery/validation/entity_documents.rs` | src | s | 3 crate-vis | — | Generic EntityDoc validation with owned indexes over one canonical snapshot |
-| `src/recovery/validation/entity_history.rs` | src | s | 2 crate-vis | — | Ordered row history checks over the same frozen canonical document |
+| `src/recovery/validation/entity_history.rs` | src | m | 2 crate-vis | — | Ordered row history checks over the same frozen canonical document |
 | `src/recovery/validation/manifest.rs` | src | m | 3 crate-vis | — | Owned resumable manifest and order checks over one immutable canonical snapshot |
 | `src/recovery/validation/window_rows.rs` | src | m | 3 crate-vis | — | Window row validation with owned indexes and a cursor between admitted turns |
 | `src/recovery/work.rs` | src | m | 8 crate-vis | — | A canonical window recovery as resumable work (Rule 5, FIX 8821) |
