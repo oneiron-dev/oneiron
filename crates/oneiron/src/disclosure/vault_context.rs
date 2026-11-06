@@ -563,20 +563,16 @@ impl DisclosureContext {
     /// and class strings are engine-fixed vocabulary and never escaped.
     #[must_use]
     pub fn receipt_stamp(&self) -> String {
-        let interlocutors = self
-            .interlocutors
-            .entries()
-            .iter()
-            .map(|entry| {
-                format!(
-                    "{}:{}",
-                    entry.class().as_str(),
-                    escape_receipt_stamp_label(entry.label())
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        format!("mode={};interlocutors={interlocutors}", self.mode.as_str())
+        let mut stamp = format!("mode={};interlocutors=", self.mode.as_str());
+        for (index, entry) in self.interlocutors.entries().iter().enumerate() {
+            if index != 0 {
+                stamp.push(',');
+            }
+            stamp.push_str(entry.class().as_str());
+            stamp.push(':');
+            write_receipt_stamp_label(&mut stamp, entry.label());
+        }
+        stamp
     }
 }
 
@@ -584,24 +580,23 @@ impl DisclosureContext {
 /// control bytes, leaving every other byte verbatim. Total and reversible:
 /// every label encodes safely, so stamping can never fail on a hostile
 /// label — the label is display data and must not block resolution.
-fn escape_receipt_stamp_label(label: &str) -> String {
-    let mut escaped = String::with_capacity(label.len());
+fn write_receipt_stamp_label(escaped: &mut String, label: &str) {
+    use std::fmt::Write;
+
     for ch in label.chars() {
         match ch {
             '%' | '=' | ';' | ',' | ':' => {
-                escaped.push('%');
-                escaped.push_str(&format!("{:02X}", ch as u32));
+                write!(escaped, "%{:02X}", ch as u32).expect("writing to a String cannot fail");
             }
             ch if ch.is_control() => {
-                for byte in ch.to_string().as_bytes() {
-                    escaped.push('%');
-                    escaped.push_str(&format!("{byte:02X}"));
+                let mut encoded = [0; 4];
+                for byte in ch.encode_utf8(&mut encoded).as_bytes() {
+                    write!(escaped, "%{byte:02X}").expect("writing to a String cannot fail");
                 }
             }
             ch => escaped.push(ch),
         }
     }
-    escaped
 }
 
 /// Agent-visible disclosure block riding the context-pack response and the
@@ -626,25 +621,27 @@ pub struct DisclosureAssembly {
 /// under "Others present".
 #[must_use]
 pub fn presence_discretion_notice(set: &InterlocutorSet) -> String {
-    let others = set
-        .non_owner()
-        .map(|entry| {
-            let mut part = format!("{} ({}", entry.label(), entry.class().as_str());
-            if let Some(relationship) = entry.relationship() {
-                part.push_str(", ");
-                part.push_str(relationship);
-            }
-            if let Some(first_touch) = entry.first_touch() {
-                part.push_str(", first contact: ");
-                part.push_str(first_touch.as_str());
-            }
-            part.push(')');
-            part
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "Others present: {others}. Don't volunteer personal or sensitive information; \
-         if asked about private matters, defer to the owner."
-    )
+    let mut notice = String::from("Others present: ");
+    for (index, entry) in set.non_owner().enumerate() {
+        if index != 0 {
+            notice.push_str(", ");
+        }
+        notice.push_str(entry.label());
+        notice.push_str(" (");
+        notice.push_str(entry.class().as_str());
+        if let Some(relationship) = entry.relationship() {
+            notice.push_str(", ");
+            notice.push_str(relationship);
+        }
+        if let Some(first_touch) = entry.first_touch() {
+            notice.push_str(", first contact: ");
+            notice.push_str(first_touch.as_str());
+        }
+        notice.push(')');
+    }
+    notice.push_str(
+        ". Don't volunteer personal or sensitive information; \
+         if asked about private matters, defer to the owner.",
+    );
+    notice
 }
