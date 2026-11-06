@@ -7,8 +7,17 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod documents;
 mod window_rows;
+pub(super) use documents::DocumentRows;
 pub(super) use window_rows::WindowRows;
+
+/// Drain the NOTE-only validator for native document capture callers.
+pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    let mut validation = DocumentRows::default();
+    while !validation.advance(snapshot, usize::MAX)? {}
+    Ok(())
+}
 
 /// Recovery-only proof for an AddressedTo edge retained by a soft-erased
 /// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
@@ -164,133 +173,6 @@ pub(super) fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Resul
         return Err(invalid("container manifest coverage"));
     }
     Ok(())
-}
-
-pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
-    strict(
-        snapshot
-            .doc_snapshots
-            .iter()
-            .map(|row| (row.entity_id, row.head)),
-    )?;
-    strict(snapshot.document_heads.iter().map(|row| row.entity_id))?;
-    strict(snapshot.head_move_receipts.iter().map(|row| row.id))?;
-    let mut cores = BTreeMap::new();
-    for entity in &snapshot.entity_blobs {
-        let header =
-            EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("document owner header"))?;
-        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            && entity.blob.len() > ENTITY_METADATA_HEADER_LEN
-        {
-            cores.insert(
-                entity.id,
-                crate::note::decode_note_body_using(
-                    &entity.blob[ENTITY_METADATA_HEADER_LEN..],
-                    crate::note::NoteKind::wire,
-                )?,
-            );
-        }
-    }
-    let docs: BTreeSet<_> = snapshot
-        .doc_snapshots
-        .iter()
-        .map(|row| (row.entity_id, row.head))
-        .collect();
-    let heads: BTreeMap<_, _> = snapshot
-        .document_heads
-        .iter()
-        .map(|row| (row.entity_id, row.head))
-        .collect();
-    for row in &snapshot.doc_snapshots {
-        id(row.entity_id)?;
-        id(row.head)?;
-        if let Some(actor) = row.birth_actor {
-            id(actor)?;
-        }
-        let core = cores
-            .get(&row.entity_id)
-            .ok_or(invalid("document owner is not a NOTE"))?;
-        // An erased author binds as no one, never as a live actor (FIX 6072).
-        let author = core.author_ref.id().map(|author| *author.as_bytes());
-        if row.birth_actor != author || !heads.contains_key(&row.entity_id) {
-            return Err(invalid("document birth binding"));
-        }
-        row.rebuild()?;
-        let header = snapshot
-            .entity_blobs
-            .iter()
-            .find(|entity| entity.id == row.entity_id)
-            .and_then(|entity| EntityMetadataHeader::parse(&entity.blob))
-            .ok_or(invalid("document envelope"))?;
-        if row.birth_at != header.learned_at {
-            return Err(invalid("document birth timestamp binding"));
-        }
-        // The head's own value carries its birth; any other value, a retained
-        // parent among them (FIX 8829), claims no authority.
-        let current = heads.get(&row.entity_id) == Some(&row.head);
-        if row.head == row.entity_id && current {
-            let birth = row
-                .authorship
-                .iter()
-                .find(|record| record.operation.as_bytes() == &row.entity_id)
-                .ok_or(invalid("NOTE birth provenance missing"))?;
-            if birth.actor != core.author_ref
-                || birth.actor_class != "ledger"
-                || birth.grant.is_some()
-                || birth.command_hash != *blake3::hash(core.markdown.as_bytes()).as_bytes()
-            {
-                return Err(invalid("NOTE birth provenance binding"));
-            }
-        }
-        if !current && !row.authorship.is_empty() {
-            return Err(invalid("proposal value claims authority"));
-        }
-    }
-    // A switch moves the head to its fork; a merge or reject keeps it. A
-    // decided fork's value stays only as the head, or as the parent a
-    // pending fork needs (FIX 8829).
-    let retained: BTreeSet<_> = super::document::retained_parents(snapshot)?
-        .into_iter()
-        .map(|(note, head)| (*note.as_bytes(), *head.as_bytes()))
-        .collect();
-    let mut switched = BTreeSet::new();
-    for row in &snapshot.head_move_receipts {
-        let receipt = row.decode()?;
-        let head_binding = match receipt.verdict {
-            crate::note::NoteVerdict::Switch => receipt.head == receipt.fork,
-            _ => receipt.head == receipt.previous_head,
-        };
-        if !cores.contains_key(&row.entity_id) || !head_binding {
-            return Err(invalid("receipt canonical identity"));
-        }
-        if receipt.verdict == crate::note::NoteVerdict::Switch {
-            switched.insert((row.entity_id, *receipt.head.as_bytes()));
-        }
-        let fork = *receipt.fork.as_bytes();
-        if docs.contains(&(row.entity_id, fork))
-            && heads.get(&row.entity_id) != Some(&fork)
-            && !retained.contains(&(row.entity_id, fork))
-        {
-            return Err(invalid("decided proposal retains text"));
-        }
-    }
-    for entity in cores.keys() {
-        if heads
-            .get(entity)
-            .is_none_or(|head| !docs.contains(&(*entity, *head)))
-        {
-            return Err(invalid("live NOTE has no canonical document value"));
-        }
-    }
-    for row in &snapshot.document_heads {
-        if !cores.contains_key(&row.entity_id)
-            || (row.head != row.entity_id && !switched.contains(&(row.entity_id, row.head)))
-            || !docs.contains(&(row.entity_id, row.head))
-        {
-            return Err(invalid("canonical document identity"));
-        }
-    }
-    super::document::validate_workflows(snapshot)
 }
 
 /// A document pointer in a raw entity row MUST have its value in the artifact.
