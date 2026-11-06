@@ -229,7 +229,15 @@ impl OfferLadder {
     ) -> ServedFuture<'a> {
         Box::pin(async move {
             self.walk_generate(
-                run, request, selector, may_send, deadline, false, None, true,
+                run,
+                request,
+                selector,
+                may_send,
+                deadline,
+                false,
+                None,
+                true,
+                RungPrompt::Configured,
             )
             .await
         })

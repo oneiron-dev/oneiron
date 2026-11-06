@@ -25,7 +25,6 @@ use oneiron::agent_dispatch::{
     WorkflowToolProgress, WorkflowToolTranscript, agent_dispatch_run_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
-use oneiron::code_run::model_call::model_call_digests;
 use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
 use oneiron::context_board::{TURN_WAKE_GRAMMAR, TurnWake, turn_wake_line};
 use oneiron::context_projection::ResolvedContextProjection;
@@ -48,8 +47,10 @@ use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
+mod response_capture;
 mod secret_use;
 
+use response_capture::{record_workflow_response, response_text};
 use secret_use::{StepConversation, StepConversationFault, StepSecretUse};
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -968,9 +969,7 @@ impl StepRunner {
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
                     .map(|(response, binding)| {
-                        if let Some(staged) = staged {
-                            staged.finalize(vault, binding.rung.clone(), binding.route.clone());
-                        }
+                        secret_use::finalize_capture(staged, vault, &binding);
                         StepConversation::Answered {
                             response,
                             binding,
@@ -1048,8 +1047,21 @@ impl StepRunner {
             tool_rounds,
             no_record,
         );
+        let bytes = response_text(&response);
+        // FIX 3611: a saved-workflow step that answered in its one call binds
+        // that answer to its capsule. A tool round, a resumed step or an
+        // off-record stretch binds none.
+        if workflow.is_some() && continuation.is_none() && !tool_rounds && !no_record {
+            oneiron::code_run::bind_workflow_step_answer(
+                vault,
+                attempt.id,
+                attempt.attempt_count,
+                &final_request,
+                &bytes,
+            );
+        }
         Ok(GeneratedStep {
-            bytes: response_text(&response),
+            bytes,
             tool_rounds,
             planner_craft_rows,
         })
@@ -1071,55 +1083,4 @@ fn stamp_executor(
     {
         tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
     }
-}
-
-fn response_text(response: &LlmResponse) -> Vec<u8> {
-    response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<String>()
-        .into_bytes()
-}
-
-/// Best-effort final-answer capture for FIX 12516. Intermediate self.use
-/// rounds are explicitly marked truncated and get their own later slice.
-#[allow(clippy::too_many_arguments)]
-fn record_workflow_response(
-    vault: &Vault,
-    source_rows: Option<Vec<EntityId>>,
-    request: &LlmRequest,
-    response: &LlmResponse,
-    binding: &ModelCallBinding,
-    attempt: &AttemptRecord,
-    actor: WriteActor,
-    tool_rounds: bool,
-    no_record: bool,
-) {
-    if no_record {
-        tracing::debug!("workflow model-call record skipped: off-record room");
-        return;
-    }
-    let digests = match model_call_digests(request) {
-        Ok(digests) => digests,
-        Err(error) => {
-            tracing::warn!(%error, "workflow model-call digests failed");
-            return;
-        }
-    };
-    super::model_call_capture::record_generated_response(
-        vault,
-        source_rows,
-        digests,
-        !request.tools.is_empty(),
-        response,
-        binding,
-        attempt,
-        actor,
-        tool_rounds,
-    );
 }
