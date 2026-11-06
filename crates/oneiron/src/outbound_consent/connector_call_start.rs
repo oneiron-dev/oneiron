@@ -185,6 +185,11 @@ impl Vault {
             sealed_arguments: None,
             off_record: memory.keeps_no_record(),
             paced_until: None,
+            // FIX 4747 slice 7: the leased agent run try the caller's write
+            // binds, as a connector-send schedule's fence reads it.
+            agent_run: memory
+                .task_host()
+                .map(crate::task_verb::HostBinding::parent),
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
@@ -255,6 +260,7 @@ impl Vault {
                         grant: pending.grant,
                         secret_use: pending.secret_use,
                         off_record: pending.off_record,
+                        agent_run: pending.agent_run,
                         sweep_minted: false,
                         sweep_dry_run_forced: false,
                         ..held

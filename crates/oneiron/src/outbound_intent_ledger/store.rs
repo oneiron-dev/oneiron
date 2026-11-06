@@ -712,6 +712,9 @@ fn update_pending_recorded_outcome(
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
     also(&mut wtxn, &record)?;
+    // FIX 4747 slice 7: an agent run's effect mark settles, or opens again
+    // for a retry, in this writer.
+    crate::agent_dispatch::settle_agent_run_effect_mark_in_txn(vault, &mut wtxn, &record);
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // A takeover may have abandoned the row: the owner's waiting shed looks

@@ -192,6 +192,12 @@ pub(super) struct PendingConnectorCall {
     /// deadline (FIX 8753).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) paced_until: Option<u64>,
+    /// The agent run try whose step made the call, from its caller's run
+    /// binding, never from the request (FIX 4747 slice 7): every pass,
+    /// a settler's resume of the held call included, marks the effect on
+    /// that run's TASK and sends only while this machine holds the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) agent_run: Option<AttemptId>,
 }
 
 /// A held call's terminal outcome, without the tool's reply: the ledger

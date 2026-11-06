@@ -56,7 +56,17 @@ impl Memory<'_> {
 
         let intent = self.outbound_intent(draft, trigger);
 
-        let task_ref = self.vault.store.clock.entity_id()?;
+        // FIX 4747 slice 7: an agent run's schedule takes the TASK id its try
+        // and verb call derive, so the same step another machine replays
+        // finds the TASK the old machine created, synced, instead of minting
+        // a second; that TASK's own send lease and lookup decide its send.
+        let task_ref = match self.agent_run_send_task_ref(draft)? {
+            Some((task_ref, true)) => {
+                return Ok((already_scheduled_task_receipt(task_ref), None));
+            }
+            Some((task_ref, false)) => task_ref,
+            None => self.vault.store.clock.entity_id()?,
+        };
         let payload = connector_send_attempt_payload(task_ref)?;
         // The queue's live-schedule dedupe is scoped by the BOUND EFFECT ACTOR
         // — never `on_behalf_of`, the target, the trigger, the TASK, or any
@@ -122,5 +132,53 @@ impl Memory<'_> {
             result.approval_digest.as_deref(),
         );
         Ok((dispatch_receipt(intent_ref, result), sender_ref))
+    }
+
+    /// The connector-send TASK id a schedule by the agent run this caller's
+    /// write binds takes, with whether an entity already stands under it
+    /// (FIX 4747 slice 7, `agent_dispatch::agent_run_send_task_id_in`).
+    /// `None` for a caller no run binds, a run that has no run TASK, and a
+    /// call with no invocation: the schedule mints a fresh id as before.
+    fn agent_run_send_task_ref(
+        &self,
+        draft: &OutboundDraftInput,
+    ) -> MemoryResult<Option<(EntityId, bool)>> {
+        let Some(host) = self.task_host() else {
+            return Ok(None);
+        };
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(task_ref) = crate::agent_dispatch::agent_run_send_task_id_in(
+            self.vault,
+            &txn,
+            host.parent(),
+            self.invocation(),
+            &draft.channel,
+            &draft.verb,
+            &draft.target,
+        )?
+        else {
+            return Ok(None);
+        };
+        let stands = self
+            .vault
+            .get_entity_type_in_txn(&txn, &task_ref)?
+            .is_some();
+        Ok(Some((task_ref, stands)))
+    }
+}
+
+/// The receipt of a schedule whose agent run's replayed step finds the
+/// connector-send TASK an earlier executor of the run created (FIX 4747
+/// slice 7): nothing new is gated or queued; the TASK's own executor sends
+/// it, or looks it up first.
+fn already_scheduled_task_receipt(task_ref: EntityId) -> OutboundIntentReceipt {
+    OutboundIntentReceipt {
+        intent_ref: format!("intent:task:{}", task_ref.to_hex()),
+        outcome: "already_scheduled".to_owned(),
+        gate_outcome: None,
+        gate_decision_ref: None,
+        gate_reason_codes: Vec::new(),
+        approval_digest: None,
+        deduped: true,
     }
 }

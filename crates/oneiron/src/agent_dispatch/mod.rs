@@ -72,11 +72,20 @@ mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
 mod resident;
 mod room_join;
+mod run_effects;
+pub use self::run_effects::AgentRunEffectAnswerOutcome;
+pub(crate) use self::run_effects::{
+    AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER, AgentRunEffectAdmission,
+    AgentRunEffectCall, AgentRunEffectSites, AgentRunEffectStop, admit_agent_run_effect_in_txn,
+    agent_run_effect_ask_target, agent_run_effect_permitted, agent_run_send_task_id_in,
+    record_agent_run_effect_mark_in_txn, settle_agent_run_effect_mark_in_txn,
+};
 mod run_handover;
 pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
 pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
+mod run_placement;
 mod run_task;
 pub(crate) use self::run_task::{
     AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN, AgentRunFences, agent_run_fence_permits_effect,

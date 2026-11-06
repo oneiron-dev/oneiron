@@ -25,7 +25,11 @@
 //! (`erase_agent_run_tasks_in_txn`, REVIEW-6615). The run then has none: it
 //! stays on this machine and runs as before.
 //! The handover to another machine, the reaper and the re-creation of the
-//! queue row there, is `super::run_handover` (slice 6).
+//! queue row there, is `super::run_handover` (slice 6). The effects the run's
+//! steps start are marked on its TASK by their engine-stamped intent ids, and
+//! a taker meets those marks, in `super::run_effects`; a vault whose home is
+//! a cloud node elsewhere has its runs minted released for the cloud,
+//! `super::run_placement` (slice 7).
 //! Entry: `mint_agent_run_task_in_txn`, `take_agent_run_lease_in_txn`.
 
 use std::collections::{BTreeSet, HashMap};
@@ -183,13 +187,22 @@ pub(crate) enum AgentRunLeaseTake {
     /// This process released its leases as it closes: it claims nothing,
     /// and the row stays queued for the next process or machine.
     Closing,
+    /// The vault's home is a cloud node elsewhere and the run's own lease
+    /// was released for it within the placement grace (FIX 4747 slice 7,
+    /// `super::run_placement`): this machine claims nothing for now, and the
+    /// row stays queued until the cloud takes the run or the grace ends.
+    LeftForCloud,
 }
 
 /// What the run TASK says of a claim by this machine (FIX 4747).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ClaimStanding {
-    /// The run is this machine's to run, under the lease the TASK holds.
-    Own(AgentRunExecutorLease),
+    /// The run is this machine's to run, under the lease the TASK holds;
+    /// `open` while no machine settled it.
+    Own {
+        lease: AgentRunExecutorLease,
+        open: bool,
+    },
     /// Another machine holds the run.
     HeldElsewhere,
     /// Another machine settled the run.
@@ -245,6 +258,12 @@ pub(super) struct AgentRunTaskBody {
     pub(super) executor: AgentRunExecutorLease,
     pub(super) outcome: Option<AgentRunOutcome>,
     pub(super) created_at: u64,
+    /// The outbound effects the run's steps started, each by its
+    /// engine-stamped intent id and the lease generation that started it
+    /// (FIX 4747 slice 7, `super::run_effects`): ids and flags only, never a
+    /// body. Empty for a run that started none, so its TASK reads as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) effects: Vec<super::run_effects::AgentRunEffectMark>,
 }
 
 /// The frozen queue payload as one MessagePack bin, not an array of
@@ -320,7 +339,10 @@ fn own_expired_agent_run_lease_retaken(
 /// reaper (`super::run_handover`) hands it over.
 fn claim_standing(body: &AgentRunTaskBody, node_id: u64) -> ClaimStanding {
     match (body.executor.node_id == node_id, body.outcome) {
-        (true, _) => ClaimStanding::Own(body.executor),
+        (true, outcome) => ClaimStanding::Own {
+            lease: body.executor,
+            open: outcome.is_none(),
+        },
         (false, Some(_)) => ClaimStanding::Settled,
         (false, None) => ClaimStanding::HeldElsewhere,
     }
@@ -363,8 +385,11 @@ pub(super) fn closing(vault: &Vault) -> bool {
 /// `attempt`, in the dispatch's write (FIX 4747): the frozen queue payload
 /// the row stores, the run's refs, its world and project, and this machine's
 /// lease at the first generation. A closing process mints it released
-/// (`held_until` now). The TASK is born at the dispatch scope's world and
-/// facet, as `tasks.create` stamps a narrowed writer's TASKs.
+/// (`held_until` now), and so does a machine whose vault's elected home is a
+/// cloud node elsewhere (FIX 4747 slice 7, `super::run_placement`), so the
+/// cloud's reaper takes the run at once. The TASK is born at the dispatch
+/// scope's world and facet, as `tasks.create` stamps a narrowed writer's
+/// TASKs.
 ///
 /// It never fails the dispatch it rides. Engine call (CALLS, FIX 4747): the
 /// mint runs in a savepoint, and one the batch refuses (the secret scan
@@ -434,7 +459,12 @@ fn put_agent_run_task_in_txn(
     let parent = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
     let facet = input.scope.as_ref().and_then(|scope| scope.facet);
-    let held_until = if closing(vault) {
+    // Cloud users run in the cloud (cross-arch-0019 item 01): a run
+    // dispatched on a machine that is not the vault's cloud home is minted
+    // released for the cloud's reaper (FIX 4747 slice 7).
+    let held_until = if closing(vault)
+        || super::run_placement::cloud_home_elsewhere_in(vault, &*wtxn, node_id)?
+    {
         now
     } else {
         agent_run_lease_held_until(now)
@@ -466,6 +496,7 @@ fn put_agent_run_task_in_txn(
         },
         outcome: None,
         created_at: record.created_at,
+        effects: Vec::new(),
     };
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("agent run task body encode failed"))?;
@@ -499,7 +530,9 @@ fn put_agent_run_task_in_txn(
 /// taken again at the next generation; a run this machine settled reopens
 /// for its later try (`claim_standing`). Another machine's lease, another
 /// machine's settlement, or a run TASK this version does not read is left as
-/// it is. A closing process takes none.
+/// it is. A closing process takes none, and nor does a machine whose vault's
+/// home is a cloud node elsewhere while its own released lease is inside the
+/// placement grace (FIX 4747 slice 7, `super::run_placement`).
 pub(crate) fn take_agent_run_lease_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -517,7 +550,21 @@ pub(crate) fn take_agent_run_lease_in_txn(
         ClaimStanding::HeldElsewhere => Ok(AgentRunLeaseTake::HeldElsewhere),
         ClaimStanding::Settled => Ok(AgentRunLeaseTake::Settled),
         ClaimStanding::Unreadable => Ok(AgentRunLeaseTake::Unreadable),
-        ClaimStanding::Own(held) => {
+        ClaimStanding::Own { lease: held, open } => {
+            // Cloud users run in the cloud (FIX 4747 slice 7): an open run
+            // whose lease was released for a cloud home elsewhere is left for
+            // the cloud's reaper within the grace; after it this machine
+            // takes its own expired lease again, below, as before.
+            if open
+                && held.expired_at(now)
+                && super::run_placement::leaves_lease_for_cloud(
+                    held,
+                    super::run_placement::cloud_home_elsewhere_in(vault, &*wtxn, node_id)?,
+                    now,
+                )
+            {
+                return Ok(AgentRunLeaseTake::LeftForCloud);
+            }
             let lease =
                 own_expired_agent_run_lease_retaken(held, now).unwrap_or(AgentRunExecutorLease {
                     held_until: agent_run_lease_renewal(held.held_until, now)
@@ -559,7 +606,7 @@ pub(crate) fn agent_run_unrun_cause_in(
     }
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
     Ok(match claim_standing_in(vault, &*wtxn, task_ref, node_id)? {
-        ClaimStanding::Own(_) => None,
+        ClaimStanding::Own { .. } => None,
         ClaimStanding::HeldElsewhere => Some(AGENT_RUN_EXECUTOR_MOVED),
         ClaimStanding::Settled => Some(AGENT_RUN_SETTLED_ELSEWHERE),
         ClaimStanding::Unreadable => Some(AGENT_RUN_TASK_UNREADABLE),
@@ -583,6 +630,24 @@ pub(super) fn agent_run_task_ref_in(
 ) -> Result<Option<EntityId>> {
     Ok(
         agent_run_task_slot_in(&vault.store, txn, row.id, row.retry_of)?
+            .and_then(|(task_ref, erased)| (!erased).then_some(task_ref)),
+    )
+}
+
+/// The run TASK the try `attempt` shares, read in `txn`, as
+/// [`agent_run_task_ref_in`] finds it for that try's queue row; a try this
+/// queue does not hold is judged by its own id alone. `None` for a try with
+/// none (FIX 4747 slice 7: what an effect's run names).
+pub(super) fn agent_run_task_of_attempt_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<EntityId>> {
+    let retry_of = AttemptQueue::new(vault)
+        .get_in_txn(txn, attempt)?
+        .and_then(|row| row.retry_of);
+    Ok(
+        agent_run_task_slot_in(&vault.store, txn, attempt, retry_of)?
             .and_then(|(task_ref, erased)| (!erased).then_some(task_ref)),
     )
 }
