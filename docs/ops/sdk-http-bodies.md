@@ -30,3 +30,15 @@ The holder proof, invocation identifier, turn and session headers, response
 receipts, timeouts and redirect policy are unchanged. The holder proof signs
 the slip's timestamp-and-nonce challenge, not the request body. Invocation
 claims separately bind the server's canonical call-body digest.
+
+## Core key-value results
+
+The embedded core `vault.kv.get`, `vault.kv.put`, and `vault.kv.search`
+result adapters move each item's JSON payload into the result without
+serializing that payload again. All payloads are removed before encoding
+the remaining finite record fields with the existing codec. The adapters
+then restore the original payloads, including their object and array order.
+Absent gets stay JSON null; put receipts and search results keep their
+existing fields and ordering. Native storage, input decoding, verb hooks,
+and client result types are unchanged. Other core result encoders retain
+their existing behavior.
