@@ -40,7 +40,7 @@ pub(super) fn record_output(
 ) -> EngineExecutorResult<()> {
     let mut sink = storage.code_run_output_sink()?;
     sink.write(raw)?;
-    publish_output(storage, record, path, sink).map(drop)
+    publish_output(storage, record, path, sink, None).map(drop)
 }
 
 /// Publishes the body `sink` wrote as the run's output at `path`, and
@@ -52,13 +52,22 @@ pub(super) fn publish_output(
     record: &mut CodeRunReplayRecord,
     path: String,
     sink: BodySink,
+    producing_step_start: Option<u64>,
 ) -> EngineExecutorResult<CodeRunRawOutput> {
     if record.outputs.iter().any(|output| output.path == path) {
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
     let input_rows = crate::code_run::resident_tool_answer_rows(record, None);
-    let output =
-        storage.publish_code_run_output_sourced(path, sink, true, record.run_id, input_rows)?;
+    let output = storage.publish_code_run_output_produced(
+        path,
+        sink,
+        true,
+        record.run_id,
+        input_rows,
+        producing_step_start,
+        None,
+        None,
+    )?;
     record.outputs.push(output.clone());
     Ok(output)
 }
@@ -95,11 +104,11 @@ pub(super) fn record_reply_evidence(
     if let Some(bytes) = reply_evidence::for_run_bytes(storage, record.run_id, reply)? {
         let mut sink = storage.code_run_script_sink()?;
         sink.write(bytes.as_slice())?;
-        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+        publish_output(storage, record, reply_output_path(seq), sink, None).map(drop)
     } else {
         let mut sink = storage.code_run_output_sink()?;
         write_json(&mut sink, reply)?;
-        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+        publish_output(storage, record, reply_output_path(seq), sink, None).map(drop)
     }
 }
 
@@ -400,7 +409,7 @@ pub(super) fn record_script_output(
 ) -> EngineExecutorResult<()> {
     let mut sink = storage.code_run_script_sink()?;
     sink.write(script.as_bytes())?;
-    publish_output(storage, record, path, sink).map(drop)
+    publish_output(storage, record, path, sink, None).map(drop)
 }
 
 /// A TypeScript step's preparation beside its program (FIX 8276): the
