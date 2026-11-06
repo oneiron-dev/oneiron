@@ -20,6 +20,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    // An owed forget stands with the rows it still owes, as the image holds them.
+    (&t::MAIL_PACK_FORGET_OWED, CONTENT),
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
