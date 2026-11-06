@@ -191,7 +191,7 @@ pub(super) fn refold_world_edits(
 /// The state a crossed main-log row stands for: its parents' same-vault
 /// merge, bounded by its own vault and signed sequence.
 pub(super) fn crossed_state<'a>(
-    entry: &AuthorityLogEntry,
+    entry: &'a AuthorityLogEntry,
     mut parents: impl Iterator<Item = Option<&'a FoldState>>,
 ) -> Option<FoldState> {
     // Parents of two vaults stand for nothing (Sol P2 round 5, F6).
