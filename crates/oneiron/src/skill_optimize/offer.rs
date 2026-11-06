@@ -34,7 +34,12 @@ use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+mod download_card;
 mod snapshot;
+
+pub use download_card::{
+    StockDownloadCard, StockDownloadFile, record_stock_download_card, stock_download_card_seen,
+};
 
 pub use self::snapshot::{
     ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,

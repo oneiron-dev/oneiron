@@ -254,6 +254,7 @@ pub(super) fn draft(
         record_read(vault, attempt.id, grounded, &mut read_set_lost);
         match vault.run_coach_training_offer(admitted, draft, now) {
             Ok(offer) => {
+                publish_download_card(vault, runtime, &offer, now);
                 tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer")
             }
             // A draft the offer door refuses is no offer; the other seats go on.
@@ -264,6 +265,32 @@ pub(super) fn draft(
         }
     }
     Ok(())
+}
+
+/// The original offer remains available if no native file supplier exists
+/// or the card could not be recorded. Publishing is not a Seen mark.
+fn publish_download_card(
+    vault: &Vault,
+    runtime: &crate::models::ModelRuntime,
+    offer: &TrainingOffer,
+    now: u64,
+) {
+    let OfferCandidate::Stock { model, .. } = &offer.candidate else {
+        return;
+    };
+    // This is the captured worker's exact verified manifest, not a registry
+    // hit, backend presence or a locality guess.
+    if runtime.stock_weights(&model.model).is_some() {
+        return;
+    }
+    let Some(card) = runtime.stock_download_card(&model.model) else {
+        return;
+    };
+    if let Err(error) =
+        oneiron::skill_optimize::record_stock_download_card(vault, &offer.id, &card, now)
+    {
+        tracing::warn!(%error, offer = %offer.id.to_hex(), "the stock download card could not be recorded");
+    }
 }
 
 /// Records rows the pass read under the offer draft's key (FIX 6934, 7073).
