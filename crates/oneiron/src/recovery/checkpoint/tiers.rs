@@ -174,6 +174,10 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // the carrier's body, which could confirm a guess of its
                 // author once that actor is erased (FIX 17143).
                 b"it:authored:",
+                // A body this install received from its home is this
+                // install's own evidence (FIX 14534): a restored install
+                // received nothing, so no image keeps it.
+                b"ab:h:",
                 // So is the record of which machine wrote a MESSAGE row: a
                 // digest of the row, and a restored install wrote nothing
                 // (FIX 12113).
