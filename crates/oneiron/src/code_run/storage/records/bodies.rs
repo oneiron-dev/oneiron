@@ -280,6 +280,7 @@ impl Vault {
             |digest| self.pin_result_body(digest),
         )?;
         finished.output.producing_step_start = output.producing_step_start;
+        finished.output.producing_effect = output.producing_effect.clone();
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",

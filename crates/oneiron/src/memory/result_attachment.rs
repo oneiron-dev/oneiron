@@ -139,6 +139,7 @@ impl MessageResultAttachment {
             complete: self.complete,
             input_rows: None,
             producing_step_start: None,
+            producing_effect: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: self.preview.clone(),

@@ -55,7 +55,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "hook_view_served",
     "rewritten_request",
 ];
-pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 10] = [
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 11] = [
     "handle",
     "path",
     "raw_blake3",
@@ -66,6 +66,7 @@ pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 10] = [
     "preview",
     "input_rows",
     "producing_step_start",
+    "producing_effect",
 ];
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
@@ -117,6 +118,7 @@ const KEY_COMPLETE: &str = CODE_RUN_RAW_OUTPUT_KEYS[6];
 const KEY_PREVIEW: &str = CODE_RUN_RAW_OUTPUT_KEYS[7];
 const KEY_INPUT_ROWS: &str = CODE_RUN_RAW_OUTPUT_KEYS[8];
 const KEY_PRODUCING_STEP_START: &str = CODE_RUN_RAW_OUTPUT_KEYS[9];
+const KEY_PRODUCING_EFFECT: &str = CODE_RUN_RAW_OUTPUT_KEYS[10];
 
 const KEY_CODEC: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[0];
 const KEY_TEXT: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[1];
@@ -406,6 +408,13 @@ fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
             Value::from(KEY_PRODUCING_STEP_START),
             output.producing_step_start.map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(KEY_PRODUCING_EFFECT),
+            output
+                .producing_effect
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
     ])
 }
 
@@ -429,6 +438,10 @@ fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
         producing_step_start: match required(fields[9], "missing output producing_step_start")? {
             Value::Nil => None,
             value => Some(u64_value(value)?),
+        },
+        producing_effect: match required(fields[10], "missing output producing_effect")? {
+            Value::Nil => None,
+            value => Some(str_value(value)?.to_owned()),
         },
     };
     validate_raw_output(&output)?;
