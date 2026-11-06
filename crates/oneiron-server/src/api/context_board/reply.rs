@@ -79,6 +79,7 @@ async fn reply(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: effort,
         },
         messages: Vec::new(),

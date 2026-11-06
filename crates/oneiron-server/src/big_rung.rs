@@ -311,6 +311,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),

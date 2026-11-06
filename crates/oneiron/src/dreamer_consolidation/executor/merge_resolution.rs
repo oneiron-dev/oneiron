@@ -427,6 +427,7 @@ impl ConsolidationExecutor<'_> {
              value as JSON>}. On supersede the value is the newest one stated; on merge it is \
              one value that holds what the candidates state.";
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let mut request = LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
@@ -451,6 +452,7 @@ impl ConsolidationExecutor<'_> {
                 locality: call.inference.selected_locality().ok_or_else(||
                     crate::Error::InvalidConfig("consolidation host binding needs locality".into()))?,
                 host_keyless: keyless,
+                host_paid: paid,
             }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {

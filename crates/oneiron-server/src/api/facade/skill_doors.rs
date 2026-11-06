@@ -549,6 +549,7 @@ impl HostSkillRefiner<'_> {
                 response_format: ResponseFormat::Text,
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, prompt.to_owned()),

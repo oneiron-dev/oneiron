@@ -224,6 +224,7 @@ async fn generate(
             },
             locality: route.locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: Some(effort),
         },
         messages: vec![

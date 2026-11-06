@@ -314,6 +314,7 @@ impl ConsolidationExecutor<'_> {
             ));
         };
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         // The call labels its claims and questions before its state renders
         // (FIX 7506).
         let mut labels = CallLabelMap::default();
@@ -365,6 +366,7 @@ impl ConsolidationExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }
             .with_purpose_defaults(),
             messages: Vec::new(),

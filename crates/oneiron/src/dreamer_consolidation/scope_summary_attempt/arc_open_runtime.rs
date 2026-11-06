@@ -172,6 +172,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     response_format: ResponseFormat::Text,
                     locality,
                     host_keyless: call.inference.selected_keyless(),
+                    host_paid: call.inference.selected_paid(),
                 }
                 .with_purpose_defaults(),
                 messages: Vec::new(),

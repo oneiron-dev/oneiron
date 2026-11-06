@@ -133,6 +133,7 @@ impl Backend {
                 response_format: ResponseFormat::Json { schema },
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![LlmMessage {
                 role: LlmMessageRole::User,

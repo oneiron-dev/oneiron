@@ -171,6 +171,7 @@ impl Shape {
                 }),
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),

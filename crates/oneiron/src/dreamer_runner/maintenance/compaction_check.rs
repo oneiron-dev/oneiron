@@ -298,7 +298,8 @@ pub async fn run_compaction_check(
     };
     let locality = judge_locality(&model)?;
     let keyless = model.inference.selected_keyless();
-    let request = judge_request(&model, &declaration, &read, locality, keyless)?;
+    let paid = model.inference.selected_paid();
+    let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
@@ -313,6 +314,7 @@ pub async fn run_compaction_check(
         state: &state,
         locality,
         keyless,
+        paid,
     };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
@@ -549,9 +551,10 @@ fn judge_request(
     read: &Ready,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> Result<LlmRequest> {
     let input = judge_input(declaration, read);
-    judge_call(model, diagnostic_schema(), &input, locality, keyless)
+    judge_call(model, diagnostic_schema(), &input, locality, keyless, paid)
 }
 
 /// What the judge reads: the span, the summary and the span's retained
@@ -594,10 +597,11 @@ fn judge_call(
     input: &serde_json::Value,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> Result<LlmRequest> {
     let input = serde_json::to_string(input)
         .map_err(|_| Error::InvariantViolation("the check input did not encode"))?;
-    let mut request = judge_shell(model, schema, locality, keyless);
+    let mut request = judge_shell(model, schema, locality, keyless, paid);
     request.messages.push(LlmMessage {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text { text: input, signature: None }],
@@ -612,6 +616,7 @@ fn judge_shell(
     schema: serde_json::Value,
     locality: oneiron_model::llm::ModelLocality,
     keyless: bool,
+    paid: bool,
 ) -> LlmRequest {
     LlmRequest {
         model: model.model.clone(),
@@ -629,6 +634,7 @@ fn judge_shell(
             response_format: ResponseFormat::Json { schema },
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {

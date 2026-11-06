@@ -457,6 +457,7 @@ pub(in crate::server) fn launch_request(
             },
             locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             LlmMessage {
