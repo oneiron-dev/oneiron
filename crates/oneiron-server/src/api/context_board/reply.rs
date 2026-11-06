@@ -132,7 +132,6 @@ async fn reply(
         pack.discard_reply_entity_payload();
     }
     let mut dynamic = serde_json::to_value(&context).map_err(|_| internal())?;
-    let standing = standing_compiled.as_deref().unwrap_or("");
     dynamic
         .as_object_mut()
         .ok_or_else(internal)?
@@ -149,7 +148,9 @@ async fn reply(
         .as_ref()
         .map(|base| base.body.as_str())
         .unwrap_or("");
-    let prefix = [standing, evidence].join("\n\n");
+    let mut prefix = standing_compiled.unwrap_or_default();
+    prefix.push_str("\n\n");
+    prefix.push_str(evidence);
     let board = serde_json::to_string(&dynamic).map_err(|_| internal())?;
     // Everything the model reads beside the caller's message, in either
     // layout: what the egress check below reads.
