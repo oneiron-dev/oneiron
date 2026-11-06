@@ -367,6 +367,7 @@ fn judge_request(
             },
             locality,
             host_keyless: keyless,
+            host_paid: false,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -374,11 +375,15 @@ fn judge_request(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: model.rubric.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: input }],
+                content: vec![ContentPart::Text {
+                    text: input,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),
@@ -541,7 +546,7 @@ fn verdict_of(response: &LlmResponse) -> Option<Verdict> {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
