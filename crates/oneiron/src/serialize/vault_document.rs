@@ -589,6 +589,7 @@ impl<'v> DocumentWriter<'v> {
                 sources: tail.sources,
                 thread_roots: Default::default(),
                 holder_requests: Vec::new(),
+                notices: Vec::new(),
             },
         ))
     }

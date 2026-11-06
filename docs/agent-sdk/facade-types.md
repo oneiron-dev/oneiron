@@ -1453,10 +1453,12 @@ export type HolderExportUnassigned = "no_owner_act" | "owner_not_live" | "no_rec
 export type HolderExportState = { kind: "recorded"; request: string; holder: EntityId; status: OwnerWorkStatus } | { kind: "unassigned"; reason: HolderExportUnassigned } | { kind: "unrecorded" }
 /** `oneiron::authority::export_secret_work::HolderExportRequest` */
 export type HolderExportRequest = { secret: EntityId; generation: number; state: HolderExportState }
+/** `oneiron::share_travel::pack_notice::WorldRecipientNotice` */
+export type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref?: string | null; world_name?: string | null; reason: string; body: string }
 /** `oneiron::memory::export::MemoryExport` */
-export type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[] }
+export type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[]; notices?: WorldRecipientNotice[] }
 /** `oneiron::memory::export::ExportTransfer` */
-export type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[] }
+export type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[]; notices?: WorldRecipientNotice[] }
 /** `oneiron::memory::export::ExportAnswer` */
 export type ExportAnswer = MemoryExport | ExportTransfer
 /** `oneiron::memory::export_transfer_read::ExportTransferReadRequest` */
@@ -2149,8 +2151,6 @@ export type AuthorityLaneRef = string
 export type BudgetPolicyRef = string
 /** `oneiron::skill_hub::pack_catalog::source::PackSection` */
 export type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef }
-/** `oneiron::share_travel::pack_notice::WorldRecipientNotice` */
-export type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref?: string | null; world_name?: string | null; reason: string; body: string }
 /** `oneiron::skill_hub::pack_catalog::admission_types::PackInstallReceipt` */
 export type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number; notices?: WorldRecipientNotice[]; owner_activated?: PackCandidateReason[] }
 /** `oneiron::memory::hook_regen_doors::PackPutReceipt` */

@@ -352,20 +352,34 @@ impl CoreAuth {
         vault: &oneiron::Vault,
         id: &oneiron::EntityId,
     ) -> oneiron::Result<bool> {
+        self.can_read_entity_at(vault, id, &self.destination())
+    }
+    /// [`Self::can_read_entity`] for a read toward `destination` instead of
+    /// the machine the request's connection proved: the same credential
+    /// lane, read for the machine a door already judged the rows for. The
+    /// owner's own whole-vault export, whose owner its door admitted again,
+    /// reads on this device: his recipient choice keeps none of its rows
+    /// (owner ruling 1-EXPORT = B).
+    pub(crate) fn can_read_entity_at(
+        &self,
+        vault: &oneiron::Vault,
+        id: &oneiron::EntityId,
+        destination: &oneiron::settings::ReadDestination,
+    ) -> oneiron::Result<bool> {
         if self.is_local_dev_hatch() {
             let action = vault.dev_action_authority()?;
             return vault
-                .scoped_read(action.read_key().for_destination(&self.destination()))
+                .scoped_read(action.read_key().for_destination(destination))
                 .is_entity_readable(id);
         }
         let Some(proof) = self.verified_slip() else {
-            return Ok(!vault.device_local_keeps_for(id, &self.destination())?);
+            return Ok(!vault.device_local_keeps_for(id, destination)?);
         };
         let Some(key) = vault.credential_read_key(proof)? else {
             return Ok(false);
         };
         vault
-            .scoped_read(key.for_destination(&self.destination()))
+            .scoped_read(key.for_destination(destination))
             .is_entity_readable(id)
     }
     /// Whether this credential is still live, read inside the write

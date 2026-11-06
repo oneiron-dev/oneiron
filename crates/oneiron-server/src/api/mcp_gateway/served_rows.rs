@@ -136,8 +136,15 @@ pub(super) fn held_act_answer(
     let (output, rows) = unknown_act_answer(tool, actor, output, served)?;
     let held = match rows.as_deref() {
         Some(known) if KNOWN_ROW_ACTS.contains(&tool) && actor.destination().is_off_device() => {
-            super::device_release::mcp_release_result(server, actor, known, false, output.clone())
-                .is_err()
+            super::device_release::mcp_release_result(
+                server,
+                actor,
+                known,
+                false,
+                output.clone(),
+                false,
+            )
+            .is_err()
         }
         _ => false,
     };

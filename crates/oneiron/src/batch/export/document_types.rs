@@ -102,6 +102,10 @@ pub struct WholeVaultExportReceipt {
     /// because it did not open here, and where its holder's sealed copy
     /// stands once the export's audit recorded it.
     pub(crate) holder_requests: Vec<crate::authority::HolderExportRequest>,
+    /// Owner ruling 1-EXPORT = B: each world the owner's own export carries
+    /// that his recipient choice would keep from where it goes, and why.
+    /// None on this device.
+    pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 impl WholeVaultExportReceipt {
@@ -116,6 +120,11 @@ impl WholeVaultExportReceipt {
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest
     }
+    /// Owner ruling 1-EXPORT = B: each world this export carries that the
+    /// owner's recipient choice would keep from where it goes, and why.
+    pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
+        &self.notices
+    }
 }
 
 /// An archive payload in memory and its standalone validating manifest, for a
@@ -128,6 +137,8 @@ pub struct WholeVaultExport {
     pub(crate) manifest: WholeVaultDocumentManifest,
     /// OF-490: the diaries this export read, for the vault's own log.
     pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
+    /// As [`WholeVaultExportReceipt::notices`].
+    pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 impl WholeVaultExport {
@@ -137,6 +148,10 @@ impl WholeVaultExport {
     }
     pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
         &self.diary_reads
+    }
+    /// As [`WholeVaultExportReceipt::notices`].
+    pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
+        &self.notices
     }
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest

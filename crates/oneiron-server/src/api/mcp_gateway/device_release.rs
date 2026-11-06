@@ -14,18 +14,33 @@ use std::sync::Arc;
 /// Whether a page its producer retained may leave again: none of the rows
 /// it was derived from, nor any row its output or keyframe names, is one a
 /// device-local world keeps from the caller now. One whose rows are unknown
-/// leaves only on this device (FIX 5988).
+/// leaves only on this device (FIX 5988). A page of the owner's own
+/// whole-vault export (`owner_whole_vault_export`, as the continued call's
+/// tool and his fresh proof name it) is kept by an integrity hold alone
+/// (owner ruling 1-EXPORT = B).
 pub(super) fn mcp_snapshot_releases(
     server: &SyncServer,
     actor: &McpCallContext,
     snapshot: &crate::mcp::McpPageSnapshot,
+    owner_whole_vault_export: bool,
 ) -> Result<bool, McpGatewayError> {
     let Some(rows) = snapshot.rows.as_deref() else {
         return Ok(!actor.destination().is_off_device());
     };
     let retained = serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe))
         .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
-    crate::device_local::withholds_retained(&server.vault, actor.destination(), rows, &retained)
+    let withheld = if owner_whole_vault_export {
+        crate::device_local::owner_export_retained_hold(
+            &server.vault,
+            &actor.destination(),
+            rows,
+            &retained,
+        )
+        .map(|hold| hold.is_some())
+    } else {
+        crate::device_local::withholds_retained(&server.vault, actor.destination(), rows, &retained)
+    };
+    withheld
         .map(|withheld| !withheld)
         .map_err(|error| mcp_engine_error("mcp page snapshot release check failed", error))
 }
@@ -64,15 +79,27 @@ pub(super) fn mcp_carrier_releases(
 /// naming a short ref that resolves to no row, is refused: a continuation's
 /// caller starts over from page one, and a fresh call is told its result
 /// changed and to call again. The owner's own agent-pack export reads its
-/// prose as no ref (`owner_export_scan`, FIX 5522).
+/// prose as no ref (`owner_export_scan`, FIX 5522). The owner's own
+/// whole-vault export (`owner_whole_vault_export`, as its route or recorded
+/// call and his fresh proof name it, never its answer) reads its notices'
+/// world names as no ref, and only an integrity hold refuses it: his
+/// recipient choice keeps none of its rows (owner ruling 1-EXPORT = B).
 pub(super) fn mcp_release_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     rows: &[oneiron::EntityId],
     continued: bool,
     result: Value,
+    owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
-    release_result(server, actor, Some(rows), continued, result)
+    release_result(
+        server,
+        actor,
+        Some(rows),
+        continued,
+        result,
+        owner_whole_vault_export,
+    )
 }
 
 /// An action's listed dependencies, or its truthful unknown set, under the
@@ -83,7 +110,7 @@ pub(super) fn mcp_release_action_result(
     rows: Option<&[oneiron::EntityId]>,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
-    release_result(server, actor, rows, false, result)
+    release_result(server, actor, rows, false, result, false)
 }
 
 fn release_result(
@@ -92,6 +119,7 @@ fn release_result(
     rows: Option<&[oneiron::EntityId]>,
     continued: bool,
     result: Value,
+    owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
     // A claimed call keeps the result it is about to judge, for the calls
     // waiting on it (FIX 7914).
@@ -107,7 +135,7 @@ fn release_result(
     if !destination.is_off_device() {
         return Ok(result);
     }
-    let scan = owner_export_scan(server, actor, &result);
+    let scan = owner_export_scan(server, actor, &result, owner_whole_vault_export);
     let Some(mut named) =
         crate::device_local::short_refs_named(&server.vault, scan.as_ref().unwrap_or(&result))
     else {
@@ -115,13 +143,48 @@ fn release_result(
     };
     named.extend_from_slice(rows.unwrap_or(&[]));
     let bytes = serde_json::to_vec(&result).map_err(|_| refused(ReleaseHold::Placement))?;
-    if let Some(hold) =
+    let hold = if owner_whole_vault_export {
+        crate::device_local::owner_export_retained_hold(&server.vault, &destination, &named, &bytes)
+    } else {
         crate::device_local::retained_hold(&server.vault, &destination, &named, &bytes)
-            .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
+    };
+    if let Some(hold) =
+        hold.map_err(|error| mcp_engine_error("mcp page release check failed", error))?
     {
         return Err(refused(hold));
     }
     Ok(result)
+}
+
+/// Whether the answer of `tool`, the verb this call's route ran, released to
+/// `actor` now is the owner's own whole-vault export (owner ruling 1-EXPORT
+/// = B): `vault.export`, or a read of the export it kept, for a caller whose
+/// scope and fresh owner proof admit him now as a read of a kept export
+/// admits him. Chosen from the route and the proof, never from the answer.
+pub(super) fn owner_whole_vault_export_call(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    tool: &str,
+) -> bool {
+    actor.auth.as_ref().is_some_and(|auth| {
+        crate::api::facade::owner_whole_vault_export_admitted(server, auth, tool)
+    })
+}
+
+/// [`owner_whole_vault_export_call`] for `kept`, the result a claimed call
+/// recorded as its release was about to judge it: the host's own envelope of
+/// a successful call, whose tool the host named as it built it.
+pub(super) fn owner_whole_vault_export_kept(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    kept: &Value,
+) -> bool {
+    kept.get("isError") == Some(&Value::Bool(false))
+        && kept
+            .get("structuredContent")
+            .and_then(|structured| structured.get("tool"))
+            .and_then(Value::as_str)
+            .is_some_and(|tool| owner_whole_vault_export_call(server, actor, tool))
 }
 
 /// A refusal is released as a result is (DEC-0005): by `rows`, those its
@@ -282,12 +345,25 @@ const OWNER_EXPORT_VERB: &str = "vault.agents.export_pack";
 /// The copy of `result` its short-ref scan reads instead (FIX 5522, CALLS
 /// "FIX 5522 owner export scan scope"): on the owner's own successful
 /// agent-pack export, as the host's envelope names its tool, the export with
-/// its text leaves read as none. `None` for every other result and caller,
-/// scanned whole as before. Keys, whole ids, every other field and the
-/// result that leaves stay as they are.
-fn owner_export_scan(server: &SyncServer, actor: &McpCallContext, result: &Value) -> Option<Value> {
+/// its text leaves read as none; on his own whole-vault export
+/// (`owner_whole_vault_export`, owner ruling 1-EXPORT = B), the export with
+/// its notices' world names read as none, when one names a world. `None` for
+/// every other result and caller, scanned whole as before. Keys, whole ids,
+/// every other field and the result that leaves stay as they are.
+fn owner_export_scan(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    result: &Value,
+    owner_whole_vault_export: bool,
+) -> Option<Value> {
     let structured = result.get("structuredContent")?;
-    if result.get("isError") != Some(&Value::Bool(false))
+    if owner_whole_vault_export {
+        let names_world = |notice: &Value| notice.get("world_name").is_some_and(Value::is_string);
+        let notices = structured.get("output")?.get("notices")?.as_array()?;
+        if !notices.iter().any(names_world) {
+            return None;
+        }
+    } else if result.get("isError") != Some(&Value::Bool(false))
         || structured.get("tool").and_then(Value::as_str) != Some(OWNER_EXPORT_VERB)
         || !reads_as_owner(server, actor)
     {
@@ -328,8 +404,8 @@ fn reads_as_owner(server: &SyncServer, actor: &McpCallContext) -> bool {
     .is_ok_and(|key| key.reads_as_vault_owner())
 }
 
-/// An agent-pack export's text leaves read as none: its born-with prose and
-/// each notice's world name. Nothing else changes.
+/// An owner export's text leaves read as none: an agent pack's born-with
+/// prose, and each notice's world name. Nothing else changes.
 fn clear_export_text(export: &mut Value) {
     if let Some(born_with) = export.get_mut("born_with").and_then(Value::as_object_mut) {
         for (field, text) in born_with.iter_mut() {
@@ -357,7 +433,7 @@ pub(super) fn mcp_release_run_result(
     rows: Option<&[oneiron::EntityId]>,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
-    mcp_release_listed(server, actor, rows, false, result)
+    mcp_release_listed(server, actor, rows, false, result, false)
 }
 
 /// [`mcp_release_result`] for a result whose rows may be unknown (`None`,
@@ -369,12 +445,20 @@ pub(super) fn mcp_release_listed(
     rows: Option<&[oneiron::EntityId]>,
     continued: bool,
     result: Value,
+    owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
     if rows.is_none() {
         super::claimed_release::record(&result, None);
     }
     match rows {
-        Some(rows) => mcp_release_result(server, actor, rows, continued, result),
+        Some(rows) => mcp_release_result(
+            server,
+            actor,
+            rows,
+            continued,
+            result,
+            owner_whole_vault_export,
+        ),
         None if !actor.destination().is_off_device() => Ok(result),
         None if continued => Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,

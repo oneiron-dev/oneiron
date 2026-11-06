@@ -10,9 +10,11 @@
 //! Each read and release admits its caller again as the export admitted its
 //! exporter: the scope, an unattenuated owner credential outside a room
 //! turn, an owner proof that holds now, the exporter itself, every row the
-//! archive was derived from (source admission), and no hold a world keeps
-//! from the caller's destination. A kept export lives until its owner lets
-//! it go or the server stops: nothing expires it while it is unread.
+//! archive was derived from (source admission), and no integrity hold on
+//! where its rows go: the owner's recipient choice keeps none of his own
+//! export's rows (owner ruling 1-EXPORT = B). A kept export lives until its
+//! owner lets it go or the server stops: nothing expires it while it is
+//! unread.
 //!
 //! `GET /v1/core/export-secret-supplements/{request}` reads, for the owner
 //! whose export it was, one export secret request by its entry (FIX
@@ -107,6 +109,7 @@ impl ExportTransfers {
             bytes: receipt.bytes,
             digest: receipt.digest.clone(),
             holder_requests: receipt.holder_requests.clone(),
+            notices: receipt.notices.clone(),
         };
         let kept = KeptExport {
             exporter: exporter_of(auth),
@@ -182,6 +185,12 @@ pub(super) fn vault_export_answer(
     let auth = call.auth();
     let surface = call.surface();
     let vault = &server.vault;
+    // An export a code run calls follows the world settings as before owner
+    // ruling 1-EXPORT = B (FIX 9591): its run's release judges its rows.
+    let input = &ExportOptions {
+        in_code_run: super::host_doors::support::in_code_run(),
+        ..input.clone()
+    };
     if input.delivery.unwrap_or_default() == ExportDelivery::Inline {
         let (output, rows) = match (proof, action, owner) {
             (Some(proof), _, _) if proof.claims().holder_ref == "host" => vault
@@ -445,6 +454,43 @@ fn admitted_as(
     if let Some(call) = call {
         super::invoke::facade_outside_room_turn(call, EXPORT_VERB)?;
     }
+    let reader = export_owner_now(server, auth)?;
+    let kept = server
+        .export_transfers
+        .get(transfer_ref)?
+        .filter(|kept| kept.exporter == exporter_of(auth))
+        .ok_or_else(unknown_transfer)?;
+    // FIX 11596: the render's act must still stand for this caller. A
+    // positive lapse lets the export go, so its spool is never read again.
+    if let Some(lapse) = kept
+        .act
+        .as_ref()
+        .and_then(|act| server.vault.kept_export_lapse(act, reader))
+    {
+        server.export_transfers.release(transfer_ref)?;
+        return Err(export_lapsed(lapse));
+    }
+    // The exporter is admitted again above as the owner whose own export
+    // this is (owner ruling 1-EXPORT = B): his recipient choice keeps none
+    // of its rows, and every other source check and hold stands.
+    let vault = server.vault();
+    let destination = auth.destination();
+    if !super::release::rows_still_admitted(vault, auth, &kept.rows, true)
+        || super::release::known_denied_rows(vault, &destination, &kept.rows, &Value::Null, true)
+    {
+        return Err(FacadeApiError::forbidden(
+            "this export's rows are not released to this caller now",
+            ["Export again from where its rows are released."],
+        ));
+    }
+    Ok(kept)
+}
+
+/// The owner `auth`'s fresh proof exports as now, as its export's render
+/// resolved its own: an unattenuated owner credential, and the host's root,
+/// the owner's own live slip, a host action or a managed vault's attested
+/// owner admitted again in a snapshot of its own.
+fn export_owner_now(server: &SyncServer, auth: &CoreAuth) -> Result<EntityId, FacadeApiError> {
     if !auth.is_owner_grade() {
         return Err(FacadeApiError::forbidden(
             "full-vault export requires owner authority",
@@ -452,8 +498,6 @@ fn admitted_as(
         ));
     }
     let action = crate::api::host_action::facade_host_action(server, auth)?;
-    // The owner the caller's fresh proof resolves to, as its export's
-    // render resolved its own.
     let reader = match (auth.verified_slip(), action) {
         (Some(proof), _) if proof.claims().holder_ref == "host" => {
             server.vault.admit_host_owner_export(proof)?
@@ -476,32 +520,25 @@ fn admitted_as(
         }
         (None, None) => return Err(no_owner_proof()),
     };
-    let kept = server
-        .export_transfers
-        .get(transfer_ref)?
-        .filter(|kept| kept.exporter == exporter_of(auth))
-        .ok_or_else(unknown_transfer)?;
-    // FIX 11596: the render's act must still stand for this caller. A
-    // positive lapse lets the export go, so its spool is never read again.
-    if let Some(lapse) = kept
-        .act
-        .as_ref()
-        .and_then(|act| server.vault.kept_export_lapse(act, reader))
-    {
-        server.export_transfers.release(transfer_ref)?;
-        return Err(export_lapsed(lapse));
-    }
-    let vault = server.vault();
-    let destination = auth.destination();
-    if !super::release::rows_still_admitted(vault, auth, &kept.rows)
-        || super::release::known_denied_rows(vault, &destination, &kept.rows, &Value::Null)
-    {
-        return Err(FacadeApiError::forbidden(
-            "this export's rows are not released to this caller now",
-            ["Export again from where its rows are released."],
-        ));
-    }
-    Ok(kept)
+    Ok(reader)
+}
+
+/// Whether the answer of `verb`, the verb its route ran, released to
+/// `auth`'s caller now is the owner's own whole-vault export (owner ruling
+/// 1-EXPORT = B): `vault.export`, or a read of the export it kept, for a
+/// caller its scope and fresh owner proof admit now as a read of a kept
+/// export admits him. Chosen from the route and the proof, never from the
+/// answer; any other verb, and a check that fails, is no owner export. Its
+/// release then keeps every integrity hold, and no recipient choice.
+pub(crate) fn owner_whole_vault_export_admitted(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> bool {
+    matches!(verb, EXPORT_VERB | "vault.export.transfer.read")
+        && auth.require(CoreScope::Read).is_ok()
+        && auth.require_unrestricted_record_scope().is_ok()
+        && export_owner_now(server, auth).is_ok()
 }
 
 /// The one byte range, first and last byte inclusive, a `Range: bytes=`

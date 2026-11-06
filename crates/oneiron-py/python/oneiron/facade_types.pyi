@@ -3778,17 +3778,28 @@ class HolderExportRequest(TypedDict):
     secret: EntityId
     generation: int
     state: HolderExportState
+class WorldRecipientNotice(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    world_ref: NotRequired[str | None]
+    world_name: NotRequired[str | None]
+    reason: str
+    body: str
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
+    notices: NotRequired[list[WorldRecipientNotice]]
 class ExportTransfer(TypedDict):
     transfer_ref: str
     format: str
     bytes: int
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
+    notices: NotRequired[list[WorldRecipientNotice]]
 ExportAnswer = MemoryExport | ExportTransfer
 class ExportTransferReadRequest(TypedDict):
     transfer_ref: str
@@ -5511,15 +5522,6 @@ class PackSection(TypedDict):
     verbs: list[SectionVerbRef]
     authority_lane: AuthorityLaneRef
     budget_policy: BudgetPolicyRef
-class WorldRecipientNotice(TypedDict):
-    notice_type: str
-    channel: str
-    voice: str
-    audience: str
-    world_ref: NotRequired[str | None]
-    world_name: NotRequired[str | None]
-    reason: str
-    body: str
 class PackInstallReceipt(TypedDict):
     source_id: str
     pack_name: str

@@ -127,6 +127,52 @@ pub(crate) fn device_only_withholds_raw(
     Ok(carried.kept_by(flagged))
 }
 
+/// The owner's own export's judgment of `id` toward `flagged`, every world
+/// the owner's recipient choice withholds from where it goes (owner ruling
+/// 1-EXPORT = B), as its release judges it
+/// ([`crate::Vault::owner_export_release_hold_for`]): the worlds of `flagged`
+/// that keep `id` by that choice alone, which his export carries it in
+/// spite of, empty when none keeps it; `None` when a flagged world keeps it
+/// and the worlds its words lie in cannot be named, which stays here as an
+/// integrity hold. `raw` is the revision of `id` the export serves, as
+/// [`device_only_withholds_raw`] reads it.
+pub(crate) fn device_only_recipient_worlds_raw(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    if !device_only_withholds_raw(store, txn, flagged, id, raw)? {
+        return Ok(Some(BTreeSet::new()));
+    }
+    if flagged.contains(id) {
+        return Ok(Some(BTreeSet::from([*id])));
+    }
+    let carried = carried_worlds_in(store, txn, id)?;
+    let barred = carried
+        .worlds
+        .intersection(flagged)
+        .copied()
+        .collect::<BTreeSet<_>>();
+    Ok((!carried.unknown && !barred.is_empty()).then_some(barred))
+}
+
+/// [`device_only_recipient_worlds_raw`] judged on the revision of `id`
+/// stored now. Nothing is read while no world is flagged.
+pub(crate) fn device_only_recipient_worlds(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    if flagged.is_empty() {
+        return Ok(Some(BTreeSet::new()));
+    }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
+    device_only_recipient_worlds_raw(store, txn, flagged, id, raw.as_deref())
+}
+
 /// The worlds whose words the stored row `id` carries: where it sits and, for
 /// an epoch SUMMARY, where each record it was written from sits and what its
 /// own withdrawal recorded. A deletion records them on every epoch summary it
