@@ -8,9 +8,10 @@
 //! order a room's adoption of the DAG gives its legacy turns; messages by
 //! their order inside the turn.
 //!
-//! FIX 5032: a chat log lists its turns from row headers first
-//! ([`Memory::transcript_turn_keys`]) and reads only the turns it selects,
-//! through the same page reader ([`Memory::selected_transcript_turns`]).
+//! FIX 5032: a chat log and a turn action list their turns from row headers
+//! first ([`Memory::transcript_turn_keys`]) and read only the turns they
+//! select, through the same page reader
+//! ([`Memory::selected_transcript_turns`]).
 
 use serde::Serialize;
 
@@ -29,8 +30,8 @@ use crate::vault::ReadMode;
 pub use crate::compaction::MAX_TRANSCRIPT_PAGE_TURNS;
 
 /// How many times a page is listed and read before a conversation whose turns
-/// keep moving in time is refused. A chat log's read plan lists and reads
-/// as many times (FIX 5032).
+/// keep moving in time is refused. A chat log's read plan and a turn
+/// action's selection list and read as many times (FIX 5032).
 pub(crate) const TRANSCRIPT_READ_ATTEMPTS: usize = 3;
 
 /// One page of a conversation's transcript.
@@ -254,46 +255,6 @@ impl Memory<'_> {
             &["Read the page again."],
         )
         .with_read_receipt(read))
-    }
-
-    /// The branch of a DAG conversation that leads to `target`, read as the
-    /// bound actor: the turns on its retained Parent chain, root first, each
-    /// with its visible messages the actor may read, on one page. `None` for
-    /// a conversation that has not adopted the DAG, whose transcript is its
-    /// time order. A sibling branch's turns never join it.
-    ///
-    /// # Errors
-    ///
-    /// `NOT_FOUND` when the actor may not read the conversation;
-    /// `INVALID_STATE` when a turn on the branch moved in time while it was
-    /// read.
-    pub(crate) fn turn_action_branch_transcript(
-        &self,
-        conversation: &EntityId,
-        target: &EntityId,
-    ) -> MemoryResult<Option<TranscriptPage>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        if !crate::conversation_dag::keeps_dag_topology(&self.vault.store, &txn, conversation)? {
-            return Ok(None);
-        }
-        let turns = self.branch_turns_in(&txn, conversation, target)?;
-        drop(txn);
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let mut read = conversation_row_receipt(&lane, conversation)?;
-        let Some((page, _)) = self.transcript_page(&lane, &turns, turns.len().max(1), &mut read)?
-        else {
-            return Err(MemoryError::new(
-                MEMORY_CODE_INVALID_STATE,
-                "the branch's turns moved while it was read",
-                &["Read the branch again."],
-            )
-            .with_read_receipt(read));
-        };
-        Ok(Some(TranscriptPage {
-            conversation: conversation.to_hex(),
-            turns: page,
-            next: None,
-        }))
     }
 
     /// FIX 5032: the TURN keys of `conversation`'s transcript, from row
