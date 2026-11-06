@@ -273,6 +273,7 @@ impl SyncServer {
             retained,
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
+            shared_envs: std::sync::OnceLock::new(),
             leaf_keys: crate::handler::LeafKeyRelay::default(),
             usage_ledger: UsageLedger::new(vault.clone()),
             retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
