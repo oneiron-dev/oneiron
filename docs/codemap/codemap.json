@@ -76419,6 +76419,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/author_carrier.rs",
+     "purpose": "A window's copy of an identity-topology author carrier (FIX 17143): an `entities` value whose row is an…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -92622,7 +92632,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 363,
+     "files": 364,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92834,7 +92844,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6541,
+   "source_files": 6542,
    "test_files": 895
   },
   "oneiron-android": {
