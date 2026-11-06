@@ -145,7 +145,11 @@ impl DeliveryWindowPolicyClaim {
             return None;
         }
         let retry_at = if let Some(window) = self.window {
-            window.retry_at_after(context.delivery_epoch_secs, context.local_minute_of_day)?
+            window.retry_at_after_zoned(
+                context.delivery_epoch_secs,
+                context.local_minute_of_day,
+                context.iana_zone.as_deref(),
+            )?
         } else {
             0
         };

@@ -46,6 +46,41 @@ impl Memory<'_> {
         Ok(snapshot_view(imported.code_artifact_id, &imported.snapshot))
     }
 
+    /// `vault.code.snapshots.capture`: current folder files, including untracked
+    /// and ignored files, through the native custody-filtered snapshot writer.
+    /// Git metadata and linked/nested repositories stay opaque. The result has
+    /// no commit witness and grants no membership, edit policy or read rights.
+    pub fn code_snapshot_capture_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeSnapshotCaptureRequest,
+    ) -> MemoryResult<CodeSnapshotView> {
+        let actor = self.codebase_owner(owner)?;
+        validate_project_id(&input.project_id)?;
+        let folder = served_host_folder(&input.local_folder)?;
+        let imported = self
+            .vault
+            .capture_local_folder_as_owner(
+                input.project_id,
+                Path::new(folder),
+                self.codebase_import_time(),
+                owner,
+                actor,
+            )
+            .map_err(|error| match error {
+                crate::Error::Code(crate::error::CodeError::CodebaseCaptureMemoryRefused {
+                    ..
+                }) => MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "not enough memory to capture this folder",
+                    &["Retry when host memory is available."],
+                ),
+                error => error.into(),
+            })?;
+        self.produced_from([imported.code_artifact_id]);
+        Ok(snapshot_view(imported.code_artifact_id, &imported.snapshot))
+    }
+
     /// `vault.code.snapshots.get`: the manifest of exactly the pinned
     /// snapshot, omitting files its custody report reads as absent. `None`
     /// when the artifact is absent or withheld.

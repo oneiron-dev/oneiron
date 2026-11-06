@@ -198,7 +198,8 @@ impl Vault {
         }
         check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
-        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?;
+        let snapshot =
+            Self::build_ingest_snapshot(project_id, &repo_ref, Some(&commit_hash), &blobs)?;
         // The read pass is useful for early quarantine but does not authorize
         // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
@@ -231,8 +232,6 @@ impl Vault {
         self.commit_ingest_snapshot(
             &snapshot,
             &blobs,
-            &repo_ref,
-            &commit_hash,
             occurred,
             learned_at,
             custody_root,
@@ -242,10 +241,10 @@ impl Vault {
     }
 
     /// The first-pass snapshot of the import: an entry for every kept blob.
-    fn build_ingest_snapshot(
+    pub(super) fn build_ingest_snapshot(
         project_id: String,
         repo_ref: &RepoRef,
-        commit_hash: &str,
+        commit_hash: Option<&str>,
         blobs: &[RepoIngestBlob],
     ) -> Result<CodebaseSnapshot> {
         let files = blobs
@@ -260,7 +259,7 @@ impl Vault {
         let snapshot = CodebaseSnapshot::new(
             project_id,
             repo_ref.clone(),
-            Some(commit_hash.to_owned()),
+            commit_hash.map(str::to_owned),
             files,
         )?;
         Ok(snapshot)
@@ -268,16 +267,10 @@ impl Vault {
 
     /// The final writer of the import: its admission first, then custody,
     /// reclaim and every derived row, in one grouped transaction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the final writer takes the first pass as it stood"
-    )]
-    fn commit_ingest_snapshot<R>(
+    pub(super) fn commit_ingest_snapshot<R>(
         &self,
         snapshot: &CodebaseSnapshot,
         blobs: &[RepoIngestBlob],
-        repo_ref: &RepoRef,
-        commit_hash: &str,
         occurred: TimeRange,
         learned_at: u64,
         custody_root: Option<&str>,
@@ -328,7 +321,7 @@ impl Vault {
             let code_body = CodeArtifactBody::new(
                 "Summarize the repository snapshot.",
                 filtered_snapshot.fork_hash,
-                repo_ref.canonical(),
+                snapshot.repo_ref.canonical(),
             );
             let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
 
@@ -383,20 +376,25 @@ impl Vault {
                     .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
             )?;
             // Each source names the file document its symbols are spans on,
-            // as this writer reads it (FIX 7809).
+            // as this writer reads it (FIX 7809), under the repository
+            // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
-            let symbol_sources = symbol_texts
-                .iter()
-                .map(|(path, text)| {
-                    Ok(CodeSymbolSource::new(path, text).with_document(
-                        code_symbol_document_in_txn(&self.store, read, repo_ref, path)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let identity =
+                crate::codebase::resolve_repo_identity_in_txn(self, read, &snapshot.repo_ref)?;
+            let symbol_sources =
+                symbol_texts
+                    .iter()
+                    .map(|(path, text)| {
+                        Ok(CodeSymbolSource::new(path, text).with_document(
+                            code_symbol_document_in_txn(&self.store, read, &identity, path)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
-                repo_ref.clone(),
-                Some(commit_hash.to_owned()),
+                snapshot.repo_ref.clone(),
+                identity,
+                snapshot.commit_hash.clone(),
                 symbol_sources,
             )?;
             // Each symbol names the operations that wrote it, read from its

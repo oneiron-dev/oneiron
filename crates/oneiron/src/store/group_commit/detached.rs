@@ -34,7 +34,10 @@
 //! vault, or on the closing vault in its drop ([`DetachedWrite::of_vault`]).
 //! When the handle a leader took turns out to be the last, because every
 //! other holder let go while the write ran, the vault closes on a thread of
-//! its own just after.
+//! its own just after. Each handle a leader takes is counted on its vault's
+//! open path from when it is taken until it is let go of, its close
+//! included ([`LeaderHolds`]), so a reopen of that path in this process waits
+//! for that close rather than finding the vault still open (FIX 12316).
 //!
 //! A write may carry an after-commit callback ([`DetachedWrite::after_commit`]):
 //! it runs once with whether the write's rows landed, after its group's
@@ -43,8 +46,8 @@
 //! before any group ran it is told `false` as it is said lost.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
-use std::time::Instant;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::time::{Duration, Instant};
 
 use heed::RwTxn;
 
@@ -73,8 +76,9 @@ type VaultWrite = Box<dyn FnOnce(&Vault, &mut RwTxn<'_>) -> Result<()> + Send>;
 
 enum Closure {
     Core(CoreWrite),
-    /// The vault, held weakly: a queued write keeps no vault open.
-    Vault(Weak<Vault>, VaultWrite),
+    /// The vault, held weakly: a queued write keeps no vault open. Its
+    /// leader takes a handle on it through the vault's [`LeaderHolds`].
+    Vault(Weak<Vault>, LeaderHolds, VaultWrite),
 }
 
 /// One detached write: its name, said in each warn about it, and its
@@ -120,7 +124,11 @@ impl DetachedWrite {
             name,
             replay_only: false,
             intent: open_intent(),
-            closure: Closure::Vault(Arc::downgrade(vault), Box::new(write)),
+            closure: Closure::Vault(
+                Arc::downgrade(vault),
+                vault.store.leader_holds(),
+                Box::new(write),
+            ),
             after: None,
         }
     }
@@ -151,7 +159,7 @@ impl DetachedWrite {
     pub(super) fn runs_on_core(&self) -> bool {
         match &self.closure {
             Closure::Core(_) => true,
-            Closure::Vault(vault, _) => vault.strong_count() > 0,
+            Closure::Vault(vault, ..) => vault.strong_count() > 0,
         }
     }
 }
@@ -242,7 +250,7 @@ pub(super) struct DetachedGroup<'v> {
     /// Each run write's after-commit callback, with whether its rows stayed.
     after: Vec<(AfterCommit, bool)>,
     /// The vault handles taken to run its writes.
-    held: Vec<Arc<Vault>>,
+    held: Vec<LeaderHold>,
 }
 
 impl<'v> DetachedGroup<'v> {
@@ -305,9 +313,7 @@ impl DetachedGroup<'_> {
     /// Lets go of the vault handles taken for this group, once the writer is
     /// passed on.
     pub(super) fn release(self) {
-        for vault in self.held {
-            release_vault_handle(vault);
-        }
+        drop(self.held);
     }
 }
 
@@ -504,7 +510,7 @@ impl StoreCore {
         // A write through the vault runs on the closing vault, or on a handle
         // taken now; `None` while the vault closes on another thread.
         let held = match (&closure, group.closing) {
-            (Closure::Vault(vault, _), None) => vault.upgrade().map(Some),
+            (Closure::Vault(vault, holds, _), None) => holds.take(vault).map(Some),
             (Closure::Core(_) | Closure::Vault(..), _) => Some(None),
         };
         let Some(held) = held else {
@@ -538,7 +544,7 @@ impl StoreCore {
                     write(self, &mut child)?;
                     count_on_intent(intent.as_ref(), &self.canonical_dbs(), &mut child)
                 }
-                Closure::Vault(_, write) => {
+                Closure::Vault(_, _, write) => {
                     let vault = vault.ok_or(Error::InvariantViolation(
                         "a detached vault write ran with no vault",
                     ))?;
@@ -595,28 +601,158 @@ fn count_on_intent(
     intent.map_or(Ok(()), |intent| intent.count_commit_in_txn(dbs, txn))
 }
 
-/// Lets go of a vault handle taken on a thread that may be the store's
-/// leader: a group's, or an after-commit callback's that queues a write again
-/// (FIX 12023 W0). When it is the last, the vault closes on a thread of its
-/// own ([`close_vault_elsewhere`]).
-pub(crate) fn release_vault_handle(vault: Arc<Vault>) {
-    if let Some(last) = Arc::into_inner(vault) {
-        close_vault_elsewhere(last);
+/// How often a reopen looks again while a store's leader holds the vault at
+/// its path ([`LeaderHolds::wait_for_release`]).
+const LEADER_HOLD_POLL: Duration = Duration::from_millis(10);
+
+/// The vault handles a store's leader holds, counted on the store's open path
+/// (FIX 12316): one for each handle taken from a weak one to run a detached
+/// write or its callback, from when it is taken until it is let go of, and
+/// when it is the last, until the vault it held has closed. A reopen of the
+/// path that finds every handle on the vault there counted here waits for
+/// them, since the vault closes once they are let go of, instead of finding
+/// it still open.
+#[derive(Clone, Default)]
+pub(crate) struct LeaderHolds(Arc<LeaderHoldCount>);
+
+#[derive(Default)]
+struct LeaderHoldCount {
+    /// The handles counted. It changes only under this lock, together with
+    /// the vault's strong count (a take's upgrade, a release's
+    /// `Arc::into_inner`), and a reopen reads both under it, so the two are
+    /// never read apart (REVIEW-5658 P1).
+    held: Mutex<usize>,
+    /// The vault the handles are taken on, from the first one taken.
+    vault: OnceLock<Weak<Vault>>,
+}
+
+impl LeaderHolds {
+    fn held(&self) -> MutexGuard<'_, usize> {
+        self.0.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A handle on `vault` while a holder keeps it, counted as it is taken;
+    /// `None` once every holder let go.
+    pub(crate) fn take(&self, vault: &Weak<Vault>) -> Option<LeaderHold> {
+        let mut held = self.held();
+        self.0.vault.get_or_init(|| vault.clone());
+        let handle = vault.upgrade()?;
+        *held += 1;
+        Some(LeaderHold {
+            vault: Some(handle),
+            holds: self.clone(),
+        })
+    }
+
+    /// Lets go of a counted handle. The last one keeps its count until the
+    /// vault it held has closed, on a thread of its own; the vault never
+    /// closes under this lock.
+    fn release(&self, vault: Arc<Vault>) {
+        let last = {
+            let mut held = self.held();
+            let last = Arc::into_inner(vault);
+            if last.is_none() {
+                *held -= 1;
+            }
+            last
+        };
+        if let Some(last) = last {
+            close_vault_elsewhere(last, self.clone());
+        }
+    }
+
+    /// The count a last handle kept, once the vault it held has closed (or
+    /// will never close here).
+    fn release_closed(&self) {
+        *self.held() -= 1;
+    }
+
+    /// Every handle on the vault is one counted here, or none is left and
+    /// its close is on its way: the vault closes once these are let go of.
+    pub(crate) fn close_pending(&self) -> bool {
+        let held = self.held();
+        *held > 0
+            && self
+                .0
+                .vault
+                .get()
+                .is_some_and(|vault| vault.strong_count() <= *held)
+    }
+
+    fn count(&self) -> usize {
+        *self.held()
+    }
+
+    /// Waits until no handle is counted here, or until `deadline`.
+    pub(crate) fn wait_for_release(&self, deadline: Instant) {
+        while self.count() > 0 && Instant::now() < deadline {
+            std::thread::sleep(LEADER_HOLD_POLL);
+        }
+    }
+}
+
+/// A vault handle a store's leader took ([`LeaderHolds::take`]), on a thread
+/// that may be the store's leader: a group's, or an after-commit callback's
+/// that queues a write again (FIX 12023 W0). Dropped, it lets go of the
+/// handle; when it is the last, the vault closes on a thread of its own
+/// ([`close_vault_elsewhere`]), counted until it has closed.
+pub(crate) struct LeaderHold {
+    /// `Some` until the hold drops.
+    vault: Option<Arc<Vault>>,
+    holds: LeaderHolds,
+}
+
+impl LeaderHold {
+    /// The handle held.
+    pub(crate) fn handle(&self) -> &Arc<Vault> {
+        match &self.vault {
+            Some(vault) => vault,
+            None => unreachable!("a leader hold lets go of its handle only as it drops"),
+        }
+    }
+}
+
+impl std::ops::Deref for LeaderHold {
+    type Target = Vault;
+
+    fn deref(&self) -> &Vault {
+        self.handle()
+    }
+}
+
+impl Drop for LeaderHold {
+    fn drop(&mut self) {
+        if let Some(vault) = self.vault.take() {
+            self.holds.release(vault);
+        }
+    }
+}
+
+impl Store {
+    /// The vault handles this store's leader holds, counted on its open path
+    /// (FIX 12316).
+    pub(crate) fn leader_holds(&self) -> LeaderHolds {
+        self.owner._registered_path.holds.clone()
     }
 }
 
 /// Closes a vault whose last handle a group took to run a detached write, on
 /// a thread of its own: this thread may be the store's leader, which that
-/// close waits for. A vault no thread can start for stays open, said in a
-/// warn, rather than close where its close would wait for itself.
-fn close_vault_elsewhere(vault: Vault) {
+/// close waits for. Its hold is let go of once the vault has closed, so a
+/// reopen waiting on it finds the path free. A vault no thread can start for
+/// stays open, said in a warn, rather than close where its close would wait
+/// for itself, and its hold is let go of, so a reopen refuses as it would
+/// for any vault still open.
+fn close_vault_elsewhere(vault: Vault, holds: LeaderHolds) {
     let slot = Arc::new(Mutex::new(Some(vault)));
     let held = Arc::clone(&slot);
+    let closing = holds.clone();
     let started = std::thread::Builder::new()
         .name("oneiron-vault-close".into())
         .spawn(move || {
             let vault = held.lock().unwrap_or_else(PoisonError::into_inner).take();
             drop(vault);
+            closing.release_closed();
         });
     if let Err(error) = started {
         tracing::warn!(
@@ -624,5 +760,6 @@ fn close_vault_elsewhere(vault: Vault) {
             "a vault whose last handle a detached write held stays open: its close thread did not start"
         );
         std::mem::forget(slot.lock().unwrap_or_else(PoisonError::into_inner).take());
+        holds.release_closed();
     }
 }

@@ -499,6 +499,33 @@ fn lay<T>(
     Some(source)
 }
 
+/// Read the owner's budget beneath an unplanned spawn with no explicit cap.
+/// The caller keeps its original request identity and admits this same result
+/// through the ordinary launch budget path; this is not a spend grant.
+pub(crate) fn owner_spawn_budget_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &crate::task_type::TaskTypeRef,
+) -> Result<Option<u64>> {
+    let type_ref = crate::learning::TypeRef::from(type_ref);
+    let scopes = read_scopes_in_txn(vault, txn, project, Some(&type_ref))?;
+    let mut budget = None;
+    let _ = lay(
+        &mut budget,
+        rows_in_order(&vault.store, txn, &scopes, SpawnChoice::Budget)?,
+        |value| match value {
+            ChoiceValue::Budget(units) => Some(units),
+            _ => None,
+        },
+        |_| true,
+    );
+    Ok(crate::agent_dispatch::resolved_budget_ask(
+        budget.as_ref(),
+        None,
+    ))
+}
+
 impl LivePlanRequest<'_> {
     /// This request with the owner's choices laid under its need
     /// ([`lay_owner_choices_in_txn`]), read where the parent's `project`

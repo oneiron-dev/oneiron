@@ -10,6 +10,8 @@
 use super::*;
 use crate::codebase::entity_id_from_hash_material;
 
+mod rereview;
+
 /// The effector a landing reads secret values under: the owner binds a
 /// record's `read` scope to it at the bind door, and an unbound record
 /// refuses the landing with its typed binding error.
@@ -467,6 +469,7 @@ fn landing_store_identity(repo: &RepoRef) -> String {
     match repo {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
         RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
+        RepoRef::LocalCapture { .. } => repo.canonical(),
     }
 }
 

@@ -43,12 +43,14 @@ use crate::outbound_intent_ledger::ProviderWaitKind;
 use crate::surface_event::SurfaceConnectorPayload;
 use crate::{EntityId, Vault};
 
+mod apns;
 mod content;
 mod email;
 mod host;
 mod line_wire;
 mod telegram;
 
+pub use self::apns::{APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment};
 use self::content::trusted_contact_check_in_text;
 pub use self::host::{
     LINE_API_BASE, SLACK_API_BASE, ServedEndpoints, ServedTransports, TELEGRAM_API_BASE,
@@ -703,6 +705,7 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
             (telegram::TELEGRAM_CHANNEL, "send") => self.telegram_send(request),
             (EMAIL_CHANNEL, "send") => self.email_send(request),
+            ("apns", "push") => self.apns_push(request),
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }

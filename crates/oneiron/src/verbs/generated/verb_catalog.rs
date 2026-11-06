@@ -25,6 +25,12 @@ pub enum AgentVerb {
     SelfFocusScratchpadRecall,
     SelfFocusScratchpadAppend,
     SelfFocusScratchpadSeal,
+    SelfBoardLayout,
+    SelfBoardFold,
+    SelfBoardUnfold,
+    SelfBoardSize,
+    SelfBoardFilter,
+    SelfBoardReplace,
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
@@ -216,6 +222,7 @@ pub enum AgentVerb {
     VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
+    VaultProactivityDigest,
     VaultInboxLens,
     VaultInboxGroups,
     VaultInboxGroupsResolve,
@@ -475,6 +482,12 @@ pub enum AgentVerb {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultDraftersList,
+    VaultDraftersListAs,
+    VaultDraftersStatus,
+    VaultDraftersPolicySet,
+    VaultDraftersRevert,
+    VaultDraftersRevertAs,
     VaultResearchBind,
     VaultResearchFork,
     VaultResearchWeave,
@@ -725,6 +738,7 @@ pub enum AgentVerb {
     VaultCodeCacheGet,
     VaultCodeCacheReuse,
     VaultCodeSnapshotsIngest,
+    VaultCodeSnapshotsCapture,
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
@@ -1059,6 +1073,8 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultProductivityCreate,
     VaultProductivityTree,
+    VaultIngestAgUiImport,
+    VaultIngestAgUiRead,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
@@ -1298,6 +1314,12 @@ impl AgentVerb {
         Self::SelfFocusScratchpadRecall,
         Self::SelfFocusScratchpadAppend,
         Self::SelfFocusScratchpadSeal,
+        Self::SelfBoardLayout,
+        Self::SelfBoardFold,
+        Self::SelfBoardUnfold,
+        Self::SelfBoardSize,
+        Self::SelfBoardFilter,
+        Self::SelfBoardReplace,
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
@@ -1489,6 +1511,7 @@ impl AgentVerb {
         Self::VaultWeaveDigestFeedbackPut,
         Self::VaultWeaveOwnerDigestRender,
         Self::VaultInboxConcernsReview,
+        Self::VaultProactivityDigest,
         Self::VaultInboxLens,
         Self::VaultInboxGroups,
         Self::VaultInboxGroupsResolve,
@@ -1748,6 +1771,12 @@ impl AgentVerb {
         Self::VaultCoachTrainingOffersPilotsComplete,
         Self::VaultCoachTrainingOffersPilotsGet,
         Self::VaultCoachTrainingOffersSources,
+        Self::VaultDraftersList,
+        Self::VaultDraftersListAs,
+        Self::VaultDraftersStatus,
+        Self::VaultDraftersPolicySet,
+        Self::VaultDraftersRevert,
+        Self::VaultDraftersRevertAs,
         Self::VaultResearchBind,
         Self::VaultResearchFork,
         Self::VaultResearchWeave,
@@ -1998,6 +2027,7 @@ impl AgentVerb {
         Self::VaultCodeCacheGet,
         Self::VaultCodeCacheReuse,
         Self::VaultCodeSnapshotsIngest,
+        Self::VaultCodeSnapshotsCapture,
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
@@ -2332,6 +2362,8 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultProductivityCreate,
         Self::VaultProductivityTree,
+        Self::VaultIngestAgUiImport,
+        Self::VaultIngestAgUiRead,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
@@ -2574,6 +2606,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfFocusScratchpadAppend => "self.focus.scratchpad.append",
             Self::SelfFocusScratchpadSeal => "self.focus.scratchpad.seal",
+            Self::SelfBoardLayout => "self.board.layout",
+            Self::SelfBoardFold => "self.board.fold",
+            Self::SelfBoardUnfold => "self.board.unfold",
+            Self::SelfBoardSize => "self.board.size",
+            Self::SelfBoardFilter => "self.board.filter",
+            Self::SelfBoardReplace => "self.board.replace",
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
@@ -2765,6 +2803,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => "vault.weave.digest_feedback.put",
             Self::VaultWeaveOwnerDigestRender => "vault.weave.owner.digest.render",
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
+            Self::VaultProactivityDigest => "vault.proactivity.digest",
             Self::VaultInboxLens => "vault.inbox.lens",
             Self::VaultInboxGroups => "vault.inbox.groups",
             Self::VaultInboxGroupsResolve => "vault.inbox.groups.resolve",
@@ -3040,6 +3079,12 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
             Self::VaultCoachTrainingOffersSources => "vault.coach.training_offers.sources",
+            Self::VaultDraftersList => "vault.drafters.list",
+            Self::VaultDraftersListAs => "vault.drafters.list_as",
+            Self::VaultDraftersStatus => "vault.drafters.status",
+            Self::VaultDraftersPolicySet => "vault.drafters.policy.set",
+            Self::VaultDraftersRevert => "vault.drafters.revert",
+            Self::VaultDraftersRevertAs => "vault.drafters.revert_as",
             Self::VaultResearchBind => "vault.research.bind",
             Self::VaultResearchFork => "vault.research.fork",
             Self::VaultResearchWeave => "vault.research.weave",
@@ -3298,6 +3343,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => "vault.code.cache.get",
             Self::VaultCodeCacheReuse => "vault.code.cache.reuse",
             Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
+            Self::VaultCodeSnapshotsCapture => "vault.code.snapshots.capture",
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
@@ -3638,6 +3684,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultProductivityCreate => "vault.productivity.create",
             Self::VaultProductivityTree => "vault.productivity.tree",
+            Self::VaultIngestAgUiImport => "vault.ingest.ag_ui.import",
+            Self::VaultIngestAgUiRead => "vault.ingest.ag_ui.read",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
@@ -3883,6 +3931,12 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardLayout
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -4074,6 +4128,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -4333,6 +4388,12 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
+                | Self::VaultDraftersStatus
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -4583,6 +4644,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -4895,6 +4957,8 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
                 | Self::VaultProductivityTree
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -5185,6 +5249,12 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardLayout
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -5376,6 +5446,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -5635,6 +5706,12 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
+                | Self::VaultDraftersStatus
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -5885,6 +5962,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -6197,6 +6275,8 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
                 | Self::VaultProductivityTree
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -6476,6 +6556,8 @@ impl AgentVerb {
                 | Self::VaultEvalsLabelsBlocked
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersCandidates
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultRootsRequestsList
                 | Self::VaultLegalHoldsList
@@ -6658,6 +6740,12 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardLayout
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -6827,6 +6915,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -7084,6 +7173,12 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultDraftersList
+                | Self::VaultDraftersListAs
+                | Self::VaultDraftersStatus
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -7321,6 +7416,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -7613,6 +7709,8 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultConversationsCreate
@@ -7823,6 +7921,11 @@ impl AgentVerb {
                 | Self::VaultReportsRoute
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfStandingEdit
@@ -8090,6 +8193,9 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersCandidatesPrepare
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultDraftersPolicySet
+                | Self::VaultDraftersRevert
+                | Self::VaultDraftersRevertAs
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -8240,6 +8346,7 @@ impl AgentVerb {
                 | Self::VaultCodeViewsBuild
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
                 | Self::VaultCodeMergeQueueRequeueSurvivors
@@ -8428,6 +8535,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
+                | Self::VaultIngestAgUiImport
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -8612,6 +8720,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
+            Self::SelfBoardLayout => &["spec"],
+            Self::SelfBoardFold => &["spec"],
+            Self::SelfBoardUnfold => &["spec"],
+            Self::SelfBoardSize => &["spec"],
+            Self::SelfBoardFilter => &["spec"],
+            Self::SelfBoardReplace => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -8820,6 +8934,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultProactivityDigest => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
             Self::VaultInboxGroupsResolve => &["spec"],
@@ -9079,6 +9194,12 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultDraftersList => &["spec"],
+            Self::VaultDraftersListAs => &["spec"],
+            Self::VaultDraftersStatus => &["spec"],
+            Self::VaultDraftersPolicySet => &["spec"],
+            Self::VaultDraftersRevert => &["spec"],
+            Self::VaultDraftersRevertAs => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -9329,6 +9450,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => &["spec"],
             Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsCapture => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
@@ -9663,6 +9785,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
             Self::VaultProductivityTree => &["spec"],
+            Self::VaultIngestAgUiImport => &["spec"],
+            Self::VaultIngestAgUiRead => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -9903,6 +10027,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
+            Self::SelfBoardLayout => &["spec"],
+            Self::SelfBoardFold => &["spec"],
+            Self::SelfBoardUnfold => &["spec"],
+            Self::SelfBoardSize => &["spec"],
+            Self::SelfBoardFilter => &["spec"],
+            Self::SelfBoardReplace => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -10094,6 +10224,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultProactivityDigest => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
             Self::VaultInboxGroupsResolve => &["spec"],
@@ -10353,6 +10484,12 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultDraftersList => &["spec"],
+            Self::VaultDraftersListAs => &["spec"],
+            Self::VaultDraftersStatus => &["spec"],
+            Self::VaultDraftersPolicySet => &["spec"],
+            Self::VaultDraftersRevert => &["spec"],
+            Self::VaultDraftersRevertAs => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -10603,6 +10740,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => &["spec"],
             Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsCapture => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
@@ -10937,6 +11075,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
             Self::VaultProductivityTree => &["spec"],
+            Self::VaultIngestAgUiImport => &["spec"],
+            Self::VaultIngestAgUiRead => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -11223,6 +11363,24 @@ impl AgentVerb {
             }
             Self::SelfFocusScratchpadSeal => {
                 "Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."
+            }
+            Self::SelfBoardLayout => {
+                "The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."
+            }
+            Self::SelfBoardFold => {
+                "Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."
+            }
+            Self::SelfBoardUnfold => {
+                "Unfolds one section of the bound actor's context board; applies at the next turn."
+            }
+            Self::SelfBoardSize => {
+                "Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."
+            }
+            Self::SelfBoardFilter => {
+                "Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."
+            }
+            Self::SelfBoardReplace => {
+                "Replaces the whole layout the bound actor's next turn applies to its context board."
             }
             Self::SelfMemoryDiary => {
                 "Writes one private entry in the bound actor's own diary, as an actor-private NOTE."
@@ -11786,6 +11944,9 @@ impl AgentVerb {
             }
             Self::VaultInboxConcernsReview => {
                 "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."
+            }
+            Self::VaultProactivityDigest => {
+                "Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."
             }
             Self::VaultInboxLens => {
                 "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
@@ -12554,6 +12715,24 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersSources => {
                 "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."
             }
+            Self::VaultDraftersList => {
+                "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."
+            }
+            Self::VaultDraftersListAs => {
+                "An agent lists the vault's own drafter versions, as the owner's list shows them, under its own live Grant naming the read."
+            }
+            Self::VaultDraftersStatus => {
+                "The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor."
+            }
+            Self::VaultDraftersPolicySet => {
+                "The owner sets the drafter policy at the revision they read: on or off, the excluded worlds and the recipe; off, or a newly excluded world, returns each affected target to stock."
+            }
+            Self::VaultDraftersRevert => {
+                "The owner reverts a target to one retained, qualified drafter version at the binding generation they read; an erased version never comes back."
+            }
+            Self::VaultDraftersRevertAs => {
+                "An agent reverts a target to one retained, qualified drafter version at the binding generation it read, under its own live Grant naming the revert."
+            }
             Self::VaultResearchBind => {
                 "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."
             }
@@ -13289,6 +13468,9 @@ impl AgentVerb {
             }
             Self::VaultCodeSnapshotsIngest => {
                 "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
+            }
+            Self::VaultCodeSnapshotsCapture => {
+                "Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque."
             }
             Self::VaultCodeSnapshotsGet => {
                 "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."
@@ -14059,7 +14241,7 @@ impl AgentVerb {
                 "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
+                "Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."
@@ -14239,6 +14421,12 @@ impl AgentVerb {
             }
             Self::VaultProductivityTree => {
                 "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."
+            }
+            Self::VaultIngestAgUiImport => {
+                "The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."
+            }
+            Self::VaultIngestAgUiRead => {
+                "Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."
             }
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
@@ -14842,7 +15030,7 @@ impl AgentVerb {
                 "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
             }
             Self::SelfFold => {
-                "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles."
+                "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console."
             }
             Self::SelfCompact => {
                 "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."

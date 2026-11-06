@@ -53,7 +53,8 @@ pub(crate) use outcomes::{outcome_fact_admissible_in, outcome_question, outcome_
 pub use read::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, reaction_line};
 pub(crate) use read::{grouped_lines_in, person_name_in};
 pub use signal::{
-    MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalPage, page_reaction_signals,
+    MAX_REACTION_SIGNAL_PAGE, ReactionSignal, ReactionSignalDeadlineExceeded, ReactionSignalPage,
+    check_reaction_signal_deadline, page_reaction_signals,
 };
 pub use value::{
     PREDICATE_CONVERSATION_REACTION, PREDICATE_CONVERSATION_REACTION_ECHO, ReactionExternalId,

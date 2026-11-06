@@ -31,6 +31,15 @@ pub struct CodeSnapshotIngestRequest {
     pub pointer: CodeRepoPointer,
 }
 
+/// Captures current folder bytes on the serving host, without a Git commit.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotCaptureRequest {
+    pub project_id: String,
+    /// Absolute host folder. It grants no repository membership or edit rights.
+    pub local_folder: String,
+}
+
 /// One code snapshot, pinned by its artifact and its fork hash.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -97,7 +106,7 @@ pub struct CodeSnapshotView {
     /// The canonical repository pointer the import recorded.
     pub repo_ref: String,
     pub project_id: String,
-    /// The Git commit, 40 lower-hex characters.
+    /// The Git commit, 40 lower-hex characters; absent for a current-folder capture.
     pub commit: Option<String>,
     /// The fork hash, 64 lower-hex characters.
     pub snapshot: String,

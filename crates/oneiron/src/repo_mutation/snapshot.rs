@@ -26,7 +26,11 @@ use crate::git_wire::bundle_tree::{
 };
 use crate::store::code_tree_blob::MODE_GITLINK;
 
+mod capture;
+mod checkout;
 mod pinned;
+pub(crate) use capture::CaptureEntry;
+pub(crate) use checkout::visit_code_capture_files;
 pub(super) use pinned::RepoPinnedBase;
 
 /// The bytes one snapshot holds in memory: a machine floor, not a count.
@@ -211,53 +215,33 @@ fn collect_snapshot_entries(
     entries: &mut Vec<StoredRepoSnapshotEntry>,
     stats: &mut SnapshotStats,
 ) -> Result<()> {
-    let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
-    children.sort_by_key(std::fs::DirEntry::file_name);
-    for child in children {
-        if child.file_name() == OsStr::new(".git") {
-            continue;
-        }
-        let path = child.path();
-        let relative = repo_relative_path(repo_root, &path)?;
-        if indexed_paths.contains(&relative) {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_dir() {
-            if linked_paths.contains(&relative) || nested_repository(&path)? {
-                continue;
-            }
-            collect_snapshot_entries(
-                repo_root,
-                &path,
-                custody,
-                indexed_paths,
-                linked_paths,
-                entries,
-                stats,
-            )?;
-            continue;
-        }
-        if metadata.file_type().is_symlink() {
-            let target = fs::read_link(&path)?;
-            let target = path_arg(&target)?;
-            record_snapshot_entry_size(stats, target.len() as u64)?;
-            entries.push(custody.symlink(relative, target));
-        } else if metadata.file_type().is_file() {
-            if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
+    checkout::visit_checkout_entries(
+        repo_root,
+        dir,
+        indexed_paths,
+        linked_paths,
+        &mut |path, relative, metadata| {
+            if metadata.file_type().is_symlink() {
+                let target = fs::read_link(path)?;
+                let target = path_arg(&target)?;
+                record_snapshot_entry_size(stats, target.len() as u64)?;
+                entries.push(custody.symlink(relative, target));
+            } else if metadata.file_type().is_file() {
+                if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
+                    return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                        "repo mutation snapshot file exceeds max bytes",
+                    )));
+                }
+                record_snapshot_entry_size(stats, metadata.len())?;
+                entries.push(custody.file(relative, is_executable(metadata), fs::read(path)?));
+            } else {
                 return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                    "repo mutation snapshot file exceeds max bytes",
+                    "repo snapshot supports only files, directories, and symlinks",
                 )));
             }
-            record_snapshot_entry_size(stats, metadata.len())?;
-            entries.push(custody.file(relative, is_executable(&metadata), fs::read(&path)?));
-        } else {
-            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo snapshot supports only files, directories, and symlinks",
-            )));
-        }
-    }
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 pub(super) fn restore_repo_snapshot(

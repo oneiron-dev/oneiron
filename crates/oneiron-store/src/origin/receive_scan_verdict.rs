@@ -58,7 +58,9 @@ impl CheckoutSecretLiftProposal {
 /// A short, name-shaped slug for the repository.
 fn repo_slug(repo: &RepoRef) -> String {
     match repo {
-        RepoRef::LocalFolder { path, .. } => path_slug(path.rsplit('/').next().unwrap_or(path)),
+        RepoRef::LocalFolder { path, .. } | RepoRef::LocalCapture { path } => {
+            path_slug(path.rsplit('/').next().unwrap_or(path))
+        }
         RepoRef::GitHubAtCommit { owner, repo, .. } => {
             format!("{}_{}", path_slug(owner), path_slug(repo))
         }
