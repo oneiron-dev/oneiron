@@ -200,11 +200,11 @@ fn tick(
     if seal.organ.is_none() {
         follow_seal_pack(server, installs);
     }
-    let keys = seal_keys(server, seal)?;
     let tsa = seal.tsa.clone();
     if host.status(SEAL_ORGAN).is_none() {
         host.install(install(server, seal, fetch_grant(seal, tsa.as_deref())?)?);
     }
+    let keys = seal_keys(server, seal)?;
     if let Some(installed) = host.spec(SEAL_ORGAN)
         && installed.tier == OrganTier::ThirdParty
         && !oneiron_organ_host::filesystem_confined()
