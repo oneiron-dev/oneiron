@@ -3340,7 +3340,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/execution_scope.rs` | src | s | 6 crate-vis | — | Core half of `git_wire::execution_scope`: its store-layer items live in… |
 | `src/git_wire/failure.rs` | src | s | 1 re-export · 1 crate-vis | — | Core half of `git_wire::failure`: its store-layer items live in `oneiron_store::git_wire::failure` and are… |
 | `src/git_wire/hub_read.rs` | src | s | 2 crate-vis | — | Core half of `git_wire::hub_read`: its store-layer items live in `oneiron_store::git_wire::hub_read` and are… |
-| `src/git_wire/import_fetch.rs` | src | m | 1 struct · 2 enum · 4 fn · 3 crate-vis | FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome | The outside import's Git legs (FIX 6871, G7 PR1): one exact fetch of one outside ref into a fresh private… |
+| `src/git_wire/import_fetch.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 re-export · 3 crate-vis | FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome | The outside import's Git legs (FIX 6871, G7 PR1): one exact fetch of one outside ref into a fresh private… |
 | `src/git_wire/mirror_plan_push.rs` | src | s | 2 struct · 1 enum · 2 fn | GitPlanPushReport, GitPlanRef, GitPlanRefOutcome | The outbound half of an automatic mirror push plan (FIX 6866 part 2): an authenticated read of a frozen… |
 | `src/git_wire/mirror_plan_review.rs` | src | m | 4 struct · 1 enum · 6 fn | GitPeeledRef, GitRefEnd, GitRefTag, GitRetainedPeeledRef, GitRetainedRefTag | What a whole ref an automatic mirror plan pushes names beyond the commits it reaches (FIX 6866 part 2), and… |
 | `src/git_wire/mirror_push.rs` | src | s | 1 fn · 1 crate-vis | — | Core half of `git_wire::mirror_push`: its store-layer items live in `oneiron_store::git_wire::mirror_push`… |
@@ -5137,7 +5137,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/document.rs` | src | s | 3 crate-vis | — | Review-approved repository file updates lower to idempotent document edits |
 | `src/repo_mutation/external_import/host.rs` | src | s | 1 trait | ExternalGitSourceHost | The per-call transport an outside import borrows (FIX 6871): built by the serving host from the credential… |
 | `src/repo_mutation/external_import/lfs.rs` | src | s | 1 crate-vis | — | An outside import's Git-LFS objects (FIX 7596): after the exact fetch and before any send, every object the… |
-| `src/repo_mutation/external_import/mod.rs` | src | m | 2 enum · 1 fn · 3 const · 2 re-export · 6 crate-vis | ExternalImportRefPlan, ExternalStatusRoute | Exact outside import (FIX 6871, G7 PR1): one outside commit, fetched exactly and sent through the vault's… |
+| `src/repo_mutation/external_import/mod.rs` | src | L | 2 enum · 3 fn · 3 const · 2 re-export · 6 crate-vis | ExternalImportRefPlan, ExternalStatusRoute | Exact outside import (FIX 6871, G7 PR1): one outside commit, fetched exactly and sent through the vault's… |
 | `src/repo_mutation/external_import/receive.rs` | src | s | 5 crate-vis | — | Where an outside import meets the door's own records (FIX 6871): its exact base, resolved by the candidate… |
 | `src/repo_mutation/external_import/source.rs` | src | m | 27 crate-vis | — | The outside import's four reserved claim families (FIX 6871): the immutable source, one immutable dispatch… |
 | `src/repo_mutation/external_import/status.rs` | src | s | 2 crate-vis | — | `external_import_status` (FIX 6871): one import's progress as a pure join over its own immutable facts and… |
