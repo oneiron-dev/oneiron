@@ -41,6 +41,7 @@ pub(crate) use ai_answers::{lift_ai_answer, lift_ai_video_job};
 
 mod llm_responses;
 pub(crate) use llm_responses::{
+    lift_model_role_invocation, lift_model_step_receipt, lift_model_stream_events,
     lift_model_stream_terminal, lift_settled_program_step, lift_settled_step,
 };
 mod model_usage;
