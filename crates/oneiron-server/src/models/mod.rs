@@ -124,7 +124,9 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+pub(crate) use worker_host::{
+    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+};
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{
@@ -357,11 +359,22 @@ fn build_provider(
         }
         ProviderKind::AnthropicCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::ApiKeyHeader)?;
+            let engine_models = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             Arc::new(AnthropicMessagesBackend::new(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
                     cap: output_cap(provider),
+                    engine_models,
                 },
             ))
         }

@@ -123,7 +123,7 @@ pub fn read_host_output(
     else {
         return Ok(None);
     };
-    read_whole(vault, &output)
+    read_whole(vault, parent_run, &output)
 }
 
 /// Whether run `run` has a replay record on `vault`.
@@ -201,11 +201,18 @@ pub fn read_scoped_finding(vault: &Vault, job: &ReaderJob) -> Result<Option<Vec<
     else {
         return Ok(None);
     };
-    read_whole(vault, &output)
+    read_whole(vault, found.owner, &output)
 }
 
 /// `output`'s whole body.
-fn read_whole(vault: &Vault, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
+fn read_whole(
+    vault: &Vault,
+    owner: EntityId,
+    output: &CodeRunRawOutput,
+) -> Result<Option<Vec<u8>>> {
+    if vault.code_run_output_withdrawn(owner, output)? {
+        return Ok(None);
+    }
     let len = usize::try_from(output.raw_len)
         .map_err(|_| Error::ArithmeticOverflow("host scoped output length"))?;
     vault.read_code_run_raw_output_range(output, 0, len)

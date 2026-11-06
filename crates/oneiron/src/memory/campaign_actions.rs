@@ -317,7 +317,7 @@ impl Memory<'_> {
             require_readable(&lane, txn, &[campaign, person, evidence])?;
             // An archived campaign still must honor an unsubscribe.
             require_campaign_person(self, txn, campaign, person, false)?;
-            let receipt = crate::campaign::send_hygiene::apply_suppression_in_txn(
+            let receipt = self.vault.store.record_hooks.apply_suppression_in_txn(
                 self.vault,
                 txn,
                 crate::write_envelope::cohort_claims::suppression::SuppressionCause::Unsubscribe,
