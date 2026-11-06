@@ -86,8 +86,10 @@ pub use folds::{
 
 pub use check_material::CompactionCheckMaterialRef;
 pub(crate) use check_material::{
-    CheckMaterialFault, CompactionCheckMaterial, check_material_carriage, check_material_in,
-    check_material_owners, erase_check_material_in_txn, put_check_material_in_txn,
+    CheckMaterialFault, CompactionCheckMaterial, admit_check_material_in_txn,
+    check_material_carriage, check_material_in, check_material_owners,
+    compaction_check_material_accepts_masked, erase_check_material_in_txn,
+    put_check_material_in_txn,
 };
 pub use conversation::{
     ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,

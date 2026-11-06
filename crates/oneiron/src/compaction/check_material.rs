@@ -14,16 +14,23 @@
 //! and the check's declaration all bind it. The row lands in the mint's own
 //! write, with the summary, the receipt and the check's declaration.
 //!
+//! The reply is a model's words, so the side-row wall admits the material
+//! first in that write, before its ref is taken: each secret the wall places
+//! reads as its handle, and the ref names the bytes the row keeps. A
+//! material the wall refuses is not kept, and the check reads it missing.
+//!
 //! The erase of the SUMMARY or of any source, and the withdrawal of the
 //! summary's words, take the material out of the live row. The erase's
 //! obligations retire the copy in each image. The erased row keeps its refs
-//! and its digest only. Nothing here refuses an erase. No clock expires the
-//! row: it stays while its summary stands, and ordinary retention retires its
-//! instances when no row names them.
+//! and its digest only. A row that does not decode keeps the opaque erased
+//! marker. Nothing here refuses an erase. No clock expires the row: it stays
+//! while its summary stands, and ordinary retention retires its instances
+//! when no row names them.
 
 use std::time::Duration;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_store::body_envelope::opaque_response::OPAQUE_ERASED;
 use serde::{Deserialize, Serialize};
 
 use super::driver::StoredCompactionRequest;
@@ -31,15 +38,25 @@ use super::{
     CompactionGateFailure, CompactionGatePolicy, CompactionProduct, CompactionRequest,
     gate_compaction,
 };
-use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::error::GateError;
+use crate::side_table::{self, ErasedForm, Named, SideKey, SideTable};
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
-use crate::store::{ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, Store};
+use crate::store::{
+    ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, Store, is_opaque_erased,
+    stamp_opaque_erased,
+};
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::FinishReason;
 
 /// Check material rows. Key: id16(summary).
 const MATERIALS: SideTable<EntityId, CheckMaterialRow, Named> =
     SideTable::new(&side_table::COMPACTION_CHECK_MATERIAL);
+
+/// Whether a masked copy of a `COMPACTION_CHECK_MATERIAL` row still decodes
+/// as its typed value, for the historical lift sweep (FIX 2680, 5040).
+pub(crate) fn compaction_check_material_accepts_masked(bytes: &[u8]) -> bool {
+    side_table::decodes::<CheckMaterialRow, Named>(bytes)
+}
 
 /// Where a conversation summary's check material is, and what it is (FIX
 /// 5040): its occurrence, which is the sealed request's job id, and its
@@ -103,7 +120,9 @@ pub(crate) struct CompactionCheckMaterial {
 
 impl CompactionCheckMaterial {
     /// The material of the accepted try, taken before its whole reply is
-    /// discarded. `None` for a window that no conversation binds.
+    /// discarded. `None` for a window that no conversation binds. The reply
+    /// is as the backend gave it: only [`admit_check_material_in_txn`] makes
+    /// it a copy that a row may keep.
     pub(crate) fn capture(
         request: &CompactionRequest,
         product: &CompactionProduct,
@@ -168,6 +187,20 @@ struct CheckMaterialRow {
 }
 
 impl CheckMaterialRow {
+    /// The standing row of `material`, landed with `summary` and bound to
+    /// `reference`.
+    fn of(
+        summary: EntityId,
+        reference: &CompactionCheckMaterialRef,
+        material: CompactionCheckMaterial,
+    ) -> Self {
+        Self {
+            body: bound_body(summary, reference),
+            sources: material.request.sources().to_vec(),
+            material: Some(material),
+        }
+    }
+
     /// The records whose words the material copies: the SUMMARY (its reply)
     /// and the sources (its window). The erase of any one takes it.
     fn owners(&self) -> Vec<EntityId> {
@@ -181,9 +214,65 @@ impl CheckMaterialRow {
     }
 }
 
-/// Puts `material`, the material of the landing `summary`, in the mint's
-/// own write, bound to `reference`, the ref that its receipt names. When an
-/// owner is already gone, the row is kept in its erased form.
+/// An erase takes the material and keeps the refs and digest (FIX 5040).
+impl ErasedForm for CheckMaterialRow {
+    fn into_erased(mut self) -> Result<Self> {
+        self.material = None;
+        Ok(self)
+    }
+}
+
+/// The body that `reference` names, owned by `summary`.
+fn bound_body(summary: EntityId, reference: &CompactionCheckMaterialRef) -> OwnedBody {
+    OwnedBody {
+        owner: summary,
+        occurrence: reference.occurrence,
+        state: BodyState::Complete {
+            body: reference.body.clone(),
+        },
+        result: None,
+    }
+}
+
+/// Admits `material`, the material of the landing `summary`, through the
+/// side-row wall into its row, in the mint's own write, before its ref is
+/// taken (FIX 5040). Each secret the wall places reads as its handle, so
+/// the ref names the bytes the row keeps. When the wall refuses, the
+/// material is not kept: the ref names the material as given, no row holds
+/// it, and the check answers `check_material_missing`. The summary still
+/// lands.
+///
+/// # Errors
+///
+/// Storage errors, and a material that does not encode.
+pub(crate) fn admit_check_material_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    summary: EntityId,
+    material: CompactionCheckMaterial,
+) -> Result<(CompactionCheckMaterialRef, Option<CompactionCheckMaterial>)> {
+    let given = material.reference()?;
+    let mut row = CheckMaterialRow::of(summary, &given, material);
+    // The wall refuses before it mints a custody record.
+    if let Err(error) = MATERIALS.admit(vault, txn, &summary, &mut row) {
+        if !matches!(error, Error::Gate(GateError::GateWriteRejected { .. })) {
+            return Err(error);
+        }
+        tracing::warn!(
+            "a conversation summary's check material holds a secret the side-row wall cannot \
+             place; it is not kept"
+        );
+        return Ok((given, None));
+    }
+    let material = row.material.ok_or(Error::InvariantViolation(
+        "an admitted compaction check material is gone",
+    ))?;
+    Ok((material.reference()?, Some(material)))
+}
+
+/// Puts `material`, the admitted material of the landing `summary`, in the
+/// mint's own write, bound to `reference`, the ref that its receipt names.
+/// When an owner is already gone, the row is kept in its erased form.
 ///
 /// # Errors
 ///
@@ -192,23 +281,12 @@ pub(crate) fn put_check_material_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     summary: EntityId,
-    material: &CompactionCheckMaterial,
+    material: CompactionCheckMaterial,
     reference: &CompactionCheckMaterialRef,
 ) -> Result<()> {
-    let mut row = CheckMaterialRow {
-        body: OwnedBody {
-            owner: summary,
-            occurrence: reference.occurrence,
-            state: BodyState::Complete {
-                body: reference.body.clone(),
-            },
-            result: None,
-        },
-        sources: material.request.sources().to_vec(),
-        material: Some(material.clone()),
-    };
+    let row = CheckMaterialRow::of(summary, reference, material);
     if crate::llm::owner_gone_in_txn(vault, &*txn, &row.owners())? {
-        row.material = None;
+        return MATERIALS.put_erased(vault, txn, &summary, side_table::Erased::of(row)?);
     }
     MATERIALS.put(vault, txn, &summary, &row)
 }
@@ -265,15 +343,7 @@ pub(crate) fn check_material_in(
     let Ok(row) = MATERIALS.decode_value(bytes) else {
         return Ok(Err(Unreadable));
     };
-    let bound = OwnedBody {
-        owner: *summary,
-        occurrence: reference.occurrence,
-        state: BodyState::Complete {
-            body: reference.body.clone(),
-        },
-        result: None,
-    };
-    if row.body != bound {
+    if row.body != bound_body(*summary, reference) {
         return Ok(Err(Changed));
     }
     let Some(material) = row.material else {
@@ -317,10 +387,12 @@ pub(crate) fn check_material_owners(key: &[u8], value: &[u8]) -> Vec<EntityId> {
 }
 
 /// The erase of `owner` takes the material out of every row that it owns,
-/// in the erase's own transaction, at both delete doors. Each row stays in
-/// its erased form, with its refs and digest. A row that does not decode
-/// stays as it is. The copies in images retire through the obligations of
-/// the rows.
+/// in the erase's own transaction, at both delete doors. The row keyed by
+/// `owner` as its SUMMARY is taken whatever its bytes decode to (FIX 5040).
+/// A row that decodes stays in its erased form, with its refs and digest.
+/// A row that does not decode, keyed by `owner` or naming its id, keeps the
+/// opaque erased marker that its response family reads as erased. The
+/// copies in images retire through the obligations of the rows.
 ///
 /// # Errors
 ///
@@ -331,31 +403,39 @@ pub(crate) fn erase_check_material_in_txn(
     owner: &EntityId,
 ) -> Result<()> {
     let needle = owner.to_hex();
-    let mut owned = Vec::new();
+    let mut erased = Vec::new();
+    let mut opaque = Vec::new();
     for row in MATERIALS.iter_raw_from(store, wtxn, &[])? {
         let (key, bytes) = row?;
-        // An owner's id is in its row as hex text: a row without that text
-        // is not decoded.
-        if !bytes
-            .windows(needle.len())
-            .any(|window| window == needle.as_bytes())
-        {
-            continue;
-        }
-        let Ok(mut row) = MATERIALS.decode_value(&bytes) else {
-            continue;
-        };
-        if row.material.is_none() || !row.owners().contains(owner) {
-            continue;
-        }
-        row.material = None;
-        owned.push((key, row));
-    }
-    for (key, row) in owned {
         let Some(summary) = <EntityId as SideKey>::decode_key(&key) else {
             continue;
         };
-        MATERIALS.put(store, wtxn, &summary, &row)?;
+        let keyed = summary == *owner;
+        // An owner's id is in its row as hex text: a row without that text,
+        // and not keyed by the owner, is not decoded.
+        let named = keyed
+            || bytes
+                .windows(needle.len())
+                .any(|window| window == needle.as_bytes());
+        if !named || is_opaque_erased(&bytes) {
+            continue;
+        }
+        match MATERIALS.decode_value(&bytes) {
+            Ok(row) if row.material.is_some() && (keyed || row.owners().contains(owner)) => {
+                erased.push((summary, row));
+            }
+            Ok(_) => {}
+            Err(_) => opaque.push(summary),
+        }
+    }
+    for (summary, row) in erased {
+        MATERIALS.put_erased(store, wtxn, &summary, side_table::Erased::of(row)?)?;
+    }
+    let marker = stamp_opaque_erased(OPAQUE_ERASED);
+    for summary in opaque {
+        store
+            .vault_meta
+            .put(wtxn, &MATERIALS.key_bytes(&summary), &marker)?;
     }
     Ok(())
 }
