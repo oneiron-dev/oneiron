@@ -72,8 +72,9 @@ pub(crate) fn erase_birth_carriers_in_txn(
             None => continue,
         };
         let doomed = doomed_carriers_in_txn(vault, wtxn, &doc, named)?;
-        if !doomed.is_empty() {
-            drop_from_stored_window_in_txn(vault, wtxn, &key, &doc, &doomed)?;
+        let positions = crate::sync::origin_positions::stale_birth_keys_in_txn(vault, wtxn, &doc)?;
+        if !doomed.is_empty() || !positions.is_empty() {
+            drop_from_stored_window_in_txn(vault, wtxn, &key, &doc, &doomed, &positions)?;
         }
     }
     Ok(())
@@ -128,19 +129,21 @@ pub(in crate::sync) fn scrub_erased_actor_births(
     doc: &LoroDoc,
     history_free: Option<&WindowKey>,
 ) -> Result<bool> {
-    let doomed = {
+    let (doomed, positions) = {
         let rtxn = vault.store.env.read_txn()?;
         let mut seen: BTreeMap<EntityId, bool> = BTreeMap::new();
-        doomed_carriers_in_txn(vault, &rtxn, doc, |actor| {
+        let doomed = doomed_carriers_in_txn(vault, &rtxn, doc, |actor| {
             if let Some(erased) = seen.get(actor) {
                 return Ok(*erased);
             }
             let erased = vault.carrier_actor_erased_in_txn(&rtxn, actor)?;
             seen.insert(*actor, erased);
             Ok(erased)
-        })?
+        })?;
+        let positions = crate::sync::origin_positions::stale_birth_keys_in_txn(vault, &rtxn, doc)?;
+        (doomed, positions)
     };
-    if doomed.is_empty() {
+    if doomed.is_empty() && positions.is_empty() {
         return Ok(false);
     }
     // Pin BEFORE the removal: the operation that put each carrier in still
@@ -152,6 +155,7 @@ pub(in crate::sync) fn scrub_erased_actor_births(
     for key in &doomed {
         map_delete(&map, key)?;
     }
+    crate::sync::origin_positions::remove_keys(doc, &positions)?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }
@@ -260,12 +264,14 @@ fn drop_from_stored_window_in_txn(
     key: &WindowKey,
     doc: &LoroDoc,
     doomed: &[String],
+    positions: &[String],
 ) -> Result<()> {
     let before = doc.oplog_vv();
     let map = births(doc);
     for map_key in doomed {
         map_delete(&map, map_key)?;
     }
+    crate::sync::origin_positions::remove_keys(doc, positions)?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     let removal = export_updates_from(doc, &before)?;
     let label = key.as_str().to_owned();

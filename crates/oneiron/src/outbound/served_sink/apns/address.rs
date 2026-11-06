@@ -30,7 +30,15 @@ impl ApnsDeviceAddress {
         address.device_token.make_ascii_lowercase();
         let bytes = serde_json::to_vec(&address)
             .map_err(|_| Error::InvalidClaimBody("APNs address encoding failed"))?;
-        Ok(format!("{ADDRESS_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes)))
+        let address = format!("{ADDRESS_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes));
+        if address.len()
+            > crate::write_envelope::channel_identity::keys::MAX_ADDRESS_OR_HANDLE_BYTES
+        {
+            return Err(Error::InvalidClaimBody(
+                "APNs device address exceeds channel-identity address bound",
+            ));
+        }
+        Ok(address)
     }
 
     /// The normal outbound target of the identity returned by that provision.
