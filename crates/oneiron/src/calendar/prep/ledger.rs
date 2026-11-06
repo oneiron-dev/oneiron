@@ -8,6 +8,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{claim_surfaceable, decode_claim_body};
 use crate::commitment::{CommitmentStatus, decode_commitment_claim};
 use crate::ports::EntityStoreRead;
+use crate::store::ManifestDbs;
 use crate::{EntityId, Error, Result, Vault};
 
 pub(super) fn unscoped_ledger_prep_items(
@@ -16,12 +17,20 @@ pub(super) fn unscoped_ledger_prep_items(
     fired_at: u64,
 ) -> Result<Vec<(EntityId, PrepItem)>> {
     let txn = vault.store.env.read_txn()?;
-    ledger_prep_items(vault, &vault.store.read(), &txn, event, fired_at, |id| {
-        Ok(vault
-            .store
-            .port_entity_record(&txn, id)?
-            .map(|row| row.encode()))
-    })
+    ledger_prep_items(
+        vault,
+        &vault.store.read(),
+        vault.store.pending_scan_checks(),
+        &txn,
+        event,
+        fired_at,
+        |id| {
+            Ok(vault
+                .store
+                .port_entity_record(&txn, id)?
+                .map(|row| row.encode()))
+        },
+    )
 }
 
 /// `source` returns this caller's projected row, never merely its membership
@@ -29,6 +38,7 @@ pub(super) fn unscoped_ledger_prep_items(
 pub(super) fn ledger_prep_items(
     vault: &Vault,
     store: &crate::store::StoreRead<'_>,
+    pending: &crate::store::PendingScanChecks,
     txn: &heed::RoTxn<'_>,
     event: &PrepEvent,
     fired_at: u64,
@@ -42,9 +52,40 @@ pub(super) fn ledger_prep_items(
             .ok_or(Error::CorruptedIndex("prep ledger source header"))?;
         Ok((header.learned_at <= fired_at).then_some(raw))
     };
+    let mut contacts: Vec<_> = event.attendee_refs.iter().map(|id| (*id, None)).collect();
+    for id in vault.claims_for_subject_from_read_in_txn(store, txn, &event.event_ref)? {
+        let Some(raw) = source_in_time(&id)? else {
+            continue;
+        };
+        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if body.predicate != crate::calendar::claims::PREDICATE_CALENDAR_ATTENDEE
+            || !claim_surfaceable(&body)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(store.base(), txn, &id)?
+        {
+            continue;
+        }
+        let attendee = crate::calendar::claims::decode_attendee_value(&body.value)?;
+        let party = attendee
+            .who
+            .strip_prefix("mailto:")
+            .unwrap_or(&attendee.who)
+            .trim();
+        if !party.contains('@') {
+            continue;
+        }
+        for contact in crate::counterparty_contact::contact_ids_with_live_head_from_read_in_txn(
+            store,
+            pending,
+            txn,
+            crate::counterparty_contact::PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+            party,
+        )? {
+            contacts.push((contact, Some((party.to_owned(), id))));
+        }
+    }
     let mut seen = HashSet::new();
     let mut items = Vec::new();
-    for attendee in &event.attendee_refs {
+    for (attendee, expected_party) in &contacts {
         let (ledger, label_heads) =
             match vault.commitment_ledger_for_counterparty_in_txn(store, txn, attendee, |id| {
                 Ok(source_in_time(id)?.is_some())
@@ -53,6 +94,12 @@ pub(super) fn ledger_prep_items(
                 Err(Error::EntityNotFound | Error::InvalidEntityType(_)) => continue,
                 Err(error) => return Err(error),
             };
+        if expected_party
+            .as_ref()
+            .is_some_and(|(party, _)| ledger.counterparty.counterparty != *party)
+        {
+            continue;
+        }
         for entry in ledger.owed_by_them.into_iter().chain(ledger.owed_to_them) {
             if seen.contains(&entry.commitment_id) {
                 continue;
@@ -79,6 +126,12 @@ pub(super) fn ledger_prep_items(
             let mut source_refs = vec![entry.commitment_id.to_hex()];
             for head in label_heads {
                 let hex = head.to_hex();
+                if !source_refs.contains(&hex) {
+                    source_refs.push(hex);
+                }
+            }
+            if let Some((_, attendee_claim)) = expected_party {
+                let hex = attendee_claim.to_hex();
                 if !source_refs.contains(&hex) {
                     source_refs.push(hex);
                 }

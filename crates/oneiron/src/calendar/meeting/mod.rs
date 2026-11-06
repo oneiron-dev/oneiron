@@ -280,7 +280,10 @@ impl Memory<'_> {
         &self,
         event: EntityId,
         lane: &crate::claim::ScopedRead<'_>,
-        telemetry: Option<&crate::off_record::SessionRetrievalTelemetry<'_>>,
+        session: Option<(
+            &crate::off_record::SessionRetrievalTelemetry<'_>,
+            &crate::store::PendingScanChecks,
+        )>,
     ) -> MemoryResult<(ScopedReadResult<Option<PrepPack>>, Vec<EntityId>)> {
         let scoped = lane.read_projected(
             &[PointRead::id(event)],
@@ -313,7 +316,7 @@ impl Memory<'_> {
                 fired_at: self.vault().now_recorded_at(),
                 policy: PrepPolicy::default(),
             },
-            telemetry,
+            session,
         )?;
         receipt.restrict_with(&pack.receipt);
         if let Some(pack) = &pack.value {

@@ -15,6 +15,7 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_NOTE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::store::ManifestDbs;
 use crate::vault::Vault;
 
 /// Default ceiling on the assembled pack. A ceiling, not a target.
@@ -183,7 +184,10 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
 pub(crate) fn build_prep_pack_scoped(
     read: &crate::claim::ScopedRead<'_>,
     request: &PrepBuildRequest,
-    telemetry: Option<&crate::off_record::SessionRetrievalTelemetry<'_>>,
+    session: Option<(
+        &crate::off_record::SessionRetrievalTelemetry<'_>,
+        &crate::store::PendingScanChecks,
+    )>,
 ) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
     if !prep_is_eligible(&request.event, request.policy) {
         return Ok(crate::claim::ScopedReadResult {
@@ -201,8 +205,8 @@ pub(crate) fn build_prep_pack_scoped(
      -> Result<bool> { Ok(true) };
     let builder = prep_context_builder(read.vault(), &request.event, request.fired_at)
         .reading(read.store_read());
-    let builder = match telemetry {
-        Some(telemetry) => builder.in_session(telemetry),
+    let builder = match session {
+        Some((telemetry, _)) => builder.in_session(telemetry),
         None => builder,
     };
     let (scoped, _) = builder
@@ -219,6 +223,10 @@ pub(crate) fn build_prep_pack_scoped(
             super::ledger::ledger_prep_items(
                 read.vault(),
                 &read.store_read(),
+                session.map_or_else(
+                    || read.vault().store.pending_scan_checks(),
+                    |(_, pending)| pending,
+                ),
                 txn,
                 &request.event,
                 request.fired_at,

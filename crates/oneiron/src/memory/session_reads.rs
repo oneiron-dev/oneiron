@@ -175,7 +175,11 @@ impl<'s> SessionReadContext<'s> {
                 let event = input.event_id()?;
                 let lane = self.lane(ClaimReadStatus::Surfaceable);
                 let telemetry = self.session.retrieval_telemetry(self.route)?;
-                let (read, rows) = memory.calendar_prep_in(event, &lane, Some(&telemetry))?;
+                let (read, rows) = memory.calendar_prep_in(
+                    event,
+                    &lane,
+                    Some((&telemetry, self.session.pending_scan_checks())),
+                )?;
                 (encode(&read)?, rows)
             }
         };
