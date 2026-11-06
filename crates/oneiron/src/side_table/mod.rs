@@ -40,6 +40,11 @@ pub(crate) trait SideTableDbs {
     /// `None` for a target that holds only `vault_meta` (an open gate before the store exists).
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb>;
 
+    /// The concrete custody owner, when this target names one non-union store.
+    fn side_key_custody(&self) -> Option<&crate::store::key_custody::KeyCustody> {
+        None
+    }
+
     fn side_sync_state(&self) -> Result<&OverlayStrDb> {
         self.side_sync_state_opt().ok_or(Error::InvariantViolation(
             "a sync_state side table needs a target that holds sync_state",
@@ -61,6 +66,10 @@ impl<T: ManifestDbs> SideTableDbs for T {
 
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
         Some(self.sync_state())
+    }
+
+    fn side_key_custody(&self) -> Option<&crate::store::key_custody::KeyCustody> {
+        (!self.is_union()).then(|| self.key_custody())
     }
 }
 
@@ -88,6 +97,13 @@ impl SideTableDbs for RoutedDbs<'_> {
         }
     }
 
+    fn side_key_custody(&self) -> Option<&crate::store::key_custody::KeyCustody> {
+        match self {
+            Self::Base(vault) => vault.side_key_custody(),
+            Self::Session(view) => view.side_key_custody(),
+        }
+    }
+
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         match self {
             Self::Base(vault) => vault.side_custody(),
@@ -105,6 +121,10 @@ impl SideTableDbs for crate::Vault {
 
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
         self.store.side_sync_state_opt()
+    }
+
+    fn side_key_custody(&self) -> Option<&crate::store::key_custody::KeyCustody> {
+        self.store.side_key_custody()
     }
 
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {

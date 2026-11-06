@@ -94,7 +94,14 @@ pub(crate) fn stage_retirement_in_txn(
             .as_ref()
             .map_or(intent.cause, |standing| standing.cause.max(intent.cause)),
     };
-    RETIRE_PENDING.put(dbs, wtxn, &intent.subject, &value)
+    RETIRE_PENDING.put(dbs, wtxn, &intent.subject, &value)?;
+    crate::agent_def::setup_trace::observe_custody_retirement(
+        dbs,
+        &intent.subject,
+        value.through,
+        value.cause,
+    );
+    Ok(())
 }
 
 /// Withdraws the Retention intent standing for `subject`, in `wtxn`, when
@@ -107,7 +114,11 @@ pub(crate) fn withdraw_retention_in_txn(
 ) -> Result<bool> {
     match RETIRE_PENDING.get(dbs, &*wtxn, subject)? {
         Some(standing) if standing.cause == RetireCause::Retention => {
-            RETIRE_PENDING.delete(dbs, wtxn, subject)
+            let deleted = RETIRE_PENDING.delete(dbs, wtxn, subject)?;
+            if deleted {
+                crate::agent_def::setup_trace::observe_retirement_withdrawal(dbs, subject);
+            }
+            Ok(deleted)
         }
         _ => Ok(false),
     }

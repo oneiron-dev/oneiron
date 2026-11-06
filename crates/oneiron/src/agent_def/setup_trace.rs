@@ -8,6 +8,8 @@ use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::federation::Scope;
+use crate::side_table::SideTableDbs;
+use crate::store::key_custody::{CustodySubject, KeyCustody, RetireCause, RetirementIntent};
 use crate::store::{ManifestDbs, Store};
 
 thread_local! {
@@ -21,19 +23,30 @@ struct Position {
     unborn: bool,
 }
 
+#[derive(Clone)]
+pub(crate) enum SetupRetirementEvent {
+    Staged(RetirementIntent),
+    Withdrawn(CustodySubject),
+}
+
 struct Trace {
     owner: usize,
     positions: Vec<Position>,
     mutated: BTreeSet<EntityId>,
     retired_positions: BTreeMap<EntityId, Option<Scope>>,
     position_resets: BTreeSet<EntityId>,
+    retirements: Vec<SetupRetirementEvent>,
 }
 
 fn active(store: &impl ManifestDbs) -> Option<Rc<RefCell<Trace>>> {
     if store.is_union() {
         return None;
     }
-    let owner = std::ptr::from_ref(store.key_custody()) as usize;
+    active_owner(store.key_custody())
+}
+
+fn active_owner(owner: &KeyCustody) -> Option<Rc<RefCell<Trace>>> {
+    let owner = std::ptr::from_ref(owner) as usize;
     TRACES.with(|traces| {
         traces
             .borrow()
@@ -59,6 +72,7 @@ impl<'store> SetupMutationTrace<'store> {
             mutated: BTreeSet::new(),
             retired_positions: BTreeMap::new(),
             position_resets: BTreeSet::new(),
+            retirements: Vec::new(),
         }));
         TRACES.with(|traces| traces.borrow_mut().push(Rc::clone(&state)));
         Self {
@@ -99,6 +113,7 @@ impl<'store> SetupMutationTrace<'store> {
             entities: std::mem::take(&mut trace.mutated),
             retired_positions: std::mem::take(&mut trace.retired_positions),
             position_resets: std::mem::take(&mut trace.position_resets),
+            retirements: std::mem::take(&mut trace.retirements),
             blast_radius,
         })
     }
@@ -115,6 +130,7 @@ pub(crate) struct ObservedSetupMutations {
     entities: BTreeSet<EntityId>,
     retired_positions: BTreeMap<EntityId, Option<Scope>>,
     position_resets: BTreeSet<EntityId>,
+    retirements: Vec<SetupRetirementEvent>,
     blast_radius: u64,
 }
 
@@ -127,6 +143,10 @@ impl ObservedSetupMutations {
 
     pub(crate) fn entities(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.entities.iter().copied()
+    }
+
+    pub(crate) fn retirements(&self) -> &[SetupRetirementEvent] {
+        &self.retirements
     }
 
     pub(crate) fn blast_radius(&self) -> u64 {
@@ -143,6 +163,7 @@ pub(super) fn observe_merged_child(store: &impl ManifestDbs, child: &ObservedSet
     let mut parent = parent.borrow_mut();
     parent.mutated.extend(child.entities.iter().copied());
     parent.positions.extend(child.positions.iter().cloned());
+    parent.retirements.extend(child.retirements.iter().cloned());
     for id in &child.position_resets {
         parent.retired_positions.remove(id);
     }
@@ -291,5 +312,54 @@ pub(crate) fn observe_position_retirement(
         trace.retired_positions.insert(id, position.scope.clone());
         trace.positions.push(position);
     }
+    Ok(())
+}
+
+/// Records the effective intent written successfully, not the weaker request
+/// that may have joined an older, stronger intent.
+pub(crate) fn observe_custody_retirement(
+    dbs: &impl SideTableDbs,
+    subject: &CustodySubject,
+    through: u64,
+    cause: RetireCause,
+) {
+    let Some(trace) = dbs.side_key_custody().and_then(active_owner) else {
+        return;
+    };
+    trace
+        .borrow_mut()
+        .retirements
+        .push(SetupRetirementEvent::Staged(RetirementIntent {
+            subject: subject.clone(),
+            through,
+            cause,
+        }));
+}
+
+pub(crate) fn observe_retirement_withdrawal(dbs: &impl SideTableDbs, subject: &CustodySubject) {
+    let Some(trace) = dbs.side_key_custody().and_then(active_owner) else {
+        return;
+    };
+    trace
+        .borrow_mut()
+        .retirements
+        .push(SetupRetirementEvent::Withdrawn(subject.clone()));
+}
+
+/// A successful fence changes authority at this address even if no row is
+/// stored here. Absence is not a future birth whose position can be filled in.
+pub(crate) fn observe_row_fence(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    let Some(trace) = active(store) else {
+        return Ok(());
+    };
+    let mut position = stored_position(store, txn, id)?;
+    position.unborn = false;
+    let mut trace = trace.borrow_mut();
+    trace.mutated.insert(id);
+    trace.positions.push(position);
     Ok(())
 }
