@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 use super::live_exchange::AnswerReceipts;
 use super::*;
 
+mod event_body;
 mod first_answer;
 
 /// One reply body: a parsed JSON message with its owned raw body, or an
@@ -24,7 +25,7 @@ pub(super) enum Reply {
 /// One event of a reply stream.
 pub(super) enum StreamEvent {
     /// The response that answers the request, and its own bytes.
-    Answer(Value, Vec<u8>),
+    Answer(Value, RawOutboundBody),
     /// A server request.
     Request(Value),
     /// The stream ended without answering.
@@ -32,7 +33,8 @@ pub(super) enum StreamEvent {
 }
 
 /// A reply stream read event by event, each event whole whatever its size
-/// (FIX 8227): only a message that does not parse is unreadable. Past
+/// (FIX 8227). The first tools/call read can release the event's text before
+/// parsing its typed value; control and later reads keep their byte storage. Past
 /// `deadline`, so is the rest of a round. Everything it holds of what the
 /// connector said is wiped once read past or dropped (FIX 8309, L10 09:30):
 /// the reader's buffer, the line, the event's data, the event ids and a
@@ -54,14 +56,19 @@ impl EventStream {
     /// The next answer to `id` or server request; notifications are
     /// dropped.
     pub(super) fn next(&mut self, id: u64) -> Result<StreamEvent, ()> {
-        self.read_event(id, None)
+        self.read_event(id, None, None)
+    }
+
+    /// The first tools/call read can place each complete event before parsing it.
+    pub(super) fn next_spooled(&mut self, id: u64, vault: &Vault) -> Result<StreamEvent, ()> {
+        self.read_event(id, None, Some(vault))
     }
 
     /// [`Self::next`] for a stream read while its round waits for an answer
     /// (FIX 9286): a quiet stream is not an ended one, so a read that timed
     /// out reads on, its partial line kept, as long as `waiting` holds.
     pub(super) fn next_while(&mut self, id: u64, waiting: &AtomicBool) -> Result<StreamEvent, ()> {
-        self.read_event(id, Some(waiting))
+        self.read_event(id, Some(waiting), None)
     }
 
     /// Reads on with no deadline of its own: whoever waits on the stream
@@ -70,7 +77,12 @@ impl EventStream {
         self.deadline = None;
     }
 
-    fn read_event(&mut self, id: u64, waiting: Option<&AtomicBool>) -> Result<StreamEvent, ()> {
+    fn read_event(
+        &mut self,
+        id: u64,
+        waiting: Option<&AtomicBool>,
+        vault: Option<&Vault>,
+    ) -> Result<StreamEvent, ()> {
         loop {
             let n = match self.reader.read_line(&mut self.line) {
                 Ok(n) => n,
@@ -94,11 +106,10 @@ impl EventStream {
             if end || trimmed.is_empty() {
                 self.last_event_id.clone_from(&self.id_buffer);
                 if !self.data.is_empty() {
-                    let mut event = std::mem::take(&mut self.data);
-                    if let Ok(message) = serde_json::from_str::<Value>(&event) {
+                    let event = std::mem::take(&mut self.data);
+                    if let Some((message, body)) = event_body::read(event, vault)? {
                         if answers(&message, id) {
-                            let bytes = std::mem::take(&mut *event).into_bytes();
-                            return Ok(StreamEvent::Answer(message, bytes));
+                            return Ok(StreamEvent::Answer(message, body));
                         }
                         if message.get("method").is_some() && message.get("id").is_some() {
                             return Ok(StreamEvent::Request(message));
@@ -227,7 +238,7 @@ pub(super) fn read_reply(
     };
     loop {
         match stream.next(id)? {
-            StreamEvent::Answer(message, bytes) => return Ok(Some((message, bytes.into()))),
+            StreamEvent::Answer(message, body) => return Ok(Some((message, body))),
             StreamEvent::Request(_) => {}
             StreamEvent::End => return Ok(None),
         }
