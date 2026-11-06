@@ -127,6 +127,27 @@ impl DecisionCallInvoice<'_> {
         })
     }
 
+    /// A failed logical read can still have complete native response counts.
+    /// Unknown or unresolved requests retain source data but never freeze a prefix
+    /// as the terminal invoice. The ordinary read error remains the caller's result.
+    pub fn record_failed_completions(
+        &self,
+        completions: &[DecisionCompletionObservation],
+    ) -> crate::Result<()> {
+        let Some(units) = completed_units(completions) else {
+            return Ok(());
+        };
+        self.vault.with_write_txn_grouped(|wtxn| {
+            crate::dreamer_runner::record_native_house_completions_in_txn(
+                self.vault,
+                wtxn,
+                self.origin,
+                completions,
+            )?;
+            crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, self.origin, units)
+        })
+    }
+
     /// Records the native terminal quantity, not a quote or a GROSS meter delta.
     pub fn record_usage(&self, usage: &oneiron_model::llm::LlmUsage) -> crate::Result<()> {
         let units = usage
@@ -138,6 +159,36 @@ impl DecisionCallInvoice<'_> {
             crate::dreamer_runner::invoice_native_call_in_txn(self.vault, wtxn, self.origin, units)
         })
     }
+}
+
+/// Every response must name exactly its request's native prompt population.
+/// These indices identify returned prompts, never financial corrective ordinals.
+fn completed_units(completions: &[DecisionCompletionObservation]) -> Option<u64> {
+    if completions.is_empty() {
+        return None;
+    }
+    let mut units = 0_u64;
+    for completion in completions {
+        let response = completion.response.as_ref()?;
+        if !(200..=299).contains(&response.status) {
+            return None;
+        }
+        let answers = response.answers.as_ref()?;
+        if completion.requested_prompts == 0 || answers.len() != completion.requested_prompts {
+            return None;
+        }
+        let mut indices = std::collections::BTreeSet::new();
+        for answer in answers {
+            let index = usize::try_from(answer.index?).ok()?;
+            if index >= completion.requested_prompts || !indices.insert(index) {
+                return None;
+            }
+            units = units.checked_add(answer.tokens_evaluated?)?;
+            // Match the existing native forward-pass accounting, not a raw zero rewrite.
+            units = units.checked_add(answer.tokens_predicted?.max(1))?;
+        }
+    }
+    Some(units)
 }
 
 impl DecisionCallAdmission {
