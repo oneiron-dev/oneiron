@@ -24,7 +24,7 @@ use crate::frame::{
     STREAM_CHUNK, read_chunk, read_segment, write_chunk, write_segment, write_stream_end,
     write_stream_header,
 };
-use crate::send::{Sender, encoded, git_echo_form, git_watchable, push_wiped, reply_headers};
+use crate::send::{Sender, encoded, git_echo_forms, git_reply_headers, git_watchable, push_wiped};
 use crate::{Failure, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader};
 
 /// The user agent of a git exchange: a smart-HTTP server serves its smart
@@ -86,7 +86,7 @@ async fn exchange(
     }
     let answered = Outcome::Answered {
         status: response.status().as_u16(),
-        headers: reply_headers(response.headers(), &credential.watched),
+        headers: git_reply_headers(response.headers(), &git_echo_forms(&credential.watched)),
     };
     idle_bound(idle, write_stream_header(stream, &reply(header, answered))).await?;
     let cut = relay(&mut response, stream, &credential.watched, idle).await?;
@@ -418,9 +418,7 @@ struct EchoWatch {
 
 impl EchoWatch {
     fn new(token: &[u8]) -> Self {
-        let mut forms = crate::strip::forms(token);
-        forms.extend(crate::strip::base64_forms(token));
-        forms.retain(|form| git_echo_form(form));
+        let forms = git_echo_forms(token);
         let keep = forms
             .iter()
             .map(|form| form.len())
