@@ -113,12 +113,12 @@ pub(super) fn carry_live(
                 BODY.decode_value(raw)
                     .is_ok_and(|body| body.state == complete)
             })
-            .map(<[u8]>::to_vec);
+            .map(|raw| raw.to_vec());
         let held = current
             .store
             .vault_meta
             .get(&txn, &holder)?
-            .map(<[u8]>::to_vec);
+            .map(|raw| raw.to_vec());
         let (Some(named), Some(held)) = (named, held) else {
             tracing::warn!(
                 receipt = %binding.receipt.to_hex(),
