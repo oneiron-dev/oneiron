@@ -44,6 +44,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // Content-owned audit, never authority (FIX 10260).
     (&t::MESSAGE_REPLY_ASSERTIONS, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
+    (&t::MESSAGE_STREAM_ERASED, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),
     (&t::MESSAGE_STREAM_RECEIPT, CONTENT),
     (&t::MODEL_STEP_SUBMISSION, CONTENT),
