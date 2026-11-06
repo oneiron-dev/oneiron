@@ -863,8 +863,15 @@ The intent is attached only while the durable case and its failed attempt still
 match in the proposal's write transaction. Otherwise the ordinary route-only
 proposal remains, with `repair: null`. This changes no consent or repair execution:
 review and approve or decline it through the ordinary run review. It does not
-apply a fix, resume the failed attempt or change a grant. Person proposals for bare
-blocked reports remain route-only.
+apply a fix, resume the failed attempt or change a grant.
+
+A Person intent for a bare blocked report uses that report's original reporter
+and diagnostic references. It is attached only while the pending report still
+matches, its durable run still names the receipt, and that run dispatched the
+reporter, all in the proposal's write transaction. This does not claim a new read
+of the diagnostic's body. A missing, changed or unbound run leaves `repair: null`;
+ordinary report settlement and human review are unchanged. No failed case or
+pre-fail checkpoint is invented for a report.
 
 ## Settle an open contradiction
 
