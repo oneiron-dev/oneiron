@@ -32,8 +32,8 @@ mod wait_holders;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub(crate) use self::continuation::{
-    StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
-    seed_continuation_run,
+    StoredRunContinuation, continuation_seed_body_in_txn, publish_continuation_output_in_txn,
+    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
@@ -51,6 +51,7 @@ pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
     code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
+    retire_unlanded_inline_body_keys_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
