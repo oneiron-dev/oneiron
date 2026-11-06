@@ -16,7 +16,10 @@
 //! on the owner.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes, team_leader};
+use super::super::coach::TypeTreeOutcomeReadRequests;
+use super::super::type_tree_gate::{
+    TreeReplayScorer, record_team_shape_outcomes_with_requests, team_leader,
+};
 use super::{
     ForkPromoteReport, PROMOTE_SKILL_PREFIX, Pass, UpstreamSeat, by_path, fork_files, next_version,
     open_forks, refused,
@@ -95,9 +98,20 @@ impl Upstream {
     /// holds, once per head: before any leaf is counted, so no team of a
     /// reserved leader counts as a run elsewhere (FIX 8705). A head a merge
     /// puts in force is read afresh, and its reserve with it.
-    fn prepare(&mut self, vault: &Vault, settled: &[TeamReceipt]) -> Result<()> {
+    fn prepare(
+        &mut self,
+        vault: &Vault,
+        settled: &[TeamReceipt],
+        requests: Option<&TypeTreeOutcomeReadRequests>,
+    ) -> Result<()> {
         if self.reserve.is_none() {
-            record_team_shape_outcomes(vault, &self.head, &self.record, settled)?;
+            record_team_shape_outcomes_with_requests(
+                vault,
+                &self.head,
+                &self.record,
+                settled,
+                requests,
+            )?;
             self.reserve = Some(held_out_receipts(vault, &self.head)?.into_iter().collect());
         }
         Ok(())
@@ -149,6 +163,7 @@ pub(super) fn run(
     seat: Option<(&dyn HeldOutReplayNotes, &dyn UpstreamSeat)>,
     projects: impl IntoIterator<Item = EntityId>,
     settled: &[TeamReceipt],
+    requests: Option<&TypeTreeOutcomeReadRequests>,
     report: &mut ForkPromoteReport,
 ) -> Result<()> {
     let mut upstream = Upstream::of(pass);
@@ -183,7 +198,7 @@ pub(super) fn run(
             report.leaves += 1;
             // A reserve that cannot be read counts nothing; as an offer's
             // refusal, it leaves this leaf for a later night.
-            match upstream.prepare(vault, settled) {
+            match upstream.prepare(vault, settled, requests) {
                 Ok(()) => {}
                 Err(
                     Error::Artifact(ArtifactError::InvalidSkillBody(_)) | Error::InvalidConfig(_),

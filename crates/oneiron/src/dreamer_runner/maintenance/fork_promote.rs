@@ -33,8 +33,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::applied;
-use super::coach::COACH_FORK_PROMOTE_FACET;
-use super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes, team_leader};
+use super::coach::{COACH_FORK_PROMOTE_FACET, TypeTreeOutcomeReadRequests};
+use super::type_tree_gate::{
+    TreeReplayScorer, record_team_shape_outcomes_with_requests, team_leader,
+};
 use super::type_tree_prior::DonorTree;
 use super::type_tree_upkeep::{recount, type_evidence};
 use crate::agent_dispatch::load_team_type_tree;
@@ -219,6 +221,7 @@ impl Vault {
         now: u64,
     ) -> Result<ForkPromoteReport> {
         self.require_coach_attempt(attempt, COACH_FORK_PROMOTE_FACET)?;
+        let requests = TypeTreeOutcomeReadRequests::from_input(&attempt.status.payload.input);
         let mut report = ForkPromoteReport::default();
         let pass = self.fork_pass(attempt, now)?;
         let settled: Vec<TeamReceipt> = team_receipts(self, None)?
@@ -245,6 +248,7 @@ impl Vault {
                     *project,
                     teams,
                     donor.as_ref(),
+                    requests.as_ref(),
                     &mut report,
                 );
                 match fork {
@@ -262,6 +266,7 @@ impl Vault {
             scorer,
             &by_project,
             donor.as_ref(),
+            requests.as_ref(),
             now,
             &mut report,
         )?;
@@ -272,6 +277,7 @@ impl Vault {
                 scorer.zip(upstream),
                 projects,
                 &settled,
+                requests.as_ref(),
                 &mut report,
             )?;
         }
@@ -330,6 +336,7 @@ fn fork_project(
     project: EntityId,
     teams: &[TeamReceipt],
     donor: Option<&DonorTree>,
+    requests: Option<&TypeTreeOutcomeReadRequests>,
     report: &mut ForkPromoteReport,
 ) -> Result<()> {
     if pass.reverted.contains(&project)
@@ -350,7 +357,13 @@ fn fork_project(
         return Ok(());
     }
     report.diverged += 1;
-    let reserve = record_team_shape_outcomes(vault, &pass.head, &pass.head_record, teams)?;
+    let reserve = record_team_shape_outcomes_with_requests(
+        vault,
+        &pass.head,
+        &pass.head_record,
+        teams,
+        requests,
+    )?;
     let mut held_out: Vec<String> = reserve
         .held_out_teams
         .iter()

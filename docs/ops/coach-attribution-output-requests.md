@@ -50,5 +50,30 @@ supply a position.
 The original Coach-attempt check runs before the optional request is read. The
 ordinary settled-team, run-binding, terminal-pack and exact manifest checks all
 run before any lookup. Missing entries stay unknown; extra entries create no
-outcome. The other fork-promote callers still request no placement. Nil nightly
-jobs, unknown optional input, retained birth and no-restamp behavior are unchanged.
+outcome. Nil nightly jobs, unknown optional input, retained birth and no-restamp
+behavior are unchanged.
+
+## Project fork and leaf-promotion outcomes
+
+`DreamerRunnerStore::enqueue_coach_fork_promote_with_requests` accepts the same
+`TypeTreeOutcomeReadRequests` and queues the existing `coach.fork_promote` pass.
+The original Coach-attempt check runs before decoding the durable job input. The
+request then reaches all three settled-team outcome writers: the project's fork
+trigger, upkeep of a project's own tree, and the vault head's leaf-promotion
+reserve.
+
+Every lookup still uses the exact skill head and leader pack receipt selected by
+that writer after its existing checks. Upkeep uses the project's incumbent head;
+leaf promotion uses the current vault head, including a new head selected after a
+successful merge. A request for an earlier head is never transferred to a later
+one. Missing keys remain unknown, and extra keys do not create outcomes. Stored
+rows retain their original physical placement, including unknown.
+
+The caller supplies all placement axes explicitly. Team membership, project,
+receipt, executor, funding and current read scope do not supply placement. The
+existing held-out reservation, fork scoring, upkeep settlement, promotion order,
+refusal counts and ordinary nightly behavior are unchanged. The same advisory
+queue dedupe rules apply as for the other request-bearing Coach jobs.
+
+This request does not grant source access, declare a complete input read set,
+enable FACT or authorize model release.
