@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 
 use super::event_body::Data;
 
-/// `None` is one consumed data field; other lines keep the native reader.
+/// `None` is one consumed data or ignored line; id and blank lines stay native.
 pub(super) fn read(
     reader: &mut impl BufRead,
     data: &mut Data,
@@ -31,6 +31,10 @@ pub(super) fn read(
         }
     }
     if prefix.as_slice() != b"data:" {
+        if !prefix.starts_with(b"id") && prefix.iter().any(|&byte| byte != b'\r' && byte != b'\n') {
+            discard_line(&mut Cursor::new(prefix.as_slice()).chain(reader))?;
+            return Ok(None);
+        }
         return Cursor::new(prefix.as_slice())
             .chain(reader)
             .read_line(line)
@@ -87,4 +91,39 @@ pub(super) fn read(
         return Err(());
     }
     Ok(None)
+}
+
+/// A prefix already proved this line neither blank nor an id/data field.
+fn discard_line(reader: &mut impl BufRead) -> Result<(), ()> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(()),
+        };
+        if available.is_empty() {
+            break;
+        }
+        let newline = available.iter().position(|&byte| byte == b'\n');
+        let count = newline.map_or(available.len(), |at| at + 1);
+        bytes.extend_from_slice(&available[..newline.unwrap_or(count)]);
+        reader.consume(count);
+        let valid = match std::str::from_utf8(&bytes) {
+            Ok(_) => bytes.len(),
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(_) => return Err(()),
+        };
+        let remaining = bytes.len() - valid;
+        bytes.copy_within(valid.., 0);
+        bytes[remaining..].fill(0);
+        bytes.truncate(remaining);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if !bytes.is_empty() {
+        return Err(());
+    }
+    Ok(())
 }
