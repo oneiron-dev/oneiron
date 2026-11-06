@@ -325,7 +325,8 @@ impl AgentVerbDoor for RunHostDoor {
             if let Some(lease) = &lease {
                 lease.on(server.vault()).book_and_revise();
             }
-            with_run_write_token(run_writes.as_ref(), || match resident {
+            let mut hook_notice = None;
+            let result = with_run_write_token(run_writes.as_ref(), || match resident {
                 Some(ResidentRow::Board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
                         .map(|(output, rows)| (output, Some(rows)))
@@ -364,19 +365,24 @@ impl AgentVerbDoor for RunHostDoor {
                         media_step.as_ref(),
                     )
                 }
-                None => answer_as_agent_in_step(
-                    &server,
-                    actor,
-                    &origin,
-                    invocation,
-                    verb,
-                    input,
-                    held,
-                    line.as_ref(),
-                    attempt.as_deref(),
-                    media_step.as_ref(),
-                ),
-            })
+                None => {
+                    let (answer, notice) = answer_as_agent_in_step_with_notice(
+                        &server,
+                        actor,
+                        &origin,
+                        invocation,
+                        verb,
+                        input,
+                        held,
+                        line.as_ref(),
+                        attempt.as_deref(),
+                        media_step.as_ref(),
+                    );
+                    hook_notice = notice;
+                    answer
+                }
+            });
+            (result, hook_notice)
         };
         let receiver = if verb == AgentVerb::VaultRecall {
             // Engine 00:59 for parked L09: only VaultRecall leaves the shared
@@ -393,16 +399,23 @@ impl AgentVerbDoor for RunHostDoor {
         if self.media_trapped() {
             return Err(oneiron::Error::DurableStepTrapped);
         }
-        let Ok(answered) = answered else {
+        let Ok((answered, notice)) = answered else {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
+        let hook_notice = (notice == Some(true)).then(|| {
+            Value::String(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY.to_owned())
+        });
         self.observed(
             verb,
             match answered {
-                Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
+                Ok((output, rows)) => {
+                    let mut answer = AgentVerbAnswer::new(output, rows);
+                    answer.hook_notice = hook_notice;
+                    Ok(Ok(answer))
+                }
                 // A verb hook's stop goes back to the run as the typed stop, and
                 // a model call no provider answered as the typed outage, which
                 // the run parks on (FIX 3194).
@@ -412,7 +425,7 @@ impl AgentVerbDoor for RunHostDoor {
                         Err(oneiron::Error::ProviderUnavailable { retry_after })
                     }
                     (None, _) => Ok(Err(AgentVerbRefusal {
-                        hook_notice: None,
+                        hook_notice,
                         code: error.code,
                     })),
                 },
@@ -683,54 +696,82 @@ pub(super) fn answer_as_agent_in_step(
     attempt: Option<&str>,
     media_step: Option<&RunMediaStep>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
-    // The agent's task work waits its turn in the vault's line (Rule 5), as
-    // a served caller's does, and runs on it.
-    let turn = verb
-        .is_task_work()
-        .then(|| Arc::new(server.vault.admit_task_work_blocking(actor.entity_ref())));
-    let producers = ProducerRows::default();
-    let memory = agent_memory(server, actor, origin, invocation)
-        .with_task_decisions(server.decision_host().task_decisions()?)
-        .listing_producers(&producers);
-    let memory = match turn {
-        Some(turn) => memory.with_task_work_turn(turn),
-        None => memory,
-    };
-    let name = verb.as_str();
-    // The rows an `ai.verdict`'s evidence refs and image resolved to (FIX
-    // 5461), and a connector call's passes picked (FIX 5455).
-    let mut evidence = Some(Vec::new());
-    let output = if served_by_host(verb) {
-        verb_hook_boundary::row(&memory, name, input, |input| {
-            sdk::validate_input(name, &input)?;
-            HELD_IMAGE.sync_scope(held, || {
-                host_row(
-                    server,
-                    actor,
-                    &memory,
-                    verb,
-                    input,
-                    line,
-                    attempt,
-                    media_step,
-                    &mut evidence,
-                )
+    answer_as_agent_in_step_with_notice(
+        server, actor, origin, invocation, verb, input, held, line, attempt, media_step,
+    )
+    .0
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the agent's call"
+)]
+fn answer_as_agent_in_step_with_notice(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
+) -> (MemoryResult<(Value, Option<Vec<EntityId>>)>, Option<bool>) {
+    let mut notice = None;
+    let result = (|| -> MemoryResult<_> {
+        // The agent's task work waits its turn in the vault's line (Rule 5), as
+        // a served caller's does, and runs on it.
+        let turn = verb
+            .is_task_work()
+            .then(|| Arc::new(server.vault.admit_task_work_blocking(actor.entity_ref())));
+        let producers = ProducerRows::default();
+        let memory = agent_memory(server, actor, origin, invocation)
+            .with_task_decisions(server.decision_host().task_decisions()?)
+            .listing_producers(&producers);
+        let memory = match turn {
+            Some(turn) => memory.with_task_work_turn(turn),
+            None => memory,
+        };
+        let name = verb.as_str();
+        // The rows an `ai.verdict`'s evidence refs and image resolved to (FIX
+        // 5461), and a connector call's passes picked (FIX 5455).
+        let mut evidence = Some(Vec::new());
+        let (output, hook_notice) = if served_by_host(verb) {
+            verb_hook_boundary::row_with_notice(&memory, name, input, |input| {
+                sdk::validate_input(name, &input)?;
+                HELD_IMAGE.sync_scope(held, || {
+                    host_row(
+                        server,
+                        actor,
+                        &memory,
+                        verb,
+                        input,
+                        line,
+                        attempt,
+                        media_step,
+                        &mut evidence,
+                    )
+                })
             })
-        })?
-    } else {
-        sdk::invoke(&memory, name, input)?
-    };
-    if LANDS_TURN.contains(&verb) {
-        server
-            .ai
-            .turn_landed_by(server.vault(), actor.entity_ref(), actor.actor_class());
-    }
-    let rows = evidence.map(|mut evidence| {
-        let mut rows = producers.take();
-        rows.append(&mut evidence);
-        rows
-    });
-    Ok((output, rows))
+        } else {
+            sdk::invoke_with_notice(&memory, name, input)
+        };
+        notice = hook_notice;
+        let output = output?;
+        if LANDS_TURN.contains(&verb) {
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.entity_ref(), actor.actor_class());
+        }
+        let rows = evidence.map(|mut evidence| {
+            let mut rows = producers.take();
+            rows.append(&mut evidence);
+            rows
+        });
+        Ok((output, rows))
+    })();
+    (result, notice)
 }
 
 /// The agent's own surface for one call, on this device.
