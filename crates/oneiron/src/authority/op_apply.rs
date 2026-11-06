@@ -275,7 +275,11 @@ pub(super) fn local_outbound_scope(
 /// grant's erasable opening key, which the door that logged the action
 /// keyed it under and which no fold holds, so a fold, a replay after the
 /// key's revocation and a post-revoke proof take the signed commitment as
-/// it stands, without the key: the scope must only be canonical.
+/// it stands, without the key: the scope must only be canonical. Every
+/// machine folds the same log to the same pacts (canon D3). The install that
+/// holds the epoch's live opening re-checks the folded scope against the
+/// commitment in its own authority view (`pact_openings`, FIX 11730) and
+/// holds a pact that does not match inactive there.
 fn verify_pact_scope_digest(
     scope: &FederationPactScope,
 ) -> std::result::Result<(), FederationLifecycleRejection> {
@@ -403,6 +407,8 @@ pub(super) fn apply_federation_lifecycle(
                 peer_owner_key,
                 pact_epoch: action.pact_epoch,
                 scope_digest: claimed_digest,
+                pact_nonce: action.pact_nonce,
+                scope_epoch: action.pact_epoch,
                 pact_scope: scope.clone(),
                 effective_scope,
                 narrowings: std::collections::BTreeMap::new(),
@@ -483,6 +489,8 @@ pub(super) fn apply_federation_lifecycle(
             pact.status = FederationPactStatus::Active;
             pact.pact_epoch = action.pact_epoch;
             pact.scope_digest = claimed_digest;
+            pact.pact_nonce = action.pact_nonce;
+            pact.scope_epoch = action.pact_epoch;
             pact.pact_scope = scope.clone();
             pact.effective_scope =
                 local_outbound_scope(&local_vault_id, &pact.peer_vault_id, scope);
@@ -541,9 +549,9 @@ pub(super) fn apply_federation_lifecycle(
 }
 
 /// Deterministic, commutative pick between two equally ranked pact states:
-/// the lexicographic-min (scope_digest, grant_ref, canonical scope bytes)
-/// side. The triple is always discriminating for divergent states, since
-/// divergence implies at least one of the three differs.
+/// the lexicographic-min (scope_digest, grant_ref, canonical scope bytes,
+/// pact nonce, scope epoch) side. The key is always discriminating for
+/// divergent states, since divergence implies at least one of them differs.
 fn pact_merge_tiebreak_side<'a>(
     left: &'a FederationPactState,
     right: &'a FederationPactState,
@@ -553,6 +561,8 @@ fn pact_merge_tiebreak_side<'a>(
             pact.scope_digest,
             pact.grant_ref,
             encode_federation_pact_scope(&pact.pact_scope).unwrap_or_default(),
+            pact.pact_nonce,
+            pact.scope_epoch,
         )
     };
     if key(left) <= key(right) { left } else { right }
@@ -615,6 +625,7 @@ pub(super) fn merge_pact_states(
     // Both non-terminal at the same consent epoch: fold the competitor set.
     if (left.scope_digest, left.grant_ref) == (right.scope_digest, right.grant_ref)
         && left.pact_scope == right.pact_scope
+        && (left.pact_nonce, left.scope_epoch) == (right.pact_nonce, right.scope_epoch)
     {
         let mut merged = left.clone();
         // Concurrent unilateral narrows are both honored, each kept under the
