@@ -326,6 +326,22 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
     })
 }
 
+impl Memory<'_> {
+    /// What a retry of this handle's call of `verb` meets once a budget
+    /// window held an earlier try of its invocation and the drain ran it to
+    /// its end: the saved result, or the saved refusal (FIX 8753). A
+    /// transport answers it before it starts the call again, so the effect
+    /// never runs twice. `None` while the call still waits in line, when
+    /// nothing of it was held, and on the drain's own run of it.
+    #[must_use]
+    pub fn ended_paced_verb_reply(&self, verb: &str) -> Option<MemoryResult<Value>> {
+        match paced_verb_reply(self, verb)? {
+            Err(error) if error.code == MEMORY_CODE_PACED_HOLD => None,
+            reply => Some(reply),
+        }
+    }
+}
+
 /// Marks the paced call `invocation`'s turn runs as landed, in the verb's
 /// own effect write, so the effect and the mark commit together: the call
 /// never runs again, and its witness goes. What it came to is saved at the
