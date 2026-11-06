@@ -352,8 +352,8 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
 /// hold. The marker belongs to the occurrence, not its shared content hash.
 ///
 /// FIX 9348: an occurrence can be captured after a source in its frozen
-/// input rows was hard-erased. That erase's writer never saw it, so it has
-/// no stale mark yet. Here it gets that mark, and it retires on the same
+/// input rows took the hard-delete marker. That erase's writer never saw
+/// it, so it has no stale mark yet. Here it gets that mark, and it retires on the same
 /// path as an occurrence the erase did see. Other outputs, and other
 /// holders of the same bytes, are unchanged.
 fn fence_sourced_outputs_in_txn<'r>(
@@ -374,7 +374,7 @@ fn fence_sourced_outputs_in_txn<'r>(
             crate::ports::BodyStale::Withdrawn,
         )? {
             withdrawn.push(index);
-        } else if source_hard_erased_in_txn(store, wtxn, output, &mut sources)? {
+        } else if source_hard_delete_marked_in_txn(store, wtxn, output, &mut sources)? {
             late.push(occurrence.id());
             withdrawn.push(index);
         }
@@ -410,13 +410,14 @@ fn fence_sourced_outputs_in_txn<'r>(
     Ok(record)
 }
 
-/// Whether a row in `output`'s frozen input rows has a completed hard erase
-/// (FIX 9348). Only the native hard-delete marker proves it, and only its
-/// presence is read. A soft delete, a missing row and a pending erasure
+/// Whether a row in `output`'s frozen input rows carries the native
+/// hard-delete marker (FIX 9348). Only that marker counts, and only its
+/// presence is read. It marks the hard delete, not that every purge step
+/// has finished. A soft delete, a missing row and a pending erasure
 /// prove nothing; the pending erasure meets this output in its own writer.
 /// Unknown input rows name no source. `sources` keeps each row's answer
 /// for the rest of the record.
-fn source_hard_erased_in_txn(
+fn source_hard_delete_marked_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     output: &CodeRunRawOutput,
