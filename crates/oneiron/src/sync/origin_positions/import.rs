@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
-use super::{ORIGIN_POSITIONS_MAP, bound_position, has_positions};
+use super::{ORIGIN_POSITIONS_MAP, bound_position, has_positions, holds_carrier};
 use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::error::Result;
@@ -119,6 +119,13 @@ pub fn prepare_own_device_push_positions(
     prepare(vault, Some(&proof), window, doc, payload)
 }
 
+/// Exact incoming values selected after replacement conflict resolution,
+/// before reverse rematerialization can remove uninstalled position data.
+/// Only the native replacement's final persistence writer may finish them.
+pub(in crate::sync) struct ReplacementPositions {
+    incoming: OwnDevicePositionImport,
+}
+
 impl OwnDevicePositionImport {
     /// Installs only exact values this successful payload supplied and the
     /// live document still holds. Missing facts, unknown births, a changed
@@ -130,53 +137,95 @@ impl OwnDevicePositionImport {
         }
         let _bodies = vault.pin_all_result_bodies();
         vault.with_write_txn_grouped(|txn| {
-            if !self.proof.stands_in_txn(vault, txn)? {
-                return Ok(());
+            let positions = self.values.iter().filter_map(|(key, sent)| {
+                let (position, current) = bound_position(doc, key)?;
+                (current == *sent).then_some(position)
+            });
+            self.install_in_txn(vault, txn, positions)
+        })
+    }
+
+    pub(in crate::sync) fn select_replacement(
+        mut self,
+        doc: &LoroDoc,
+    ) -> Option<ReplacementPositions> {
+        self.values.retain(|key, sent| {
+            bound_position(doc, key).is_some_and(|(_, current)| current == *sent)
+        });
+        (!self.values.is_empty()).then_some(ReplacementPositions { incoming: self })
+    }
+
+    fn install_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        positions: impl Iterator<Item = OriginPosition>,
+    ) -> Result<()> {
+        if self.vault != vault.store.env.path() || !self.proof.stands_in_txn(vault, txn)? {
+            return Ok(());
+        }
+        for position in positions {
+            // Unknown birth is data, not an incarnation certificate.
+            if std::iter::once(&position.row)
+                .chain(position.sources.iter())
+                .any(|row| row.birth_digest.is_none())
+                || !facts::matches_in_txn(vault, txn, &position)?
+            {
+                continue;
             }
-            for (key, sent) in &self.values {
-                let Some((position, current)) = bound_position(doc, key) else {
-                    continue;
+            let mut peer = false;
+            for row in std::iter::once(&position.row).chain(position.sources.iter()) {
+                let Some(raw) = vault.store.port_entity_raw(txn, &row.id)? else {
+                    peer = true;
+                    break;
                 };
-                if current != *sent
-                    // Unknown birth is data, not an incarnation certificate.
-                    || std::iter::once(&position.row)
-                        .chain(position.sources.iter())
-                        .any(|row| row.birth_digest.is_none())
-                    || !facts::matches_in_txn(vault, txn, &position)?
-                {
-                    continue;
-                }
-                let mut peer = false;
-                for row in std::iter::once(&position.row).chain(position.sources.iter()) {
-                    let Some(raw) = vault.store.port_entity_raw(txn, &row.id)? else {
-                        peer = true;
-                        break;
-                    };
-                    let residence = crate::sync::residence::residence_window_for_blob(&raw)?;
-                    if (row.id == position.row.id && residence != self.window)
-                        || crate::sync::ingest::peer_row_in_txn(
-                            vault,
-                            txn,
-                            residence.as_str(),
-                            &row.id,
-                            &raw,
-                        )?
-                    {
-                        peer = true;
-                        break;
-                    }
-                }
-                if !peer {
-                    facts::install_in_txn(
+                let residence = crate::sync::residence::residence_window_for_blob(&raw)?;
+                if (row.id == position.row.id && residence != self.window)
+                    || crate::sync::ingest::peer_row_in_txn(
                         vault,
                         txn,
-                        &VerifiedOriginPosition {
-                            position: &position,
-                        },
-                    )?;
+                        residence.as_str(),
+                        &row.id,
+                        &raw,
+                    )?
+                {
+                    peer = true;
+                    break;
                 }
             }
-            Ok(())
-        })
+            if !peer {
+                facts::install_in_txn(
+                    vault,
+                    txn,
+                    &VerifiedOriginPosition {
+                        position: &position,
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ReplacementPositions {
+    /// Caller pins bodies before the parent writer. The optional savepoint
+    /// joins that writer's commit or leaves no position/revision writes on
+    /// error. Final carrier/reference checks do not need the root keys the
+    /// unchanged canonical scrub deliberately removed.
+    pub(in crate::sync) fn finish_in_txn(
+        &self,
+        vault: &Vault,
+        parent: &mut heed::RwTxn<'_>,
+        doc: &LoroDoc,
+    ) -> Result<()> {
+        let mut staged = vault.store.env.nested_write_txn(parent)?;
+        let positions = self.incoming.values.iter().filter_map(|(key, sent)| {
+            let position = OriginPosition::decode(sent)?;
+            holds_carrier(doc, key, &position).then_some(position)
+        });
+        self.incoming
+            .install_in_txn(vault, &mut staged, positions)?;
+        staged.commit()?;
+        Ok(())
     }
 }
