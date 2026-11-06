@@ -22,7 +22,7 @@ The `proposal_ref` string is also unescaped into an anonymous file. Property nam
 are matched as they stream, without copying them or an unknown member's value
 into a metadata head. Missing, duplicate, unknown and non-string members still
 produce the same invalid-JSON response. Large widen answers do not use the generic
-metadata decoder.
+metadata decoder. The existing whole-JSON reader used by other doors is unchanged.
 
 Large reject bodies use the same closed-schema string reader and UTF-8 file sink
 for their sole required `proposal_ref` member. They have no delta member. Small

@@ -296,42 +296,75 @@ impl Gather<'_> {
     /// The complete stored ancestry of the roots, in source order. An attempt's record
     /// is admitted against the complete source rows it recorded, else it is the owner's
     /// alone; each kept step request is admitted on its own.
+    ///
+    /// The topology names only attempts the reader may know of (FIX 10814): those whose
+    /// record it admits, and the roots its own request named. Order, cycles and links
+    /// are drawn over that set, each link from an admitted attempt, the one it is stored
+    /// on. Any other attempt is `unavailable` without its id, and so is a gap only a
+    /// withheld attempt names.
     fn ancestry_in(&mut self, admit: &Admit<'_, '_, '_>) {
         let vault = self.vault;
         let walk = DreamerRunnerStore::new(vault).cause_ancestry_in_txn(admit.txn, &self.roots);
         self.walked += walk.reached.len() + walk.gaps.len();
-        for (id, why) in walk.gaps {
-            self.unavailable(
-                format!("attempt:{}", bytes_to_hex_lower(id.as_bytes())),
-                why,
-            );
-        }
-        let ids: Vec<AttemptId> = walk.reached.iter().map(|record| record.id).collect();
-        let (order, cyclic) = source_order(&ids, &walk.links);
         let hex = |id: &AttemptId| bytes_to_hex_lower(id.as_bytes());
+        let mut records: BTreeMap<AttemptId, (AttemptRecord, Option<String>)> = walk
+            .reached
+            .into_iter()
+            .map(|record| {
+                let rows = record.source_rows();
+                let refused = match admit.part(rows.unwrap_or_default(), rows.is_some(), &[]) {
+                    Ok(None) => None,
+                    Ok(Some(why)) => Some(why.to_owned()),
+                    Err(error) => Some(kind(&error)),
+                };
+                (record.id, (record, refused))
+            })
+            .collect();
+        let admitted: BTreeSet<AttemptId> = records
+            .iter()
+            .filter(|(_, (_, refused))| refused.is_none())
+            .map(|(id, _)| *id)
+            .collect();
+        let roots: BTreeSet<AttemptId> = self.roots.iter().copied().collect();
+        let known = |id: &AttemptId| admitted.contains(id) || roots.contains(id);
+        for (id, why) in walk.gaps {
+            let named = roots.contains(&id)
+                || walk
+                    .links
+                    .iter()
+                    .any(|(from, to, _)| *to == id && admitted.contains(from));
+            let part = if named {
+                format!("attempt:{}", hex(&id))
+            } else {
+                "attempt".to_owned()
+            };
+            self.unavailable(part, why);
+        }
+        let links: Vec<(AttemptId, AttemptId, &'static str)> = walk
+            .links
+            .iter()
+            .copied()
+            .filter(|(from, to, _)| admitted.contains(from) && known(to))
+            .collect();
+        let ids: Vec<AttemptId> = records.keys().copied().filter(known).collect();
+        let (order, cyclic) = source_order(&ids, &links);
         self.context.attempts = order.iter().map(hex).collect();
         self.context.cyclic.extend(cyclic.iter().map(hex));
         self.context
             .links
-            .extend(walk.links.iter().map(|&(from, to, kind)| HealLink {
+            .extend(links.iter().map(|&(from, to, kind)| HealLink {
                 from: hex(&from),
                 to: hex(&to),
                 kind,
             }));
-        let mut records: BTreeMap<AttemptId, AttemptRecord> = walk
-            .reached
-            .into_iter()
-            .map(|record| (record.id, record))
-            .collect();
         for id in order {
-            let Some(record) = records.remove(&id) else {
+            let Some((record, refused)) = records.remove(&id) else {
                 continue;
             };
             let attempt = hex(&id);
             let mut entry = Map::new();
-            let rows = record.source_rows();
-            match admit.part(rows.unwrap_or_default(), rows.is_some(), &[]) {
-                Ok(None) => {
+            match refused {
+                None => {
                     if let Some(task) = &record.task_ref {
                         self.refer_hex(&format!("task:{attempt}"), task);
                     }
@@ -343,12 +376,18 @@ impl Gather<'_> {
                         serde_json::to_value(&record).unwrap_or_default(),
                     );
                 }
-                Ok(Some(why)) => self.unavailable(format!("attempt_record:{attempt}"), why),
-                Err(error) => self.unavailable(format!("attempt_record:{attempt}"), kind(&error)),
+                Some(why) => self.unavailable(format!("attempt_record:{attempt}"), why),
             }
             self.kept_requests_in(admit, id, &attempt, &mut entry);
             entry.insert("attempt".into(), Value::String(attempt));
             self.attempts.push((id, entry));
+        }
+        // Left: attempts the reader may not know of, each withheld or unprovable.
+        for (_, refused) in records.into_values() {
+            self.unavailable(
+                "attempt_record".to_owned(),
+                refused.unwrap_or_else(|| WITHHELD.to_owned()),
+            );
         }
     }
 

@@ -76,13 +76,14 @@ pub enum VmRestoreBoot {
     InspectMarker { identity: ManagedRestoreIdentity },
 }
 
-/// The guest drive a restore's source is, after the vault's own drives: the
-/// third without a config drive, the fourth with one.
+/// The guest drive a restore's source is, after the vault's own drives and
+/// its optional config and shared-model drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VmRestoreSourceDevice {
     Vdc,
     Vdd,
+    Vde,
 }
 
 impl VmRestoreSourceDevice {
@@ -92,6 +93,7 @@ impl VmRestoreSourceDevice {
         match self {
             Self::Vdc => "/dev/vdc",
             Self::Vdd => "/dev/vdd",
+            Self::Vde => "/dev/vde",
         }
     }
 }

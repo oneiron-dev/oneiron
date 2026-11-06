@@ -178,7 +178,7 @@ pub(super) async fn judge(
         membership_why(binding, &*backend, shell, verdict, &decisions.why_wording).await?;
     let mut generations: Vec<_> = steps
         .into_iter()
-        .map(|(hash, usage)| SavedQueryGenerationReceipt {
+        .map(|(hash, usage, _)| SavedQueryGenerationReceipt {
             request_hash: super::support::hex_lower(&hash),
             usage,
         })
