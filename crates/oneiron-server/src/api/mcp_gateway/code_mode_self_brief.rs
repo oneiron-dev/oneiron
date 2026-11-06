@@ -30,7 +30,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::EntityId;
-use oneiron::engine_executor::{BriefBoundary, BriefCandidateToken, BriefPrefix, SelfBriefPort};
+use oneiron::engine_executor::{
+    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+};
 
 use super::{McpCallContext, McpGatewayError};
 use crate::api::ConnectionBriefReads;
@@ -213,6 +215,41 @@ impl SelfBriefPort for CodeModeSelfBrief {
     /// Acknowledges the staged candidate `token` names. A prefix with no
     /// staged candidate, a delivered one carried again, changes nothing. A
     /// stale answer changes nothing either, and is logged.
+    /// Moves the installed brief to its next epoch as the fold batch lands,
+    /// so the boundary outlives an entry that ends before its next request
+    /// (a full window, a wait): the next entry's birth stages that epoch,
+    /// not the prefix delivered before the fold. A miss is logged and
+    /// changes nothing.
+    fn folded(&self, boundary: &FoldBoundary) {
+        let Some(owner) = *self.owner.lock().unwrap_or_else(PoisonError::into_inner) else {
+            return;
+        };
+        let (server, actor, key, run_id) = (
+            Arc::clone(&self.server),
+            self.actor.clone(),
+            self.key.clone(),
+            self.run_id,
+        );
+        let advanced = on_server(&self.runtime, move |handle| {
+            handle.block_on(advance_brief(&server, &actor, &key, run_id, owner))
+        })
+        .and_then(|advanced| advanced);
+        match advanced {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(
+                ?boundary,
+                run = %self.run_id.to_hex(),
+                "a code-mode run's self brief is no longer held; its fold did not move it"
+            ),
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                ?boundary,
+                run = %self.run_id.to_hex(),
+                "a code-mode run's self brief did not move past a fold"
+            ),
+        }
+    }
+
     fn delivered(&self, token: BriefCandidateToken) {
         let candidate = {
             let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
@@ -282,6 +319,25 @@ async fn install_brief(
 /// session reads and the PEOPLE its credential reads, laid out under the
 /// `people` share of the agent's live board layout; or, with the installed
 /// epoch delivered, that prefix's bytes and rows as they stand.
+async fn advance_brief(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    key: &BriefKey,
+    run_id: EntityId,
+    owner: BriefOwner,
+) -> oneiron::Result<bool> {
+    let reads = super::mcp_session_reads(server, actor).await;
+    let line = super::code_mode_line(server, run_id);
+    let state =
+        crate::api::connection_brief_state(server, actor, &reads, Some(run_id), line.as_ref())
+            .map_err(unresolved)?;
+    server
+        .self_brief_sessions
+        .lock()
+        .await
+        .advance(key, owner, state)
+}
+
 async fn prepare_prefix(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -304,9 +360,11 @@ async fn prepare_prefix(
     } else {
         None
     };
+    // The fold's epoch moved as the batch landed (`folded`); a fold here
+    // only restates what the run holds now at that epoch.
     let mut briefs = server.self_brief_sessions.lock().await;
     let held = match state {
-        Some(state) => briefs.advance(key, owner, state)?,
+        Some(state) => briefs.holds(key, owner) && briefs.restate(key, state)?,
         None => briefs.holds(key, owner),
     };
     if !held {
