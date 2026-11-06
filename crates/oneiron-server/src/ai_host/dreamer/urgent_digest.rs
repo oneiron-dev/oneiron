@@ -21,9 +21,8 @@ use oneiron::dreamer_runner::maintenance::digest::DIGEST_ASSESS_UNLENT_PARK_REAS
 use oneiron::llm::decision::{DecisionRung, Reversibility};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, Vault, WakeAttemptContext};
-use tokio::sync::watch;
 
-use super::{PassAdmission, admit, now_ms, pause, paused};
+use super::{PassAdmission, admit, now_ms, pause, pause_lifted, paused};
 use crate::decision_host::DecisionHost;
 
 /// The harm question's shipped wording: prompt data beside this host, never
@@ -111,16 +110,6 @@ fn queue_round(
         queued.insert(basis);
     }
     Ok(())
-}
-
-/// Resolves once the pause `epoch` held lifts; pends while it holds none.
-async fn pause_lifted(epoch: Option<watch::Receiver<bool>>) {
-    match epoch {
-        Some(mut epoch) if paused(Some(&epoch)) => {
-            let _ = epoch.wait_for(|held| !*held).await;
-        }
-        _ => std::future::pending::<()>().await,
-    }
 }
 
 /// Answers one queued harm question on the server's shared ladder and hands

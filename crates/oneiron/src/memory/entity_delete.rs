@@ -6,7 +6,8 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    DeleteEntityOptions, DeleteEntityPreview, DeletionGateContext, GuestRevokeAuthority,
+    DeleteEntityOptions, DeleteEntityPreview, DeleteReason, DeletionGateContext,
+    GuestRevokeAuthority,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -77,12 +78,18 @@ impl Memory<'_> {
         &self,
         owner: &AuthenticatedOwner,
         entity_ref: &str,
-        reason: SafeDeleteReason,
+        reason: DeleteReason,
     ) -> MemoryResult<DeleteReceipt> {
-        self.safe_delete_checked(entity_ref, reason, |txn| {
-            owner.revalidate_in_txn(self.vault, txn)?;
-            Ok(())
-        })
+        self.safe_delete_checked_in_phase(
+            entity_ref,
+            reason,
+            |txn| {
+                owner.revalidate_in_txn(self.vault, txn)?;
+                Ok(())
+            },
+            false,
+            None,
+        )
     }
 
     pub(super) fn safe_delete_checked(
@@ -91,7 +98,7 @@ impl Memory<'_> {
         reason: SafeDeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<DeleteReceipt> {
-        self.safe_delete_checked_in_phase(entity_ref, reason, check, false, None)
+        self.safe_delete_checked_in_phase(entity_ref, reason.delete_reason(), check, false, None)
     }
 
     /// As [`Self::safe_delete_checked`], making `claim` in the delete's
@@ -99,12 +106,12 @@ impl Memory<'_> {
     pub(super) fn safe_delete_claimed(
         &self,
         entity_ref: &str,
-        reason: SafeDeleteReason,
+        reason: DeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
         claim: Option<crate::deletion::DeletionClaim<'_>>,
     ) -> MemoryResult<DeleteReceipt> {
-        if claim.is_some() && reason != SafeDeleteReason::UserHardDelete {
-            return Err(Error::InvariantViolation("a claimed delete is a user hard delete").into());
+        if claim.is_some() && reason != DeleteReason::OwnerErase {
+            return Err(Error::InvariantViolation("a claimed delete is an owner erase").into());
         }
         self.safe_delete_checked_in_phase(entity_ref, reason, check, false, claim)
     }
@@ -115,7 +122,7 @@ impl Memory<'_> {
     pub(super) fn safe_delete_preview_checked(
         &self,
         entity_ref: &str,
-        reason: SafeDeleteReason,
+        reason: DeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<DeleteReceipt> {
         self.safe_delete_checked_in_phase(entity_ref, reason, check, true, None)
@@ -124,7 +131,7 @@ impl Memory<'_> {
     fn safe_delete_checked_in_phase(
         &self,
         entity_ref: &str,
-        reason: SafeDeleteReason,
+        reason: DeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
         stop_check_after_soft_scrub: bool,
         claim: Option<crate::deletion::DeletionClaim<'_>>,
@@ -186,7 +193,7 @@ impl Memory<'_> {
         };
         let receipt = self.safe_delete_gated(
             &id,
-            SafeDeleteReason::UserHardDelete,
+            DeleteReason::UserHardDelete,
             gate,
             &same,
             check,
@@ -208,7 +215,7 @@ impl Memory<'_> {
     fn safe_delete_gated(
         &self,
         id: &EntityId,
-        reason: SafeDeleteReason,
+        reason: DeleteReason,
         gate: DeletionGateContext,
         authority: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
@@ -244,7 +251,7 @@ impl Memory<'_> {
         .with_owner_act(owner_act);
         let outcome = self
             .vault
-            .delete_entity_with_reason_gated(id, reason.delete_reason(), gated);
+            .delete_entity_with_reason_gated(id, reason, gated);
         // FIX 11743: a Connect guest's slips its delete revoked in one of
         // its writes; once they have committed, every stream judging a
         // credential judges again, as after a slip revoke. The notice says
@@ -347,9 +354,9 @@ impl Memory<'_> {
                 .revoke_share(share_id, &actor, self.vault.store.clock.now_recorded_at())?;
         }
         let reason = if options.purge {
-            SafeDeleteReason::UserHardDelete
+            DeleteReason::UserHardDelete
         } else {
-            SafeDeleteReason::UserDelete
+            DeleteReason::UserDelete
         };
         self.safe_delete_preview_checked(&preview.entity().to_hex(), reason, |txn| {
             preview

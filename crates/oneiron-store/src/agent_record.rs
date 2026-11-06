@@ -188,4 +188,3 @@ impl CompactionOwnership {
         }
     }
 }
-
