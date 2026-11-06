@@ -393,16 +393,21 @@ fn dispatched(
     Some(Sending { sent, marked, held })
 }
 
-/// Whether `request`'s own Anthropic options carry a `cache_control` at any
-/// depth (FIX 6493). The wire sends those options as they are, so each is a
-/// marker on a block the host's descriptor does not place.
+/// Whether `request`'s own params or Anthropic options carry a
+/// `cache_control` at any depth (FIX 6493). The wire copies both into the
+/// body as they are, so each is a marker the host's descriptor does not
+/// place: a top-level one turns on automatic caching of the final block.
 fn options_mark(request: &LlmRequest) -> bool {
-    AnthropicProviderOptions::from_request(request).is_ok_and(|options| {
-        options
-            .raw
-            .iter()
-            .any(|(key, value)| names_cache_control(key, value))
-    })
+    request
+        .params
+        .iter()
+        .any(|(key, value)| names_cache_control(key, value))
+        || AnthropicProviderOptions::from_request(request).is_ok_and(|options| {
+            options
+                .raw
+                .iter()
+                .any(|(key, value)| names_cache_control(key, value))
+        })
 }
 
 fn names_cache_control(key: &str, value: &JsonValue) -> bool {
