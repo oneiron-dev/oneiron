@@ -161,7 +161,8 @@ fn pass_heads(doc: &LoroDoc, window: &str) -> Rc<Heads> {
 pub(crate) struct AdmissionRows {
     bindings: BTreeMap<EntityId, EntityId>,
     versions: BTreeMap<(EntityId, u64), Vec<u8>>,
-    /// The meet of the receipts met for each change.
+    /// The join of the receipts met for each change: every actor any copy
+    /// names, so a later copy naming another is refused.
     events: BTreeMap<(EntityId, u64), crate::source_audience::SourceAudienceEvent>,
 }
 
@@ -187,7 +188,15 @@ impl AdmissionRows {
                     revision,
                     event,
                 }) => {
-                    self.events.entry((policy, revision)).or_insert(event);
+                    let joined = match self.events.get(&(policy, revision)) {
+                        Some(held) => source_audience::event_join(held, &event),
+                        None => Some(event),
+                    };
+                    // A held map that contradicts itself keeps the first; the
+                    // range's own copies are tested against it.
+                    if let Some(joined) = joined {
+                        self.events.insert((policy, revision), joined);
+                    }
                 }
                 Ok(Carrier::Withheld { .. }) | Err(_) => {}
             }
@@ -250,12 +259,12 @@ pub(crate) fn admit_carrier(
             revision,
             event,
         } => {
-            let meet = match seen.events.get(&(policy, revision)) {
-                Some(held) => source_audience::event_meet(held, &event)
+            let joined = match seen.events.get(&(policy, revision)) {
+                Some(held) => source_audience::event_join(held, &event)
                     .ok_or_else(|| refused("two receipts of one change tell two changes"))?,
                 None => event.clone(),
             };
-            seen.events.insert((policy, revision), meet);
+            seen.events.insert((policy, revision), joined);
             if let Some(vault) = vault {
                 let rtxn = vault.store.env.read_txn()?;
                 if source_audience::event_conflicts_in(vault, &rtxn, &policy, revision, &event)? {

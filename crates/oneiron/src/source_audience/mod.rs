@@ -47,7 +47,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 pub(crate) use replica::{
-    ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_meet,
+    ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
     merge_policy_in_txn, names_erased_actor_in, policy_closure_in, policy_conflicts_in, policy_in,
     publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
@@ -67,7 +67,11 @@ const RECORDS: SideTable<EntityId, EntityId, Named> =
 const HELD: SideTable<EntityId, HeldBack, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_HELD);
 /// The thread policy of one thread of a source policy, by the source policy
-/// and the BLAKE3 of the source's own thread key.
+/// and the BLAKE3 of the source's own thread key. A second policy another
+/// install minted for the same thread before the two met is filed beside it,
+/// under the BLAKE3 of that key and its own id, so every merged thread
+/// policy of a source is found by a scan of the source's rows; the thread's
+/// own key keeps the first.
 const THREADS: SideTable<(EntityId, [u8; 32]), EntityId, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_THREAD);
 /// Every change to a policy's readers, by the policy and the revision the
