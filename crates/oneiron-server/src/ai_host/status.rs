@@ -172,27 +172,57 @@ pub struct AiStatus {
 }
 
 /// Interior-mutable status cell owned by one server.
-pub(crate) struct StatusCell(Mutex<AiStatus>);
+pub(crate) struct StatusCell(Mutex<StatusState>);
+
+/// The status, and how many Dreamer executions run now across every
+/// executor that shares the cell: the Dreamer reads working while any runs.
+struct StatusState {
+    status: AiStatus,
+    dreamer_running: u64,
+}
 
 impl StatusCell {
     pub(crate) fn new(status: AiStatus) -> Self {
-        Self(Mutex::new(status))
+        Self(Mutex::new(StatusState {
+            status,
+            dreamer_running: 0,
+        }))
     }
 
-    pub(crate) fn snapshot(&self) -> AiStatus {
+    fn state(&self) -> std::sync::MutexGuard<'_, StatusState> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+    }
+
+    pub(crate) fn snapshot(&self) -> AiStatus {
+        self.state().status.clone()
     }
 
     pub(crate) fn update(&self, change: impl FnOnce(&mut AiStatus)) {
-        change(
-            &mut self
-                .0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        change(&mut self.state().status);
+    }
+
+    /// `count` Dreamer executions start: the Dreamer is working.
+    pub(crate) fn dreamer_started(&self, count: u64) {
+        let mut state = self.state();
+        state.dreamer_running = state.dreamer_running.saturating_add(count);
+        let dreamer = &mut state.status.dreamer;
+        dreamer.state = WorkState::Working;
+        dreamer.started = dreamer.started.saturating_add(count);
+    }
+
+    /// `count` Dreamer executions ended, their outcomes folded in by
+    /// `change`. The Dreamer waits again only once no execution runs, so
+    /// one executor's end never shows another's work as waiting; a worker
+    /// another path set idle stays idle.
+    pub(crate) fn dreamer_ended(&self, count: u64, change: impl FnOnce(&mut AiStatus)) {
+        let mut state = self.state();
+        state.dreamer_running = state.dreamer_running.saturating_sub(count);
+        if state.dreamer_running == 0 && state.status.dreamer.state == WorkState::Working {
+            state.status.dreamer.state = WorkState::Waiting;
+        }
+        change(&mut state.status);
     }
 }
 
