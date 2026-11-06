@@ -4,7 +4,7 @@ use super::{
     DUE_JOB, ExecutorStorage, NewReaderJob, ReaderJob, ReaderJobKind, ReaderJobState, ReaderParent,
     Result, SpawnAdmission, child_key, due_key, queued_key,
 };
-use crate::agent_dispatch::load_team_type_tree_in_txn;
+use crate::agent_dispatch::{load_team_type_tree_in_read, load_team_type_tree_in_txn};
 use crate::code_run::{SpawnHostSeat, SpawnParentBinding, reader_job_cutoff};
 use crate::task_type::{PlacementRequest, place_task};
 
@@ -46,9 +46,23 @@ impl ExecutorStorage<'_> {
             {
                 return Ok(SpawnAdmission::Unmetered);
             }
-            let type_ref = match (tx.vault, &new.kind) {
-                (Some(vault), ReaderJobKind::Read | ReaderJobKind::Summarize { .. }) => {
-                    match load_team_type_tree_in_txn(vault, &*tx.txn, parent.project) {
+            let type_ref = match &new.kind {
+                ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
+                    let tree = match tx.read {
+                        crate::side_table::RoutedDbs::Base(vault) => {
+                            load_team_type_tree_in_txn(vault, &*tx.txn, parent.project)
+                        }
+                        crate::side_table::RoutedDbs::Session(view) => {
+                            let posture = match self {
+                                Self::Canonical(vault) => vault.privacy_posture(),
+                                Self::Session(binding) => binding.session.privacy_posture(),
+                            };
+                            load_team_type_tree_in_read(
+                                &view.read(), &*tx.txn, posture, parent.project,
+                            )
+                        }
+                    };
+                    match tree {
                         Ok(tree) => {
                             let request = PlacementRequest {
                                 spec_text: Some(new.ask.clone()),

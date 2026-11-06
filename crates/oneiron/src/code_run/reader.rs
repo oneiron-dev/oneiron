@@ -534,8 +534,8 @@ pub struct ReaderJob {
     pub binding: SpawnParentBinding,
     pub kind: ReaderJobKind,
     pub ask: String,
-    /// This child's rule placement, frozen with its job on the canonical route.
-    /// No stamp when the route has no tree supplier or its tree could not be read.
+    /// This child's rule placement, frozen with its job from the route's content view.
+    /// No stamp when its tree could not be read.
     pub type_ref: Option<crate::task_type::TaskTypeRef>,
     pub state: ReaderJobState,
     pub generation: u32,
