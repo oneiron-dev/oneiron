@@ -383,7 +383,9 @@ impl Vault {
             };
             if !matches!(
                 &entry.op,
-                AuthorityOp::AgentGrantAct(_) | AuthorityOp::SlipGrantRevoke { .. }
+                AuthorityOp::AgentGrantAct(_)
+                    | AuthorityOp::SlipGrantRevoke { .. }
+                    | AuthorityOp::MembershipExecution(_)
             ) || !fold.valid_entries.contains(&authority_entry_hash(&entry)?)
             {
                 continue;
@@ -399,6 +401,11 @@ impl Vault {
                 },
                 AuthorityOp::SlipGrantRevoke { grant_ref } => {
                     grants.membership_revoked.insert(grant_ref);
+                }
+                // A membership change no host issuer signed, signed later
+                // by its carrier (FIX 12335), withdraws each Grant it names.
+                AuthorityOp::MembershipExecution(record) => {
+                    grants.membership_revoked.extend(record.withdrawn_grants);
                 }
                 _ => {}
             }
