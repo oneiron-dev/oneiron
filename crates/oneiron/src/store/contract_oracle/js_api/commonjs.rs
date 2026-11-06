@@ -302,7 +302,9 @@ fn whole_sequence_values<'ast, 'src>(
         let value = assignment.right.get_inner_expression();
         let fresh = fresh_value(value);
         if fresh_prefix.is_some_and(|prefix| prefix != fresh)
-            || (!fresh && !whole_value(value, semantic, &mut sequence_accounted))
+            || (!fresh
+                && !whole_value(value, semantic, &mut sequence_accounted)
+                && !(alias && wrapper(value, "exports", semantic, &mut sequence_accounted)))
         {
             return None;
         }
