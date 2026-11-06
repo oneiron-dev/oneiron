@@ -331,6 +331,15 @@ fn whole_sequence_values<'ast, 'src>(
     if replacements.is_empty() {
         return None;
     }
+    let assigned_final = matches!(
+        last.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    );
+    let replacements = if assigned_final {
+        &sequence.expressions[..]
+    } else {
+        replacements
+    };
     let mut sequence_accounted = BTreeSet::new();
     let mut values = Vec::new();
     for expression in replacements {
@@ -362,15 +371,17 @@ fn whole_sequence_values<'ast, 'src>(
             return None;
         }
     }
-    let last = last.get_inner_expression();
-    if fresh_value(last) {
-        values.push(last);
-    } else if !whole_value(last, semantic, &mut sequence_accounted)
-        && !(values.is_empty()
-            && alias
-            && wrapper(last, "exports", semantic, &mut sequence_accounted))
-    {
-        return None;
+    if !assigned_final {
+        let last = last.get_inner_expression();
+        if fresh_value(last) {
+            values.push(last);
+        } else if !whole_value(last, semantic, &mut sequence_accounted)
+            && !(values.is_empty()
+                && alias
+                && wrapper(last, "exports", semantic, &mut sequence_accounted))
+        {
+            return None;
+        }
     }
     accounted.extend(sequence_accounted);
     Some(values)
