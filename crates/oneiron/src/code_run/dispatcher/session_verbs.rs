@@ -4,11 +4,13 @@
 //! A session-bound run forwards no verb through its door: the door runs on
 //! the canonical vault, outside the room's route and saver. Of its verb
 //! calls, `vault.notes.create` and `vault.claims.upsert` stage in the room
-//! (DOOR-127), and the four reads [`session_read`] names read the room
+//! (DOOR-127), and the five reads [`session_read`] names read the room
 //! through its view ([`crate::memory::SessionReadContext`]), under the key
-//! the run's door admits for its caller at each call. Every other verb keeps
-//! its refusal. The run's own `vault.search` reads the same way when its door
-//! admits it with a key (`ExecutorStorage::search_text_as`).
+//! the run's door admits for its caller at each call. `vault.receipts` reads
+//! the vault's receipts beside the served forms the room kept (FIX 7355).
+//! Every other verb keeps its refusal. The run's own `vault.search` reads the
+//! same way when its door admits it with a key
+//! (`ExecutorStorage::search_text_as`).
 //!
 //! A verb hook bound to one of these reads runs in the room as on base
 //! (S01-2c, [`hooks`]): its content reads go through the room's view under
@@ -44,6 +46,7 @@ pub(super) fn session_read(verb: AgentVerb) -> Option<SessionRead> {
         "vault.hydrate" => Some(SessionRead::Hydrate),
         "vault.refs.resolve" => Some(SessionRead::RefsResolve),
         "vault.search.bm25" => Some(SessionRead::SearchBm25),
+        "vault.receipts" => Some(SessionRead::Receipts),
         _ => None,
     }
 }
