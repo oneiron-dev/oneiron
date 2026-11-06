@@ -29250,7 +29250,7 @@ async fn ai_phone_voice_start(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.start")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.start", &value)?;
@@ -29281,7 +29281,7 @@ async fn ai_phone_voice_audio(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.audio")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.audio", &value)?;
@@ -29312,7 +29312,7 @@ async fn ai_phone_voice_events(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.events")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.events", &value)?;
@@ -29343,7 +29343,7 @@ async fn ai_phone_voice_ack(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.ack")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.ack", &value)?;
@@ -29374,7 +29374,7 @@ async fn ai_phone_voice_usage(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.usage")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.usage", &value)?;
@@ -29405,7 +29405,7 @@ async fn ai_phone_voice_tool(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.tool")?;
     let caller = facade_actor(server, auth)?;
     let value = input?;
@@ -29445,7 +29445,7 @@ async fn ai_phone_voice_end(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.end")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.end", &value)?;
@@ -29476,7 +29476,7 @@ async fn ai_phone_voice_close(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    facade_scoped_credential(auth)?;
     facade_outside_room_turn(call, "ai.phone.voice.close")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.phone.voice.close", &value)?;

@@ -6699,6 +6699,14 @@ impl AgentVerb {
                 | Self::VaultRepoCheckoutBind
                 | Self::VaultRepoExport
                 | Self::VaultWorkflowsDispatchBound
+                | Self::AiPhoneVoiceStart
+                | Self::AiPhoneVoiceAudio
+                | Self::AiPhoneVoiceEvents
+                | Self::AiPhoneVoiceAck
+                | Self::AiPhoneVoiceUsage
+                | Self::AiPhoneVoiceTool
+                | Self::AiPhoneVoiceEnd
+                | Self::AiPhoneVoiceClose
                 | Self::AiAskImage
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
@@ -7621,14 +7629,6 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
-                | Self::AiPhoneVoiceStart
-                | Self::AiPhoneVoiceAudio
-                | Self::AiPhoneVoiceEvents
-                | Self::AiPhoneVoiceAck
-                | Self::AiPhoneVoiceUsage
-                | Self::AiPhoneVoiceTool
-                | Self::AiPhoneVoiceEnd
-                | Self::AiPhoneVoiceClose
                 | Self::AiAnonymousChat
                 | Self::VaultModelsCatalogRefresh
                 | Self::VaultModelsCatalogGet
