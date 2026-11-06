@@ -1,4 +1,4 @@
-//! One guard read and selected lease contributions from the same lock.
+//! One guard read and selected lease states from the same lock.
 
 use super::ledger::{LeaseRecord, LeaseState};
 use super::{BudgetGuard, BudgetLeaseState, BudgetRead};
@@ -9,7 +9,7 @@ use crate::llm::BudgetLease;
 pub struct BudgetAccountingSnapshot {
     pub read: BudgetRead,
     /// One entry per requested lease, in the same order. A foreign or unknown
-    /// lease has no contribution on this guard, even if its public id matches.
+    /// lease has no state on this guard, even if its public id matches.
     pub leases: Vec<Option<BudgetLeaseState>>,
 }
 
