@@ -147,6 +147,10 @@ pub struct PdfPreparation<'a> {
     pub audit: &'a [EsignEventRow],
     pub canonical_url: &'a str,
     pub signature_images: &'a BTreeMap<String, SignatureRaster>,
+    /// Allocated capacities of caller-held byte buffers outside the parse
+    /// pool, including this original exactly once. This is not a witness for
+    /// the caller's whole heap. The hosted native path uses it at admission.
+    pub pinned_buffer_bytes: u64,
 }
 #[derive(Debug)]
 pub struct PreparedEsignPdf {

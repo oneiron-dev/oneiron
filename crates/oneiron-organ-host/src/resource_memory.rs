@@ -53,29 +53,25 @@ pub trait FloorLease: Send {
     fn shrink(&mut self, bytes: u64);
 
     /// Grows allocated buffers without a deadline: only `stopped` ends the
-    /// wait. Use [`Self::grow_pending_untimed`] if earlier reservations are
-    /// not established allocations.
+    /// wait.
     ///
     /// # Errors
     /// As [`Self::grow`].
     fn grow_untimed(&mut self, more: u64, stopped: &dyn Fn() -> bool) -> Result<(), FloorRefusal>;
-
-    /// Grows without a deadline while every earlier unallocated reservation
-    /// stays charged. Only [`Self::materialized`] establishes allocation.
-    ///
-    /// # Errors
-    /// As [`Self::grow`].
-    fn grow_pending_untimed(
-        &mut self,
-        more: u64,
-        stopped: &dyn Fn() -> bool,
-    ) -> Result<(), FloorRefusal>;
 }
 
 /// The machine's memory, as the host leases it to organs' own buffers. The
 /// server's implementation is its machine memory line, shared with every
 /// other lease it gives.
 pub trait MachineFloor: Send + Sync {
+    /// Checks distinct caller-held input plus a complete requested pool
+    /// against the existing physical floor, without waiting or reserving.
+    /// `pinned` names only the caller-supplied footprint, not unknown heap.
+    ///
+    /// # Errors
+    /// The machine's floor if the named peak cannot fit with no other leases.
+    fn check_irreducible_peak(&self, pinned: u64, bytes: u64) -> Result<(), FloorRefusal>;
+
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`
     /// and no longer than `stopped` allows.

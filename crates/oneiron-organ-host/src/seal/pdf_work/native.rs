@@ -9,7 +9,7 @@ use oneiron::blob_artifact::esign::render::{
 };
 
 use super::super::HostedSealer;
-use crate::resource_memory::{FloorLease, FloorRefusal, SharedFloor};
+use crate::resource_memory::FloorRefusal;
 
 impl HostedSealer<'_> {
     pub(super) fn prepare_esign_pdf_native(
@@ -22,84 +22,100 @@ impl HostedSealer<'_> {
         let Some(floor) = self.host.floor() else {
             return Ok(None);
         };
-        let memory = Arc::new(PrepareMemory {
-            floor,
-            state: Mutex::new(MemoryState {
-                lease: None,
-                refused: None,
-            }),
-        });
-        let prepared = prepare_esign_pdf_with_replayed_audit_admitted(
-            original,
-            request,
-            self.vault.esign_stream_decode_bytes(),
-            chain,
-            trail.to_vec(),
-            memory.clone(),
-        );
-        let refused = memory
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .refused;
-        if let Some(refused) = refused {
-            let error = match refused {
-                FloorRefusal::Floor { needed, available } => {
-                    PdfPreparationError::MemoryFloor { needed, available }
-                }
-                FloorRefusal::Deadline => PdfPreparationError::Deadline,
+        // The caller reports the actual capacities of its pinned byte buffers;
+        // they are outside this pool and the original is already included.
+        let mut capacity = 0;
+        loop {
+            let lease = if capacity == 0 {
+                None
+            } else {
+                floor
+                    .0
+                    .check_irreducible_peak(request.pinned_buffer_bytes, capacity)
+                    .map_err(memory_refused)?;
+                Some(
+                    floor
+                        .0
+                        .lease_untimed(capacity, &|| false)
+                        .map_err(memory_refused)?,
+                )
             };
-            return Err(EsignSealerError::Retryable {
-                stage: "prepare".to_owned(),
-                code: error.to_string(),
-                retry_after_ms: None,
+            let memory = Arc::new(PrepareMemory {
+                state: Mutex::new(MemoryState {
+                    capacity,
+                    used: 0,
+                    shortfall: None,
+                }),
             });
+            let prepared = prepare_esign_pdf_with_replayed_audit_admitted(
+                original,
+                request,
+                self.vault.esign_stream_decode_bytes(),
+                chain,
+                trail.to_vec(),
+                memory.clone(),
+            );
+            let shortfall = memory
+                .state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .shortfall;
+            if let Some(needed) = shortfall {
+                drop(prepared);
+                drop(memory);
+                drop(lease);
+                capacity = needed;
+                continue;
+            }
+            return prepared
+                .map(Some)
+                .map_err(|error| EsignSealerError::InputInvalid {
+                    code: error.to_string(),
+                });
         }
-        prepared
-            .map(Some)
-            .map_err(|error| EsignSealerError::InputInvalid {
-                code: error.to_string(),
-            })
+    }
+}
+
+fn memory_refused(refused: FloorRefusal) -> EsignSealerError {
+    let error = match refused {
+        FloorRefusal::Floor { needed, available } => {
+            PdfPreparationError::MemoryFloor { needed, available }
+        }
+        FloorRefusal::Deadline => PdfPreparationError::Deadline,
+    };
+    EsignSealerError::Retryable {
+        stage: "prepare".to_owned(),
+        code: error.to_string(),
+        retry_after_ms: None,
     }
 }
 
 struct PrepareMemory {
-    floor: SharedFloor,
     state: Mutex<MemoryState>,
 }
 
 struct MemoryState {
-    lease: Option<Box<dyn FloorLease>>,
-    refused: Option<FloorRefusal>,
+    capacity: u64,
+    used: u64,
+    shortfall: Option<u64>,
 }
 
 impl InspectionMemory for PrepareMemory {
     fn admit(&self, bytes: u64) -> Result<(), DecodeAdmissionError> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        // The native fallback has neither a call deadline nor a stop handle.
-        // Keep reservations pending: the inspection port has no allocated-byte
-        // notification and admission is not evidence of materialization.
-        let admitted = match state.lease.as_mut() {
-            Some(lease) => lease.grow_pending_untimed(bytes, &|| false),
-            None => self.floor.0.lease_untimed(bytes, &|| false).map(|lease| {
-                state.lease = Some(lease);
-            }),
-        };
-        admitted.map_err(|refused| {
-            state.refused.get_or_insert(refused);
-            match refused {
-                FloorRefusal::Floor { needed, available } => {
-                    DecodeAdmissionError::MemoryFloor { needed, available }
-                }
-                FloorRefusal::Deadline => DecodeAdmissionError::Deadline,
-            }
-        })
+        let needed = state.used.saturating_add(bytes);
+        if needed > state.capacity {
+            state.shortfall.get_or_insert(needed);
+            // Cancel this attempt, not the work. The wrapper releases this
+            // pool and all parsed buffers before booking a complete new pool.
+            return Err(DecodeAdmissionError::Cancelled);
+        }
+        state.used = needed;
+        Ok(())
     }
 
     fn release(&self, bytes: u64) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(lease) = state.lease.as_mut() {
-            lease.shrink(bytes);
-        }
+        state.used = state.used.saturating_sub(bytes);
     }
 }
