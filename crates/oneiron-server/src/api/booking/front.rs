@@ -127,10 +127,12 @@ async fn run_constraint_turn_in(
 
     // ── the one admission call, in the listing class ────────────────────
     let mut turn = turn::Turn::new(server, transport);
+    let caller = transport.caller();
     let (now, disposition) = loop {
         let now = now_secs()?;
         let facts = admission_facts(server, page_ref, &listing, transport, now)?;
-        let disposition = enforce_slot_list(State(Arc::clone(server)), facts, false).await?;
+        let disposition =
+            enforce_slot_list(State(Arc::clone(server)), facts, false, caller).await?;
         if let Some(disposition) = turn.after(disposition).await? {
             break (now, disposition);
         }
