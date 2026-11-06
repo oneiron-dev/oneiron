@@ -14,6 +14,9 @@ use super::TokenHex;
 
 const DOMAIN: &str = "oneiron/managed-account-widen/v1";
 
+/// The header a supervisor sends a [`ManagedWidenAction`] in.
+pub const MANAGED_WIDEN_ACTION_HEADER: &str = "x-oneiron-managed-widen-action";
+
 /// A host assertion tied to one vault, exact body and authenticated holder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

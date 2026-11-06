@@ -185,6 +185,10 @@ side_tables! {
     /// Digest of which install keys counted as mine-machine signers when an authority write last
     /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
     IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// One proposing actor's opaque ramp-scope handle on this vault (FIX 9870): 32 random bytes.
+    /// Local and erasable; never replicates, never restored from an image. Key: hex32 (actor
+    /// entity id).
+    IDENTITY_TOPOLOGY_PROPOSER_SCOPE: SyncState b"it:proposer-scope:" Raw;
     /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
     /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
     IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
@@ -452,6 +456,11 @@ side_tables! {
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
     /// An entity document's state vector (document family). Key: hex32.
     DOCUMENT_STATE_VECTOR: SyncState b"sv:e:" Raw;
+    /// The home's version vector of a world window, as this device last
+    /// exchanged it (FIX 14534): what a world eviction waits to see cover the
+    /// window. Local only, never imaged; the next exchange writes it again.
+    /// Key: window key.
+    SYNC_HOME_WINDOW_VV: SyncState b"sv:hw:" Raw;
     /// ARCH-0023b document family: the root document's state vector, paired with d:root. Key: ().
     SYNC_SV_ROOT: SyncState b"sv:root" Raw;
     /// A sync window's state vector (document family). Key: yyyy-mm.
@@ -461,6 +470,26 @@ side_tables! {
     SYNC_SVF_ROOT: SyncState b"svf:root" Raw;
     /// Whether a sync window's state vector is fresh (document family). Key: yyyy-mm.
     WINDOW_SHALLOW_FENCE: SyncState b"svf:w:" Raw;
+    /// This machine's place in its home's queue of sealed world updates (DEC-0005 fix 8, FIX
+    /// 12586): the queue epoch (16) ‖ u64be the last number it took. Key: ().
+    SYNC_SEALED_UPDATE_CURSOR: SyncState b"swu:c" Raw;
+    /// One sealed world update the home keeps for the vault's machines (DEC-0005 fix 8, FIX
+    /// 12586): u64be vault second it was stored ‖ its id (16) ‖ the sealed bytes, which the home
+    /// cannot read. Kept 90 days. Key: u64hex16 (its number in the queue's epoch).
+    SYNC_SEALED_UPDATE_ENTRY: SyncState b"swu:e:" Raw;
+    /// The number the home gave one sealed world update's id, so one id is stored once: u64be.
+    /// Key: hex32 (the id).
+    SYNC_SEALED_UPDATE_ID: SyncState b"swu:i:" Raw;
+    /// The home's queue of sealed world updates: its epoch (16), minted on first use ‖ u64be the
+    /// last number it gave. Key: ().
+    SYNC_SEALED_UPDATE_QUEUE: SyncState b"swu:m" Raw;
+    /// One world update this machine sealed for its home, until the home says it is stored: its
+    /// id (16) ‖ the world (16) ‖ u64be vault second it was sealed ‖ the sealed bytes. Key:
+    /// u64hex16 (its place in the order the updates were made).
+    SYNC_SEALED_UPDATE_OUTBOX: SyncState b"swu:o:" Raw;
+    /// The place of one outbox update by its id, so one id is kept once: u64be. Key: hex32 (the
+    /// id).
+    SYNC_SEALED_UPDATE_OUTBOX_ID: SyncState b"swu:p:" Raw;
     /// Test-fixture row, never read or written by production code: a cached
     /// minted capability slip for one request-credential recipe id
     /// (`crates/oneiron-server/src/test_credentials.rs`, mounted only as
