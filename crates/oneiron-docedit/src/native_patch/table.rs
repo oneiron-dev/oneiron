@@ -406,9 +406,9 @@ pub(super) fn set_cell(
     // is tried first (FIX 12227): each field the change covers whole goes,
     // the new text written into an adjacent run, only when the cell then
     // reads exactly the requested text. Otherwise the cell is rebuilt from
-    // its first paragraph's and first run's properties; only when the line
-    // count is unchanged do later lines reuse the same-index paragraph's
-    // properties, falling back to the first paragraph's template on error.
+    // its first paragraph/run template, except same-count later lines and
+    // count-changed unchanged outer paragraphs reuse their actual properties.
+    // Unsupported coverage/properties fall back to the existing templates.
     let (out, cut_fields) = match crate::edit::cell_text_cut(&bytes, &tree, body, value) {
         Some((out, cut_fields)) => (out, cut_fields),
         None => (
@@ -427,16 +427,16 @@ pub(super) fn set_cell(
     Ok(cut_fields)
 }
 
-/// Replace the cell's paragraphs using the first paragraph's properties and
-/// first run's properties, or the first field's when no run exists. When the
-/// line count is unchanged, later lines use the same-index paragraph's
-/// properties. Their common character prefix/suffix keeps each direct run
-/// or field's properties in static runs; the changed middle uses the first
-/// run's (else first field's, else the global run's) properties. Unsupported
-/// coverage or properties retain the one-template render, which falls back
-/// to the first paragraph's template on error.
-/// Copied properties keep their namespace bindings; removed field types are
-/// reported.
+/// Rebuild with the first paragraph/run template (else the first field's).
+/// Same-count later lines keep their same-index paragraph properties and
+/// each direct run/field's properties on the common character prefix/suffix
+/// as static runs; replacement text uses the first run/field/global template.
+/// With different counts, only unchanged common whole-paragraph prefix/suffix
+/// lines keep their original paragraph and static run properties. Changed
+/// middle and added lines use the first template. Unsupported coverage or
+/// properties use the actual one-template render for same-count later lines,
+/// then the first template; count-changed outer lines fall directly to first.
+/// Copied properties keep namespace bindings; removed field types are reported.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -570,21 +570,66 @@ fn rebuilt(
             "<{p}{p_bindings}>{p_pr}{head}{middle}{tail}{end}</{p}>"
         ))
     };
-    let same_count = paragraphs.len() == value.split('\n').count();
+    let paragraph_run = |para: usize| {
+        within(tree, para)
+            .find(|(_, node)| node.is(DML, "r"))
+            .or_else(|| within(tree, para).find(|(_, node)| node.is(DML, "fld")))
+            .or(source_run)
+    };
+    let new_count = value.split('\n').count();
+    let same_count = paragraphs.len() == new_count;
+    let (head, tail) = if same_count {
+        (0, 0)
+    } else {
+        let paragraph_text = |para: usize| {
+            within(tree, para)
+                .filter(|(_, node)| node.is(DML, "t"))
+                .map(|(_, node)| node.text.as_str())
+                .collect::<String>()
+        };
+        let mut head = 0;
+        for ((para, _), line) in paragraphs.iter().zip(value.split('\n')) {
+            if paragraph_text(*para) != line {
+                break;
+            }
+            head += 1;
+        }
+        let mut tail = 0;
+        let remaining = (paragraphs.len() - head).min(new_count - head);
+        for ((para, _), line) in paragraphs
+            .iter()
+            .rev()
+            .zip(value.split('\n').rev())
+            .take(remaining)
+        {
+            if paragraph_text(*para) != line {
+                break;
+            }
+            tail += 1;
+        }
+        (head, tail)
+    };
     let mut out = bytes[..first_node.span.start].to_vec();
     for (index, line) in value.split('\n').enumerate() {
         let rendered = if same_count && index > 0 {
             let actual = paragraphs[index];
-            let actual_run = within(tree, actual.0)
-                .find(|(_, node)| node.is(DML, "r"))
-                .or_else(|| within(tree, actual.0).find(|(_, node)| node.is(DML, "fld")))
-                .or(source_run);
+            let actual_run = paragraph_run(actual.0);
             match styled(actual, actual_run, line) {
                 Some(xml) => xml,
                 None => match render(actual, actual_run, line) {
                     Ok(xml) => xml,
                     Err(_) => render((first, first_node), source_run, line)?,
                 },
+            }
+        } else if !same_count && (index < head || index >= new_count - tail) {
+            let actual = if index < head {
+                paragraphs[index]
+            } else {
+                paragraphs[paragraphs.len() - (new_count - index)]
+            };
+            match styled(actual, paragraph_run(actual.0), line) {
+                Some(xml) => xml,
+                None => render((first, first_node), source_run, line)?,
             }
         } else {
             render((first, first_node), source_run, line)?
