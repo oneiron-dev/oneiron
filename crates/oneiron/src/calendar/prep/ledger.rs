@@ -57,14 +57,18 @@ pub(super) fn ledger_prep_items(
         let Some(raw) = source_in_time(&id)? else {
             continue;
         };
-        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let Ok(body) = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+            continue;
+        };
         if body.predicate != crate::calendar::claims::PREDICATE_CALENDAR_ATTENDEE
             || !claim_surfaceable(&body)
             || !crate::gate::claim_critical_confirm_settled_in_txn(store.base(), txn, &id)?
         {
             continue;
         }
-        let attendee = crate::calendar::claims::decode_attendee_value(&body.value)?;
+        let Ok(attendee) = crate::calendar::claims::decode_attendee_value(&body.value) else {
+            continue;
+        };
         let party = attendee
             .who
             .strip_prefix("mailto:")
