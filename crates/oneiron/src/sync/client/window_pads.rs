@@ -478,12 +478,12 @@ impl SyncClient {
         let mut staged = self
             .staged_world_updates
             .iter()
-            .filter(|(staged, ..)| staged == key)
+            .filter(|staged| &staged.key == key)
             .peekable();
         staged.peek()?;
         let scratch = doc.fork();
-        for (_, bytes, _) in staged {
-            let _ = scratch.import(bytes);
+        for staged in staged {
+            let _ = scratch.import(&staged.bytes);
         }
         Some(scratch)
     }

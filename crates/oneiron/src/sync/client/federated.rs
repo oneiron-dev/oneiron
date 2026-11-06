@@ -54,6 +54,20 @@ impl SyncClient {
         update: &[u8],
         from: PeerMachine,
     ) -> std::result::Result<(), TransportError> {
+        self.import_own_device_window_update_with_copies(window_key, update, from, Vec::new())
+    }
+
+    /// The caller supplies actual prepared holders bound to this delivery,
+    /// before any world deferral. Empty keeps the ordinary raw update path.
+    pub(super) fn import_own_device_window_update_with_copies(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        from: PeerMachine,
+        copies: Vec<
+            std::sync::Arc<crate::embed::home_vectors::retained::PreparedHomeClaimResponse>,
+        >,
+    ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
         if update.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES {
@@ -74,11 +88,16 @@ impl SyncClient {
             // together stay within the memory bound, however many there are
             // (FIX 8863); the drain imports each once its edges resolve.
             self.staged_world_updates
-                .push((window.key.clone(), update.to_vec(), from));
+                .push(super::home_claim_copies::StagedWorldUpdate {
+                    key: window.key.clone(),
+                    bytes: update.to_vec(),
+                    from,
+                    copies,
+                });
             let pending_bytes: usize = self
                 .staged_world_updates
                 .iter()
-                .map(|(_, bytes, _)| bytes.len())
+                .map(|staged| staged.bytes.len())
                 .sum();
             // An update joined from its envelope's parts may pass the bound
             // alone (FIX 8247): it waits while nothing else does, and beside
@@ -92,12 +111,13 @@ impl SyncClient {
             return self.drain_staged_world_updates();
         }
         let own_device = self.own_device_import(from);
-        self.import_accepted_window_update_with_evidence(
+        self.import_accepted_window_update_with_copies(
             window_key,
             &window,
             update,
             &std::collections::HashMap::new(),
             own_device.as_ref(),
+            &copies,
         )?;
         self.drain_staged_world_updates()
     }

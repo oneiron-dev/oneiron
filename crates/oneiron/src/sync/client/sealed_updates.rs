@@ -432,8 +432,8 @@ impl SyncClient {
         let imported =
             self.import_own_device_window_update(window_key, bytes, PeerMachine::Unknown);
         if imported.is_err() {
-            self.staged_world_updates.retain(|(key, staged, _)| {
-                key.as_str() != window_key || staged.as_slice() != bytes
+            self.staged_world_updates.retain(|staged| {
+                staged.key.as_str() != window_key || staged.bytes.as_slice() != bytes
             });
         }
         imported.map_err(|error| error.to_string())
