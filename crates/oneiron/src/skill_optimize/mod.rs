@@ -259,6 +259,7 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
+pub use gate::SkillVerdictReadPosition;
 pub use gate::{
     AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,
@@ -275,14 +276,14 @@ pub use gate::{
     preflight_skill_edit_offline_floors, project_goal_revision_proposals, receipt_is_held_out,
     register_held_out_replay_scorer, resolve_skill_edit_tradeoff,
     resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit, score_gate_skill_edit_in_cycle,
-    score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
-    set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
-    settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
-    skill_edit_needs_goal_axis_report, skill_edit_score_call_purpose, skill_edit_verdict,
-    skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_goal_axis_plan,
-    skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
-    supersede_skill_edit_judge,
+    score_gate_skill_edit_in_cycle_positioned, score_gate_skill_edit_with_scorer,
+    set_skill_edit_cycle_cap, set_skill_edit_goal_axes, set_skill_goal_project,
+    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as,
+    settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest, skill_edit_cycle_cap,
+    skill_edit_goal, skill_edit_goal_axis_report, skill_edit_needs_goal_axis_report,
+    skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
+    skill_edit_verdicts_for_proposal, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask,
+    skill_tradeoff_asks_for, skill_tradeoff_preferences, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
     CanonicalSkillEditVerdict, VerdictRead, VerdictReadObserver,

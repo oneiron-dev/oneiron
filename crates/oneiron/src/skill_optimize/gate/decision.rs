@@ -65,6 +65,7 @@ pub fn score_gate_skill_edit_with_scorer(
         &cycle,
         vault.store.clock.now_recorded_at(),
         None,
+        None,
     )
 }
 
@@ -91,7 +92,31 @@ pub fn score_gate_skill_edit_in_cycle(
     at: u64,
 ) -> Result<HeldOutVerdict> {
     let cycle = proven_cycle(vault, attempt)?;
-    rule_on_proposal(vault, proposal, scorer, &cycle, at, None)
+    rule_on_proposal(vault, proposal, scorer, &cycle, at, None, None)
+}
+
+/// The same gate with placement supplied on this original scoring request.
+/// The placement is recorded only on a newly ruled row. A replay returns its
+/// standing ruling unchanged; it cannot restamp an older row's read scope.
+/// No scope axis is inferred from the proposal, scorer, attempt or payer.
+pub fn score_gate_skill_edit_in_cycle_positioned(
+    vault: &Vault,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+    attempt: AttemptId,
+    at: u64,
+    read_position: SkillVerdictReadPosition,
+) -> Result<HeldOutVerdict> {
+    let cycle = proven_cycle(vault, attempt)?;
+    rule_on_proposal(
+        vault,
+        proposal,
+        scorer,
+        &cycle,
+        at,
+        None,
+        Some(&read_position),
+    )
 }
 
 /// The same gate, with the caller's owner proof revalidated in every write.
@@ -111,6 +136,7 @@ pub(crate) fn score_gate_skill_edit_as_owner(
         &cycle,
         vault.now_recorded_at(),
         Some(owner),
+        None,
     )
 }
 
@@ -165,6 +191,7 @@ fn rule_on_proposal(
     cycle: &SkillEditCycle,
     at: u64,
     owner: Option<&crate::consent::AuthenticatedOwner>,
+    read_position: Option<&SkillVerdictReadPosition>,
 ) -> Result<HeldOutVerdict> {
     let judge_revision = scorer.judge_revision();
     validate_judge_revision(judge_revision)?;
@@ -195,7 +222,8 @@ fn rule_on_proposal(
         // refusal — one the world had already outrun — impossible to commit.
         match (presented, terminal_reason(&staged, current.as_ref())) {
             (Some(presented), Some(committed)) if presented == committed => {
-                let verdict = refusal(vault.store.clock.entity_id()?, proposal, &target, cycle, committed, at);
+                let mut verdict = refusal(vault.store.clock.entity_id()?, proposal, &target, cycle, committed, at);
+                verdict.read_position = read_position.cloned();
                 record_verdict_in_txn(vault, wtxn, &verdict)?;
                 if committed.closes_proposal() {
                     close_answered_proposal_in_txn(vault, wtxn, proposal, at)?;
@@ -345,6 +373,7 @@ fn rule_on_proposal(
             accepted: false,
             judge_revision: Some(judge_revision.to_owned()),
             displaced_by_revision: None,
+            read_position: read_position.cloned(),
             id: vault.store.clock.entity_id()?,
             proposal: *proposal,
             skill: target,
@@ -685,6 +714,7 @@ fn refusal(
         accepted: false,
         judge_revision: None,
         displaced_by_revision: None,
+        read_position: None,
         id,
         proposal: *proposal,
         skill: *skill,

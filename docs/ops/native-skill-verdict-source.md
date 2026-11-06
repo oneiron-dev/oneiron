@@ -20,7 +20,21 @@ unknown when any decoded ruling has a displacement marker.
 
 These witnesses are data, not grants, custody certificates or complete attempt
 read sets. They are not fed into ENTITY admission, the heal source union or model
-source declarations. The original Coach request/key bridge, genuine producer-owned
-VERDICTS read position and native scoped admission must still compose before that
-capture is activated. A missing witness does not filter ordinary candidates,
+source declarations. The original Coach request/key bridge and native scoped admission must still
+compose before that capture is activated. A missing witness does not filter ordinary candidates,
 change an optimizer outcome or turn a working read into a refusal.
+
+## Producer-requested placement
+
+The native `score_gate_skill_edit_in_cycle_positioned` entry takes an explicit
+`SkillVerdictReadPosition` on the original scoring request. It runs the same gate
+and writes that position only when the request creates a new ruling. A standing
+ruling returned by replay is never restamped. The position carries its full Scope,
+registered kind band, explicit relationship/private axes, body worlds/facets and
+read anchors. The attempt, scorer, payer and supporting SKILL infer none of them.
+Existing unpositioned entries record no position and keep their original encoding.
+
+A new admission-refusal, tradeoff-resolution or deferred-approval row does not
+inherit a different request's placement merely because it continues that verdict.
+It is born unknown. An absent optional position means unknown; a supplied but
+malformed position is a corrupt row, not a broader or default placement.

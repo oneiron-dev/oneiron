@@ -108,7 +108,7 @@ pub(super) fn record_verdict_in_txn(
             "a judged skill edit verdict must carry measurements",
         ));
     }
-    let row = Value::Map(vec![
+    let mut row = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(VERDICT_SCHEMA_VERSION),
@@ -232,9 +232,18 @@ pub(super) fn record_verdict_in_txn(
                 .map_or(Value::Nil, Value::from),
         ),
         (Value::from(KEY_AT), Value::from(verdict.at)),
-    ]);
+    ];
+    if let Some(position) = &verdict.read_position {
+        row.push((
+            Value::from(KEY_READ_POSITION),
+            Value::from(
+                serde_json::to_string(position)
+                    .map_err(|_| invalid("skill verdict read position encode failed"))?,
+            ),
+        ));
+    }
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &row)
+    rmpv::encode::write_value(&mut encoded, &Value::Map(row))
         .map_err(|_| invalid("skill edit verdict MessagePack encode failed"))?;
     VERDICTS.put(&vault.store, wtxn, &verdict.id, &encoded)?;
     // A ruling ends the proposal's live trial; admission stays this gate's.
