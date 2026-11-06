@@ -186,7 +186,8 @@ fn witness_message_gate_input(
 /// The manifest-independent floor: envelope validity, the staged-bytes bind,
 /// and author authority. `None` means the floor is clear. A `system` row
 /// passes on its writer's exact Auto row, or on the Coach's offer-question
-/// permit for exactly these bytes (`coach_offer_reach`).
+/// permit for exactly these bytes (`coach_offer_reach`). A training companion
+/// question requires that same reserved-question permit.
 fn witness_message_floor_denial(
     envelope: &WitnessMessageEnvelope<'_>,
     actor: WriteActor,
@@ -198,8 +199,15 @@ fn witness_message_floor_denial(
     if let Some(reason_code) = witness_message_envelope_denial(envelope, body) {
         return Some(reason_code);
     }
-    if envelope.author == WITNESS_AUTHOR_SYSTEM
-        && !system_author_authorized(actor, policy, agent_definition_ceiling)
+    let needs_permit = (envelope.author == WITNESS_AUTHOR_SYSTEM
+        && !system_author_authorized(actor, policy, agent_definition_ceiling))
+        || (envelope.author == WITNESS_AUTHOR_COMPANION
+            && matches!(
+                envelope.message_type,
+                super::training_ask_kind::OFFER_QUESTION_TYPE
+                    | super::training_ask_kind::SWAP_QUESTION_TYPE
+            ));
+    if needs_permit
         && !permit.is_some_and(|permit| {
             super::coach_offer_reach::offer_question_authorized(
                 permit,
