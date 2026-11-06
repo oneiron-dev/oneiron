@@ -2,7 +2,7 @@
 //! one check its scoped reads, its verdict's evidence (FIX 10068) and its
 //! verb input (FIX 10084) share, on top of what the reading key admits.
 
-use crate::claim::{ClaimReadStatus, PointRead, ReadRow, ScopedReadResult};
+use crate::claim::{ClaimReadStatus, ReadRow, ScopedReadResult};
 use crate::memory::{EntityView, ImageViewRequest, Memory, MemoryError, MemoryResult, PulledImage};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result};
@@ -24,46 +24,29 @@ pub(in crate::runtime_hooks) fn shows_row(grant: &HookGrant, row: &ReadRow) -> R
     Ok(shows_non_claim(grant))
 }
 
-/// The evidence views of a hook's `ai.verdict` that its grant shows (FIX
-/// 10068), judged on the very views `memory`, the grant's reader, hydrated:
-/// each is the row its id names in one read of the reader's lane, shown
-/// when [`shows_row`] says so. The views the grant does not show come back
-/// apart by id, so the host can name them without passing their bodies on.
-/// A grant that names no predicate and no world shows every view.
+/// Hydrates a hook's `ai.verdict` evidence through its grant's reader.
+/// The grant judges the exact raw revision projected to each view, in that
+/// read's snapshot; a later live revision never admits an older body.
+/// Additional grant denials return separately by id, without their bodies.
+/// An unrestricted grant keeps ordinary hydration unchanged.
 ///
 /// # Errors
 ///
-/// The reader's lane not building, a view whose id does not parse, or the
-/// read failing.
+/// The ordinary hydration errors, including absent or reader-withheld refs,
+/// with its read receipt, or the native claim decoder refusing a body.
 pub fn hook_evidence_views(
     memory: &Memory<'_>,
     grant: &HookGrant,
-    views: Vec<EntityView>,
+    evidence: &[String],
 ) -> MemoryResult<(Vec<EntityView>, Vec<EntityId>)> {
-    if views.is_empty() || shows_non_claim(grant) {
-        return Ok((views, Vec::new()));
+    if shows_non_claim(grant) {
+        return memory
+            .hydrate(evidence)
+            .map(|read| (read.value, Vec::new()));
     }
-    let ids = views
-        .iter()
-        .map(|view| EntityId::from_hex(&view.id_hex))
-        .collect::<Result<Vec<_>>>()?;
-    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
-    let reads: Vec<PointRead<'_>> = ids.iter().map(|id| PointRead::id(*id)).collect();
-    let rows = lane.read(&reads, None)?.value;
-    let mut shown = Vec::with_capacity(views.len());
-    let mut withheld = Vec::new();
-    for ((view, id), row) in views.into_iter().zip(ids).zip(rows) {
-        let admitted = match &row {
-            Some(row) => shows_row(grant, row)?,
-            None => false,
-        };
-        if admitted {
-            shown.push(view);
-        } else {
-            withheld.push(id);
-        }
-    }
-    Ok((shown, withheld))
+    memory
+        .hydrate_filtered(evidence, |row| shows_row(grant, row))
+        .map(|read| read.value)
 }
 
 /// An ASSET has neither a claim predicate nor a world. A hook sees its
