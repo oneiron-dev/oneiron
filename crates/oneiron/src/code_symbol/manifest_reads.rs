@@ -45,7 +45,7 @@ pub(crate) fn code_symbol_definitions_in_txn(
         .symbols
         .iter()
         .filter(|symbol| symbol.name == name)
-        .map(|symbol| code_symbol_definition(&manifest.repo_ref, symbol, &manifest.chunks))
+        .map(|symbol| code_symbol_definition(&manifest.repo_identity, symbol, &manifest.chunks))
         .collect::<Result<Vec<_>>>()?;
     Ok(Some((manifest, definitions)))
 }
@@ -60,7 +60,7 @@ pub(crate) fn code_symbol_manifest_ids(
     manifest
         .symbols
         .iter()
-        .map(|symbol| code_symbol_entity_id(&manifest.repo_ref, symbol))
+        .map(|symbol| code_symbol_entity_id(&manifest.repo_identity, symbol))
         .collect()
 }
 

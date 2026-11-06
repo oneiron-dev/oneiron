@@ -32,10 +32,10 @@ pub(super) fn git_common_dir(repo_root: &Path) -> Result<PathBuf> {
 
 pub(super) use crate::git_wire::mutation_commands::resolve_mutable_repo_root;
 
-/// The same canonical, commit-independent identity used by document ingress:
-/// a working tree's top level, or a bare repository's own directory, which
-/// is what a served repository is (FIX 12199).
-pub(crate) use crate::git_wire::mutation_commands::canonical_mutation_scope;
+/// The same canonical, commit-independent repository document ingress
+/// names: a working tree's top level, or a bare repository's own directory,
+/// which is what a served repository is (FIX 12199).
+pub(crate) use crate::git_wire::mutation_commands::canonical_mutation_repo_ref;
 
 pub(super) use crate::git_wire::mutation_commands::canonical_repo_ref_for_root;
 

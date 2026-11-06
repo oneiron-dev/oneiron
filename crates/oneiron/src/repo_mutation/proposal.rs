@@ -164,7 +164,11 @@ impl RepoProposal {
         vault: &Vault,
         frontier: &crate::code_document::CodeDocumentFrontier,
     ) -> Result<u32> {
-        if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo {
+        if vault
+            .resolve_repo_identity(&RepoRef::parse(&self.repo)?)?
+            .as_str()
+            != frontier.repo
+        {
             return Err(invalid("reviewed file belongs to another document"));
         }
         if self.is_file_bundle() {
