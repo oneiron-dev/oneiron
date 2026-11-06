@@ -81,7 +81,7 @@ pub(crate) fn erase_citations_in_txn(
     // A retained head or proposal held the erased pin: the NOTE's saved
     // full-view receipts may hold it too (FIX 18270).
     for note in &scrubbed {
-        drop_view_receipts(&vault.store, txn, *note)?;
+        redact_view_receipts(vault, txn, *note)?;
     }
     dependents.retain(|citing| citing != id);
     #[cfg(feature = "sync")]
@@ -109,9 +109,9 @@ pub(crate) fn erase_citations_in_txn(
 /// document pins one is rebuilt without that citation, history included
 /// ([`rebuild_restored`]), and its reverse rows left without their pin row
 /// go. Retained heads and proposal documents are scrubbed as the live erase
-/// scrubs them, and every NOTE a scrub changed loses its saved full-view
-/// receipts. In the restore's own transaction, before it commits; nothing is
-/// notified.
+/// scrubs them, and the saved receipts of every NOTE a scrub changed lose
+/// the erased pins ([`redact_view_receipts`]). In the restore's own
+/// transaction, before it commits; nothing is notified.
 ///
 /// # Errors
 ///
@@ -142,7 +142,7 @@ pub(crate) fn erase_restored_citations_in_txn(
     let mut scrubbed = scrub_stored_proposal_citations(vault, txn)?;
     scrubbed.extend(scrub_retired_canonical_citations(vault, txn)?);
     for note in citing.iter().chain(&scrubbed) {
-        drop_view_receipts(store, txn, *note)?;
+        redact_view_receipts(vault, txn, *note)?;
     }
     // Residence copies the image held: an erased item's own, and every
     // cached NOTE's that cites one (FIX 18400).
@@ -239,13 +239,41 @@ fn drop_edit_frames(store: &Store, txn: &mut heed::RwTxn<'_>, note: EntityId) ->
     Ok(())
 }
 
-/// Drops `note`'s saved full-view receipts: each holds a whole old document
-/// view, its erased pins and quotes included. Its authored operation ids
-/// survive in the authorship map, so a replay cannot apply its command again.
-fn drop_view_receipts(store: &Store, txn: &mut heed::RwTxn<'_>, note: EntityId) -> Result<()> {
+/// Takes the erased citations out of `note`'s saved receipts (FIX 18270).
+/// An applied receipt holds a whole old document view, pins and quotes
+/// included: each erased pin leaves that view. The receipt itself stays,
+/// with its request, command hash, actor and the rest of its view, so a
+/// replay of its request is still answered from it and never applied
+/// again, whichever head now stands and whatever authorship that head
+/// holds (an actor erase keeps receipts for the same reason, FIX 3879).
+/// The queued delivery copies (`nc:e:`) go: a host delivers a queued
+/// receipt only while it equals the saved one.
+pub(super) fn redact_view_receipts(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+) -> Result<()> {
+    let store = &vault.store;
     let key_prefix = format!("{}:", note.to_hex()).into_bytes();
-    super::sync_rows::NOTE_RECEIPT_BY_REQUEST.delete_from(store, txn, &key_prefix)?;
     super::sync_rows::SYNC_NC_E.delete_from(store, txn, &key_prefix)?;
+    let saved = super::sync_rows::NOTE_RECEIPT_BY_REQUEST.scan_from(store, txn, &key_prefix)?;
+    for (key, (by, mut receipt)) in saved {
+        let super::document::NoteScalarEditOutcome::Applied(view) = &mut receipt.outcome else {
+            continue;
+        };
+        let before = view.pins.len();
+        let mut kept = Vec::with_capacity(before);
+        for pin in std::mem::take(&mut view.pins) {
+            if !pin_is_erased(vault, txn, &pin)? {
+                kept.push(pin);
+            }
+        }
+        let changed = kept.len() != before;
+        view.pins = kept;
+        if changed {
+            super::sync_rows::NOTE_RECEIPT_BY_REQUEST.put(store, txn, &key, &(by, receipt))?;
+        }
+    }
     Ok(())
 }
 
