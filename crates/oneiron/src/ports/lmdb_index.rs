@@ -454,8 +454,10 @@ impl super::RetrievalIndexMaintenance for Vault {
     ) -> Result<bool> {
         let had_vector = self.store.vectors.delete(txn, id.as_bytes())?;
         crate::embed::record_embedding_device_in_txn(&self.store, txn, id, None)?;
-        // FIX 8983: its media vectors and their device marks go in the same write.
+        // FIX 8983: its media vectors and their device marks go in the same write,
+        // and every room's staged copies of them (FIX 9398).
         crate::embed::delete_media_vectors_in_txn(&self.store, txn, id)?;
+        crate::embed::drop_room_media_copies_in_txn(&self.store, txn, id);
         crate::hnsw::hnsw_deindex(&self.store, txn, id)?;
         Ok(had_vector)
     }
