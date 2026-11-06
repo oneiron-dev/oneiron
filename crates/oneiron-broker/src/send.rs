@@ -8,6 +8,7 @@
 //! follow or reply guard (OF-603).
 
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -50,6 +51,7 @@ pub struct SendPolicy {
 /// The client every call of one broker sends through.
 pub(crate) struct Sender {
     client: Client,
+    ws_tls: Arc<rustls::ClientConfig>,
     /// [`SendPolicy::timeout`].
     timeout: Duration,
     /// Whether gzip request bodies still go: on, until a gzip-sent body is
@@ -60,7 +62,7 @@ pub(crate) struct Sender {
 }
 
 impl Sender {
-    pub(crate) fn new(policy: &SendPolicy) -> Result<Self, reqwest::Error> {
+    pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
         let mut builder = Client::builder()
             .use_rustls_tls()
             .https_only(true)
@@ -75,12 +77,15 @@ impl Sender {
             .connect_timeout(policy.timeout.min(Duration::from_secs(30)))
             .timeout(policy.timeout);
         for pem in &policy.extra_roots {
-            for root in Certificate::from_pem_bundle(pem)? {
+            for root in Certificate::from_pem_bundle(pem).map_err(io::Error::other)? {
                 builder = builder.add_root_certificate(root);
             }
         }
+        let client = builder.build().map_err(io::Error::other)?;
+        let ws_tls = ws_client_config(&policy.extra_roots)?;
         Ok(Self {
-            client: builder.build()?,
+            client,
+            ws_tls,
             timeout: policy.timeout,
             gzip: AtomicBool::new(true),
         })
@@ -89,6 +94,12 @@ impl Sender {
     /// The deadline of a call accepted now.
     pub(crate) fn deadline(&self) -> CallDeadline {
         CallDeadline::start(self.timeout)
+    }
+
+    /// The verified client a git exchange sends through, and its idle
+    /// bound: [`SendPolicy::timeout`] without progress.
+    pub(crate) fn git_client(&self) -> (&Client, Duration) {
+        (&self.client, self.timeout)
     }
 
     /// Sends `body` to `url` once with the key in the shape's auth header,
@@ -175,7 +186,14 @@ impl Sender {
     ) -> io::Result<()> {
         if call.shape == crate::Shape::OpenAiResponses {
             return crate::responses::responses_to(
-                call, checked, body, whole, secret, writer, deadline,
+                &self.ws_tls,
+                call,
+                checked,
+                body,
+                whole,
+                secret,
+                writer,
+                deadline,
             )
             .await;
         }
@@ -196,6 +214,11 @@ impl Sender {
         let mut watch = KeyWatch::new(secret);
         let mut cleared = Zeroizing::new(Vec::new());
         let mut read = 0_usize;
+        // Relayed events go on as soon as the watch clears them, a frame at
+        // most at a time; other streamed bodies go in whole frames (FIX
+        // 15702). The watch still holds back any bytes that could begin a
+        // form of the key.
+        let eager = call.shape.relays_events();
         let cut = loop {
             let (passed, last) = match response.chunk().await {
                 Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
@@ -213,7 +236,8 @@ impl Sender {
             }
             // Whole chunks as they fill; at the end, the rest too.
             let mut sent = 0;
-            while cleared.len() - sent >= STREAM_CHUNK || (last && sent < cleared.len()) {
+            while cleared.len() - sent >= STREAM_CHUNK || ((last || eager) && sent < cleared.len())
+            {
                 let end = cleared.len().min(sent + STREAM_CHUNK);
                 within(deadline, write_chunk(writer, &cleared[sent..end])).await?;
                 sent = end;
@@ -445,16 +469,48 @@ impl Sender {
     }
 }
 
+/// Uses the HTTPS sender's WebPKI, platform and configured private-CA trust.
+/// The HTTPS client has already validated every configured PEM bundle.
+fn ws_client_config(extra_roots: &[Vec<u8>]) -> io::Result<Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    for pem in extra_roots {
+        for cert in CertificateDer::pem_reader_iter(io::BufReader::new(pem.as_slice())) {
+            let cert = cert.map_err(io::Error::other)?;
+            roots.add(cert).map_err(io::Error::other)?;
+        }
+    }
+    // Match reqwest: respect an installed provider, otherwise use ring.
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
 /// The origin whose Messages API takes a gzip request body (ARCH-0081 §6).
 const GZIP_ORIGIN: &str = "https://api.anthropic.com";
 /// The smallest request body worth compressing.
 const MIN_COMPRESSED_BODY: usize = 16 << 10;
 
+/// Whether `secret` is a key the strip rule is sure to find in a reply:
+/// long enough, short enough, ASCII in the rule's own alphabet.
+pub(crate) fn watchable(secret: &[u8]) -> bool {
+    secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
+}
+
 /// The shape's key header value for `secret`, marked sensitive.
 pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
     // byte hides inside a multibyte one, in the rule's own alphabet.
-    if secret.len() < MIN_SECRET || secret.len() > MAX_SECRET || !admits(secret) {
+    if !watchable(secret) {
         return Err(Refusal::Secret);
     }
     let mut auth = Zeroizing::new(call.shape.auth_prefix().as_bytes().to_vec());
@@ -467,7 +523,7 @@ pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue
 /// Whether the body arrives under a coding the HTTP stack did not undo, so
 /// the strip would read encoded bytes: any content coding but `identity`, or
 /// any transfer coding but `chunked`, in any value of either header.
-fn encoded(headers: &HeaderMap) -> bool {
+pub(crate) fn encoded(headers: &HeaderMap) -> bool {
     let other = |name: reqwest::header::HeaderName, plain: &[&str]| {
         headers.get_all(name).iter().any(|value| {
             !value.to_str().is_ok_and(|codings| {

@@ -21,7 +21,16 @@
 //!    (`child_run`, `lease`);
 //! 2. builds [`OfficialCliSeatExecutor`] in the run's checkout worktree,
 //!    over the host's disk floor and those destinations;
-//! 3. runs [`ByoaDispatcher::execute_cli`] and settles its end: a bound
+//! 3. materializes the T1 secrets the run declares into those destinations
+//!    before its process starts (FIX 10624; ARCH-0069, T1 "injected at
+//!    materialization, revoked at teardown"): each entry of the secret
+//!    manifest at the checkout's pinned commit that names an environment
+//!    variable this host offers as a destination gets one grant, minted for
+//!    the run's attempt through the vault's grant door, whose receipt is taken
+//!    at materialization. A declared secret the vault refuses fails the run
+//!    before any spawn. The grants are torn down once the process is done,
+//!    and the run's exhaust carries their taint;
+//! 4. runs [`ByoaDispatcher::execute_cli`] and settles its end: a bound
 //!    runner work's through the owner's runner-seat route at its own seat,
 //!    anything else captured as before (`terminal`, FIX 9320).
 //!
@@ -31,10 +40,12 @@
 //! lost while the run goes on retires them at once. The host
 //! starts only where the own-runtime executor may serve: never on a hosted
 //! vault, whose logins run behind the microVM executor. No secret byte
-//! reaches an argv, a log, a reply or a receipt; T0, T1 and T2 custody,
-//! taint and capture are as they were.
+//! reaches an argv, a log, a reply or a receipt. A running process's
+//! environment never changes: a value it needs later is a T1 helper's or a
+//! T0 door's, never this host's.
 
 mod child_run;
+mod helper_run;
 mod lease;
 mod terminal;
 
@@ -51,17 +62,23 @@ use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoEndpointSpec, ByoaCliExecutor, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaInputStager, ByoaResult, CLAUDE_CODE_PROGRAM,
-    CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM,
+    ByoaEgressPort, ByoaError, ByoaExecutionFence, ByoaExhaust, ByoaInputStager, ByoaResult,
+    CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM, declared_host_secrets,
+    seat_secret_caller,
 };
+use oneiron::entity_id::EntityId;
 use oneiron::git_wire::GitWire;
+use oneiron::secret_lease::{
+    SECRET_GRANT_MAX_TTL_SECS, SecretGrantCaller, SecretGrantTarget, SecretTaintRef,
+};
 use oneiron::{HostingPrivacyPosture, LlmBackend, Vault};
 use oneiron_vault_contract::now_ts;
 use tokio::sync::broadcast;
 
 use self::child_run::{NoSeatChildRuns, SeatChildRun};
-use super::seat_login::{OfficialCliSeatExecutor, RunnerSeatPolicySettings};
-use super::secret_destinations::RunSecretDestinations;
+use self::helper_run::SeatHelper;
+use super::seat_login::{OfficialCliSeatExecutor, RunnerSeatPolicySettings, SEAT_ENV_REMOVED};
+use super::secret_destinations::{RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX};
 use super::staged_input::WorkdirStager;
 use crate::server::SyncServer;
 
@@ -157,6 +174,9 @@ impl SyncServer {
         let child = SeatChildRun::begin(self, &fence, &NoSeatChildRuns);
         let mut executor = CheckoutSeat {
             vault,
+            server: self,
+            fence: &fence,
+            run: fence.attempt_id,
             floor: Arc::new(self.transfers.disk.clone()),
             destinations: child.destinations(),
             stop: child.stop_flag(),
@@ -223,6 +243,13 @@ fn runs_here(spec: &CliSandboxSpec) -> bool {
 /// bound to, over the host's disk floor and the run's destinations.
 struct CheckoutSeat<'a> {
     vault: &'a Vault,
+    /// The server whose helper registrations and issuer the run's
+    /// credential helper uses (FIX 10624 step 2).
+    server: &'a SyncServer,
+    /// The run's claim.
+    fence: &'a ByoaExecutionFence,
+    /// The leased attempt: the run its T1 grants are held for.
+    run: AttemptId,
     floor: Arc<dyn ProposalSpoolFloor>,
     destinations: Option<RunSecretDestinations>,
     /// Raised when the run's claim is lost: its process stops.
@@ -243,8 +270,143 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             secret_destinations: self.destinations.clone(),
             floor: Some(Arc::clone(&self.floor)),
             stop: self.stop.clone(),
+            helper_env: None,
+            model_env: None,
         };
-        seat.run(spec, checkout, boundary, budget, authorize)
+        let ttl_secs = budget.wall_clock_secs.clamp(1, SECRET_GRANT_MAX_TTL_SECS);
+        let grants = match &self.destinations {
+            Some(destinations) => {
+                SeatGrants::materialize(self.vault, self.run, destinations, checkout, ttl_secs)?
+            }
+            None => None,
+        };
+        let helper = match SeatHelper::begin(self.server, self.fence, checkout, ttl_secs) {
+            Ok(helper) => helper,
+            Err(error) => {
+                if let (Some(grants), Some(destinations)) = (grants, &self.destinations) {
+                    grants.revoke(self.vault, self.run, destinations);
+                }
+                return Err(error);
+            }
+        };
+        seat.helper_env = helper.as_ref().and_then(SeatHelper::env);
+        seat.model_env = helper.as_ref().and_then(SeatHelper::model_env);
+        let ran = seat.run(spec, checkout, boundary, budget, authorize);
+        let mut taints = match (grants, &self.destinations) {
+            (Some(grants), Some(destinations)) => grants.revoke(self.vault, self.run, destinations),
+            _ => Vec::new(),
+        };
+        if let Some(helper) = helper {
+            taints.extend(helper.end(self.server));
+        }
+        ran.map(|mut exhaust| {
+            for taint in taints {
+                if !exhaust.secret_taint_refs.contains(&taint) {
+                    exhaust.secret_taint_refs.push(taint);
+                }
+            }
+            exhaust
+        })
+    }
+}
+
+/// The T1 grants a seat run's host minted for it before its process started
+/// (FIX 10624): one per declared secret this host offers a destination for,
+/// each held for the run's attempt alone.
+struct SeatGrants {
+    caller: SecretGrantCaller,
+    minted: Vec<(EntityId, SecretTaintRef)>,
+}
+
+impl SeatGrants {
+    /// Mints the grants for what `checkout`'s run declares into
+    /// `destinations`, the receipt of each taken as its value lands, or
+    /// `None` when the run declares none this host offers. A declared secret
+    /// the vault refuses tears down the grants already minted and fails the
+    /// run: its process never starts without a value it declared.
+    fn materialize(
+        vault: &Vault,
+        run: AttemptId,
+        destinations: &RunSecretDestinations,
+        checkout: &CheckoutLeaseAct,
+        ttl_secs: u64,
+    ) -> ByoaResult<Option<Self>> {
+        let mut wanted = Vec::new();
+        for secret in declared_host_secrets(vault, checkout)? {
+            if SEAT_ENV_REMOVED.contains(&secret.variable.as_str()) {
+                // The seat runs on the person's own login: a vendor credential
+                // variable never reaches its process, so none is minted for it.
+                tracing::warn!(
+                    variable = %secret.variable,
+                    "a seat run declares a vendor credential variable; it is not materialized"
+                );
+                continue;
+            }
+            let destination = format!("{SECRET_DESTINATION_ENV_PREFIX}{}", secret.variable);
+            if destinations.names(&destination) {
+                wanted.push((secret.name, destination));
+            }
+        }
+        if wanted.is_empty() {
+            return Ok(None);
+        }
+        let mut grants = Self {
+            caller: seat_secret_caller(vault, run)?,
+            minted: Vec::with_capacity(wanted.len()),
+        };
+        for (name, destination) in wanted {
+            let minted = vault.mint_secret_grant_for_name(
+                &grants.caller,
+                &name,
+                SecretGrantTarget::HostDestination { name: destination },
+                Some(ttl_secs),
+                None,
+                &mut destinations.own_delivery(run),
+            );
+            match minted {
+                Ok(minted) => grants.minted.push((
+                    minted.grant.grant_id,
+                    SecretTaintRef {
+                        secret_ref: name,
+                        generation: minted.grant.generation,
+                    },
+                )),
+                Err(error) => {
+                    grants.revoke(vault, run, destinations);
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(Some(grants))
+    }
+
+    /// Tears every grant down, its value withdrawn from `destinations`, and
+    /// hands back the taint the run's output carries for them. A grant that
+    /// cannot be torn down now ends at its expiry.
+    fn revoke(
+        self,
+        vault: &Vault,
+        run: AttemptId,
+        destinations: &RunSecretDestinations,
+    ) -> Vec<SecretTaintRef> {
+        let Self { caller, minted } = self;
+        minted
+            .into_iter()
+            .map(|(grant, taint)| {
+                let torn = vault.teardown_secret_grant(
+                    &caller,
+                    &grant,
+                    &mut destinations.own_delivery(run),
+                );
+                if let Err(error) = torn {
+                    tracing::warn!(
+                        %error,
+                        "a seat run's secret grant could not be torn down; it ends at its expiry"
+                    );
+                }
+                taint
+            })
+            .collect()
     }
 }
 
