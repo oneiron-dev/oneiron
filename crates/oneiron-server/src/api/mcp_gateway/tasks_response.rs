@@ -16,6 +16,7 @@ use crate::server::SyncServer;
 use oneiron::ErrorKind;
 use serde_json::Value;
 use serde_json::json;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 fn mcp_tasks_section(
@@ -162,7 +163,12 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
-                native_read::execute_mcp_native_read(server, &args, actor, &mut served).await?
+                let read = native_read::execute_mcp_native_read(server, &args, actor, &mut served);
+                match read.await? {
+                    ControlFlow::Continue(produced) => produced,
+                    // A verb hook's stop is a result the client reads (FIX 1435).
+                    ControlFlow::Break(stopped) => return Ok(stopped),
+                }
             } else {
                 // Establish the board epoch before reading a continuable
                 // task set. The result itself is retained below, so a
@@ -853,7 +859,7 @@ fn mcp_direct_authorship<'a>(
 use super::{board_setup, memory_response, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
-mod native_read;
+pub(super) mod native_read;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{
     execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
