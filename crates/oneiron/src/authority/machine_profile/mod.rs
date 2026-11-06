@@ -498,9 +498,9 @@ impl AuthorityFold {
     /// [`Self::machine_proof_key`] reads records it now: the one member a
     /// row that machine wrote may name as its author on a shared vault (FIX
     /// 21272). `None` wherever the machine proves no key here, and wherever a
-    /// chain this install trusts removed it or conflicts: that veto, which
-    /// keeps the machine from being trusted, keeps the roster fallback from
-    /// naming its owner too (Engine R1).
+    /// chain this install trusts removed it or conflicts, or those chains'
+    /// keys disagree: the veto that keeps the machine from being trusted
+    /// keeps the roster fallback from naming its owner too (Engine R1, R2).
     #[must_use]
     pub(crate) fn machine_proof_owner(&self, machine: EntityId) -> Option<EntityId> {
         let folded = self.machines.get(&machine)?;
@@ -510,10 +510,11 @@ impl AuthorityFold {
             .map_or(MachineAdmitter::Roster, |pin| {
                 MachineAdmitter::Anchor(pin.anchor_key)
             });
-        if folded
-            .trust_chains(&admitter)
-            .iter()
-            .any(|(_, chain)| chain.removed || chain.conflicted)
+        let chains = folded.trust_chains(&admitter);
+        if folded.keys_unsettled(&admitter, &chains)
+            || chains
+                .iter()
+                .any(|(_, chain)| chain.removed || chain.conflicted)
         {
             return None;
         }
