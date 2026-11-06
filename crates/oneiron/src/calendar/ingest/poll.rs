@@ -180,6 +180,12 @@ struct IcsFeedCursor {
     paused: Option<IcsFeedPause>,
     #[serde(default)]
     last_screen_verdict: Option<String>,
+    /// How many times the cursor was written; every write advances it, each
+    /// under the vault's calendar admission turn (FIX 4797). A poll applies a
+    /// complete body only while the cursor, this included, still stands as it
+    /// read it before its fetch.
+    #[serde(default)]
+    write_seq: u64,
 }
 
 /// The persisted half of a loud pause.
@@ -198,6 +204,7 @@ impl IcsFeedCursor {
             last_complete_at: None,
             paused: None,
             last_screen_verdict: None,
+            write_seq: 0,
         }
     }
 }
@@ -328,7 +335,7 @@ pub fn run_ics_feed_poll_with_screener(
                 write_cursor(
                     vault,
                     &cursor_digest,
-                    &IcsFeedCursor {
+                    IcsFeedCursor {
                         paused: None,
                         ..cursor
                     },
@@ -339,10 +346,10 @@ pub fn run_ics_feed_poll_with_screener(
         }
         IcsFetchResponse::CredentialReset => pause_feed(vault, config, &cursor_digest, cursor, now),
         IcsFetchResponse::Complete { .. } if cursor != prior_cursor => {
-            // Another poll moved the cursor after this fetch was sent: this
-            // body may be older than the one that poll applied, and its
-            // absence sweep would undo that poll's events. The next poll
-            // fetches again.
+            // Another poll wrote the cursor after this fetch was sent (every
+            // write advances its write_seq): this body may be older than the
+            // one that poll applied, and its absence sweep would undo that
+            // poll's events. The next poll fetches again.
             let next_not_before = reenqueue(vault, config, now, jitter_seed)?;
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
@@ -365,8 +372,9 @@ pub fn run_ics_feed_poll_with_screener(
             write_cursor(
                 vault,
                 &cursor_digest,
-                &IcsFeedCursor {
+                IcsFeedCursor {
                     etag: etag.or(cursor.etag),
+                    write_seq: cursor.write_seq,
                     last_complete_at: Some(now),
                     last_screen_verdict: Some(admission.verdict_fold.token().to_owned()),
                     ..IcsFeedCursor::new(config)
@@ -454,7 +462,7 @@ fn pause_feed(
     write_cursor(
         vault,
         cursor_digest,
-        &IcsFeedCursor {
+        IcsFeedCursor {
             paused: Some(IcsFeedPause {
                 at: now,
                 reason: "provider reset the secret feed URL".to_owned(),
@@ -548,13 +556,15 @@ fn read_cursor(vault: &Vault, digest: &[u8; 32]) -> Result<Option<IcsFeedCursor>
     Ok(CURSOR.get(&vault.store, &rtxn, digest)?)
 }
 
+/// Writes `cursor` as the feed's next cursor write, advancing its `write_seq`.
 fn write_cursor(
     vault: &Vault,
     digest: &[u8; 32],
-    cursor: &IcsFeedCursor,
+    mut cursor: IcsFeedCursor,
 ) -> Result<(), CalendarError> {
+    cursor.write_seq = cursor.write_seq.wrapping_add(1);
     vault.try_with_write_txn_grouped(|wtxn| {
-        CURSOR.put(vault, wtxn, digest, cursor)?;
+        CURSOR.put(vault, wtxn, digest, &cursor)?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())
