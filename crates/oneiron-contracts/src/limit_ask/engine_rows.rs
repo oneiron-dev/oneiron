@@ -155,6 +155,9 @@ impl EngineLimit {
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
         Self::DecisionQuestionsPerCall,
+        Self::ContextEdgeHops,
+        Self::ContextNeighbors,
+        Self::ContextSelectedEdges,
     ];
 
     /// The config key that sets the row.
@@ -303,6 +306,9 @@ impl EngineLimit {
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
             Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
+            Self::ContextEdgeHops => "limits.context_edge_hops",
+            Self::ContextNeighbors => "limits.context_neighbors",
+            Self::ContextSelectedEdges => "limits.context_selected_edges",
         }
     }
 
@@ -532,6 +538,12 @@ impl EngineLimit {
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
             Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
+            // Owner-ruled ABC row 11 (FIX 62).
+            Self::ContextEdgeHops => 1_024,
+            // Owner-ruled ABC row 12 (FIX 63).
+            Self::ContextNeighbors => 1_048_576,
+            // Owner-ruled ABC row 13 (FIX 64).
+            Self::ContextSelectedEdges => 1_048_576,
         }
     }
 }
