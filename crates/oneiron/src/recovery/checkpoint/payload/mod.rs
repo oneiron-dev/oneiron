@@ -37,6 +37,7 @@ mod preflight;
 mod restore;
 mod rows;
 mod seal;
+mod source_bindings;
 mod structure;
 #[cfg(feature = "sync")]
 mod sync;

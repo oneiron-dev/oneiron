@@ -80,7 +80,11 @@ pub(in crate::recovery::checkpoint) fn seal_image(
     databases: &mut BTreeMap<String, CanonicalRows>,
 ) -> Result<Option<CapturedPayload>> {
     let owners = projected.owners();
-    let Some(minted) = vault.store.checkpoint_payload_compartments(&owners)? else {
+    let source_originals = projected.scoped_touch_source_originals();
+    let Some(minted) = vault
+        .store
+        .checkpoint_payload_compartments(&owners, &source_originals)?
+    else {
         return Ok(None);
     };
     let mut compartments = BTreeMap::new();

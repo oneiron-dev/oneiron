@@ -112,6 +112,30 @@ unknown reason or candidate row is converted into a privacy reason or an
 actual deletion effect. The native key finisher defers keys a source's own
 hold keeps.
 
+For an actual raw Entities source captured by a checkpoint, the existing
+checkpoint payload instance row also records its id-bound original. Its
+required `source` field is `Unbound` or `ScopedTouch(original_id)`; there is no
+missing-field default, old-format reader or separate ownership table. Capture
+uses the snapshot's exact entity key, header and body, not the current live
+source row. Positive recorded bindings survive ordinary source deletion and
+new incarnations; a later capture without a body does not erase that fact.
+The privacy cleanup unions those recorded sources with the live COMM scan.
+It settles retained source compartments even when the source row is absent.
+Live-row removal still requires the existing typed source validation and hold
+checks. Only actual deindexing contributes to the live-row deletion effect.
+
+The native capture writer checks the original's current canonical privacy
+marker before minting a source compartment. If privacy erasure already landed,
+it settles any recorded source compartment and omits that owner through the
+existing erased-owner path. If capture binds the instance first, the original's
+privacy writer finds that binding. The snapshot's custody read guard protects
+key destruction, not delete commits; it is not used as proof that the original
+cannot be erased between the raw capture and mint. Holds and staged retirement
+keep the existing per-source key behavior. This source metadata does not
+authorize deletion or substitute the original as a key owner. Sync-only copies,
+whole archived-vault images and bare post-cut restores are not proved by this
+raw-Entities source path.
+
 The existing permanent marker remains presence-only for admission. Its
 informational value records a real privacy request's canonical reason, time
 and request id, without letting a later ordinary request forget that setting.

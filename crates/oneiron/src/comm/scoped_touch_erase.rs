@@ -15,15 +15,25 @@ fn source_ids_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     originals: &BTreeMap<EntityId, TombstoneReason>,
-) -> Result<Vec<EntityId>> {
+) -> Result<BTreeMap<EntityId, TombstoneReason>> {
     if !originals
         .values()
         .any(|reason| reason.erases_checkpoint_payloads())
     {
-        return Ok(Vec::new());
+        return Ok(BTreeMap::new());
     }
     super::note_comm_record_family_scan();
-    let mut sources = Vec::new();
+    let mut sources = BTreeMap::new();
+    for (source, original) in
+        crate::store::checkpoint_payload::instance::scoped_touch_sources_in_txn(store, txn)?
+    {
+        if let Some(reason) = originals
+            .get(&original)
+            .filter(|reason| reason.erases_checkpoint_payloads())
+        {
+            sources.insert(source, *reason);
+        }
+    }
     for entry in
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_COMM_RECORD, None)?
     {
@@ -33,11 +43,11 @@ fn source_ids_in_txn(
         };
         if row.entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD
             && let Ok(Some(source)) = ScopedTouchRecord::decode(id, &row.body)
-            && originals
+            && let Some(reason) = originals
                 .get(&source.original_head())
-                .is_some_and(|reason| reason.erases_checkpoint_payloads())
+                .filter(|reason| reason.erases_checkpoint_payloads())
         {
-            sources.push(id);
+            sources.insert(id, *reason);
         }
     }
     Ok(sources)
@@ -95,7 +105,13 @@ fn erase_sources_in_txn(
     let store = write.store;
     let sources = source_ids_in_txn(store, txn, originals)?;
     let mut erased = false;
-    for source in sources {
+    for (source, reason) in sources {
+        crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
+            store,
+            txn,
+            &source,
+            Some(reason),
+        )?;
         let Some(raw) = store.port_entity_raw(txn, &source)? else {
             continue;
         };
@@ -109,18 +125,12 @@ fn erase_sources_in_txn(
         else {
             continue;
         };
-        let Some(reason) = originals
+        if !originals
             .get(&record.original_head())
-            .filter(|reason| reason.erases_checkpoint_payloads())
-        else {
+            .is_some_and(|reason| reason.erases_checkpoint_payloads())
+        {
             continue;
-        };
-        crate::deletion::settle_checkpoint_payloads_for_reason_in_txn(
-            store,
-            txn,
-            &source,
-            Some(*reason),
-        )?;
+        }
         if crate::store::legal_hold::held_in_txn(store, txn, source.as_bytes())?
             || crate::world_keys::held_pad_world_in_txn(store, txn, &raw)?
         {
