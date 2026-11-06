@@ -8,16 +8,15 @@
 //! the caller's deadline leaves the work pending where it stands, never run
 //! without a turn, never refused and never reported Healthy.
 //!
-//! Artifact validation yields between its ordered groups over one immutable
-//! source. Manifest/order rows, window rows, NOTE and generic document rows,
-//! their indexes and asset body reference checks use the existing row page
-//! size. Expected-container construction, each row's nested history/body
-//! checks, retained-parent and workflow checks, other groups, encoding and
-//! hashing still run whole.
-//! Aborted-transaction preflight, the NOTE workflow plan and the final snapshot
-//! comparison also run whole. Recapture yields between structural stages while
-//! retaining one store read view. The
-//! rebuild, forward replay and per-row checks run a page at a time, with
+//! Artifact validation yields between ordered groups, rows and nested history
+//! checks over one immutable source, using the existing row page size. Single
+//! metadata values, text splices, head and quote equality/hash, container sort,
+//! retained-parent and workflow checks, encoding and hashing still run whole.
+//! Aborted-transaction preflight and the NOTE workflow plan also run whole.
+//! Recapture yields between structural stages while retaining one store read
+//! view. After that view drops, native pad normalization runs whole in the
+//! completion turn; pure snapshot equality then resumes one row at a time.
+//! The rebuild, forward replay and per-row checks run a page at a time, with
 //! replay's cross-pass ledgers kept between pages. The manifest is published
 //! last, only after all work completes.
 
@@ -31,7 +30,8 @@ use super::canonical::{
     RebuildAt, invalid, rebuild_page, rebuild_start,
 };
 use super::ladder::{
-    PreparedRecovery, RecoveryBudget, RecoveryTier, limit, prepare_rebuilt, verify_page,
+    CanonicalComparison, PreparedRecovery, RecoveryBudget, RecoveryTier, limit, prepare_rebuilt,
+    verify_page,
 };
 use crate::error::Result;
 use crate::sync::bridge::Materializer;
@@ -51,7 +51,7 @@ pub(crate) enum RecoveryPhase {
     Preflight,
     /// The forward replay, a page of rows at a time.
     Replay,
-    /// Paged row checks, staged recapture and a whole snapshot comparison.
+    /// Paged row checks, staged recapture and row-by-row snapshot comparison.
     Verify,
     /// The repaired manifest, published last.
     Publish,
@@ -94,6 +94,7 @@ pub(crate) struct RecoveryWork {
     verified: usize,
     /// In-progress structural recapture (FIX 10316 partial), if any.
     capture: Option<CanonicalCapture>,
+    comparison: Option<CanonicalComparison>,
 }
 
 impl RecoveryWork {
@@ -117,6 +118,7 @@ impl RecoveryWork {
             forward: None,
             verified: 0,
             capture: None,
+            comparison: None,
         }
     }
 
@@ -278,6 +280,7 @@ impl RecoveryWork {
                     &mut self.verified,
                     page,
                     &mut self.capture,
+                    &mut self.comparison,
                 )? {
                     self.phase = RecoveryPhase::Publish;
                 }

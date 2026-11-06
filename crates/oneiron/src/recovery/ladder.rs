@@ -2,6 +2,11 @@
 //! between them paged on the vault's fair task-work line (FIX 8821).
 
 #[cfg(feature = "sync")]
+mod equivalence;
+#[cfg(feature = "sync")]
+pub(super) use equivalence::CanonicalComparison;
+
+#[cfg(feature = "sync")]
 use super::canonical::CanonicalCapture;
 use super::canonical::{CanonicalSnapshot, invalid, pack, rebuild_vault_window_from_canonical};
 use super::{decode_recovery_artifact, encode_recovery_artifact};
@@ -288,6 +293,7 @@ pub(super) fn verify_page(
     at: &mut usize,
     page: usize,
     capture: &mut Option<CanonicalCapture>,
+    comparison: &mut Option<CanonicalComparison>,
 ) -> Result<bool> {
     let entities = snapshot.entity_blobs.len();
     let landed_edges = 2 * entities + 1;
@@ -296,25 +302,41 @@ pub(super) fn verify_page(
     while *at < end {
         let check = *at;
         if check == entities {
-            // FIX 10316 partial: one structural recapture stage per turn.
-            // Pending yields without moving `at`; the next turn resumes the
-            // same state, window and read view. The finished capture drops
-            // its view before the equivalence below reads the store.
-            let slot =
-                capture.get_or_insert_with(|| CanonicalCapture::new(&snapshot.window, usize::MAX));
-            let done = match slot.advance(vault, &prepared.window) {
-                Ok(done) => done,
+            if comparison.is_none() {
+                // Keep the original read view until recapture completes, then
+                // drop it before the original live pad normalization.
+                let slot = capture
+                    .get_or_insert_with(|| CanonicalCapture::new(&snapshot.window, usize::MAX));
+                let done = match slot.advance(vault, &prepared.window) {
+                    Ok(done) => done,
+                    Err(error) => {
+                        *capture = None;
+                        return Err(error);
+                    }
+                };
+                let Some((actual, _)) = done else {
+                    return Ok(false);
+                };
+                *capture = None;
+                *comparison = Some(CanonicalComparison::new(pad_equivalent(
+                    vault, actual, snapshot,
+                )));
+            }
+            match comparison
+                .as_mut()
+                .expect("completed recapture is retained for comparison")
+                .advance(snapshot, page)
+            {
+                Ok(false) => return Ok(false),
+                Ok(true) => {
+                    *comparison = None;
+                    *at += 1;
+                    return Ok(*at == total);
+                }
                 Err(error) => {
-                    *capture = None;
+                    *comparison = None;
                     return Err(error);
                 }
-            };
-            let Some((actual, _)) = done else {
-                return Ok(false);
-            };
-            *capture = None;
-            if &pad_equivalent(vault, actual, snapshot) != snapshot {
-                return Err(invalid("recovery materialization is not equivalent"));
             }
         } else if check + 1 == total {
             carry_window_pads(vault, &prepared.window)?;
