@@ -829,7 +829,7 @@ pub(super) fn pinned_source_map_output_path() -> String {
 
 /// The console lines of a step that finished, kept as evidence beside its
 /// answer; the answer stays the step's observation and result.
-pub(super) fn console_output_path(seq: u64) -> String {
+pub(crate) fn console_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.console.txt")
 }
 
