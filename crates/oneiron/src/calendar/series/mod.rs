@@ -56,10 +56,11 @@ mod reseed;
 
 pub(crate) use self::expansion::expand_window_shifting_gaps_page;
 pub use self::expansion::{
-    ExpansionCursor, ExpansionPage, expand_master_window, expand_window, expand_window_page,
+    ExpansionCursor, ExpansionPage, civil_rule, expand_master_window, expand_window,
+    expand_window_page,
 };
 pub use self::keys::{
-    SeriesDtStart, SeriesExceptionKey, exception_identity, mask_master_exceptions,
+    SeriesDtStart, SeriesExceptionKey, civil_start_key, exception_identity, mask_master_exceptions,
 };
 
 #[cfg(test)]

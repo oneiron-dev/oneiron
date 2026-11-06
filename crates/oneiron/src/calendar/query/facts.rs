@@ -241,6 +241,32 @@ fn civil_seconds(wall: CalendarWallTimeValue) -> Option<u64> {
     u64::try_from(at.and_utc().timestamp()).ok()
 }
 
+/// Where an occurrence of a civil series starting at `start` (a key on the
+/// UTC carrier) can fall, `length` seconds of civil time long: from its start
+/// where that comes first to its end where that comes last, as
+/// [`CalendarEventFacts::wall_span`] spans a lone civil EVENT (FIX 16568).
+pub(in crate::calendar) fn civil_envelope(start: u64, length: u64) -> TimeRange {
+    TimeRange {
+        start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
+        end: start
+            .saturating_add(length)
+            .saturating_add(WESTERNMOST_OFFSET_SECS),
+    }
+}
+
+/// The civil start (a key on the UTC carrier) and the civil length of the
+/// span [`CalendarEventFacts::wall_span`] made; the inverse of
+/// [`civil_envelope`].
+pub(in crate::calendar) fn civil_bounds(span: TimeRange) -> (u64, u64) {
+    let start = span.start.saturating_add(EASTERNMOST_OFFSET_SECS);
+    let last = span.end.saturating_sub(WESTERNMOST_OFFSET_SECS);
+    (start, last.saturating_sub(start))
+}
+
+/// How far a civil occurrence's span reaches before and after its start key.
+pub(in crate::calendar) const CIVIL_REACH_SECS: (u64, u64) =
+    (EASTERNMOST_OFFSET_SECS, WESTERNMOST_OFFSET_SECS);
+
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::calendar) struct CalendarEventFacts {
