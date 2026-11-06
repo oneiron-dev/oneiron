@@ -107,6 +107,13 @@ pub(crate) fn erase_fork_actor_in_txn(
             forks.push((key, fork, opened));
         }
     }
+    // FIX 12470: each deck whose fork record changed takes the erased form
+    // into each live window that carries it once the erase commits.
+    #[cfg(feature = "sync")]
+    let artifacts: BTreeSet<EntityId> = forks
+        .iter()
+        .map(|((artifact, _), _, _)| *artifact)
+        .collect();
     for (key, fork, opened) in forks {
         if opened && fork.state == ForkState::Open {
             FORKS.delete(&vault.store, wtxn, &key)?;
@@ -114,6 +121,8 @@ pub(crate) fn erase_fork_actor_in_txn(
             FORKS.put(&vault.store, wtxn, &key, &fork)?;
         }
     }
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, artifacts);
     Ok(())
 }
 

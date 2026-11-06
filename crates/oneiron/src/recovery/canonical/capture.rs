@@ -152,7 +152,7 @@ impl CanonicalCapture {
                 "document_pins",
                 "message_docs",
                 // FIX 12470: not captured; the rebuilt window takes its rows
-                // again from this vault's typed body receipts.
+                // again from this vault's typed body receipts and forks.
                 "typed_body_rows",
                 "repo_manifests",
                 "withdrawn_cutoffs",
