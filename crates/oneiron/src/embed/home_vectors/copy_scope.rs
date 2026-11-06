@@ -160,13 +160,26 @@ pub(crate) fn with_home_claim_copy_batch<T>(
     land: impl FnOnce() -> T,
 ) -> T {
     let (landed, attempts) = with_copy_batch(vault, windows, land);
+    let mut retained = std::collections::BTreeSet::new();
     for attempt in attempts {
+        if matches!(attempt.result.as_ref(), Ok(RetainedHomeClaimState::Stored)) {
+            retained.insert(attempt.entity_id);
+        }
         tracing::debug!(
             entity = %attempt.entity_id.to_hex(),
             error = ?attempt.result.as_ref().err().map(|error| error.kind()),
             writer_result = ?attempt.writer_result,
             "derived home CLAIM copy attempt; not a durable receipt"
         );
+    }
+    for id in retained {
+        if let Err(error) = vault.complete_pending_retained_home_claim(&id) {
+            tracing::debug!(
+                entity = %id.to_hex(),
+                error = ?error.kind(),
+                "immediate retained home CLAIM completion returned an error"
+            );
+        }
     }
     landed
 }
