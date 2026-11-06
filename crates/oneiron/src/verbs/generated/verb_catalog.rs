@@ -25,6 +25,12 @@ pub enum AgentVerb {
     SelfFocusScratchpadRecall,
     SelfFocusScratchpadAppend,
     SelfFocusScratchpadSeal,
+    SelfBoardLayout,
+    SelfBoardFold,
+    SelfBoardUnfold,
+    SelfBoardSize,
+    SelfBoardFilter,
+    SelfBoardReplace,
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
@@ -1060,6 +1066,8 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultProductivityCreate,
     VaultProductivityTree,
+    VaultIngestAgUiImport,
+    VaultIngestAgUiRead,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
@@ -1299,6 +1307,12 @@ impl AgentVerb {
         Self::SelfFocusScratchpadRecall,
         Self::SelfFocusScratchpadAppend,
         Self::SelfFocusScratchpadSeal,
+        Self::SelfBoardLayout,
+        Self::SelfBoardFold,
+        Self::SelfBoardUnfold,
+        Self::SelfBoardSize,
+        Self::SelfBoardFilter,
+        Self::SelfBoardReplace,
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
@@ -2334,6 +2348,8 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultProductivityCreate,
         Self::VaultProductivityTree,
+        Self::VaultIngestAgUiImport,
+        Self::VaultIngestAgUiRead,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
@@ -2576,6 +2592,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfFocusScratchpadAppend => "self.focus.scratchpad.append",
             Self::SelfFocusScratchpadSeal => "self.focus.scratchpad.seal",
+            Self::SelfBoardLayout => "self.board.layout",
+            Self::SelfBoardFold => "self.board.fold",
+            Self::SelfBoardUnfold => "self.board.unfold",
+            Self::SelfBoardSize => "self.board.size",
+            Self::SelfBoardFilter => "self.board.filter",
+            Self::SelfBoardReplace => "self.board.replace",
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
@@ -3641,6 +3663,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultProductivityCreate => "vault.productivity.create",
             Self::VaultProductivityTree => "vault.productivity.tree",
+            Self::VaultIngestAgUiImport => "vault.ingest.ag_ui.import",
+            Self::VaultIngestAgUiRead => "vault.ingest.ag_ui.read",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
@@ -3886,6 +3910,12 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardLayout
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -4899,6 +4929,8 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
                 | Self::VaultProductivityTree
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -5189,6 +5221,12 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardLayout
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -6202,6 +6240,8 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
                 | Self::VaultProductivityTree
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -6663,6 +6703,12 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardLayout
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -7619,6 +7665,8 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
+                | Self::VaultIngestAgUiImport
+                | Self::VaultIngestAgUiRead
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultConversationsCreate
@@ -7829,6 +7877,11 @@ impl AgentVerb {
                 | Self::VaultReportsRoute
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
+                | Self::SelfBoardFold
+                | Self::SelfBoardUnfold
+                | Self::SelfBoardSize
+                | Self::SelfBoardFilter
+                | Self::SelfBoardReplace
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfStandingEdit
@@ -8434,6 +8487,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
+                | Self::VaultIngestAgUiImport
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -8618,6 +8672,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
+            Self::SelfBoardLayout => &["spec"],
+            Self::SelfBoardFold => &["spec"],
+            Self::SelfBoardUnfold => &["spec"],
+            Self::SelfBoardSize => &["spec"],
+            Self::SelfBoardFilter => &["spec"],
+            Self::SelfBoardReplace => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -9670,6 +9730,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
             Self::VaultProductivityTree => &["spec"],
+            Self::VaultIngestAgUiImport => &["spec"],
+            Self::VaultIngestAgUiRead => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -9910,6 +9972,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
+            Self::SelfBoardLayout => &["spec"],
+            Self::SelfBoardFold => &["spec"],
+            Self::SelfBoardUnfold => &["spec"],
+            Self::SelfBoardSize => &["spec"],
+            Self::SelfBoardFilter => &["spec"],
+            Self::SelfBoardReplace => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -10945,6 +11013,8 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
             Self::VaultProductivityTree => &["spec"],
+            Self::VaultIngestAgUiImport => &["spec"],
+            Self::VaultIngestAgUiRead => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -11231,6 +11301,24 @@ impl AgentVerb {
             }
             Self::SelfFocusScratchpadSeal => {
                 "Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."
+            }
+            Self::SelfBoardLayout => {
+                "The bound actor's own context board layout: the layout its board renders under now and the batch its next turn applies."
+            }
+            Self::SelfBoardFold => {
+                "Folds one section of the bound actor's context board to one live summary line, with an optional note and rows kept open under it; applies at the next turn."
+            }
+            Self::SelfBoardUnfold => {
+                "Unfolds one section of the bound actor's context board; applies at the next turn."
+            }
+            Self::SelfBoardSize => {
+                "Sets one section's share of the bound actor's board cap, in percent, or gives it back to the engine's sizing; all shares stay within the cap; applies at the next turn."
+            }
+            Self::SelfBoardFilter => {
+                "Sets which rows one section of the bound actor's context board shows, by who and by status, or clears it; applies at the next turn."
+            }
+            Self::SelfBoardReplace => {
+                "Replaces the whole layout the bound actor's next turn applies to its context board."
             }
             Self::SelfMemoryDiary => {
                 "Writes one private entry in the bound actor's own diary, as an actor-private NOTE."
@@ -14250,6 +14338,12 @@ impl AgentVerb {
             }
             Self::VaultProductivityTree => {
                 "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."
+            }
+            Self::VaultIngestAgUiImport => {
+                "The owner captures an opt-in AG-UI JSONL file and its app CUSTOM mapping as project-scoped Imported/Proposed source evidence. App data grants no authority or training consent."
+            }
+            Self::VaultIngestAgUiRead => {
+                "Reads one exact AG-UI source fingerprint through the caller scoped read. Reports registered app observations and explicit repair links, never success or eval/training permission."
             }
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
