@@ -15,12 +15,19 @@
 //! hold, never neither. A peek takes copies, installs them, and leaves the
 //! message, its witness and its hold in the queue.
 //!
-//! A receive that may wait first peeks, without the lock and without taking
-//! anything: the guest's mode and the socket's receive timeout apply, as to
-//! the guest's own call. Only then, with the call still live, does it take
-//! the message without waiting; a message another task took meanwhile
-//! sends it back to wait. So a call that ended takes nothing.
+//! The launcher takes a message only while the call is live, and never
+//! waits to take it. When the socket has none and the guest's call may
+//! wait, it waits without the lock, as that call would: in slices, with a
+//! check of the call after each, and up to the socket's receive timeout. A
+//! call that ended takes nothing and returns.
+//!
+//! Before it installs a descriptor, the launcher proves writable each guest
+//! region the call writes: the control buffer, the name buffer, the header
+//! and a recvmmsg's length. A fault answers EFAULT and installs nothing; the
+//! descriptors the message carried close, as the kernel closes what it
+//! cannot place.
 
+use super::wait::{Wait, Waited, may_wait};
 use super::{
     Call, MESSAGE_BOUND, Rights, aligned, controls, fds_of, identity, poisoned, put_control,
     scatter, vectors,
@@ -43,13 +50,15 @@ pub(super) fn receive(
     vector: bool,
 ) -> io::Result<()> {
     let call = Call::open(bridge, n)?;
-    let nonblocking = flags & libc::MSG_DONTWAIT != 0 || in_nonblocking_mode(&call.socket);
+    let blocking = may_wait(&call.socket, flags);
     let mut completed = 0_i64;
     let mut value = 0_i64;
     for (index, &pointer) in pointers.iter().enumerate() {
-        let wait = !nonblocking && (index == 0 || flags & libc::MSG_WAITFORONE == 0);
-        let length = match call.take(listener, pointer, flags, wait) {
-            Ok(length) => length,
+        let wait = blocking && (index == 0 || flags & libc::MSG_WAITFORONE == 0);
+        let length = match call.take(listener, pointer, flags, wait, vector) {
+            Ok(Some(length)) => length,
+            // A call that ended is answered no more.
+            Ok(None) => return Ok(()),
             Err(error) if completed == 0 => {
                 let code = error.raw_os_error().unwrap_or(libc::EIO);
                 return linux::respond(listener.as_raw_fd(), n.id, 0, code, 0);
@@ -98,9 +107,18 @@ struct Incoming {
 }
 
 impl Call<'_> {
-    /// Takes one message into the guest's header at `pointer`, with what
-    /// it carries, and returns its length as the kernel does.
-    fn take(&self, listener: &OwnedFd, pointer: u64, flags: i32, wait: bool) -> io::Result<usize> {
+    /// Takes one message into the guest's header at `pointer` (of a
+    /// recvmmsg when `vector`), with what it carries, and returns its
+    /// length as the kernel does: `None` once the call ended, with nothing
+    /// taken.
+    fn take(
+        &self,
+        listener: &OwnedFd,
+        pointer: u64,
+        flags: i32,
+        wait: bool,
+        vector: bool,
+    ) -> io::Result<Option<usize>> {
         let pid = self.n.pid;
         let mut header: libc::msghdr = load(pid, pointer)?;
         let (vectors, total) = vectors(pid, &header)?;
@@ -110,17 +128,28 @@ impl Call<'_> {
             header.msg_controllen.min(MESSAGE_BOUND)
         };
         let mut incoming = Incoming::new(&header, total, capacity);
+        let waiting = if wait {
+            Some(Wait::new(&self.socket, libc::POLLIN, libc::SO_RCVTIMEO)?)
+        } else {
+            None
+        };
         loop {
-            if wait {
-                peek(&self.socket)?;
-            }
             // Like a socket() or an accept, an install holds off the
             // inventory (FIX 5978): the witness closes after it.
-            let _shared = self.bridge.sockets.read().map_err(|_| poisoned())?;
-            linux::valid(listener.as_raw_fd(), self.n.id)?;
-            let received = match incoming.receive(&self.socket, flags) {
-                Err(error) if wait && error.kind() == io::ErrorKind::WouldBlock => continue,
-                received => received?,
+            let shared = self.bridge.sockets.read().map_err(|_| poisoned())?;
+            if linux::valid(listener.as_raw_fd(), self.n.id).is_err() {
+                return Ok(None);
+            }
+            let received = match (incoming.receive(&self.socket, flags), &waiting) {
+                (Err(error), Some(waiting)) if error.kind() == io::ErrorKind::WouldBlock => {
+                    // The wait holds no lock: an inventory may run meanwhile.
+                    drop(shared);
+                    match waiting.ready(listener, self.n.id, &self.socket)? {
+                        Waited::Ready => continue,
+                        Waited::Ended => return Ok(None),
+                    }
+                }
+                (received, _) => received?,
             };
             // The message left the queue, unless peeked. From here the
             // guest has what it carried, or it closed; the witnesses close
@@ -129,8 +158,11 @@ impl Call<'_> {
                 carried(&incoming.control[..incoming.used], &self.bridge.rights);
             let length = received.min(incoming.bytes.len());
             scatter(pid, &vectors, &mut incoming.bytes[..length])?;
+            self.prove_writable(pointer, &header, capacity, vector)?;
             let cloexec = flags & libc::MSG_CMSG_CLOEXEC != 0;
             let (mut control, truncated) = self.install(listener, contents, capacity, cloexec);
+            // Each write from here was proved: it fails only if the guest
+            // unmaps its own memory during the call.
             if incoming.named {
                 let mut name = incoming.name_bytes(header.msg_namelen);
                 if !name.is_empty() {
@@ -148,8 +180,33 @@ impl Call<'_> {
                 header.msg_flags |= libc::MSG_CTRUNC;
             }
             store(pid, pointer, header)?;
-            return Ok(received);
+            return Ok(Some(received));
         }
+    }
+
+    /// Proves writable each guest region a receive writes once it installed
+    /// a descriptor: the control buffer up to `capacity`, the name buffer,
+    /// the header at `pointer`, and after it a recvmmsg's length. Each
+    /// region gets its own bytes back unchanged; a fault answers EFAULT.
+    fn prove_writable(
+        &self,
+        pointer: u64,
+        header: &libc::msghdr,
+        capacity: usize,
+        vector: bool,
+    ) -> io::Result<()> {
+        let pid = self.n.pid;
+        let name = if header.msg_name.is_null() {
+            0
+        } else {
+            (header.msg_namelen as usize).min(size_of::<libc::sockaddr_storage>())
+        };
+        let length = if vector { size_of::<u32>() } else { 0 };
+        rewrite(pid, header.msg_control as u64, capacity)
+            .and_then(|()| rewrite(pid, header.msg_name as u64, name))
+            .and_then(|()| store(pid, pointer, *header))
+            .and_then(|()| rewrite(pid, pointer + size_of::<libc::msghdr>() as u64, length))
+            .map_err(|_| io::Error::from_raw_os_error(libc::EFAULT))
     }
 
     /// The guest's control bytes for what a message carried, at most
@@ -300,29 +357,13 @@ fn carried(control: &[u8], rights: &Rights) -> (Vec<Received>, Vec<OwnedFd>) {
     (carried, witnesses)
 }
 
-/// Waits as the guest's call would wait, until the socket has a message,
-/// an end or an error to report, and takes nothing.
-fn peek(socket: &OwnedFd) -> io::Result<()> {
-    let mut byte = [0_u8];
-    // SAFETY: recv writes at most one byte into live storage.
-    let peeked = unsafe {
-        libc::recv(
-            socket.as_raw_fd(),
-            byte.as_mut_ptr().cast(),
-            1,
-            libc::MSG_PEEK,
-        )
-    };
-    if peeked < 0 {
-        return Err(io::Error::last_os_error());
+/// Writes the guest's `length` bytes at `address` back unchanged: the proof
+/// that they are writable.
+fn rewrite(pid: u32, address: u64, length: usize) -> io::Result<()> {
+    if length == 0 {
+        return Ok(());
     }
-    Ok(())
-}
-
-/// Whether the guest put the socket in nonblocking mode. The launcher's
-/// copy shares the guest's open file description, and with it its mode.
-fn in_nonblocking_mode(socket: &OwnedFd) -> bool {
-    // SAFETY: F_GETFL only reads the status flags of a live descriptor.
-    let flags = unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFL) };
-    flags >= 0 && flags & libc::O_NONBLOCK != 0
+    let mut bytes = vec![0; length];
+    remote(pid, address, &mut bytes, false)?;
+    remote(pid, address, &mut bytes, true)
 }
