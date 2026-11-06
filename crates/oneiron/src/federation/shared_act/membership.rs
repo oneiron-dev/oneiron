@@ -2,20 +2,27 @@
 //! ordinary member changes an Admin's named power makes at once. Each rewrites
 //! or deletes FEDERATION_GRANT records in the caller's writer and revokes the
 //! capability slips of whoever lost a role, using the supplied issuer or this
-//! install's own live host issuer.
+//! install's own live host issuer. A change no issuer signs keeps its effects
+//! and a pending intent of its signed record, which this install carries
+//! when it can (`pending_execution`, FIX 12335).
 //! Removal is access revocation, never a group rekey. A new member joins only
 //! by accepting an invitation (`invitation`).
 mod invitation;
 mod owner_recovery;
+mod pending_execution;
 
 pub use invitation::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
 pub use owner_recovery::OwnerRecoveryAuthorization;
 
+pub(super) use pending_execution::UnsignedExecution;
+
 use super::{
-    Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
-    invalid, live_owners, non_root,
+    ChangeRecord, Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind,
+    SharedVaultChange, decode, invalid, live_owners, non_root,
 };
-use crate::authority::{CapabilitySlip, HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
+use crate::authority::{
+    CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
+};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -32,11 +39,14 @@ use std::collections::BTreeSet;
 
 /// What one membership move wrote (FIX 5765): every grant id it rewrote,
 /// minted, deleted or retired, as the receipt lists them; the own-device
-/// grant ids it retired, which `grants` lists too; and the slips it revoked.
+/// grant ids it retired, which `grants` lists too; the slips it revoked; and
+/// the Grants an owner's signed mint made that it deleted with no signed
+/// withdrawal, for want of an issuer (FIX 12335).
 pub(super) struct MemberMove {
     pub(super) grants: Vec<EntityId>,
     pub(super) retired_own_device: Vec<EntityId>,
     pub(super) revoked_slips: Vec<[u8; 32]>,
+    pub(super) unsigned_withdrawals: Vec<EntityId>,
 }
 
 impl MemberMove {
@@ -205,7 +215,9 @@ impl Vault {
     /// `slips`, each deleted Grant an owner's signed mint made (a GitPush
     /// grant or an owner's agent grant) gets the host's signed withdrawal in
     /// this writer (FIX 7135), so the authority audit pairs its mint with a
-    /// revoke this membership change made, never one an owner signed.
+    /// revoke this membership change made, never one an owner signed. The
+    /// deleted ids, then each such Grant no host signed a withdrawal of,
+    /// which the change's pending record names (FIX 12335).
     fn drop_member_grants_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -213,7 +225,7 @@ impl Vault {
         member: EntityId,
         leaves: bool,
         slips: Option<&HostSlipIssuer>,
-    ) -> Result<Vec<EntityId>> {
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
         let dropped: Vec<(EntityId, bool)> = self
             .vault_grants_in_txn(txn, vault_id)?
             .into_iter()
@@ -224,10 +236,18 @@ impl Vault {
             .collect();
         // Each withdrawal stays known here and reaches its peers, in this
         // writer (FIX-LIST 5107, 10772).
+        let mut unsigned = Vec::new();
         for (id, signed_mint) in &dropped {
             crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;
-            if *signed_mint && let Some(issuer) = slips {
-                self.log_membership_grant_withdrawal_in_txn(txn, issuer, *id)?;
+            if !*signed_mint {
+                continue;
+            }
+            let signed = match slips {
+                Some(issuer) => self.log_membership_grant_withdrawal_in_txn(txn, issuer, *id)?,
+                None => false,
+            };
+            if !signed {
+                unsigned.push(*id);
             }
         }
         let ids: Vec<EntityId> = dropped.into_iter().map(|(id, _)| id).collect();
@@ -235,7 +255,7 @@ impl Vault {
             txn,
             ids.iter().map(|id| BatchOp::Delete { id: *id }).collect(),
         )?;
-        Ok(ids)
+        Ok((ids, unsigned))
     }
     /// Move `member` from `from` to `to` (`None` leaves the vault), dropping
     /// the delegates it can no longer parent, the own-device grant a former
@@ -255,14 +275,12 @@ impl Vault {
         if let Some(role) = to {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
         }
+        let mut unsigned_withdrawals = Vec::new();
         if to.is_none_or(|role| !role.is_admin()) {
-            grants.extend(self.drop_member_grants_in_txn(
-                txn,
-                vault_id,
-                member,
-                to.is_none(),
-                slips,
-            )?);
+            let (dropped, unsigned) =
+                self.drop_member_grants_in_txn(txn, vault_id, member, to.is_none(), slips)?;
+            grants.extend(dropped);
+            unsigned_withdrawals = unsigned;
         }
         let mut retired_own_device = Vec::new();
         if crate::federation::own_device::own_device_grant_retires(from, to) {
@@ -279,6 +297,7 @@ impl Vault {
             grants,
             retired_own_device,
             revoked_slips,
+            unsigned_withdrawals,
         })
     }
 
@@ -297,6 +316,7 @@ impl Vault {
             grants: self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?,
             retired_own_device: Vec::new(),
             revoked_slips: Vec::new(),
+            unsigned_withdrawals: Vec::new(),
         })
     }
 
@@ -385,6 +405,26 @@ impl Vault {
         power: Option<OrgAdminPower>,
         apply: impl FnOnce(&mut heed::RwTxn<'_>, EntityId, u64) -> Result<Effect>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.move_shared_member(actor, vault_id, power, |txn, actor, now| {
+            Ok((apply(txn, actor, now)?, None))
+        })
+    }
+
+    /// [`Self::change_shared_membership`] for a change whose `apply` may
+    /// leave a half no issuer signed: that half is kept pending under the
+    /// receipt in the same writer and signed by this install's carrier when
+    /// it can, and the receipt says which (FIX 12335).
+    fn move_shared_member(
+        &self,
+        actor: &AuthenticatedOwner,
+        vault_id: u64,
+        power: Option<OrgAdminPower>,
+        apply: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            EntityId,
+            u64,
+        ) -> Result<(Effect, Option<UnsignedExecution>)>,
+    ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
@@ -399,10 +439,16 @@ impl Vault {
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
-        let effect = apply(&mut txn, actor_id, now)?;
+        let (effect, unsigned) = apply(&mut txn, actor_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
+        let record = match unsigned {
+            Some(unsigned) => self.file_membership_execution_in_txn(
+                &mut txn, vault_id, &id, actor_id, now, unsigned,
+            )?,
+            None => ChangeRecord::Unnamed,
+        };
         let receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, None, None, now,
+            &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
         )?;
         txn.commit()?;
         if !receipt.revoked_slips.is_empty() {
@@ -443,7 +489,7 @@ impl Vault {
             BTreeSet::from([creator]),
             effect,
             None,
-            None,
+            ChangeRecord::Unnamed,
             None,
             now,
         )
@@ -516,11 +562,8 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        let own_issuer = match slips {
-            Some(_) => None,
-            None => self.load_host_slip_issuer().ok(),
-        };
-        self.change_shared_membership(
+        let own_issuer = self.membership_issuer(slips);
+        self.move_shared_member(
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
@@ -537,9 +580,10 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    unsigned_withdrawals,
                     ..
                 } = self.move_member_in_txn(txn, vault_id, member, from, Some(role), slips, now)?;
-                Ok(Effect {
+                let effect = Effect {
                     change: SharedVaultChange::MemberRoleChanged {
                         member: member.to_hex(),
                         from,
@@ -548,7 +592,15 @@ impl Vault {
                     grants,
                     revoked_slips,
                     notify: BTreeSet::from([member]),
-                })
+                };
+                Ok((
+                    effect,
+                    member_execution(
+                        MembershipExecutionCause::AssignRole,
+                        member,
+                        unsigned_withdrawals,
+                    ),
+                ))
             },
         )
     }
@@ -560,11 +612,8 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        let own_issuer = match slips {
-            Some(_) => None,
-            None => self.load_host_slip_issuer().ok(),
-        };
-        self.change_shared_membership(
+        let own_issuer = self.membership_issuer(slips);
+        self.move_shared_member(
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
@@ -580,16 +629,25 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    unsigned_withdrawals,
                     ..
                 } = self.move_member_in_txn(txn, vault_id, member, from, None, slips, now)?;
-                Ok(Effect {
+                let effect = Effect {
                     change: SharedVaultChange::MemberRemoved {
                         member: member.to_hex(),
                     },
                     grants,
                     revoked_slips,
                     notify: BTreeSet::from([member]),
-                })
+                };
+                Ok((
+                    effect,
+                    member_execution(
+                        MembershipExecutionCause::RemoveMember,
+                        member,
+                        unsigned_withdrawals,
+                    ),
+                ))
             },
         )
     }
@@ -681,7 +739,7 @@ impl Vault {
                 notify: BTreeSet::from([from]),
             },
             None,
-            Some(authority_entry),
+            ChangeRecord::Signed(authority_entry),
             authorizer,
             now,
         )?;
@@ -701,11 +759,8 @@ impl Vault {
         vault_id: u64,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        let own_issuer = match slips {
-            Some(_) => None,
-            None => self.load_host_slip_issuer().ok(),
-        };
-        self.change_shared_membership(member, vault_id, None, |txn, actor, now| {
+        let own_issuer = self.membership_issuer(slips);
+        self.move_shared_member(member, vault_id, None, |txn, actor, now| {
             let from = self
                 .member_role_in_txn(txn, vault_id, actor)?
                 .ok_or_else(invalid)?;
@@ -717,16 +772,53 @@ impl Vault {
             let MemberMove {
                 grants,
                 revoked_slips,
+                unsigned_withdrawals,
                 ..
             } = self.move_member_in_txn(txn, vault_id, actor, from, None, slips, now)?;
-            Ok(Effect {
+            let effect = Effect {
                 change: SharedVaultChange::MemberLeft {
                     member: actor.to_hex(),
                 },
                 grants,
                 revoked_slips,
                 notify: BTreeSet::new(),
-            })
+            };
+            Ok((
+                effect,
+                member_execution(MembershipExecutionCause::Leave, actor, unsigned_withdrawals),
+            ))
         })
     }
+
+    /// This install's own host issuer for a membership change given no
+    /// `slips` (FIX 5898), read before the change's writer opens; `None`
+    /// with `slips`. With no `slips`, this install's key is loaded too, so
+    /// the writer can sign the record of a change no issuer signs (FIX
+    /// 12335).
+    pub(super) fn membership_issuer(
+        &self,
+        slips: Option<&HostSlipIssuer>,
+    ) -> Option<HostSlipIssuer> {
+        if slips.is_some() {
+            return None;
+        }
+        self.load_membership_carrier();
+        self.load_host_slip_issuer().ok()
+    }
+}
+
+/// A member change's half no issuer signed: the signed-mint Grants it
+/// deleted with no signed withdrawal; `None` when there are none.
+fn member_execution(
+    cause: MembershipExecutionCause,
+    member: EntityId,
+    unsigned_withdrawals: Vec<EntityId>,
+) -> Option<UnsignedExecution> {
+    (!unsigned_withdrawals.is_empty()).then_some(UnsignedExecution {
+        cause,
+        member,
+        act: None,
+        withdrawn_grants: unsigned_withdrawals,
+        handover: None,
+    })
 }
