@@ -1,6 +1,11 @@
 //! Red-batch diagnosis (FIX 4362): bisection over a red batch's staged
-//! paths and a deletion pass that minimizes its failing group.
-use super::{BatchState, CheckInvocation, CheckPhase, CheckReport, MergeQueue, Quarantine};
+//! paths and a deletion pass that minimizes its failing group. Every mask
+//! decision it evaluates is kept in order and saved with its quarantine.
+use super::driver_types::QueueDiagnosisDecision;
+use super::{
+    BatchState, CheckInvocation, CheckPhase, CheckReport, MergeBatch, MergeQueue, Quarantine,
+    QueueBatchDrive,
+};
 use crate::{
     error::{Error, Result},
     git_wire::lock_repository,
@@ -14,6 +19,10 @@ impl MergeQueue<'_> {
     /// Past one speculation window, the first red path in staged order is
     /// diagnosed: its earlier windows passed whole, so its own window is
     /// bisected over them, and every checked mask is a staged path.
+    /// Each mask decision it evaluates is kept on the batch's drive record
+    /// with the final quarantine, in the same writer (FIX 4362). A crash
+    /// before that save loses no check: a retry evaluates the same
+    /// decisions again over the verdict slots already saved.
     pub fn diagnose_red<F>(&self, id: &str, runner: &mut F) -> Result<Quarantine>
     where
         F: FnMut(&CheckInvocation) -> Result<CheckReport>,
@@ -23,17 +32,16 @@ impl MergeQueue<'_> {
             return Ok(quarantine);
         }
         let count = batch.proposals.len();
-        let mut mask = (1_u64 << count) - 1;
-        let full = self.check(id, mask, CheckPhase::Fast, runner)?;
-        if full.passes() || count > super::staging::SPECULATION_WIDTH {
+        let full = (1_u64 << count) - 1;
+        let mut mask = full;
+        let mut trace = Vec::new();
+        let full_red = self.diagnosis_decision(&batch, full, full, runner, &mut trace)?;
+        if !full_red || count > super::staging::SPECULATION_WIDTH {
             // A stack can pass while an exclusion path fails. That also blocks
             // all-path agreement, so diagnose the first red path if one exists.
             let mut red = None;
             for path in &batch.paths {
-                if !self
-                    .check(id, path.mask, CheckPhase::Fast, runner)?
-                    .passes()
-                {
+                if self.diagnosis_decision(&batch, full, path.mask, runner, &mut trace)? {
                     red = Some(path.mask);
                     break;
                 }
@@ -51,15 +59,10 @@ impl MergeQueue<'_> {
                 .iter()
                 .fold(0_u64, |acc, bit| acc | (1 << bit));
             let right = mask ^ left;
-            if !self
-                .check(id, prefix | left, CheckPhase::Fast, runner)?
-                .passes()
-            {
+            let parent = prefix | mask;
+            if self.diagnosis_decision(&batch, parent, prefix | left, runner, &mut trace)? {
                 mask = left;
-            } else if !self
-                .check(id, prefix | right, CheckPhase::Fast, runner)?
-                .passes()
-            {
+            } else if self.diagnosis_decision(&batch, parent, prefix | right, runner, &mut trace)? {
                 mask = right;
             } else {
                 break;
@@ -72,9 +75,13 @@ impl MergeQueue<'_> {
                 let without = mask & !(1 << index);
                 if without != mask
                     && without != 0
-                    && !self
-                        .check(id, prefix | without, CheckPhase::Fast, runner)?
-                        .passes()
+                    && self.diagnosis_decision(
+                        &batch,
+                        prefix | mask,
+                        prefix | without,
+                        runner,
+                        &mut trace,
+                    )?
                 {
                     mask = without;
                     reduced = true;
@@ -105,7 +112,45 @@ impl MergeQueue<'_> {
         }
         current.state = BatchState::Quarantined;
         current.quarantine = Some(quarantine.clone());
+        current
+            .drive
+            .get_or_insert_with(QueueBatchDrive::default)
+            .diagnosis_trace = trace;
         self.save(&queue, &[&current])?;
         Ok(quarantine)
+    }
+
+    /// One mask decision of [`Self::diagnose_red`] (FIX 4362): checks the
+    /// staged path `checked` through [`Self::check`], so a verdict its slot
+    /// holds is reused, not rerun. Keeps the decision in `trace` with
+    /// `parent`, the path's exact staged tree and that verdict. Answers
+    /// whether the path is red.
+    fn diagnosis_decision<F>(
+        &self,
+        batch: &MergeBatch,
+        parent: u64,
+        checked: u64,
+        runner: &mut F,
+        trace: &mut Vec<QueueDiagnosisDecision>,
+    ) -> Result<bool>
+    where
+        F: FnMut(&CheckInvocation) -> Result<CheckReport>,
+    {
+        let verdict = self.check(&batch.id, checked, CheckPhase::Fast, runner)?;
+        let tree = batch
+            .paths
+            .iter()
+            .find(|path| path.mask == checked)
+            .ok_or_else(|| invalid("speculative path not staged"))?
+            .tree
+            .clone();
+        let red = !verdict.passes();
+        trace.push(QueueDiagnosisDecision {
+            parent_mask: parent,
+            checked_mask: checked,
+            tree,
+            verdict: verdict.id,
+        });
+        Ok(red)
     }
 }
