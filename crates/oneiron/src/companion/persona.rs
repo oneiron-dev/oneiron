@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::federation::{ScopeId, Sensitivity};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use crate::serialize::msgpack_value_from_json;
+use crate::vault::RevisionRef;
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,10 @@ pub struct CompiledPersona {
     pub scenario: Option<EntityId>,
     pub value: JsonValue,
     pub made_by: PersonaMadeBy,
+    /// The live revision each of `made_by.inputs` was read at, in that order,
+    /// each in the snapshot its words were read in (FIX 4817): a reader that
+    /// wore this value can tell whether every input still reads at it.
+    pub input_revisions: Vec<Option<RevisionRef>>,
     /// Every scoped read the projection made, folded: the changes and scenario
     /// facts this reader could not see are counted here, never silently lost.
     pub receipt: ScopedReadReceipt,
@@ -293,19 +298,23 @@ impl ScopedRead<'_> {
     /// Replays approved identity changes on the current PERSON baseline. Pending, retracted,
     /// superseded, scoped-away and unauthorized changes cannot enter the result.
     /// The optional scenario is applied last and must belong to this PERSON.
+    /// Each input keeps the revision its read saw (FIX 4817).
     pub fn compile_persona(
         &self,
         person: &EntityId,
         scenario: Option<EntityId>,
     ) -> Result<CompiledPersona> {
-        let baseline = self.read(&[PointRead::id(*person)], None)?.single();
+        let baseline = self.read_revisions(&[PointRead::id(*person)])?.single();
         let mut receipt = baseline.receipt;
-        let Some(ReadRow {
-            entity_type: kind,
-            learned_at: baseline_at,
-            body: Some(data),
-            ..
-        }) = baseline.value
+        let Some((
+            ReadRow {
+                entity_type: kind,
+                learned_at: baseline_at,
+                body: Some(data),
+                ..
+            },
+            baseline_revision,
+        )) = baseline.value
         else {
             return Err(Error::EntityNotFound);
         };
@@ -320,9 +329,9 @@ impl ScopedRead<'_> {
             .into_iter()
             .map(PointRead::id)
             .collect();
-        let claims = self.read(&claims, None)?;
+        let claims = self.read_revisions(&claims)?;
         receipt.restrict_with(&claims.receipt);
-        for row in claims.value.into_iter().flatten() {
+        for (row, revision) in claims.value.into_iter().flatten() {
             let ReadRow {
                 id,
                 body: Some(data),
@@ -350,25 +359,30 @@ impl ScopedRead<'_> {
                 continue;
             }
             let change = PersonaChange::from_claim_value(&body.value)?;
-            changes.push((change.made_by.at, id, change));
+            changes.push((change.made_by.at, id, change, revision));
         }
-        changes.sort_by_key(|(at, id, _)| (*at, *id));
+        changes.sort_by_key(|(at, id, _, _)| (*at, *id));
         let mut inputs = vec![*person];
+        let mut input_revisions = vec![baseline_revision];
         let mut at = baseline_at;
-        for (changed_at, id, change) in changes {
+        for (changed_at, id, change, revision) in changes {
             merge_patch(&mut value, &change.patch);
             inputs.push(id);
+            input_revisions.push(revision);
             at = at.max(changed_at);
         }
         if let Some(facet) = scenario {
-            let parts = self.read(&[PointRead::id(facet)], None)?.single();
+            let parts = self.read_revisions(&[PointRead::id(facet)])?.single();
             receipt.restrict_with(&parts.receipt);
-            let Some(ReadRow {
-                entity_type: kind,
-                learned_at,
-                body: Some(data),
-                ..
-            }) = parts.value
+            let Some((
+                ReadRow {
+                    entity_type: kind,
+                    learned_at,
+                    body: Some(data),
+                    ..
+                },
+                facet_revision,
+            )) = parts.value
             else {
                 return Err(Error::EntityNotFound);
             };
@@ -393,6 +407,7 @@ impl ScopedRead<'_> {
             object(&mask.patch)?;
             merge_patch(&mut value, &mask.patch);
             inputs.push(facet);
+            input_revisions.push(facet_revision);
             at = at.max(learned_at);
         }
         Ok(CompiledPersona {
@@ -404,6 +419,7 @@ impl ScopedRead<'_> {
                 process: "persona.merge-patch.v1".to_owned(),
                 at,
             },
+            input_revisions,
             receipt,
         })
     }
