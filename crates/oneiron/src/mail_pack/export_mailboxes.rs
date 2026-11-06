@@ -196,6 +196,9 @@ struct MemberMailbox {
 /// read once in the pass's own snapshot.
 pub(crate) struct MemberMailboxPlan {
     exporter: EntityId,
+    /// The PERSON the exporter exports as ([`exporting_person_in`]): its
+    /// requests are the ones the pass reads and uses.
+    exporting_person: EntityId,
     audience: ExportAudience,
     /// Each other member's personal mailbox, by the source policy its rows
     /// were born under.
@@ -224,12 +227,39 @@ pub(super) fn own_mailbox_in(
     }
 }
 
+/// The PERSON `exporter` exports as, by the rules [`own_mailbox_in`] names
+/// a reader by: the embedded owner of a vault with no authority root as the
+/// one owner PERSON it stands for, a pen as the PERSON its subject anchor
+/// names, a PERSON as itself, anyone else as `exporter`. An Owner's request
+/// is keyed by the Owner's PERSON, so an export reads and uses its requests
+/// under this one PERSON: each co-Owner's requests stay their own, and the
+/// embedded owner of a vault with several owners stands for none of them.
+///
+/// # Errors
+///
+/// Storage and codec failures.
+fn exporting_person_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    exporter: EntityId,
+) -> Result<EntityId> {
+    if let Some(person) = crate::source_audience::embedded_owner_person_in(vault, txn, exporter)? {
+        return Ok(person);
+    }
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    Ok(
+        crate::workspace_roster::person_of_actor_in_txn(vault, txn, exporter, at)?
+            .unwrap_or(exporter),
+    )
+}
+
 impl MemberMailboxPlan {
     /// The plan of `exporter`'s export of the vault in `txn`, each source
-    /// and the exporter's request for it read once: `None` in a personal
-    /// vault. With `untold`, the people of the members' mailboxes this export
-    /// would carry could not be told, and it carries none of them and uses
-    /// no request.
+    /// and the exporter's request for it read once, under the one PERSON it
+    /// exports as ([`exporting_person_in`]): `None` in a personal vault. With
+    /// `untold`, the people of the members' mailboxes this export would
+    /// carry could not be told, and it carries none of them and uses no
+    /// request.
     ///
     /// # Errors
     ///
@@ -244,6 +274,7 @@ impl MemberMailboxPlan {
             return Ok(None);
         };
         let setting = owners_export_member_mail_in(vault, txn)?;
+        let exporting_person = exporting_person_in(vault, txn, exporter)?;
         let mut sources = BTreeMap::new();
         let mut carried_members = BTreeSet::new();
         let mut members = BTreeMap::new();
@@ -260,7 +291,8 @@ impl MemberMailboxPlan {
                 Some(person) => live_person_in(vault, txn, &person)?.then_some(person),
                 None => None,
             };
-            let (request, approved) = member_request_in(vault, txn, source, exporter, person)?;
+            let (request, approved) =
+                member_request_in(vault, txn, source, exporting_person, person)?;
             let placement = match (member_mailbox_decision(owner, setting, request), person) {
                 (MemberMailboxDecision::LeaveOut, _) => {
                     Placement::LeftOut(MailboxLeftOutReason::MemberMailbox)
@@ -289,6 +321,7 @@ impl MemberMailboxPlan {
         }
         Ok(Some(Self {
             exporter,
+            exporting_person,
             audience: ExportAudience {
                 exporter,
                 sources,
@@ -358,6 +391,7 @@ impl MemberMailboxPlan {
         let carried =
             (!carried.is_empty() || !self.approvals.is_empty()).then_some(CarriedMemberMailboxes {
                 exporter: self.exporter,
+                exporting_person: self.exporting_person,
                 mailboxes: carried,
                 approvals: self.approvals,
             });
@@ -379,6 +413,9 @@ struct CarriedMailbox {
 /// it uses, each used and its person told in that same write.
 pub(crate) struct CarriedMemberMailboxes {
     exporter: EntityId,
+    /// The PERSON the export pass read the exporter's requests under
+    /// ([`exporting_person_in`]).
+    exporting_person: EntityId,
     mailboxes: Vec<CarriedMailbox>,
     approvals: Vec<ApprovedMailExportRequest>,
 }
@@ -399,8 +436,10 @@ impl CarriedMemberMailboxes {
 /// it, or a person gone fails the write, as any notice that is not written
 /// does. Then each approved request the copy uses is read again and marked
 /// used by `export`, and its person told that their approval was used, in
-/// the same write; an approval that no longer stands fails it too. Answers
-/// how many mailboxes were told.
+/// the same write; an approval that no longer stands fails it too. Every
+/// request is read under the PERSON the copy read it under, and an exporter
+/// that no longer exports as that PERSON uses none. Answers how many
+/// mailboxes were told.
 ///
 /// # Errors
 ///
@@ -444,6 +483,13 @@ pub(crate) fn tell_member_mailboxes_in_txn(
             )
             .map(drop)
     };
+    if !carried.approvals.is_empty()
+        && exporting_person_in(vault, txn, carried.exporter)? != carried.exporting_person
+    {
+        return Err(crate::Error::InvalidConfig(
+            "the exporter no longer exports as the Owner whose approvals the export read".into(),
+        ));
+    }
     let owner = shared_vault_owner_in(vault, txn)?;
     let setting = owners_export_member_mail_in(vault, txn)?;
     for mailbox in &carried.mailboxes {
@@ -451,7 +497,7 @@ pub(crate) fn tell_member_mailboxes_in_txn(
             vault,
             txn,
             mailbox.source,
-            carried.exporter,
+            carried.exporting_person,
             Some(mailbox.person),
         )?;
         let carries = owner.is_some_and(|owner| {

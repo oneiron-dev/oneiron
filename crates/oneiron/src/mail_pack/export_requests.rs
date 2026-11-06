@@ -18,8 +18,12 @@
 //! - **Declined**, or **used**: closed. The Owner may ask again, which makes
 //!   a new request and a new Ask.
 //!
-//! A request stands only where it was made: no image brings one back. An
-//! erased Owner's or member's requests go, their open Asks withdrawn.
+//! A request stands only where it was made: no image brings one back, though
+//! an image may bring back its open Ask. A new request withdraws every Ask
+//! still open from that Owner about that mailbox, so the member holds one
+//! card for the pair. An erased Owner's or member's requests go, and every
+//! open Ask from them or put to them is withdrawn, a request row naming it
+//! or not.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,8 +35,9 @@ use super::pack::require_pack_active_in;
 use super::source::{MailSourceKind, SOURCES};
 use crate::consent::AuthenticatedOwner;
 use crate::llm::decision::{
-    AnswerActor, AnswerContract, AskAct, AskRole, AskTo, DecisionAnswer, DecisionRung, HolderKind,
-    HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank, catalogue,
+    AnswerActor, AnswerContract, AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk,
+    DecisionQuestion, DecisionRung, HolderKind, HumanAskReason, HumanDecisionRequest, ProviderPin,
+    RoleRank, catalogue,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
@@ -44,9 +49,30 @@ use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 const REQUESTS: SideTable<(EntityId, EntityId), MailExportRequestRow, Named> =
     SideTable::new(&side_table::MAIL_PACK_EXPORT_REQUEST);
 
+/// The vault's decision Asks, read here to find this family's: every write
+/// to one goes through the Ask queue's own doors.
+const DECISION_ASKS: SideTable<u64, DecisionAsk, Named> = SideTable::new(&side_table::DECISION_ASK);
+
 /// The host-issued queue identity of a member's export request Ask.
 const EXPORT_REQUEST_QUEUE: &str = "mail_pack.export_request";
 const EXPORT_REQUEST_QUEUE_VERSION: &str = "v1";
+
+/// The queue pin every member's export request Ask is queued under.
+fn export_request_queue_pin() -> ProviderPin {
+    ProviderPin {
+        rung: DecisionRung::Human,
+        model: EXPORT_REQUEST_QUEUE.to_owned(),
+        version: EXPORT_REQUEST_QUEUE_VERSION.to_owned(),
+    }
+}
+
+/// Whether `ask` is a member's export request Ask, open: this family's
+/// question, queued under its pin, neither answered nor withdrawn.
+fn open_export_request_ask(ask: &DecisionAsk) -> bool {
+    ask.is_open()
+        && ask.question.version == catalogue::MAIL_EXPORT_REQUEST.version
+        && ask.queue_pin == export_request_queue_pin()
+}
 
 /// The answer that lets the mailbox into the Owner's next export.
 const APPROVE: &str = "Approve";
@@ -242,20 +268,45 @@ fn approval_gone() -> Error {
     Error::InvalidConfig("a member's approval the export read no longer stands".into())
 }
 
-/// Withdraws `row`'s Ask in `txn` while it is open and still the row's. Its
-/// waiters are none: an export never waits on it.
-fn withdraw_open_ask_in_txn(
+/// Withdraws, in `txn`, every member's export request Ask still open from
+/// the Owner `requester` about the mailbox `source`, whether or not a
+/// request row still names it (a restore takes request rows, not Asks), so
+/// a new request leaves its person one card for that Owner and mailbox.
+/// Its waiters are none: an export never waits on it.
+fn withdraw_open_asks_for_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    row: &MailExportRequestRow,
+    source: EntityId,
+    requester: EntityId,
 ) -> Result<()> {
-    if vault
-        .decision_ask_in_txn(txn, row.ask_seq)?
-        .is_some_and(|ask| ask.id == row.ask_id && ask.is_open())
-    {
-        vault.withdraw_decision_ask_in_txn(txn, row.ask_seq)?;
+    for (seq, ask) in DECISION_ASKS.scan(&vault.store, txn)? {
+        if !open_export_request_ask(&ask) || !ask.principal.is(requester) {
+            continue;
+        }
+        let Some(request) = ask.correlation else {
+            continue;
+        };
+        if request_question(request, source)?.id == ask.question.id {
+            vault.withdraw_decision_ask_in_txn(txn, seq)?;
+        }
     }
     Ok(())
+}
+
+/// The member's question for `request`, about the mailbox `source`: its id
+/// derives from the family, the request and the mailbox.
+fn request_question(request: EntityId, source: EntityId) -> Result<DecisionQuestion> {
+    catalogue::MAIL_EXPORT_REQUEST.question(
+        &[request.as_bytes()],
+        format!(
+            "An Owner of this vault asks to carry your mailbox (mail source {}) in their next \
+             whole-vault export, that export only. Approve, or decline?",
+            source.to_hex()
+        ),
+        AnswerContract::Choice {
+            options: vec![APPROVE.to_owned(), DECLINE.to_owned()],
+        },
+    )
 }
 
 /// The member's Ask for `request`: Approve or Decline, from the Owner
@@ -267,29 +318,14 @@ fn request_ask(
     person: EntityId,
     requester: EntityId,
 ) -> Result<HumanDecisionRequest> {
-    let question = catalogue::MAIL_EXPORT_REQUEST.question(
-        &[request.as_bytes()],
-        format!(
-            "An Owner of this vault asks to carry your mailbox (mail source {}) in their next \
-             whole-vault export, that export only. Approve, or decline?",
-            source.to_hex()
-        ),
-        AnswerContract::Choice {
-            options: vec![APPROVE.to_owned(), DECLINE.to_owned()],
-        },
-    )?;
     Ok(HumanDecisionRequest {
-        question,
+        question: request_question(request, source)?,
         principal: requester,
         evidence: Vec::new(),
         reason: HumanAskReason::OwnerSelected,
         prior: None,
         prior_provider: None,
-        queue_pin: ProviderPin {
-            rung: DecisionRung::Human,
-            model: EXPORT_REQUEST_QUEUE.to_owned(),
-            version: EXPORT_REQUEST_QUEUE_VERSION.to_owned(),
-        },
+        queue_pin: export_request_queue_pin(),
         to: AskTo {
             role: AskRole::Responsible {
                 actor: AnswerActor::Actor(person),
@@ -420,10 +456,12 @@ impl Memory<'_> {
                     RequestStanding::Approved => {
                         return Ok(request_view(&current, source, MailExportRequestState::Approved));
                     }
-                    RequestStanding::Lapsed => withdraw_open_ask_in_txn(vault, txn, &current)?,
-                    RequestStanding::Declined | RequestStanding::Consumed => {}
+                    RequestStanding::Declined
+                    | RequestStanding::Consumed
+                    | RequestStanding::Lapsed => {}
                 }
             }
+            withdraw_open_asks_for_in_txn(vault, txn, source, requester)?;
             let request = vault.store.clock.entity_id()?;
             let ask_seq = vault.queue_decision_ask_in_txn(
                 txn,
@@ -455,20 +493,36 @@ impl Memory<'_> {
 }
 
 /// An actor's erase takes out every request naming it, as the Owner who
-/// asked or as the mailbox's person (FIX 3520), and withdraws each such
-/// request's Ask still open, in the erase's own write. Its waiters are none.
+/// asked or as the mailbox's person (FIX 3520), and withdraws every
+/// member's export request Ask still open that is from it or put to it,
+/// whether or not a request row still names that Ask (a restore takes
+/// request rows, not Asks), in the erase's own write. The Asks' own scrub
+/// runs first and leaves such an Ask naming no one where it named the
+/// actor ([`crate::llm::decision::erase_ask_actor_in_txn`]), so an open Ask
+/// of this family from no one or put to no one is withdrawn too: no one may
+/// answer it, and its answer would be refused. Its waiters are none.
 pub(crate) fn erase_export_request_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    let rows = REQUESTS.scan(&vault.store, wtxn)?;
-    for (key, row) in rows {
-        if row.requester != *actor && row.mailbox_person != *actor {
-            continue;
+    for (key, row) in REQUESTS.scan(&vault.store, wtxn)? {
+        if row.requester == *actor || row.mailbox_person == *actor {
+            REQUESTS.delete(&vault.store, wtxn, &key)?;
         }
-        withdraw_open_ask_in_txn(vault, wtxn, &row)?;
-        REQUESTS.delete(&vault.store, wtxn, &key)?;
+    }
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let names = |who: AnswerActor| who == AnswerActor::Erased || who.is(*actor);
+    for (seq, ask) in DECISION_ASKS.scan(&vault.store, wtxn)? {
+        let routed = matches!(
+            ask.to.role,
+            AskRole::Responsible { actor: who, .. } if names(who)
+        );
+        if open_export_request_ask(&ask) && (names(ask.principal) || routed) {
+            vault.withdraw_decision_ask_in_txn(wtxn, seq)?;
+        }
     }
     Ok(())
 }
