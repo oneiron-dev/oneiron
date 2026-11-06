@@ -420,6 +420,7 @@ pub(crate) fn restore(
     let birth_actor = doc_actor(row.birth_actor)?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: EntityId::now().to_hex(),
         document,
         field: field_of(row),

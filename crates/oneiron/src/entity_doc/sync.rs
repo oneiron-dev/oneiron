@@ -607,6 +607,7 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     )?;
     let mut head = Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: lazy_incarnation(entity)?,
         document: entity.to_hex(),
         field: born.field,
@@ -658,6 +659,7 @@ fn carried_head_in_txn(
     };
     Ok(Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation,
         document,
         field,

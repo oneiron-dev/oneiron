@@ -508,13 +508,9 @@ side_tables! {
     /// string.
     EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw
         => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
-    /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
-    /// by artifact ref. Key: id16.
+    /// Finalized proposal-text artifact (span attributions, actor/class per span, the head of its
+    /// document on the entity-document plane), write-once keyed by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored [accepts: crate::edit_distance::edit_distance_proposal_artifact_accepts_masked]
-        => crate::edit_distance::erase_proposal_texts_in_txn;
-    /// Raw proposal document whose served texts were custody-marked before it was kept, outside
-    /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_DOCUMENT: VaultMeta b"edit_distance/proposal_document/v1\0" Raw
         => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Rebuildable training-reservoir candidate index row, keyed by the proposal artifact's entity
     /// id. Key: id16.
@@ -571,8 +567,8 @@ side_tables! {
     EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
     /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
     EMBEDDING_SPACE: VaultMeta b"embedding/space/" Named;
-    /// Pointer from an entity to its owning document, plus generation/pending-update counters. Key:
-    /// hex32.
+    /// Pointer from an owner (a stored entity or a proposal artifact) to its document, plus
+    /// generation/pending-update counters. Key: hex32.
     ENTITY_DOC_HEAD: VaultMeta b"entity_doc:v1:head:" Named;
     /// Retained revision history document. Key: id16.
     ENTITY_REVISION_DOC: VaultMeta b"entity_revision:doc:" Raw;
