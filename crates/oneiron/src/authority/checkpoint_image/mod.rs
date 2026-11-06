@@ -74,8 +74,10 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// anchors use only the first parent and overflow keeps a whole-state suffix (FIX 11762).
 /// 24: residence compaction excludes the writing install's checkpoint metadata (FIX 18583).
 /// 25: a pact keeps the signed nonce and the consent epoch its scope commitment is keyed under
-/// (FIX 11730).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 25;
+/// (FIX 11730). 26: the fold counts a removal-archive consume's slip consumed (FIX 11862).
+/// 27: the fold admits carrier-signed membership execution records, an image carries their
+/// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 27;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
