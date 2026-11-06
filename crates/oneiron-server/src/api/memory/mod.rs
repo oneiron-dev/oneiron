@@ -4,7 +4,7 @@
 use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
-use super::ViewQuery;
+use super::MemoryTimelineQuery;
 use super::commit_core_batch_in_lane;
 use super::core_engine_error;
 use super::core_entity_timestamps;
@@ -243,7 +243,7 @@ pub(crate) enum CoreMemoryOperationKind {
             description = "Hex entity id whose supersession chain should be rendered.",
             example = "0123456789abcdef0123456789abcdef"
         ),
-        ViewQuery
+        MemoryTimelineQuery
     ),
     responses(
         (status = 200, description = "Stable ordered memory supersession timeline.", body = CoreMemoryTimelineResponse, content_type = "application/json"),
@@ -258,13 +258,16 @@ pub(crate) async fn core_memory_timeline(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
-    query: Result<Query<ViewQuery>, QueryRejection>,
+    query: Result<Query<MemoryTimelineQuery>, QueryRejection>,
 ) -> Result<Json<CoreMemoryTimelineResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&id_hex, "id")?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let request =
+        super::read_filter_param(params.filter.as_deref())?.map(|filter| filter.to_filter());
+    let scoped_read =
+        scoped_read_for_core_auth(&server.vault, &auth)?.with_read_filter(request.as_ref());
     let timeline = scoped_read.memory_timeline(&id).map_err(|error| {
         tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory timeline failed");
         core_engine_error("core memory timeline failed", error)
