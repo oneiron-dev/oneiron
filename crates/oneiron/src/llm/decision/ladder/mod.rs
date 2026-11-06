@@ -147,6 +147,25 @@ fn record_attempted_provider(
     }
 }
 
+/// A generated allowance cut keeps a pin only when a native attempt already ran.
+pub(super) fn generation_cut(
+    attempted: Option<&ProviderPin>,
+    readings: &mut [Readings],
+) -> Vec<Read> {
+    if let Some(pin) = attempted {
+        record_attempted_provider(pin, &[], readings);
+        readings
+            .iter()
+            .map(|_| Read::Cut(StopCause::GenerationAllowance))
+            .collect()
+    } else {
+        readings
+            .iter()
+            .map(|_| Read::NotStarted(StopCause::GenerationAllowance))
+            .collect()
+    }
+}
+
 /// The person question's read shape, the one seam for it (test 6b: a separate read, not
 /// joint). It is its own typed question in the same pack as the call's questions, and its
 /// P(yes) joins every answer as the person reading; an abstained person read is no
