@@ -7,6 +7,7 @@ use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::code_run::ProgramStepFeedback;
 use crate::code_sandbox::source::prepare_source;
+use crate::code_sandbox::{ProposalSpoolFloor, SandboxProposalBody};
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{
     EntityId, Result, Vault,
@@ -24,7 +25,8 @@ use crate::{
 };
 use crate::{
     code_sandbox::microvm::{
-        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter,
+        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmOutputSpool,
+        MicroVmSandboxAdapter,
     },
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
@@ -50,6 +52,8 @@ pub struct PackScriptRun<'a> {
     pub grants: &'a [PackScriptGrant],
     pub image: &'a GuestImage,
     pub budget: ExecutionBudget,
+    /// The host's shared measured disk floor for this run's streamed output.
+    pub output_floor: Arc<dyn ProposalSpoolFloor>,
     pub now: u64,
     /// The host's type-feedback service, lent as it is; `None` answers that
     /// no checker is attached (FIX 10389).
@@ -64,6 +68,10 @@ pub struct PackScriptOutcome {
     pub inbound: Vec<SurfaceEventAdmission>,
     pub verbs: Vec<OutboundIntent>,
     pub wakes: Vec<ConnectorWakeDecision>,
+    /// Finish when the guest reports done, otherwise console; retained on the host's floor.
+    pub observation: Option<SandboxProposalBody>,
+    /// Output files in first-seen order, retaining their admitted bodies without materialization.
+    pub output_files: Vec<(String, SandboxProposalBody)>,
     pub session_manifest: Option<oneiron_container::SessionManifest>,
     pub sandbox_receipt: Option<String>,
     /// The adapter script's type feedback as it stood when the run ended,
@@ -71,6 +79,11 @@ pub struct PackScriptOutcome {
     /// kept on the vault's rows under the run's identity, its late result
     /// read by its `check_ref` as the owner.
     pub program_steps: Vec<ProgramStepFeedback>,
+}
+
+#[derive(Deserialize)]
+struct ScriptStepResult {
+    done: bool,
 }
 
 #[derive(Deserialize)]
@@ -235,6 +248,7 @@ impl Vault {
             grants,
             image,
             budget,
+            output_floor,
             now,
             type_feedback,
         } = request;
@@ -326,7 +340,8 @@ impl Vault {
         )?
         .with_credential_relay(egress);
         let guest = image.clone().with_source(injected);
-        let result = adapter.run(&guest, budget);
+        let mut streamed = MicroVmOutputSpool::new(output_floor);
+        let result = adapter.run(&guest, budget, &mut streamed);
         let session_manifest = adapter.session_manifest();
         let sandbox_receipt = session_manifest
             .as_ref()
@@ -403,6 +418,13 @@ impl Vault {
                 return Err(invalid("duplicate script connector event"));
             }
         }
+        let step: ScriptStepResult = serde_json::from_str(
+            exit.result_json
+                .as_deref()
+                .ok_or_else(|| invalid("pack script returned no step result"))?,
+        )
+        .map_err(|_| invalid("pack script returned invalid step result"))?;
+        let streamed = streamed.into_step_bodies(step.done)?;
         let mut inbound = Vec::new();
         let mut wakes = Vec::new();
         self.with_write_txn_grouped(|txn| {
@@ -438,6 +460,8 @@ impl Vault {
             inbound,
             verbs,
             wakes,
+            observation: streamed.observation,
+            output_files: streamed.files,
             session_manifest,
             sandbox_receipt,
             program_steps: vec![check.feedback()],
