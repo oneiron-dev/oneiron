@@ -57,12 +57,12 @@ mod tests;
 
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
-pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
+pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_value};
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
@@ -184,9 +184,11 @@ pub(crate) use self::storage::{
     session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, capsule_context_body, capsule_request, capsule_start_body,
-    erase_capsule_actor_in_txn, erase_contribution_forks_in_txn, put_run_continuation_row_in_txn,
-    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
+    StoredRunContinuation, actor_gone_in_txn, capsule_context_body, capsule_request,
+    capsule_start_body, continuation_seed_body_in_txn, erase_capsule_actor_in_txn,
+    erase_contribution_forks_in_txn, publish_continuation_output_in_txn,
+    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
+    step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
