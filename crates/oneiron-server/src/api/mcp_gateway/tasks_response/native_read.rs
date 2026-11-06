@@ -58,6 +58,11 @@ pub(super) async fn execute_mcp_native_read(
             ..
         }) => {
             let rows = stop_release_rows(server, actor, &stop, served);
+            // The drain read that answer, not this retry (FIX 21614).
+            if super::super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                let ran = super::super::claimed_release::details_on_device_result();
+                return Ok(ControlFlow::Break(ran));
+            }
             let stopped = mcp_hook_stop_result(server, args, actor, *stop, rows, hook_notice)?;
             return Ok(ControlFlow::Break(stopped));
         }

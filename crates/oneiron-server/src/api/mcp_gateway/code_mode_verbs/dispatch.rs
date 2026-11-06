@@ -485,6 +485,11 @@ fn completed_answer(
 ) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
     let rows = super::served_rows::stop_release_rows(server, actor, &stop, served)
         .map(<[oneiron::EntityId]>::to_vec);
+    // The drain read that answer, not this guest call (FIX 21614).
+    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref()) {
+        let ran = oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device();
+        return Ok((serde_json::json!(ran), Some(Vec::new())));
+    }
     match stop {
         VerbHookStop::Completed { result, .. } => {
             let released =

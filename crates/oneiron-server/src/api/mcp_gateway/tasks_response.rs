@@ -203,6 +203,9 @@ pub(crate) async fn execute_mcp_generated_verb(
                     }) => {
                         let stop = *stop;
                         let rows = stop_release_rows(server, actor, &stop, &mut served);
+                        if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                            return Ok(super::claimed_release::details_on_device_result());
+                        }
                         return mcp_hook_stop_result(server, &args, actor, stop, rows, hook_notice);
                     }
                     produced => produced,
