@@ -444,7 +444,11 @@ pub(super) fn release_superseded_in_txn(
         };
         if capsule.run == scope.run
             && capsule.content.actor() == Some(scope.actor)
-            && let CapsuleRequest::Kept { body, .. } = capsule.request
+            && let CapsuleRequest::Kept {
+                body,
+                erased: false,
+                ..
+            } = capsule.request
         {
             manifests.push(body);
         }
@@ -466,6 +470,58 @@ pub(super) fn release_superseded_in_txn(
         }
     }
     Ok(())
+}
+
+/// Releases each of `retired`, the pieces of `scope` that requests a fold
+/// withdrawal retired named, that no request the run still keeps for the
+/// actor names (FIX 18924): the run's occurrence of each goes with its own
+/// marks. Returns the digest each released occurrence held, which the
+/// withdrawal retires. A request marked erased names no piece.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(super) fn release_retired_pieces_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    scope: PieceScope,
+    retired: &BTreeSet<[u8; 32]>,
+) -> Result<Vec<[u8; 32]>> {
+    let mut manifests = Vec::new();
+    for row in CAPSULES.iter_raw_from(store, wtxn, scope.run.as_bytes())? {
+        let (_, bytes) = row?;
+        if let Ok(capsule) = CAPSULES.decode_value(&bytes)
+            && capsule.run == scope.run
+            && capsule.content.actor() == Some(scope.actor)
+            && let CapsuleRequest::Kept {
+                body,
+                erased: false,
+                ..
+            } = capsule.request
+        {
+            manifests.push(body);
+        }
+    }
+    let mut named = BTreeSet::new();
+    for manifest in manifests {
+        manifest_pieces_in_txn(store, wtxn, manifest, &mut named)?;
+    }
+    let mut held = Vec::new();
+    for digest in retired.difference(&named) {
+        let handle = CodeRunRawOutput::of_ref(OutputRef {
+            hash: *digest,
+            byte_len: 0,
+        })
+        .handle;
+        held.extend(release_occurrence_in_txn(
+            store,
+            wtxn,
+            scope.run,
+            scope.path(digest),
+            handle,
+        )?);
+    }
+    Ok(held)
 }
 
 /// The ref the bytes `bytes` are published under.

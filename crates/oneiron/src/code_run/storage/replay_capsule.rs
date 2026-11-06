@@ -21,11 +21,13 @@
 //! A capsule also names the folds whose accepted summaries each of its
 //! bodies copies (FIX 18924). A read of a body whose folds' words are
 //! withdrawn reads none, and a fork writer meets such a request as erased.
+//! The withdrawal retires each such body in its own writer ([`fold_words`]).
 
 mod admit;
 mod context;
 mod erase;
 mod execution;
+mod fold_words;
 mod fork_erase;
 mod owner_pair;
 mod pieces;
@@ -57,6 +59,7 @@ pub(crate) use self::erase::erase_capsule_actor_in_txn;
 pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
 pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
+pub(super) use self::fold_words::retire_fold_word_capsules_in_txn;
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::{
     contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
