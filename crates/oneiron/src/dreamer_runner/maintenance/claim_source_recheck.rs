@@ -245,6 +245,9 @@ pub async fn run_claim_source_recheck(
     let declaration = ClaimSourceRecheckDeclaration::from_input(&attempt.status.payload.input)?;
     let attempt_id = attempt.status.attempt.id;
     let now = ctx.now_ms / 1_000;
+    // One scan finds the claims of every re-check owed, this one's too
+    // (FIX 20502).
+    read::discover_pending(ctx.vault)?;
     let Some(read) = read::read_asks(ctx.vault, &declaration)? else {
         // Moot: the message was restored, deleted again or erased.
         settle(ctx.vault, &declaration, now)?;
