@@ -2,12 +2,18 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use oneiron::code_run::model_call::NativeReadOutcome;
 use oneiron::llm::decision::{
-    AnswerContract, DecisionReadProvider, HostRuleRef, RemoteDecisionCapability,
+    AnswerContract, DecisionReadProvider, HostRuleRef, RemoteDecisionCapability, SeatRead,
 };
 use oneiron::llm::routing::DescriptionNotes;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::skill_hub::claim_replay_filled_state;
+
+use crate::decision_verdict::{ModelCallCaller, model_call_context};
+use crate::models::native_call_capture::{NativeReadCapture, native_read_failure};
+
+use super::native_capture::{HouseReadObserver, HouseReadRun};
 
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
@@ -54,13 +60,23 @@ impl DecisionReadGate for HouseGate {
         // A read that went out and failed keeps its reservation as spend.
         let outcome = match &gated {
             GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+            GatedRead::Read(Ok(answer))
+            | GatedRead::ReadOnRun {
+                read: Ok(answer), ..
+            } => CallOutcome::Answered(&answer.usage),
+            GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                CallOutcome::Failed
+            }
         };
         if let Err(denied) = permit.settle(outcome) {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
-        Ok(gated)
+        Ok(match gated {
+            GatedRead::NotStarted => GatedRead::NotStarted,
+            GatedRead::Read(read) | GatedRead::ReadOnRun { read, .. } => {
+                GatedRead::ReadOnRun { read, run }
+            }
+        })
     }
 }
 
@@ -74,45 +90,59 @@ struct RunHouseGate<'a> {
 }
 
 impl DecisionReadGate for RunHouseGate<'_> {
+    fn send_guard(&self) -> Option<&(dyn Fn() -> bool + Sync)> {
+        self.run.send_guard().map(|guard| guard as _)
+    }
+
     fn read(
         &self,
         deadline: &RetrievalDeadline,
         read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
     ) -> oneiron::Result<GatedRead> {
-        let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
-        // The host's own work: its turn comes while no caller waits for one,
-        // and the wait ends with the caller's work time (FIX 9526). A turn
-        // that never came admits nothing and pays nothing.
-        let Ok(_turn) = self
-            .gate
-            .admission
-            .turns
-            .admit_background_blocking_for(deadline.decision_time_left())
-        else {
-            return Ok(GatedRead::NotStarted);
-        };
-        let permit = self
-            .run
-            .admit_paid(
-                &self.gate.connector,
-                self.run.declaration().budget().reserve_units,
-            )
-            .map_err(|_| refused("refused by the budget"))?;
-        self.run
-            .dispatch_paid(permit.lease(), &self.gate.connector)
-            .map_err(|_| refused("refused at dispatch"))?;
-        let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
-        // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
-        };
-        if let Err(denied) = permit.settle(outcome) {
-            tracing::error!(%denied, "a house decision read's settlement was refused");
-        }
-        Ok(gated)
+        super::run_native_read(&self.run, || {
+            let refused =
+                |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
+            // The host's own work: its turn comes while no caller waits for one,
+            // and the wait ends with the caller's work time (FIX 9526). A turn
+            // that never came admits nothing and pays nothing.
+            let Ok(_turn) = self
+                .gate
+                .admission
+                .turns
+                .admit_background_blocking_for(deadline.decision_time_left())
+            else {
+                return Ok(GatedRead::NotStarted);
+            };
+            let permit = self
+                .run
+                .admit_paid(
+                    &self.gate.connector,
+                    self.run.declaration().budget().reserve_units,
+                )
+                .map_err(|_| refused("refused by the budget"))?;
+            self.run
+                .dispatch_paid(permit.lease(), &self.gate.connector)
+                .map_err(|_| refused("refused at dispatch"))?;
+            let gated = read(permit.lease());
+            let unread = oneiron::llm::LlmUsage::zero();
+            // A read that went out and failed keeps its reservation as spend.
+            let outcome = match &gated {
+                GatedRead::NotStarted => CallOutcome::Answered(&unread),
+                GatedRead::Read(Ok(answer))
+                | GatedRead::ReadOnRun {
+                    read: Ok(answer), ..
+                } => CallOutcome::Answered(&answer.usage),
+                GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
+                    CallOutcome::Failed
+                }
+            };
+            if let Err(denied) = permit.settle(outcome) {
+                if !self.run.is_unrecorded() {
+                    tracing::error!(%denied, "a house decision read's settlement was refused");
+                }
+            }
+            Ok(gated)
+        })
     }
 }
 
@@ -143,6 +173,7 @@ impl DecisionProvider for HouseRead {
                 gate: &self.gate,
                 run: run.sourced(Some(call.evidence.to_vec())),
             };
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -150,9 +181,11 @@ impl DecisionProvider for HouseRead {
                 &self.paired,
                 self.person.as_ref(),
             )?
+            .observed_by(&observer)
             .decide(call);
         }
-        self.provider()?.decide(call)
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        self.provider()?.observed_by(&observer).decide(call)
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
@@ -162,6 +195,7 @@ impl DecisionProvider for HouseRead {
                 gate: &self.gate,
                 run: run.sourced(Some(pack.evidence.to_vec())),
             };
+            let observer = HouseReadObserver::new(self, HouseReadRun::Caller(&gate.run));
             return DecisionReadProvider::new(
                 self.pin.clone(),
                 self.reader.as_ref(),
@@ -169,9 +203,11 @@ impl DecisionProvider for HouseRead {
                 &self.paired,
                 self.person.as_ref(),
             )?
+            .observed_by(&observer)
             .decide_pack(pack);
         }
-        self.provider()?.decide_pack(pack)
+        let observer = HouseReadObserver::new(self, HouseReadRun::HouseGate);
+        self.provider()?.observed_by(&observer).decide_pack(pack)
     }
 }
 
@@ -326,25 +362,45 @@ impl SystemOneRung {
         if call.deadline.decision_time_left().is_zero() {
             return Err(failed("admitted after the work time"));
         }
-        let asked = self.runtime.block_on(self.seat.ask(
-            request,
-            permit.lease(),
-            call.deadline.decision_time_left(),
-        ));
-        let answer = match asked {
-            Ok(answer) => {
-                permit
-                    .settle(CallOutcome::Answered(&answer.usage))
-                    .map_err(|_| failed("settlement refused"))?;
-                answer
+        let caller = (!run.is_unrecorded()).then(model_call_context).flatten();
+        let no_record_at_arrival = caller.as_ref().is_some_and(|caller| {
+            self.vault
+                .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
+        });
+        let asked = super::run_native_read(&run, || match run.send_guard() {
+            Some(guard) => {
+                let release = || {
+                    if guard() {
+                        Ok(())
+                    } else {
+                        Err(oneiron::llm::FatalLlmError::Auth.into())
+                    }
+                };
+                self.runtime.block_on(self.seat.ask_recorded_released(
+                    request,
+                    permit.lease(),
+                    call.deadline.decision_time_left(),
+                    &release,
+                ))
             }
-            Err(error) => {
-                // The seat may still bill a failed call.
-                permit
-                    .settle(CallOutcome::Failed)
-                    .map_err(|_| failed("settlement refused"))?;
-                return Err(failed(&format!("the seat failed: {error}")));
-            }
+            None => self.runtime.block_on(self.seat.ask_recorded(
+                request,
+                permit.lease(),
+                call.deadline.decision_time_left(),
+            )),
+        });
+        // Observe only after the original settlement attempt. Its failure
+        // still wins over the provider result exactly as before.
+        let settled = match &asked.result {
+            Ok(answer) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            // The seat may still bill a failed call.
+            Err(_) => permit.settle(CallOutcome::Failed),
+        };
+        self.record_seat_read(&run, caller.as_ref(), no_record_at_arrival, &asked);
+        settled.map_err(|_| failed("settlement refused"))?;
+        let answer = match asked.result {
+            Ok(answer) => answer,
+            Err(error) => return Err(failed(&format!("the seat failed: {error}"))),
         };
         let abstained = answer.answer == DecisionAnswer::Abstain;
         Ok(ProviderDecision {
@@ -354,6 +410,52 @@ impl SystemOneRung {
             person: None,
             served: None,
         })
+    }
+
+    fn record_seat_read(
+        &self,
+        run: &RunAdmission,
+        caller: Option<&ModelCallCaller>,
+        no_record_at_arrival: bool,
+        read: &SeatRead,
+    ) {
+        let Some(caller) = caller else {
+            return;
+        };
+        let outcome = match &read.result {
+            Ok(answer) => NativeReadOutcome::Completed {
+                usage: answer.usage.clone(),
+            },
+            Err(error) => {
+                let Some(failure) = native_read_failure(error) else {
+                    tracing::warn!("native-seat evidence skipped: unmapped terminal failure");
+                    return;
+                };
+                // Keep the class only, never the provider error's contents.
+                NativeReadOutcome::Failed {
+                    failure,
+                    usage: None,
+                }
+            }
+        };
+        let Some(capture) = NativeReadCapture::from_seat(
+            self.vault.as_ref(),
+            read.request.clone(),
+            caller.principal,
+            caller.session.clone(),
+            no_record_at_arrival,
+        ) else {
+            return;
+        };
+        let pin = self.seat.pin();
+        capture.record(
+            run,
+            || run.next_model_call_index(),
+            &pin.model,
+            &pin.version,
+            self.connector.locality,
+            outcome,
+        );
     }
 }
 

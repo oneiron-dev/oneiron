@@ -190,7 +190,7 @@ impl Memory<'_> {
             None,
             &filter,
             &policy,
-            output.read_suppressed,
+            0,
             &output.revisions,
         )?;
         results.receipt.restrict_with(&receipt);

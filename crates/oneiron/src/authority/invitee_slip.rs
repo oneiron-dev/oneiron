@@ -62,6 +62,7 @@ impl Vault {
             delegation: None,
             comm: None,
             trusted_contact: None,
+            seat_claim: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }
@@ -111,8 +112,9 @@ impl Vault {
 
     /// What every slip door reads beside the fold's revocation check: a
     /// grant-bound slip's grant (OF-232), an invitation-bound slip's
-    /// invitation, a support slip's delegation (OF-606) and a contact-bound
-    /// slip's naming (FIX 4325) still stand.
+    /// invitation, a support slip's delegation (OF-606), a contact-bound
+    /// slip's naming (FIX 4325) and a seat-child slip's claim (FIX 10624)
+    /// still stand.
     pub(super) fn require_live_slip_refs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -122,13 +124,14 @@ impl Vault {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
         self.require_live_delegation_in_txn(txn, claims)?;
-        self.require_live_trusted_contact_binding_in_txn(txn, claims, now)
+        self.require_live_trusted_contact_binding_in_txn(txn, claims, now)?;
+        self.require_live_seat_claim_in_txn(txn, claims)
     }
 
     /// [`Self::require_live_slip_refs_in_txn`] as a judgment, for a slip
     /// verified earlier and checked again (FIX 5952): `false` once its grant,
-    /// invitation, delegation or contact naming no longer stands, an error
-    /// only when that cannot be judged.
+    /// invitation, delegation, contact naming or seat claim no longer stands,
+    /// an error only when that cannot be judged.
     pub(super) fn slip_refs_stand_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

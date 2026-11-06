@@ -40,6 +40,10 @@ pub(crate) trait SourceAdmission: Sync {
     /// holds, read again right before the rung is sent; `None` while it
     /// holds.
     fn recheck(&self, destination: &ReadDestination) -> Option<&'static str>;
+
+    /// Snapshots the actual rung-bound request before dispatch. This alone
+    /// proves neither delivery nor permission to retain model-call evidence.
+    fn capture_request(&self, _request: &LlmRequest) {}
 }
 
 /// The request the rung of `offer` is sent with `sources`: `Ok(None)` with no
