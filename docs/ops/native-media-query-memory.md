@@ -178,6 +178,21 @@ value copies, overlay copies, database pages, transaction scratch, allocation
 peaks or a full working-set bound. Other pre-put and marker/index allocations
 remain separate.
 
+At that bound provisional stage's original false-branch marker put, the same
+caller lease separately records the typed staged row's actual encoded key and
+value capacities. The main retrieval-row put only reborrows that lease, so it
+remains available for the marker. Each row is encoded once and reaches the
+same declared-table admission and VaultMeta write. The marker's native value
+remains the same literal byte. No source record or encoded buffer is copied.
+
+The marker's staged buffers drop in their original branch scope before the
+caller lease, including put errors and unwind. Their known capacities stay
+charged conservatively until that lease drops. The published branch and
+unbound direct puts are unchanged. Encoding allocation peaks, overlay copies,
+masked values, database pages and transaction scratch remain outside these
+charges; this does not establish a full working-set bound or a compiler or
+runtime result.
+
 A bound context pack also carries that same supplied host-memory handle through
 its run and deferred-pack owners after the pipeline is consumed. Each terminal
 passes it to the original canonical or session finalizer. The canonical

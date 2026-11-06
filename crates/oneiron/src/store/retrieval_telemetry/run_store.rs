@@ -767,7 +767,7 @@ fn stage_retrieval_run_with_visibility(
             memory.as_deref_mut(),
         )?;
     }
-    if let Some(memory) = memory {
+    if let Some(memory) = memory.as_deref_mut() {
         let row = RETRIEVAL_RUN.stage(&record.run_id, record)?;
         memory.materialized(
             0,
@@ -784,6 +784,14 @@ fn stage_retrieval_run_with_visibility(
         if let Some(trace) = &record.trace {
             put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id, None)?;
         }
+    } else if let Some(memory) = memory {
+        let row = RETRIEVAL_RUN_PROVISIONAL.stage(&record.run_id, &PresentMarker)?;
+        memory.materialized(
+            0,
+            row.value_capacity_bytes()
+                .saturating_add(row.key_capacity_bytes()),
+        );
+        row.put(target, wtxn)?;
     } else {
         RETRIEVAL_RUN_PROVISIONAL.put(target, wtxn, &record.run_id, &PresentMarker)?;
     }
