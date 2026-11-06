@@ -233,7 +233,6 @@ pub(super) enum HttpReleaseError {
 type ReleaseSending<'a> =
     Pin<Box<dyn Future<Output = Result<reqwest::Response, HttpReleaseError>> + Send + 'a>>;
 
-
 /// A finished exchange's reply as JSON: an empty body is null, and a body
 /// that does not parse is null on an error status and malformed otherwise.
 fn json_reply(

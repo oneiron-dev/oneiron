@@ -278,6 +278,9 @@ fn apply_tombstone_batch(
             parent,
             staged.iter().filter(|work| work.hard).map(|work| work.id),
         )?;
+        // FIX 9398: the batch's erases drop the rooms' media copies once,
+        // as the closure ends and before the grouped commit.
+        let _room_media_drops = crate::embed::RoomMediaDrops::open(&vault.store, parent);
         let mut affected = Vec::new();
         let mut cancelled = Vec::new();
         for work in staged {
