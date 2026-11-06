@@ -1,8 +1,8 @@
 //! Generic EntityDoc validation with owned indexes over one canonical snapshot.
 
 use super::{
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, entity_history::HistoryValidation, id,
-    invalid, pointer, strict,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, entity_history::HistoryValidation,
+    entity_pointer::EntityPointer, id, invalid, strict,
 };
 use crate::error::Result;
 use crate::recovery::canonical::{
@@ -20,6 +20,7 @@ pub(in crate::recovery) struct EntityDocumentRows {
     fork_next: usize,
     lineage_next: Option<usize>,
     owner_next: usize,
+    entity_pointer: EntityPointer,
     previous: Option<[u8; 16]>,
     last_proposal: Option<[u8; 16]>,
     proposals: BTreeMap<[u8; 16], Proposal>,
@@ -128,7 +129,9 @@ impl EntityDocumentRows {
                         self.start(Stage::Owners);
                         continue;
                     };
-                    self.validate_entity(snapshot, entity)?;
+                    if !self.validate_entity(snapshot, entity)? {
+                        return Ok(false);
+                    }
                 }
                 Stage::Owners => {
                     let Some(row) = snapshot.entity_documents.get(self.next) else {
@@ -232,10 +235,10 @@ impl EntityDocumentRows {
     }
 
     fn validate_entity(
-        &self,
+        &mut self,
         snapshot: &CanonicalSnapshot,
         entity: &CanonicalEntity,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let rows = &self.rows;
         let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
@@ -244,15 +247,21 @@ impl EntityDocumentRows {
             if rows.contains_key(&entity.id) {
                 return Err(invalid("entity document owner cannot be NOTE or shell"));
             }
-            return Ok(());
+            return Ok(true);
         }
         let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
-        let ref_id = pointer(body)?;
         let row = rows
             .get(&entity.id)
             .map(|&at| &snapshot.entity_documents[at]);
+        if !self
+            .entity_pointer
+            .advance(body, row.and_then(|row| row.field.as_deref()))
+        {
+            return Ok(false);
+        }
+        let ref_id = self.entity_pointer.pointer(body)?;
         match (ref_id, row) {
-            (None, None) => return Ok(()),
+            (None, None) => {}
             (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
                 if let Some(actor) = row.birth_actor {
                     id(actor)?;
@@ -260,34 +269,20 @@ impl EntityDocumentRows {
                 if row.birth_at != header.occurred_start {
                     return Err(invalid("entity document birth timestamp"));
                 }
-                let mut reader = std::io::Cursor::new(body);
-                let value = rmpv::decode::read_value(&mut reader)
-                    .map_err(|_| invalid("entity document pointer row"))?;
-                let rmpv::Value::Map(fields) = value else {
-                    return Err(invalid("entity document pointer row"));
-                };
-                let others: Vec<_> = fields
-                    .iter()
-                    .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
-                    .collect();
-                if others
-                    .iter()
-                    .any(|(key, _)| key.as_str().is_some_and(crate::ports::is_metadata_field))
-                {
+                if self.entity_pointer.metadata {
                     return Err(invalid("editable metadata remains in the entity row"));
                 }
                 match &row.field {
-                    None if others.is_empty() => {}
+                    None if !self.entity_pointer.other_fields => {}
                     Some(field)
                         if crate::ports::is_text_field(field)
-                            && !others
-                                .iter()
-                                .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
+                            && !self.entity_pointer.body_field => {}
                     _ => return Err(invalid("entity document text field")),
                 }
             }
             _ => return Err(invalid("entity document coverage or pointer binding")),
         }
-        Ok(())
+        self.entity_pointer = EntityPointer::default();
+        Ok(true)
     }
 }
