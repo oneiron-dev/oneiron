@@ -63,9 +63,12 @@ pub enum VaultReadError {
     /// The engine refused or failed the accepted operation.
     #[error("vault-read engine failure for {method:?} ({engine_code}): {message}")]
     Engine {
-        /// Present when a completed read answered absence, not on failures before a read.
+        /// Present when the operation completed a scoped read before returning this error.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         narrowing: Option<Box<crate::claim::ScopedReadReceipt>>,
+        /// The legal-use refusal returned by the named read, without reinterpreting its bound.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        legal_hold: Option<Box<crate::error::LegalHoldNotice>>,
         /// Method whose engine execution failed.
         method: VaultReadMethod,
         /// Stable code copied from the accepted API error vocabulary.
