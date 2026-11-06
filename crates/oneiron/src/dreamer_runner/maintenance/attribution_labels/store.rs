@@ -50,6 +50,10 @@ pub(super) struct NotePattern {
     pub(super) proposal: Option<[u8; 16]>,
     /// The member keys whose notes the proposal quotes.
     pub(super) filed: Vec<Vec<u8>>,
+    /// Every entity the quoted notes' contexts name (actor, skill, project,
+    /// read rows), frozen at filing: an erase of any of them erases the
+    /// proposal, even once its notes have left the ledger.
+    pub(super) sources: Vec<[u8; 16]>,
 }
 
 /// One note's support for its pattern: the outcome it counts as, so two notes

@@ -324,7 +324,9 @@ pub(crate) fn erase_unclear_source_in_txn(
             )?;
         }
     }
-    Ok(())
+    // A filed label proposal quoting a note about `entity` goes even when a
+    // re-judgment took the note out of the ledger first.
+    crate::dreamer_runner::maintenance::erase_label_proposals_naming_in_txn(write, wtxn, entity)
 }
 
 /// [`erase_unclear_source_in_txn`] in the declared scrub's shape.

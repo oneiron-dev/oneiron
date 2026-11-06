@@ -16,7 +16,9 @@
 //!
 //! No clustering table holds note text. A re-judged note leaves its pattern
 //! in the ledger's write; an erased one also takes the proposal that quoted it
-//! (`erase_unclear_note_copies_in_txn`). A choice no rung answered (an
+//! (`erase_unclear_note_copies_in_txn`). A filed proposal keeps the entities
+//! its notes named, so an erase of one still takes it after a re-judgment
+//! removed the notes from the ledger (`erase_label_proposals_naming_in_txn`). A choice no rung answered (an
 //! exhausted budget, an outage) parks the pass where it stands; the next night
 //! resumes there.
 
@@ -446,6 +448,7 @@ impl Pass<'_> {
                             exemplar: Some(member.clone()),
                             proposal: None,
                             filed: Vec::new(),
+                            sources: Vec::new(),
                         },
                     )?;
                     Some(id)
@@ -595,7 +598,21 @@ impl Pass<'_> {
             &self.envelope,
             self.now,
         )?;
+        let named: BTreeSet<[u8; 16]> = live
+            .iter()
+            .flat_map(|(_, _, row, _)| {
+                row.context
+                    .actor
+                    .iter()
+                    .chain(&row.context.skill)
+                    .chain(&row.context.project)
+                    .chain(&row.context.sources)
+                    .map(|id| *id.as_bytes())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         pattern.proposal = Some(*proposal.as_bytes());
+        pattern.sources = named.into_iter().collect();
         pattern.filed = live.into_iter().map(|(member, ..)| member).collect();
         PATTERN.put(&vault.store, txn, &held, &pattern)?;
         Ok(true)
@@ -755,21 +772,64 @@ pub(crate) fn erase_unclear_note_copies_in_txn(
             continue;
         };
         let held = pattern_key(&member.group, &pattern_id);
-        let Some(mut pattern) = PATTERN.get(store, &*txn, &held)? else {
+        let Some(pattern) = PATTERN.get(store, &*txn, &held)? else {
             continue;
         };
         if !pattern.filed.contains(&key) {
             continue;
         }
-        pattern.filed.clear();
-        if let Some(proposal) = pattern.proposal.take() {
-            erase_proposal_copy_in_txn(write, txn, &EntityId::from_bytes(proposal)?)?;
+        withdraw_filed_in_txn(write, txn, &held, pattern)?;
+    }
+    Ok(())
+}
+
+/// Erases every filed proposal whose quoted notes named erased `entity`, by
+/// the sources frozen at filing (FIX 7824): a note re-judged out of the
+/// ledger since still had its words copied into the proposal. A pattern row
+/// that does not decode goes.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_label_proposals_naming_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    let store = write.store;
+    let rows = PATTERN
+        .iter_raw_from(store, &*txn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, value) in rows {
+        let Ok(pattern) = PATTERN.decode_value(&value) else {
+            PATTERN.delete(store, txn, &key)?;
+            continue;
+        };
+        if pattern.proposal.is_some() && pattern.sources.contains(entity.as_bytes()) {
+            withdraw_filed_in_txn(write, txn, &key, pattern)?;
         }
-        if pattern.exemplar.is_some() {
-            PATTERN.put(store, txn, &held, &pattern)?;
-        } else {
-            PATTERN.delete(store, txn, &held)?;
-        }
+    }
+    Ok(())
+}
+
+/// Erases `pattern`'s filed proposal and forgets what it quoted; the pattern
+/// keeps its notes and may file again from them, or goes with none left.
+fn withdraw_filed_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    held: &[u8],
+    mut pattern: NotePattern,
+) -> Result<()> {
+    let store = write.store;
+    pattern.filed.clear();
+    pattern.sources.clear();
+    if let Some(proposal) = pattern.proposal.take() {
+        erase_proposal_copy_in_txn(write, txn, &EntityId::from_bytes(proposal)?)?;
+    }
+    if pattern.exemplar.is_some() {
+        PATTERN.put(store, txn, &held.to_vec(), &pattern)?;
+    } else {
+        PATTERN.delete(store, txn, &held.to_vec())?;
     }
     Ok(())
 }
