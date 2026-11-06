@@ -106,6 +106,9 @@ pub(crate) use self::repo::{
     lock_repository, lock_repository_within, try_lock_repository,
     try_lock_repository_for_maintenance,
 };
+pub(crate) use oneiron_store::git_wire::path_text::{
+    git_path_bytes, git_path_os_str, git_path_string, git_path_text, git_path_text_of_os,
+};
 
 // The flat git_wire.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and
