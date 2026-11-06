@@ -227,12 +227,10 @@ impl DreamerHost {
             status: Arc::clone(&start.status),
             stopping: Arc::clone(&stopping),
         };
-        let thread = std::thread::Builder::new()
-            .name("oneiron-dreamer".into())
-            .spawn(move || {
-                let _ended = thread_ended;
-                run(start, serve, ready)
-            })?;
+        let thread = crate::engine_thread("oneiron-dreamer".into()).spawn(move || {
+            let _ended = thread_ended;
+            run(start, serve, ready)
+        })?;
         match started.await {
             Ok(Ok((shutdown, hints))) => Ok(Self {
                 shutdown,
@@ -1017,8 +1015,8 @@ impl PassExecutorFactory for ObservedFactory {
         let dreamer = self.actor;
         let after = self.settle_after;
         let joined = std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
+            crate::engine_thread("dreamer-question-pump".into())
+                .spawn_scoped(scope, || {
                     let mut may_start = || !paused(epoch.as_ref());
                     let pumped =
                         crate::decision_graph::pump_due_while(&server, now_secs, &mut may_start);
@@ -1029,6 +1027,7 @@ impl PassExecutorFactory for ObservedFactory {
                     };
                     (pumped, settled)
                 })
+                .expect("failed to spawn thread")
                 .join()
         });
         let Ok((pumped, settled_to)) = joined else {
