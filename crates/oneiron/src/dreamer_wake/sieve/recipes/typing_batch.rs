@@ -149,5 +149,5 @@ pub(crate) fn typing_member_key(carrier: AttemptId, span: &SieveSpan) -> Result<
         .update(carrier.as_bytes())
         .update(&span.id)
         .finalize();
-    AttemptId::from_bytes(&hash.as_bytes()[..16])
+    Ok(AttemptId::from_bytes(&hash.as_bytes()[..16])?)
 }

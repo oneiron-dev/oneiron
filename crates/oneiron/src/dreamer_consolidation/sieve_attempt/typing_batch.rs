@@ -320,7 +320,7 @@ fn batch_state(
                 .or_else(|| labels.label(LabelKind::Turn, span.source));
             contexts.push(serde_json::json!({
                 "source": source.map(label_text),
-                "text": member.evidence.text,
+                "text": &member.evidence.text,
             }));
         }
         let candidates: Vec<String> = member
