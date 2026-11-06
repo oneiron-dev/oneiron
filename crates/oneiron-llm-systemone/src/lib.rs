@@ -9,8 +9,9 @@ use oneiron::code_run::model_call::native_seat_read_digests;
 use oneiron::llm::DispatchRelease;
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
-    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRead, SeatReadFuture, SeatRequest,
+    AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, DecisionSystemOneResponse,
+    ImageBox, ProviderPin, RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRead, SeatReadFuture,
+    SeatRequest,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
@@ -69,7 +70,7 @@ impl<'seat> PreparedSystemOneRead<'seat> {
     /// The caller supplies its current work time after admission. A borrowed
     /// credential release remains at the transport's physical boundary.
     pub fn ask_recorded<'call>(
-        mut self,
+        self,
         lease: &'call BudgetLease,
         time_left: Duration,
         release: Option<DispatchRelease<'call>>,
@@ -77,9 +78,23 @@ impl<'seat> PreparedSystemOneRead<'seat> {
     where
         'seat: 'call,
     {
+        Box::pin(async move { self.ask_observed(lease, time_left, release).await.0 })
+    }
+
+    /// Sends the same prepared bytes and retains raw response source beside the
+    /// unchanged logical read. Cancellation can still leave this source unknown.
+    pub async fn ask_observed<'call>(
+        mut self,
+        lease: &'call BudgetLease,
+        time_left: Duration,
+        release: Option<DispatchRelease<'call>>,
+    ) -> (SeatRead, Option<DecisionSystemOneResponse>)
+    where
+        'seat: 'call,
+    {
         self.sent.time_left = time_left;
         let seat = self.seat;
-        Box::pin(seat.send_prepared(self, lease, true, release))
+        seat.send_prepared(self, lease, true, release).await
     }
 }
 
@@ -89,6 +104,32 @@ impl<'seat> PreparedSystemOneRead<'seat> {
 pub struct SystemOneHttpResponse {
     pub status: u16,
     pub body: Vec<u8>,
+}
+
+impl SystemOneHttpResponse {
+    fn observation(&self, requested_model: &str) -> DecisionSystemOneResponse {
+        let body = if self.body.len() <= MAX_RESPONSE_BYTES {
+            serde_json::from_slice::<Value>(&self.body).ok()
+        } else {
+            None
+        };
+        let model_matches = body
+            .as_ref()
+            .and_then(|body| body.get("model"))
+            .and_then(Value::as_str)
+            .map(|model| model == requested_model);
+        let usage = body.as_ref().and_then(|body| body.get("usage"));
+        DecisionSystemOneResponse {
+            status: self.status,
+            model_matches,
+            input_tokens: usage
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(Value::as_u64),
+            output_tokens: usage
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(Value::as_u64),
+        }
+    }
 }
 
 pub type SystemOneTransportFuture<'a> =
@@ -310,7 +351,9 @@ impl SystemOneSeat {
                 };
             }
         };
-        self.send_prepared(prepared, lease, capture, release).await
+        self.send_prepared(prepared, lease, capture, release)
+            .await
+            .0
     }
 
     async fn send_prepared(
@@ -319,9 +362,10 @@ impl SystemOneSeat {
         lease: &BudgetLease,
         capture: bool,
         release: Option<DispatchRelease<'_>>,
-    ) -> SeatRead {
+    ) -> (SeatRead, Option<DecisionSystemOneResponse>) {
         let PreparedSystemOneRead { request, sent, .. } = prepared;
         let mut digests = None;
+        let mut observation = None;
         let result = async {
             if capture {
                 // Fingerprint the built JSON tree, not the pre-transform request
@@ -335,6 +379,7 @@ impl SystemOneSeat {
                 Some(release) => self.transport.send_released(sent, lease, release).await?,
                 None => self.transport.send(sent, lease).await?,
             };
+            observation = Some(response.observation(&model));
             if !(200..300).contains(&response.status) {
                 return Err(if response.status >= 500 || response.status == 429 {
                     RetryableLlmError::ServerError.into()
@@ -364,10 +409,13 @@ impl SystemOneSeat {
             Ok(parsed)
         }
         .await;
-        SeatRead {
-            request: digests,
-            result,
-        }
+        (
+            SeatRead {
+                request: digests,
+                result,
+            },
+            observation,
+        )
     }
 }
 

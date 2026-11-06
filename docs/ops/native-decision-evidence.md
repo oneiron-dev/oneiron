@@ -100,3 +100,25 @@ measurements of cache, timing, price or inference receipts.
 This is source and observer plumbing only. The original settlement still owns
 its pricing quantity. Nothing here pays the invoice, substitutes NET for GROSS,
 changes coverage or enables staffed stronger-rung Arc openings.
+
+## Raw System One responses on failed reads
+
+The prepared single and pack reads retain the returned HTTP status, optional native
+input/output counters and whether the returned model matches the requested model,
+before logical answer validation. This source is immutable on the same original
+call row and does not invoice, settle, pay or exclude any call. The original successful
+aggregate-counter invoice path is unchanged. Existing read APIs and result literals
+are unchanged; the native captured reader uses the observation-bearing API.
+
+The two existing failed model-call observers first read the original terminal usage.
+When it is unknown, a 2xx response with a matching model and both native counters can
+supply failed-read usage explicitly marked `terminal_invoice: false`. Explicit zero
+stays zero. Missing counters, malformed fields and wrong/unknown models are not
+filled or attributed to the requested model. Status and any independently parsed
+counters remain raw source even when no failed-read usage can be projected.
+
+The bounded response returned by the transport is the source boundary. The default
+transport omits non-2xx bodies; custom transports may return them or retry internally.
+Transport errors and cancellation can leave no returned source even after physical
+I/O. Absence is unknown, not proof that no request was sent or billed. No response
+text, inferred retry total, per-answer share, cache amount, timing or price is added.
