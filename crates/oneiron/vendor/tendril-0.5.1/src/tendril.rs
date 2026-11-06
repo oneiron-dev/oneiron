@@ -723,6 +723,34 @@ where
         }
     }
 
+    /// Convert into a sendable value, admitting only a required shared copy.
+    /// Inline and uniquely owned buffers transfer their existing storage and guard.
+    pub fn try_into_send_with_reservation<R, E>(
+        mut self,
+        reserve: impl FnOnce(usize) -> Result<R, E>,
+        settle: impl FnOnce(&mut R, usize) -> Result<(), E>,
+    ) -> Result<SendTendril<F>, ReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        if self.is_shared() {
+            let replacement = unsafe {
+                Self::try_owned_copy_with_reservation(
+                    self.as_byte_slice(),
+                    self.len32(),
+                    reserve,
+                    settle,
+                )?
+            };
+            let old = mem::replace(&mut self, replacement);
+            drop(old);
+        }
+        Ok(SendTendril {
+            // As in into_send, the unique header's refcount has usize layout.
+            tendril: unsafe { mem::transmute(self) },
+        })
+    }
+
     /// View as a superset format, for free.
     #[inline(always)]
     pub fn as_superset<Super>(&self) -> &Tendril<Super, A>

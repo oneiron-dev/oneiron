@@ -51,6 +51,20 @@ mod str_wrap {
         }
     }
 
+    pub fn try_wrap_attr_with_reservation<R, E>(
+        attr: Attribute,
+        reserve: impl FnOnce(usize) -> Result<R, E>,
+        settle: impl FnOnce(&mut R, usize) -> Result<(), E>,
+    ) -> Result<Attr, tendril::ReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        Ok(Attr {
+            name: attr.name,
+            value: attr.value.try_into_send_with_reservation(reserve, settle)?.into(),
+        })
+    }
+
     pub fn wrap_attrs(v: Vec<Attribute>) -> Vec<Attr> {
         v.into_iter().map(wrap_attr).collect()
     }
@@ -90,6 +104,17 @@ mod str_wrap {
         v
     }
 
+    pub fn try_wrap_attr_with_reservation<R, E>(
+        attr: Attribute,
+        _reserve: impl FnOnce(usize) -> Result<R, E>,
+        _settle: impl FnOnce(&mut R, usize) -> Result<(), E>,
+    ) -> Result<Attr, tendril::ReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        Ok(attr)
+    }
+
     #[inline]
     pub fn wrap_attrs(v: Vec<Attribute>) -> Vec<Attr> {
         v
@@ -103,4 +128,4 @@ mod str_wrap {
 
 pub use str_wrap::Attr;
 pub(crate) use str_wrap::StrWrap;
-pub(crate) use str_wrap::{copy_attrs, into_tendril, wrap_attr, wrap_attrs, wrap_tendril};
+pub(crate) use str_wrap::{copy_attrs, into_tendril, try_wrap_attr_with_reservation, wrap_attr, wrap_attrs, wrap_tendril};

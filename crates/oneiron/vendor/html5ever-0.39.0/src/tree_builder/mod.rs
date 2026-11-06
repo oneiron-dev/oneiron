@@ -1458,7 +1458,7 @@ where
                 _ => {},
             }
             flags.had_duplicate_attributes = had_duplicate_attributes;
-            Some((hooks.create)(&self.sink, name, attrs, flags))
+            (hooks.create)(&self.sink, name, attrs, flags)
         } else {
             let attrs = attrs.into_unreserved().expect("guarded attributes require a native sink");
             Some(create_element_with_flags(&self.sink, name, attrs, had_duplicate_attributes))

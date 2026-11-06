@@ -35,6 +35,20 @@ pub(crate) struct PreparedAttributes {
     pub(crate) reservation: Option<AttributeReservation>,
 }
 
+impl PreparedAttributes {
+    pub(crate) fn try_reserve<R, E>(
+        &mut self,
+        additional: usize,
+        reserve: impl FnOnce(usize) -> Result<R, E>,
+        settle: impl FnOnce(&mut R, usize) -> Result<(), E>,
+    ) -> Result<(), ArenaReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        try_reserve(&mut self.attrs, &mut self.reservation, additional, reserve, settle)
+    }
+}
+
 fn try_reserve<R, E>(
     attrs: &mut Vec<Attr>,
     reservation: &mut Option<AttributeReservation>,

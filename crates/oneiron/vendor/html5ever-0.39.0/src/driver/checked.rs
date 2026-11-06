@@ -324,12 +324,13 @@ where
                 crate::QualName,
                 crate::tokenizer::TagAttributes,
                 crate::tree_builder::ElementFlags,
-            ) -> Sink::Handle
+            ) -> Result<Sink::Handle, E>
             + Send
             + 'static,
         A: Fn(&Sink, &Sink::Handle, crate::tokenizer::TagAttributes) + Send + 'static,
     {
         let error = Arc::clone(&self.tokenizer.sink.error);
+        let create_error = Arc::clone(&error);
         let reservation: crate::tokenizer::TagAttributesReservation =
             Arc::new(move |attrs, additional| {
                 if error
@@ -355,7 +356,25 @@ where
         self.tokenizer.sink.sink.set_tag_attributes_hooks(
             crate::tree_builder::TagAttributesHooks {
                 reserve: reservation,
-                create: Box::new(create_element),
+                create: Box::new(move |sink, name, attrs, flags| {
+                    if create_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .is_some()
+                    {
+                        return None;
+                    }
+                    match create_element(sink, name, attrs, flags) {
+                        Ok(handle) => Some(handle),
+                        Err(refusal) => {
+                            create_error
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .get_or_insert(refusal);
+                            None
+                        }
+                    }
+                }),
                 add: Box::new(add_attributes),
             },
         );
