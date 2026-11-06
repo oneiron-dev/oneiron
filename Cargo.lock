@@ -11776,8 +11776,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30146010a60b5773ef63f7b0033576c7a0487ecc87a30d97b787ca8e27c85140"
 dependencies = [
  "crc32fast",
+ "js-sys",
  "lzma-rust2 0.23.0",
  "ppmd-rust",
+ "wasm-bindgen",
 ]
 
 [[package]]
