@@ -136,8 +136,10 @@ pub(super) fn resolved_state(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
+    let clock_ms = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
+    // Subject anchors are dated in milliseconds, as PEOPLE reads them.
     let principal =
-        oneiron::subject_model::actor_subject_anchor(&server.vault, &self_ref, now.as_secs())?
+        oneiron::subject_model::actor_subject_anchor(&server.vault, &self_ref, clock_ms)?
             .unwrap_or_else(|| {
                 unavailable.push(("principal", "principal"));
                 self_ref
@@ -175,7 +177,7 @@ pub(super) fn resolved_state(
             classes: Vec::new(),
             budget_lease_id,
             budget,
-            clock_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
+            clock_ms,
             skill_index,
             working_set: Vec::new(),
         },
