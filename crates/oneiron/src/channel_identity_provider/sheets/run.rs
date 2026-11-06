@@ -1,13 +1,15 @@
 //! One Sheets call's send (FIX 4862): its requests reach the broker before
 //! the grant is read, one custody door releases the grant for the effect and
-//! its readback, and a write's Gate records stand on each side of its send.
+//! its readback, and a write's Gate records stand on each side of its send,
+//! each in one transaction with the write's claim on its invocation.
 
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 
 use super::SHEETS_CONNECTOR_EFFECTOR;
-use super::receipt::{EffectResult, SheetsEffect};
+use super::invocation::SheetsWriteClaim;
+use super::receipt::{EffectResult, SEND_DELIVERED, SEND_NOT_SENT, SEND_UNCERTAIN, SheetsEffect};
 use super::token;
 use super::tools::SheetsCall;
 use super::wire::{SheetsBrokerHost, SheetsWireOutcome, SheetsWireRequest};
@@ -100,14 +102,19 @@ pub(super) struct SheetsRun<'a> {
     pub(super) credential: String,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    /// A write's claim on its caller's invocation, when the caller carries
+    /// one.
+    pub(super) claim: Option<SheetsWriteClaim>,
 }
 
 impl SheetsRun<'_> {
     /// Sends `call`'s requests. The effect reaches the broker first; a write
-    /// then commits its intent record. One door releases the grant: its
-    /// access token goes with the effect, and, when the effect succeeded,
-    /// with its readback, which connects only then. A write appends its
-    /// outcome record last.
+    /// then commits its intent record and its claim. One door releases the
+    /// grant: its access token goes with the effect, and, when the effect
+    /// succeeded, with its readback, which connects only then. A write
+    /// appends its outcome record and settles its claim last. A claim whose
+    /// invocation's row already answers the write (a replay that raced this
+    /// call) answers that, and nothing is sent.
     ///
     /// # Errors
     ///
@@ -137,10 +144,13 @@ impl SheetsRun<'_> {
             request: requests.effect.digest(),
             credential: &self.credential,
         });
-        let intent = receipt
-            .as_ref()
-            .map(|write| write.intent(self.vault))
-            .transpose()?;
+        let intent = match &receipt {
+            Some(write) => match self.intent(write)? {
+                Ok(intent) => Some(intent),
+                Err(answer) => return Ok(answer),
+            },
+            None => None,
+        };
         let mut effect = Some(effect);
         let mut effect_outcome = None;
         let mut readback_outcome = None;
@@ -197,11 +207,50 @@ impl SheetsRun<'_> {
         let receipts = match (&receipt, intent) {
             (Some(write), Some(intent)) => {
                 let result = effect_result(&outcome, readback_outcome.as_ref(), generation);
-                Some((intent, write.outcome(self.vault, intent, &result)?))
+                Some((intent, self.outcome(write, intent, &result)?))
             }
             _ => None,
         };
         Ok(answer(call, outcome, readback_outcome, receipts))
+    }
+
+    /// Commits `write`'s intent record and, in the same transaction, its
+    /// claim on the caller's invocation. The intent's id, or, when the
+    /// invocation's row already answers the write, that answer, and no
+    /// record.
+    fn intent(
+        &self,
+        write: &SheetsEffect<'_>,
+    ) -> Result<std::result::Result<GateDecisionId, SheetsAnswer>> {
+        self.vault.with_write_txn_grouped(|txn| {
+            if let Some(claim) = &self.claim
+                && let Some(answer) = claim.answer_in_txn(&self.vault.store, txn)?
+            {
+                return Ok(Err(answer));
+            }
+            let intent = write.intent_in_txn(self.vault, txn)?;
+            if let Some(claim) = &self.claim {
+                claim.claim_in_txn(&self.vault.store, txn, intent)?;
+            }
+            Ok(Ok(intent))
+        })
+    }
+
+    /// Appends `write`'s outcome record, linked to `intent`, and in the same
+    /// transaction settles its claim with what the send came to.
+    fn outcome(
+        &self,
+        write: &SheetsEffect<'_>,
+        intent: GateDecisionId,
+        result: &EffectResult,
+    ) -> Result<GateDecisionId> {
+        self.vault.with_write_txn_grouped(|txn| {
+            let outcome = write.outcome_in_txn(self.vault, txn, intent, result)?;
+            if let Some(claim) = &self.claim {
+                claim.settle_in_txn(&self.vault.store, txn, intent, &result.send, outcome)?;
+            }
+            Ok(outcome)
+        })
     }
 }
 
@@ -213,13 +262,13 @@ fn effect_result(
 ) -> EffectResult {
     let (send, reply) = match outcome {
         SheetsWireOutcome::Answered { status, body } if (200..300).contains(status) => {
-            ("delivered".to_owned(), Some(json_digest(body)))
+            (SEND_DELIVERED.to_owned(), Some(json_digest(body)))
         }
         SheetsWireOutcome::Answered { status, body } => {
             (format!("rejected_{status}"), Some(json_digest(body)))
         }
-        SheetsWireOutcome::NotSent(_) => ("not_sent".to_owned(), None),
-        SheetsWireOutcome::Uncertain(_) => ("uncertain".to_owned(), None),
+        SheetsWireOutcome::NotSent(_) => (SEND_NOT_SENT.to_owned(), None),
+        SheetsWireOutcome::Uncertain(_) => (SEND_UNCERTAIN.to_owned(), None),
     };
     EffectResult {
         send,

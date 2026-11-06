@@ -12,7 +12,13 @@
 //!   and reads the sheets back. A write runs only on an explicit mutation; a
 //!   preview (the default) shows the request and sends nothing. Each write
 //!   leaves two Gate records: its intent before the send and its outcome
-//!   after ([`SHEETS_EFFECT_REASON`]).
+//!   after ([`SHEETS_EFFECT_REASON`]). A write whose caller carries an
+//!   invocation (a pumped run's step, say) claims it in its intent's
+//!   transaction and settles the claim in its outcome's, so a replay of the
+//!   invocation never sends an attempted write again: it answers the earlier
+//!   send by its two records' ids, an uncertain or unsettled one as pending
+//!   delivery, and sends again only when nothing reached Google. Another
+//!   request on the same invocation is refused.
 //! * **Any bound caller.** A code-mode run, a pumped agent run, an agent's
 //!   own MCP or HTTP credential, or the owner. A write from an anonymous
 //!   off-record session is refused, as a secret grant is: the token's use
@@ -27,6 +33,7 @@
 //!   broker adds it to the request and strips it from the reply. No token is
 //!   returned, logged or written.
 
+mod invocation;
 mod receipt;
 mod run;
 mod token;
@@ -43,6 +50,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
+use self::invocation::{SheetsWriteClaim, SheetsWriteIdentity};
 use self::run::{SheetsAnswer, SheetsRequests, SheetsRun};
 use self::tools::{SheetsCall, SheetsTool};
 use crate::code_run::ConnectorCallReply;
@@ -53,7 +61,9 @@ use crate::connector_key::{
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult, verify_actor_binding};
 use crate::outbound_consent::tool_call::MutationIntent;
-use crate::outbound_consent::{ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult};
+use crate::outbound_consent::{
+    ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult,
+};
 use crate::vault::Vault;
 
 /// The engine pack that ships the connector.
@@ -92,7 +102,9 @@ const WRITE_NEEDS_RECORD: &str = "sheets_write_needs_record";
 const BROKER_NOT_INSTALLED: &str = "sheets_broker_not_installed";
 
 /// One `connector.call` of `google.sheets` for the caller `memory` is bound
-/// to. Blocking: it sends, so call it on a blocking worker.
+/// to, under `invocation`, the caller's logical call as a connector call's
+/// ledger keys it, when it carries one. Blocking: it sends, so call it on a
+/// blocking worker.
 ///
 /// # Errors
 ///
@@ -102,6 +114,7 @@ const BROKER_NOT_INSTALLED: &str = "sheets_broker_not_installed";
 pub fn call_google_sheets(
     memory: &Memory<'_>,
     input: &ConnectorCallRequest,
+    invocation: Option<ConnectorCallInvocation>,
 ) -> MemoryResult<ConnectorCallReply> {
     let Some(tool) = SheetsTool::parse(&input.tool) else {
         return Ok(refused(TOOL_UNKNOWN));
@@ -128,6 +141,23 @@ pub fn call_google_sheets(
     if tool.writes() && memory.keeps_no_record() {
         return Ok(refused(WRITE_NEEDS_RECORD));
     }
+    let claim = match invocation {
+        Some(invocation) if tool.writes() && input.mutation == MutationIntent::ExplicitMutation => {
+            let identity = SheetsWriteIdentity {
+                tool: tool.as_str().to_owned(),
+                spreadsheet_id: call.spreadsheet_id().to_owned(),
+                request: requests.effect.digest(),
+                mutation: input.mutation,
+            };
+            Some(SheetsWriteClaim::new(memory.actor(), invocation, identity)?)
+        }
+        _ => None,
+    };
+    if let Some(claim) = &claim
+        && let Some(answer) = claim.answer(vault)?
+    {
+        return Ok(reply(tool, answer));
+    }
     let Some(host) = vault.served_transports().sheets_broker().cloned() else {
         return Ok(refused(BROKER_NOT_INSTALLED));
     };
@@ -137,8 +167,15 @@ pub fn call_google_sheets(
         credential,
         actor: memory.actor(),
         actor_class: memory.actor_class(),
+        claim,
     };
-    Ok(match run.send(&call, requests)? {
+    Ok(reply(tool, run.send(&call, requests)?))
+}
+
+/// The reply `answer` makes for a call of `tool`: a write's uncertain send
+/// waits as pending delivery, a read's answers as a tool error.
+fn reply(tool: SheetsTool, answer: SheetsAnswer) -> ConnectorCallReply {
+    match answer {
         SheetsAnswer::Answered { output, is_error } => delivered(tool, output, is_error),
         SheetsAnswer::NotSent(reason) => refused(&reason),
         SheetsAnswer::Uncertain(reason) if tool.writes() => ConnectorCallReply::PendingDelivery {
@@ -146,7 +183,7 @@ pub fn call_google_sheets(
             reasons: vec![reason],
         },
         SheetsAnswer::Uncertain(reason) => delivered(tool, json!({ "error": reason }), true),
-    })
+    }
 }
 
 /// The connector's tools as one resolved connector manifest, the typed

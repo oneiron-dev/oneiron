@@ -1,8 +1,9 @@
 //! A Sheets write's Gate records (FIX 4862), kept as a secret use keeps
 //! its own: the intent a write commits before its send, its send `pending`,
-//! and the outcome it appends after, linked to that intent. A crash between
-//! them leaves the intent alone: sent or not, unknown. Nothing writes an
-//! invented outcome for it.
+//! and the outcome it appends after, linked to that intent. Each is written
+//! in its caller's transaction, beside the write's claim on its invocation
+//! ([`super::invocation`]). A crash between them leaves the intent alone:
+//! sent or not, unknown. Nothing writes an invented outcome for it.
 //!
 //! Each record names the tool, the spreadsheet, the request's digest, the
 //! credential's custody name and its effector. The outcome adds what the send
@@ -28,6 +29,13 @@ const SHEETS_EFFECT_CONTENT_KIND: &str = "sheets_effect";
 /// never of the values.
 const SHEETS_EFFECT_DOMAIN: &[u8] = b"oneiron.sheets_effect.v1";
 
+/// The send reached Google, and Google answered with a success.
+pub(super) const SEND_DELIVERED: &str = "delivered";
+/// Nothing reached Google.
+pub(super) const SEND_NOT_SENT: &str = "not_sent";
+/// The send may have reached Google, and no answer came back.
+pub(super) const SEND_UNCERTAIN: &str = "uncertain";
+
 /// One write as its Gate records keep it.
 pub(super) struct SheetsEffect<'a> {
     pub(super) actor: EntityId,
@@ -42,7 +50,8 @@ pub(super) struct SheetsEffect<'a> {
 
 /// What a write's send came to, as its outcome record says it.
 pub(super) struct EffectResult {
-    /// `delivered`, `rejected_<status>`, `not_sent` or `uncertain`.
+    /// [`SEND_DELIVERED`], `rejected_<status>`, [`SEND_NOT_SENT`] or
+    /// [`SEND_UNCERTAIN`].
     pub(super) send: String,
     /// The grant's generation the door released, when it released one.
     pub(super) generation: Option<u32>,
@@ -53,25 +62,31 @@ pub(super) struct EffectResult {
 }
 
 impl SheetsEffect<'_> {
-    /// Commits the intent record, before the send. Its id, for
-    /// [`Self::outcome`].
-    pub(super) fn intent(&self, vault: &Vault) -> Result<GateDecisionId> {
-        self.record(vault, None, None)
-    }
-
-    /// Appends the outcome record, linked to `intent`.
-    pub(super) fn outcome(
+    /// Appends the intent record in `txn`, before the send. Its id, for
+    /// [`Self::outcome_in_txn`].
+    pub(super) fn intent_in_txn(
         &self,
         vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<GateDecisionId> {
+        self.record_in_txn(vault, txn, None, None)
+    }
+
+    /// Appends the outcome record in `txn`, linked to `intent`.
+    pub(super) fn outcome_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
         intent: GateDecisionId,
         result: &EffectResult,
     ) -> Result<GateDecisionId> {
-        self.record(vault, Some(intent), Some(result))
+        self.record_in_txn(vault, txn, Some(intent), Some(result))
     }
 
-    fn record(
+    fn record_in_txn(
         &self,
         vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
         intent: Option<GateDecisionId>,
         result: Option<&EffectResult>,
     ) -> Result<GateDecisionId> {
@@ -117,33 +132,30 @@ impl SheetsEffect<'_> {
         if let Some(intent) = intent {
             details.push(format!("intent:{}", intent.to_hex()));
         }
-        vault.with_write_txn_grouped(|txn| {
-            let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let record = GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id,
-                created_at,
-                outcome: "approved".into(),
-                reason_codes: vec![SHEETS_EFFECT_REASON.into()],
-                receipt_reasons: Vec::new(),
-                system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                    SHEETS_EFFECT_CONTENT_KIND,
-                    details,
-                ),
-                actor_class: self.actor_class.gate_actor_class().into(),
-                actor_ref: Some(self.actor.to_hex()),
-                content_kind: SHEETS_EFFECT_CONTENT_KIND.into(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: digest.finalize().as_bytes().to_vec(),
-                read_frontier_hash: [0; 32],
-                context: Default::default(),
-                redacted_at: None,
-            };
-            vault.store.append_gate_decision_in_txn(txn, &record)?;
-            Ok(())
-        })?;
+        let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at,
+            outcome: "approved".into(),
+            reason_codes: vec![SHEETS_EFFECT_REASON.into()],
+            receipt_reasons: Vec::new(),
+            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                SHEETS_EFFECT_CONTENT_KIND,
+                details,
+            ),
+            actor_class: self.actor_class.gate_actor_class().into(),
+            actor_ref: Some(self.actor.to_hex()),
+            content_kind: SHEETS_EFFECT_CONTENT_KIND.into(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: digest.finalize().as_bytes().to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        vault.store.append_gate_decision_in_txn(txn, &record)?;
         Ok(decision_id)
     }
 }
