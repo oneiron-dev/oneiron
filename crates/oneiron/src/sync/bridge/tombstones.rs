@@ -285,9 +285,12 @@ fn apply_tombstone_batch(
         let mut cancelled = Vec::new();
         for work in staged {
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
-                Ok((ids, item_cancelled)) => {
+                Ok((ids, item_effects)) => {
                     affected.extend(ids);
-                    cancelled.extend(item_cancelled);
+                    cancelled.extend(item_effects.cancelled);
+                    for seq in item_effects.decision_answers {
+                        crate::batch::queue_decision_answer(vault, parent, seq);
+                    }
                     applied.push(work.id);
                     continue;
                 }
@@ -447,7 +450,7 @@ fn apply_tombstone_in_savepoint(
     window_key: &str,
     work: &TombstoneWork,
 ) -> std::result::Result<
-    (Vec<EntityId>, Vec<(crate::attempt_queue::AttemptId, u32)>),
+    (Vec<EntityId>, crate::deletion::ErasureEffects),
     (TombstoneFailureStage, Error),
 > {
     let mut child = vault
@@ -487,17 +490,17 @@ fn apply_tombstone_in_savepoint(
         affected.extend(changed_documents);
     }
     let item = match applied {
-        Ok((_, _, cancelled)) if work.hard => {
+        Ok((_, _, effects)) if work.hard => {
             scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
-                .map(|_| cancelled)
+                .map(|_| effects)
                 .map_err(|e| (TombstoneFailureStage::ReceiverScrub, e))
         }
-        Ok((_, _, cancelled)) => Ok(cancelled),
+        Ok((_, _, effects)) => Ok(effects),
         Err(e) => Err((TombstoneFailureStage::Replay, e)),
     };
 
     match item {
-        Ok(cancelled) => {
+        Ok(effects) => {
             if crate::sync::WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
             {
                 vault
@@ -512,7 +515,7 @@ fn apply_tombstone_in_savepoint(
             }
             child
                 .commit()
-                .map(|()| (affected, cancelled))
+                .map(|()| (affected, effects))
                 .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))
         }
         Err(failure) => {

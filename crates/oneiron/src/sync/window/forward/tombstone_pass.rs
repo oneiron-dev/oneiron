@@ -145,10 +145,7 @@ enum Staged<'e> {
         value: &'e [u8],
         id: EntityId,
         hard: bool,
-        replayed: Result<(
-            ReplayedTombstoneOutcome,
-            Vec<(crate::attempt_queue::AttemptId, u32)>,
-        )>,
+        replayed: Result<(ReplayedTombstoneOutcome, crate::deletion::ErasureEffects)>,
     },
 }
 
@@ -216,9 +213,8 @@ impl Pass<'_> {
                     hard,
                     replayed,
                 } => {
-                    let replayed = replayed.and_then(|(outcome, cancelled)| {
-                        crate::attempt_queue::AttemptQueue::new(vault)
-                            .erased_payload_cancellations_committed(&cancelled);
+                    let replayed = replayed.and_then(|(outcome, effects)| {
+                        effects.committed(vault);
                         collect_after_replay(vault).map(|()| outcome)
                     });
                     self.settle(key, value, id, hard, replayed);
@@ -259,7 +255,7 @@ impl Pass<'_> {
         };
         let replayed = savepoint(vault, parent, |child| {
             quarantine::apply_replayed_tombstone_for_sync_in_txn(vault, child, &id, value)
-                .map(|(outcome, _changed, cancelled)| (outcome, cancelled))
+                .map(|(outcome, _changed, effects)| (outcome, effects))
         });
         match replayed {
             Err(err) if out_of_room(&err) => return Err(err),

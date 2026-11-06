@@ -36,3 +36,10 @@ A call that is no longer held retires its auxiliary question while retaining the
 original request and ledger history. Erasing the original call removes the
 retained request; erasing an auxiliary attempt or frozen reference clears its
 held metadata without deleting an unrelated original request.
+
+Erase-time question withdrawals are announced only after their owning transaction
+commits. Raw deletes and replay chunks carry the actual changed question sequences
+to that commit. A successful nested replay passes its sequences to the existing
+parent transaction drain. A failed child or root transaction announces none.
+Grouped restore and legal-hold writers keep that same drain, including when a
+later post-commit operation reports an error.
