@@ -409,13 +409,20 @@ pub(super) fn validate_source_carriers(
     store: &Store,
     txn: &RwTxn<'_>,
     row: (EntityId, u8, &[u8], TimeRange, u64),
+    asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> Result<()> {
     let (id, entity_type, data, occurred, learned_at) = row;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
     crate::skill_hub::validate_refinement_carrier_put(store, txn, &id, entity_type, data)?;
     crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
-    crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
+    crate::receipt::validate_put(
+        store,
+        txn,
+        (&id, entity_type, data),
+        (occurred, learned_at),
+        asset_file,
+    )
 }
 
 /// The last put-side embedding changes, after short-id and body indexes land.

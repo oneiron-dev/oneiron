@@ -45,6 +45,9 @@ use crate::sync::window::{
 };
 
 mod deferred;
+mod send;
+
+pub(crate) use send::WindowClaimCopyRelease;
 
 /// A sealed world update whose isolated check waits on an edge endpoint no
 /// staged update resolves yet (FIX 10474). Its capsule installs only once the
@@ -238,17 +241,9 @@ impl SyncClient {
         raw: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         let (frames, binding) = prepared.frames(window_key, sub_tag, queue_seq)?;
-        // An update past one frame is judged whole as its first frame leaves,
-        // from the payload kept here until then (FIX 8247).
-        if sub_tag == window_sub_tags::UPDATE
-            && let Some(id) = frames.first().and_then(|first| continued_frame_id(first))
-        {
-            let payload = prepared.envelope(WindowPadKind::Update, queue_seq).payload;
-            self.window_pad_ledger()
-                .continued
-                .insert(window_key.to_owned(), (id, payload));
-        }
-        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        self.record_window_frames(
+            prepared, window_key, sub_tag, queue_seq, raw, &frames, binding, false,
+        );
         Ok(frames)
     }
 
@@ -261,10 +256,35 @@ impl SyncClient {
         raw: &[u8],
     ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
         let (frames, binding) = prepared.frames_batched(window_key, sub_tag, queue_seq)?;
-        // Each batch draw checks the buffered whole update; no standalone
-        // continuation copy is needed for these frames.
-        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
+        self.record_window_frames(
+            prepared, window_key, sub_tag, queue_seq, raw, &frames, binding, true,
+        );
         Ok((frames, binding))
+    }
+
+    fn record_window_frames(
+        &self,
+        prepared: &PreparedWindowPads,
+        window_key: &str,
+        sub_tag: u8,
+        queue_seq: Option<u64>,
+        raw: &[u8],
+        frames: &[Vec<u8>],
+        binding: WindowPadBinding,
+        batched: bool,
+    ) {
+        // Batch draws judge their buffered whole update. Standalone sends
+        // retain the payload when their first frame cannot carry it whole.
+        if !batched
+            && sub_tag == window_sub_tags::UPDATE
+            && let Some(id) = frames.first().and_then(|first| continued_frame_id(first))
+        {
+            let payload = prepared.envelope(WindowPadKind::Update, queue_seq).payload;
+            self.window_pad_ledger()
+                .continued
+                .insert(window_key.to_owned(), (id, payload));
+        }
+        self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
     }
 
     fn record_window_send(
