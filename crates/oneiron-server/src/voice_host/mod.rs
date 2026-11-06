@@ -49,7 +49,7 @@ use oneiron::memory::RecallScope;
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
-    AsrEvent, AsrEventKind, AsrUpdate, OutputStop, PreparedAsr, UtteranceHandle,
+    AsrEvent, AsrEventKind, AsrUpdate, FloorWords, OutputStop, PreparedAsr, UtteranceHandle,
     VoiceCascadeSession, VoiceSessionConfig,
 };
 
@@ -135,6 +135,9 @@ pub struct VoiceHost {
     /// The vault the host serves, kept for its body directory: inbound
     /// wire frames spill there past the inline bound (FIX 3728).
     vault: Arc<oneiron::Vault>,
+    /// The session's correlation ref, which each generation's heard record
+    /// carries (FIX 4899).
+    session_ref: String,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -198,6 +201,7 @@ impl VoiceHost {
             .as_ref()
             .map(|bound| (Arc::clone(&vault), bound.container));
         let roster = speaker_match::CallRoster::of(&vault, &bindings.session);
+        let session_ref = bindings.session.session_ref.clone();
         Ok(Self {
             call_deadline,
             speculative_auth: bindings.speculative_auth,
@@ -213,6 +217,7 @@ impl VoiceHost {
             shutdown: bindings.shutdown,
             owner_policy: Arc::new(bindings.owner_policy),
             vault: host_vault,
+            session_ref,
         })
     }
 
@@ -371,6 +376,42 @@ impl VoiceHost {
             host: self,
             prepared: Some(prepared),
         })
+    }
+
+    /// Heard words, through the agent's floor before they are prepared (FIX
+    /// 4899). Words that took the floor leave the stop in `stops`, for the
+    /// caller to dispatch before another playback dequeue, and go on to be
+    /// prepared. A backchannel final while the agent holds the floor closes
+    /// the utterance and prepares nothing: `Ok(None)`.
+    pub(super) fn prepare_words(
+        &self,
+        token: &str,
+        revision: u64,
+        text: String,
+        final_text: bool,
+        stops: &mut Vec<OutputStop>,
+    ) -> Result<Option<EnrichmentWork<'_>>, HostError> {
+        self.require_running()?;
+        let words = {
+            let mut state = self.lock()?;
+            let handle = state.handle(token)?;
+            let kind = if final_text {
+                AsrEventKind::Final
+            } else {
+                AsrEventKind::Partial
+            };
+            let words = state.core.observe_words(&handle, kind, &text);
+            if matches!(words, FloorWords::Backchannel) {
+                state.open = None;
+            }
+            words
+        };
+        match words {
+            FloorWords::Backchannel => return Ok(None),
+            FloorWords::Interrupt(stop) => stops.push(stop),
+            FloorWords::Prepare => {}
+        }
+        self.prepare(token, revision, text, final_text).map(Some)
     }
 
     fn end(&self) -> Result<OutputStop, HostError> {

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4580 generated types.
+// UniFFI census: 1262 facade rows, 4584 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -54334,6 +54334,62 @@ pub enum LiveVoiceStopReason {
     SessionEnd,
 }
 
+/// `oneiron::voice_cascade::heard::HeardCoverage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HeardCoverage {
+    #[serde(rename = "full")]
+    Full,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "unplayed")]
+    Unplayed,
+}
+
+/// `oneiron::voice_cascade::heard::HeardUtterance`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HeardUtterance {
+    #[serde(rename = "submission")]
+    pub submission: u64,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "sample_rate")]
+    pub sample_rate: u32,
+    #[serde(rename = "samples")]
+    pub samples: u64,
+    #[serde(rename = "played_samples")]
+    pub played_samples: u64,
+    #[serde(rename = "coverage")]
+    pub coverage: HeardCoverage,
+    #[serde(
+        rename = "heard_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub heard_text: Option<String>,
+}
+
+/// `oneiron::voice_cascade::heard::HeardBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HeardBasis {
+    #[serde(rename = "client_report")]
+    ClientReport,
+    #[serde(rename = "sent_upper_bound")]
+    SentUpperBound,
+}
+
+/// `oneiron::voice_cascade::heard::HeardPlayback`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HeardPlayback {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "utterances")]
+    pub utterances: Vec<HeardUtterance>,
+    #[serde(rename = "basis")]
+    pub basis: HeardBasis,
+}
+
 /// `oneiron::verbs::live_voice::LiveVoiceEventKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
@@ -54394,6 +54450,11 @@ pub enum LiveVoiceEventKind {
     ToolContext {
         #[serde(rename = "source")]
         source: String,
+    },
+    #[serde(rename = "heard")]
+    Heard {
+        #[serde(rename = "playback")]
+        playback: HeardPlayback,
     },
     #[serde(rename = "finished")]
     Finished,
@@ -54461,6 +54522,12 @@ pub struct LiveVoiceAckRequest {
     pub event_sequence: u64,
     #[serde(rename = "kind")]
     pub kind: LiveVoiceAckKind,
+    #[serde(
+        rename = "played_samples",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub played_samples: Option<u64>,
 }
 
 /// `oneiron::verbs::live_voice::LiveVoiceUsageRequest`.

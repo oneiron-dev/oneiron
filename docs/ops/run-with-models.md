@@ -2244,10 +2244,17 @@ A call opens with one JSON line:
   claim, or a managed hello on a plain one, is refused.
 
 After that the stream carries:
-- **the transcript ops** (`open`, `partial`, `final`, `close`);
+- **the transcript ops** (`open`, `partial`, `final`, `close`). A `final`
+  heard as a backchannel while the agent holds the floor is answered
+  `{"op":"backchannel","handle":..,"revision":..}`: its utterance is closed
+  and no reply starts;
 - **media in:** `pcm` (STANDARD base64 of whole PCM16LE samples, at most about
-  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
-  `drained{generation}` once a `generation_end`'s audio has all played;
+  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`,
+  `drained{generation, played_samples?}` once a `generation_end`'s audio has
+  all played, and `stopped{generation, played_samples?}` once the client has
+  applied a `flush` and `playout_stop`. `played_samples` is how many of the
+  generation's samples the client actually played, counted over its `pcm`
+  frames in order, each at its own rate;
 - **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
   `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
   `memories{generation, found, heard, withheld, part, parts, receipts}` and
@@ -2267,6 +2274,22 @@ How a call runs:
 - Partials are enriched with the extraction prompt on the runtime's
   summarizer route, which must name a model that `[models]` serves.
 - The enrichment and the safeguard model run on the call's own line.
+- A backchannel does not take the floor. Speech over the agent's reply past
+  the barge-in hold (120 ms by default) is a pending interruption. It stops
+  the reply once held for 600 ms, or once its words are not a backchannel
+  ("mm-hmm", "yeah", "うん", "なるほど" and the rest of the engine's
+  lexicon). A run that ends with only a backchannel, or no words, stops
+  nothing, and a backchannel `final` while the agent holds the floor starts
+  no reply. Once the reply's audio has drained, a short final ("うん" to a
+  question) is an answer and starts a reply.
+- What the person heard is recorded apart from the generated text. Each
+  sentence handed to speech is one utterance, keyed by session, generation
+  and submission. Its played share comes from the `played_samples` that
+  `drained` or `stopped` names; without it the record counts the samples
+  sent, an upper bound. A part-played sentence's heard text needs a TTS
+  alignment, which no rung supplies yet, so it is left out. The next turn
+  hears which sentences the person heard in full when that was fewer than
+  were spoken.
 
 A full media queue makes heard audio wait for the next cut and a sentence
 wait for room. A queue that takes nothing for 30 seconds stops the reply.

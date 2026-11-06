@@ -11,10 +11,12 @@
 //! said stays in the history, marked interrupted. A turn whose stream ends
 //! without a stop keeps every word it said, marked incomplete (FIX 7808).
 //! Each safeguard notice said to the person enters the history too, and the
-//! next turn hears it. A turn assembled for a new audience revision, as after
-//! an attendee entered the call's room, starts from that audience's own
-//! history (OF-365 P5), and so does one after another call went live in the
-//! room or ended. A call heard in a room reads it again each turn, with
+//! next turn hears it. So does what the person heard of an answer, when they
+//! heard less than it handed to speech (FIX 4899): the answer keeps the words
+//! it generated, and a note beside it names the sentences heard in full. A
+//! turn assembled for a new audience revision, as after an attendee entered
+//! the call's room, starts from that audience's own history (OF-365 P5), and
+//! so does one after another call went live in the room or ended. A call heard in a room reads it again each turn, with
 //! every speaker a call live there must place; a room a missing entry holds
 //! starts no turn (FIX 3342). What a turn's memories read found, heard and
 //! withheld goes to the owner's client with the turn's first event, its
@@ -31,7 +33,10 @@ use oneiron::conversation::RoomLiveSpeakerEntries;
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
 use oneiron::store::GateSystemNoticeRecord;
-use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch, TurnMemories};
+use oneiron::voice_cascade::{
+    Brain, BrainEvent, BrainRequest, GenerationEpoch, HeardBasis, HeardCoverage, HeardPlayback,
+    TurnMemories,
+};
 use oneiron::{
     BudgetExhaustionPolicy, DisclosureContext, EntityId, LlmMessage, LlmMessageRole, LlmResponse,
     LlmStream, LlmStreamEvent, MemoriesSection, Vault, WriteActor,
@@ -631,6 +636,75 @@ impl Brain for ChatBrain {
             ));
         Ok(())
     }
+
+    /// What the person heard of `generation`'s answer enters the call's
+    /// history as System context beside the answer, which keeps the words
+    /// it generated (FIX 4899): when they heard fewer of its sentences in
+    /// full than it handed to speech, the next turn knows which. It is heard
+    /// as made from that turn's rows; a turn already answering is not
+    /// interrupted.
+    fn heard(
+        &mut self,
+        generation: GenerationEpoch,
+        playback: &HeardPlayback,
+    ) -> oneiron::Result<()> {
+        let Some(note) = heard_note(playback) else {
+            return Ok(());
+        };
+        let rows = self.said_by.get(&generation).cloned().unwrap_or_default();
+        self.history
+            .lock()
+            .map_err(|_| refused("history poisoned"))?
+            .push((text_message(LlmMessageRole::System, note), rows));
+        Ok(())
+    }
+}
+
+/// The history's note on what the person heard of an answer (FIX 4899):
+/// the sentences heard in full, then the heard part of the next one when an
+/// alignment placed it. `None` when they heard every sentence in full.
+fn heard_note(playback: &HeardPlayback) -> Option<String> {
+    let full: Vec<&str> = playback
+        .utterances
+        .iter()
+        .filter(|utterance| utterance.coverage == HeardCoverage::Full)
+        .map(|utterance| utterance.text.trim())
+        .collect();
+    if full.len() == playback.utterances.len() {
+        return None;
+    }
+    let basis = match playback.basis {
+        HeardBasis::ClientReport => "as their client reported it",
+        HeardBasis::SentUpperBound => "at most, as their client reported nothing",
+    };
+    let mut note = format!(
+        "What the person heard of the answer above ({basis}): {} of its {} sentences in full",
+        full.len(),
+        playback.utterances.len()
+    );
+    if !full.is_empty() {
+        note.push_str(": ");
+        note.push_str(
+            &full
+                .iter()
+                .map(|text| format!("\"{text}\""))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    note.push('.');
+    if let Some(part) = playback
+        .utterances
+        .iter()
+        .filter(|utterance| utterance.coverage == HeardCoverage::Partial)
+        .find_map(|utterance| utterance.heard_text.as_deref())
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        note.push_str(&format!(" Then part of the next one: \"{part}\"."));
+    }
+    note.push_str(" They did not hear the rest.");
+    Some(note)
 }
 
 impl Drop for ChatBrain {

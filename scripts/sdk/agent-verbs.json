@@ -14530,7 +14530,7 @@
     },
     {
       "name": "ai.voice.audio",
-      "description": "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path.",
+      "description": "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply.",
       "input": "crate::task_verb::sdk::LiveVoiceAudioRequest",
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.audio\", &input)?",
@@ -14545,7 +14545,7 @@
     },
     {
       "name": "ai.voice.events",
-      "description": "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events.",
+      "description": "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events.",
       "input": "crate::task_verb::sdk::LiveVoiceEventsRequest",
       "output": "crate::task_verb::sdk::LiveVoiceEvents",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.events\", &input)?",
@@ -14559,7 +14559,7 @@
     },
     {
       "name": "ai.voice.ack",
-      "description": "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed.",
+      "description": "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on.",
       "input": "crate::task_verb::sdk::LiveVoiceAckRequest",
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.ack\", &input)?",

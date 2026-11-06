@@ -17,7 +17,7 @@ use super::retrieval::invalid;
 use super::{
     AsrEvent, AsrEventKind, BrainEvent, BrainRequest, ControlEvent, GenerationEpoch, OutputStop,
     PartialEnricher, PartialRetrieval, PcmFrame, SafeguardRequest, SentenceEnforcement,
-    SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent, UtteranceHandle,
+    SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent, UtteranceHandle, backchannel,
 };
 
 #[path = "preparation.rs"]
@@ -28,6 +28,12 @@ pub use preparation::PreparedAsr;
 /// not place stays open: the ask door's own default for an ask with no
 /// class (CALLS.md: FIX 1388 ask expiry).
 pub const VOICE_IDENTITY_ASK_SECONDS: u64 = 24 * 60 * 60;
+
+/// How long the person's speech over the agent's output runs before it
+/// takes the floor whatever it says (CALLS, FIX 4899): an engine call. A
+/// shorter run past the barge-in hold stops the output only once its words
+/// are not a backchannel (ARCH-0061 #backchannel).
+pub const SUSTAINED_INTERRUPTION_HOLD: Duration = Duration::from_millis(600);
 
 /// A voice session's trusted binding to the committed container it is
 /// heard in (OF-365 P5). Only the host's auth layer supplies it, never a
@@ -56,7 +62,10 @@ pub struct VoiceSessionConfig {
     /// resolution is re-read at each final, not copied into another identity DB.
     pub interlocutors: InterlocutorResolutionInput,
     pub tools_enabled: bool,
-    /// Must be within 100–150 ms. Default 120 ms.
+    /// Must be within 100–150 ms. Default 120 ms. Speech held this long
+    /// over the agent's output is a pending interruption (FIX 4899): it
+    /// stops the output at [`SUSTAINED_INTERRUPTION_HOLD`], or once its
+    /// words are not a backchannel.
     pub barge_in_hold: Duration,
     pub policy_world_ref: Option<String>,
     pub policy_caller_ref: Option<String>,
@@ -103,6 +112,21 @@ pub enum AsrUpdate {
     Endpoint,
     Error(String),
     Closed(OutputStop),
+}
+
+/// What the person's words did to the floor the agent holds (FIX 4899).
+#[must_use = "dispatch an interruption's stop, then prepare the words unless they were a backchannel"]
+#[derive(Debug)]
+pub enum FloorWords {
+    /// Prepare the words as usual: the agent does not hold the floor, or
+    /// the words leave it with the agent.
+    Prepare,
+    /// The words took the floor. Dispatch the stop before another playback
+    /// dequeue, then prepare them.
+    Interrupt(OutputStop),
+    /// A backchannel final while the agent held the floor: its utterance
+    /// is closed, it starts no reply, and it is not queued for later.
+    Backchannel,
 }
 
 #[must_use = "deliver backend status and dispatch any output stop before playback"]
@@ -153,6 +177,9 @@ pub struct VoiceCascadeSession {
     ended: bool,
     speech_started: Option<Duration>,
     speech_latched: bool,
+    /// A speech run passed the barge-in hold while the agent held the
+    /// floor, and neither a stop nor its words settled it yet (FIX 4899).
+    interruption_pending: bool,
     last_speech_observation: Option<Duration>,
     preparation_serial: u64,
     prepared_asr: Option<PreparedAsr>,
@@ -184,6 +211,7 @@ impl VoiceCascadeSession {
             ended: false,
             speech_started: None,
             speech_latched: false,
+            interruption_pending: false,
             last_speech_observation: None,
             preparation_serial: 0,
             prepared_asr: None,
@@ -570,6 +598,11 @@ impl VoiceCascadeSession {
     /// speech since the previous observation; ANY silence resets the hold.
     /// Sparse partial text or endpoint timing is never used as a speech clock.
     /// One interruption per continuous speech interval; backward time is refused.
+    /// A backchannel does not take the floor (FIX 4899): speech held past the
+    /// barge-in hold over the agent's output is a pending interruption, and
+    /// it stops the output once held to [`SUSTAINED_INTERRUPTION_HOLD`], or
+    /// once its words are not a backchannel ([`Self::observe_words`]). A run
+    /// that ends in silence stops nothing.
     pub fn observe_speech(&mut self, now: Duration, speaking: bool) -> Result<Option<OutputStop>> {
         self.require_open()?;
         if self.last_speech_observation.is_some_and(|last| now < last) {
@@ -582,17 +615,67 @@ impl VoiceCascadeSession {
             return Ok(None);
         }
         let started = *self.speech_started.get_or_insert(now);
-        if self.speech_latched || now - started < self.config.barge_in_hold {
+        let held = now - started;
+        if self.speech_latched || held < self.config.barge_in_hold {
             return Ok(None);
         }
+        // Idle speech does not spend this interval's interruption. A final may
+        // start output while the same continuous speech is still in progress.
         if self.generation.is_none() {
             return Ok(None);
         }
+        self.interruption_pending = true;
+        if held < SUSTAINED_INTERRUPTION_HOLD {
+            return Ok(None);
+        }
+        Ok(Some(self.interrupt()))
+    }
+
+    /// The person's words while the agent holds the floor (FIX 4899,
+    /// ARCH-0061 #backchannel), before the host prepares them. Words that
+    /// are not a backchannel, heard while a speech run's interruption is
+    /// pending, take the floor: the output stops, and the words go on to be
+    /// prepared. A backchannel final while the agent holds the floor starts
+    /// no reply: its utterance closes, and nothing waits for it. Words with
+    /// no interruption pending, words of an utterance not open, and every
+    /// word once the agent's playout drained, are prepared as usual.
+    pub fn observe_words(
+        &mut self,
+        handle: &UtteranceHandle,
+        kind: AsrEventKind,
+        text: &str,
+    ) -> FloorWords {
+        if self.ended
+            || self.generation.is_none()
+            || !matches!(kind, AsrEventKind::Partial | AsrEventKind::Final)
+            || !self.retrieval.is_open(handle)
+            || !backchannel::has_words(text)
+        {
+            return FloorWords::Prepare;
+        }
+        if !backchannel::is_backchannel(text) {
+            return if self.interruption_pending {
+                FloorWords::Interrupt(self.interrupt())
+            } else {
+                FloorWords::Prepare
+            };
+        }
+        if kind != AsrEventKind::Final {
+            return FloorWords::Prepare;
+        }
+        // The run's words were a backchannel: they settle its interruption.
+        self.interruption_pending = false;
+        self.close_utterance(handle);
+        FloorWords::Backchannel
+    }
+
+    /// The person took the floor from the live generation.
+    fn interrupt(&mut self) -> OutputStop {
         let stop = self.stop_generation(StopReason::UserBargeIn, true);
-        // Idle speech does not spend this interval's interruption. A final may
-        // start output while the same continuous speech is still in progress.
-        self.speech_latched = true;
-        Ok(Some(stop))
+        // One interruption per continuous speech interval: a run still in
+        // progress spends it.
+        self.speech_latched = self.speech_started.is_some();
+        stop
     }
 
     /// Check at BOTH enqueue and dequeue in the audio sibling. This also accepts
@@ -637,6 +720,7 @@ impl VoiceCascadeSession {
         self.generation = None;
         self.prepared_asr = None;
         self.preparation_active = false;
+        self.interruption_pending = false;
         Ok(true)
     }
 
@@ -825,6 +909,7 @@ impl VoiceCascadeSession {
     fn stop_generation(&mut self, reason: StopReason, cancel_llm: bool) -> OutputStop {
         self.prepared_asr = None;
         self.preparation_active = false;
+        self.interruption_pending = false;
         let generation = self
             .generation
             .as_ref()
