@@ -333,12 +333,22 @@ impl TreeSink for Document {
             None
         };
 
-        let data = NodeData::Element(Element::new(
-            name,
-            attrs,
-            template_contents,
-            flags.mathml_annotation_xml_integration_point,
-        ));
+        let element = match self.tree.take_prepared_attributes() {
+            Some(prepared) => Element::new_with_prepared_attributes(
+                name,
+                attrs,
+                template_contents,
+                flags.mathml_annotation_xml_integration_point,
+                prepared,
+            ),
+            None => Element::new(
+                name,
+                attrs,
+                template_contents,
+                flags.mathml_annotation_xml_integration_point,
+            ),
+        };
+        let data = NodeData::Element(element);
 
         nodes.push(TreeNode::new(new_elem_id, data));
 

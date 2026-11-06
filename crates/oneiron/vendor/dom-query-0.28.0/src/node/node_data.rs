@@ -8,7 +8,8 @@ use selectors::attr::CaseSensitivity;
 use tendril::StrTendril;
 
 use super::NodeId;
-use crate::entities::{into_tendril, wrap_attrs, wrap_tendril, Attr, StrWrap};
+use crate::dom_tree::attributes::{AttributeReservation, PreparedAttributes};
+use crate::entities::{into_tendril, wrap_attr, wrap_attrs, wrap_tendril, Attr, StrWrap};
 
 fn contains_class(classes: &str, target_class: &str) -> bool {
     classes.split_ascii_whitespace().any(|c| c == target_class)
@@ -77,6 +78,9 @@ pub struct Element {
     /// (ASCII case-insensitive), making it an integration point for HTML.
     /// See the HTML parsing spec for "`MathML` annotation-xml integration points".
     pub mathml_annotation_xml_integration_point: bool,
+
+    // Attribute storage is freed before its parser admission is returned.
+    pub(crate) attrs_reservation: Option<AttributeReservation>,
 }
 
 impl Element {
@@ -92,6 +96,26 @@ impl Element {
             attrs: wrap_attrs(attrs),
             template_contents,
             mathml_annotation_xml_integration_point,
+            attrs_reservation: None,
+        }
+    }
+
+    pub(crate) fn new_with_prepared_attributes(
+        name: QualName,
+        attrs: Vec<Attribute>,
+        template_contents: Option<NodeId>,
+        mathml_annotation_xml_integration_point: bool,
+        mut prepared: PreparedAttributes,
+    ) -> Self {
+        for attr in attrs {
+            prepared.attrs.push(wrap_attr(attr));
+        }
+        Self {
+            name,
+            attrs: prepared.attrs,
+            template_contents,
+            mathml_annotation_xml_integration_point,
+            attrs_reservation: prepared.reservation,
         }
     }
 
@@ -249,11 +273,16 @@ impl Element {
             .map(|e| e.name.clone())
             .collect::<Vec<_>>();
 
-        self.attrs.extend(
-            attrs
-                .into_iter()
-                .filter(|attr| !existing_names.contains(&attr.name)),
-        );
+        let missing = attrs
+            .into_iter()
+            .filter(|attr| !existing_names.contains(&attr.name));
+        if self.attrs_reservation.is_some() {
+            for attr in missing {
+                self.attrs.push(attr);
+            }
+        } else {
+            self.attrs.extend(missing);
+        }
     }
 
     /// Renames the element.

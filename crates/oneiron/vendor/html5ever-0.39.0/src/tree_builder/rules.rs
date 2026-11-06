@@ -426,6 +426,9 @@ where
                     if !self.in_html_elem_named(local_name!("template")) {
                         let open_elems = self.open_elems.borrow();
                         let top = html_elem(&open_elems);
+                        if !self.before_tree_sink_operation(TreeSinkOperation::AddAttributes(top, &tag.attrs)) {
+                            return ProcessResult::Stopped;
+                        }
                         self.sink.add_attrs_if_missing(top, tag.attrs);
                     }
                     ProcessResult::Done
@@ -445,6 +448,9 @@ where
                                 && !self.in_html_elem_named(local_name!("template")) =>
                         {
                             self.frameset_ok.set(false);
+                            if !self.before_tree_sink_operation(TreeSinkOperation::AddAttributes(node, &tag.attrs)) {
+                                return ProcessResult::Stopped;
+                            }
                             self.sink.add_attrs_if_missing(node, tag.attrs)
                         },
                         _ => {},

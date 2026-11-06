@@ -1436,7 +1436,7 @@ where
         attrs: Vec<Attribute>,
         had_duplicate_attributes: bool,
     ) -> Option<Handle> {
-        if !self.before_tree_sink_operation(TreeSinkOperation::CreateElement(&name)) {
+        if !self.before_tree_sink_operation(TreeSinkOperation::CreateElement(&name, attrs.len())) {
             return None;
         }
         Some(create_element_with_flags(&self.sink, name, attrs, had_duplicate_attributes))

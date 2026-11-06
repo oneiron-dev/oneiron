@@ -211,7 +211,7 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                         .reserve_vec(&mut document.errors.borrow_mut(), 1)?;
                     return Ok(());
                 }
-                let additional = arena_slots(document, operation);
+                let additional = arena_slots(document, &operation);
                 if additional != 0 {
                     if let Some(replacement) = document
                         .tree
@@ -225,6 +225,26 @@ pub(super) fn parse_document(html: &str, budget: &Budget) -> Result<HtmlDocument
                         // Native replacement freed the old block before returning.
                         current.lock().unwrap_or_else(PoisonError::into_inner).nodes = replacement;
                     }
+                }
+                match operation {
+                    TreeSinkOperation::CreateElement(_, count) => document
+                        .tree
+                        .try_prepare_parser_attributes(
+                            count,
+                            |bytes| reserve(&budget, bytes),
+                            Backing::resize,
+                        )
+                        .map_err(arena_error)?,
+                    TreeSinkOperation::AddAttributes(target, attrs) => document
+                        .tree
+                        .try_reserve_parser_added_attributes(
+                            target,
+                            attrs,
+                            |bytes| reserve(&budget, bytes),
+                            Backing::resize,
+                        )
+                        .map_err(arena_error)?,
+                    _ => {}
                 }
                 Ok(())
             })
@@ -275,15 +295,15 @@ fn tendril_error(
     }
 }
 
-fn arena_slots(document: &Document, operation: TreeSinkOperation<'_, NodeId>) -> usize {
+fn arena_slots(document: &Document, operation: &TreeSinkOperation<'_, NodeId>) -> usize {
     match operation {
-        TreeSinkOperation::CreateElement(name) => {
+        TreeSinkOperation::CreateElement(name, _) => {
             1 + usize::from(
                 name.ns == html5ever::ns!(html) && name.local == html5ever::local_name!("template"),
             )
         }
         TreeSinkOperation::CreateComment | TreeSinkOperation::Doctype => 1,
-        TreeSinkOperation::ParseError => 0,
+        TreeSinkOperation::ParseError | TreeSinkOperation::AddAttributes(_, _) => 0,
         TreeSinkOperation::Append(parent, child) => append_slots(document, parent, child),
         TreeSinkOperation::BeforeSibling(sibling, child) => sibling_slots(document, sibling, child),
         TreeSinkOperation::BasedOnParent(element, previous, child) => {
