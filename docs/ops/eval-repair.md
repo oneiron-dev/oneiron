@@ -90,3 +90,28 @@ stages; this call does not promise rollback of the whole setup. Existing setup
 calls and the receipt-based automatic authoring plan are unchanged. The new
 facade setup uses the existing owner-host admission policy; this is not a claim
 of room-turn support for owner-host doors.
+
+## Native source-bound Coach jobs
+
+The native `Memory::request_eval_repair_authoring` captures the original source
+reader privately in the existing Coach job payload. It takes the same nomination
+filter and an authenticated owner for the request write. Each explicit request
+keeps its own job and context; it does not replace or coalesce with another
+requester or the existing nightly authoring sweep.
+
+`Vault::coach_eval_repair_authoring_source` reads the canonical `coach.host` job,
+its validated Coach stamp, and its current lease owner and generation before
+restoring that reader. A Coach facet string or a caller-supplied decoded payload
+is not sufficient. The returned opaque source exposes metadata-only nominations,
+not the stored reader or task bodies. Its `record_case` accepts only an exact
+successful nomination, then rechecks the same canonical payload, stamp and lease
+inside the case writer. It shares the existing source projection, full task
+rebuild, family-before-case admission, and exact case reuse machinery. It does
+not fabricate owner proof for a background job.
+
+This is a native source/write interface, not a published automatic-authoring
+endpoint. The server's loaded-skill input/output, scoped Skill-authored cuts,
+retirements, and read-set integration still need a consumer for this explicit
+job. Existing manual owner calls and receipt-based nightly authoring are
+unchanged. No new source ledger, training permission, label, or read grant is
+created.

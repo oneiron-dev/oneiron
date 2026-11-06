@@ -194,7 +194,7 @@ pub use self::eval_set::{
     MeasurementUnavailable, ScoreDirection, eval_seat_canary,
 };
 pub use self::eval_set::{
-    EvalRepairAction, EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe,
+    COACH_EVAL_REPAIR_AUTHORING_FACET, EvalRepairAuthoringSource, EvalRepairAction, EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe,
     EvalRepairCaseReference, EvalRepairCaseRequest, EvalRepairGrader, EvalRepairPrecondition,
     EvalRepairNominationRequest, EvalRepairNominations, EvalRepairSourceNominations,
     EvalRepairTask, EvalRepairTaskRead, EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
