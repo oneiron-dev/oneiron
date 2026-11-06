@@ -1,6 +1,7 @@
 //! A checkpoint restore across a shared-vault owner handover (FIX 5765): the
-//! exact rows a valid `OwnerHandover` names restore as the live vault holds
-//! them, so the restore proceeds, the demotion stays in force and demoted
+//! exact rows a valid `OwnerHandover`, or the handover a valid carrier-signed
+//! membership execution record carries (FIX 12335), names restore as the
+//! live vault holds them, so the restore proceeds, the demotion stays in force and demoted
 //! authority never comes back. The FEDERATION_GRANT rows it wrote, bodies and
 //! shells, and the shells of the own-device grants it retired; and the five
 //! shared-act families of the act and receipt it signed, each by its exact
