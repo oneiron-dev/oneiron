@@ -4709,6 +4709,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_drafters_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.drafters.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.drafters.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_drafters_list_as(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.drafters.list_as")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.drafters.list_as", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_drafters_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.drafters.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.drafters.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_drafters_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.drafters.policy.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.drafters.policy.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_drafters_revert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.drafters.revert")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.drafters.revert", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_drafters_revert_as(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.drafters.revert_as")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.drafters.revert_as", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_research_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.research.bind")?;
         let output = py
