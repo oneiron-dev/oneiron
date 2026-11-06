@@ -1,7 +1,7 @@
 //! Idempotency validators: turn/message existence, parent/actor binding, order collision axes.
 
 use super::super::*;
-use super::codec::decode_witness_turn_person;
+use super::codec::{decode_witness_turn_person, turn_speaker_author};
 use super::decode_witness_turn_speaker;
 use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityRecord, EntityStoreRead};
@@ -237,6 +237,26 @@ pub(crate) fn taken_witness_message_order(
         }
     }
     Ok(None)
+}
+
+/// The author bucket a stored TURN's speaker stamp names, so a writer that
+/// lands a later revision under that TURN keeps the speaker it was born with.
+/// `None` for a TURN not stored yet, or one whose stamp names no bucket: the
+/// write door then judges the incoming speaker as it always does.
+pub(crate) fn stored_witness_turn_author(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    turn_id: &EntityId,
+) -> MemoryResult<Option<WitnessAuthor>> {
+    let Some(raw) = dbs.port_entity_record(txn, turn_id)? else {
+        return Ok(None);
+    };
+    if raw.entity_type != ENTITY_TYPE_TURN {
+        return Ok(None);
+    }
+    Ok(decode_witness_turn_speaker(&raw.body)
+        .ok()
+        .and_then(turn_speaker_author))
 }
 
 /// The first order after every MESSAGE a stored TURN holds (0 for a turn not

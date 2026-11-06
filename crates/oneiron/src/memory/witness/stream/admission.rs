@@ -734,6 +734,28 @@ fn committed_body(
         rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("message body"))?,
     ))
 }
+/// The writer a MESSAGE's birth names when a native door wrote it: its row
+/// birth's actor, under a TURN that carries no import stamp. An imported or
+/// archived row's words came from its source, not from whoever landed them,
+/// so it names no writer here; nor does a MESSAGE with no stamped birth.
+fn native_birth_writer(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> MessageStreamResult<Option<EntityId>> {
+    let Some(turn) =
+        crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &seed.turn)?
+    else {
+        return Ok(None);
+    };
+    if super::super::codec::import_stamp(&turn.body) != super::super::codec::ImportStamp::Live {
+        return Ok(None);
+    }
+    Ok(
+        crate::store::birth_record::row_birth_in_txn(&vault.store, txn, &seed.message_id)?
+            .map(|birth| birth.made_by.process.actor),
+    )
+}
 /// Revalidate immutable axes/topology in the same snapshot used for a continuation.
 pub(super) fn committed_text(
     vault: &Vault,
@@ -745,9 +767,17 @@ pub(super) fn committed_text(
     };
     if !seed.author.names_writer() {
         // System and counterparty rows intentionally have no AuthoredBy edge.
-        // Only a stream's durable actor-bound receipt proves which writer may
-        // continue.
-        if storage::receipt(vault, txn, seed.message_id)?.is_none_or(|r| r.actor != seed.actor) {
+        // A stream's durable actor-bound receipt proves which writer may
+        // continue. A counterparty MESSAGE committed atomically has none: its
+        // native birth names its writer instead.
+        let writer = match storage::receipt(vault, txn, seed.message_id)? {
+            Some(receipt) => Some(receipt.actor),
+            None if seed.author == crate::memory::WitnessAuthor::Counterparty => {
+                native_birth_writer(vault, txn, seed)?
+            }
+            None => None,
+        };
+        if writer != Some(seed.actor) {
             return Err(MessageStreamError::WrongActor);
         }
     }
