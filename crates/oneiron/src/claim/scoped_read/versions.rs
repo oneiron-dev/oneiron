@@ -409,6 +409,21 @@ impl ScopedRead<'_> {
             .into_owned();
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
+        } else if raw.first() == Some(&crate::registry::ENTITY_TYPE_NOTE) {
+            // A retained revision of a NOTE is its birth row: it reads with
+            // its birth text, never its head's (FIX 7783).
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            let body = crate::note::birth_body_from_in_txn(
+                &self.store_read(),
+                txn,
+                id,
+                header.entity_type,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?
+            .into_owned();
+            raw.truncate(ENTITY_METADATA_HEADER_LEN);
+            raw.extend_from_slice(&body);
         }
         Ok(Some(AdmittedRevision { raw, content_hash }))
     }

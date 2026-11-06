@@ -360,26 +360,33 @@ impl BatchBuilder<'_> {
         self
     }
 
-    /// Adds the actor-attributed NOTE put behind
+    /// Adds the actor-attributed NOTE birth behind
     /// [`Memory::author_take`](crate::memory::Memory::author_take)
     /// — the only door that may write `ENTITY_TYPE_NOTE`, since the raw put
     /// rejects the type outright.
     ///
     /// The typed door earns that bypass rather than inheriting it: it decodes
-    /// the body under the pinned NOTE ABI and requires the stored
+    /// `core` under the pinned NOTE row ABI and requires the stored
     /// `author_ref` to be `author`, the actor the caller has already verified
     /// against the store in this transaction. What the raw door cannot do is
     /// name that actor; this one is handed it.
+    ///
+    /// The row is the NOTE's immutable core alone (FIX 7783). `markdown` is
+    /// its explicit birth text: the transaction that applies the batch births
+    /// the NOTE's document from it after every op, with its snapshot, state
+    /// vector and initial text index entry (`note::birth_document_in_txn`).
     pub(crate) fn put_authored_note(
         mut self,
         id: &EntityId,
         author: &EntityId,
         occurred: TimeRange,
         learned_at: u64,
-        data: &[u8],
+        core: &[u8],
+        markdown: &str,
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = validate_authored_note_body(author, data)
+            && let Err(e) = validate_authored_note_body(author, core)
+                .and_then(|()| crate::note::validate_markdown(markdown))
         {
             self.validation_error = Some(e);
         }
@@ -388,8 +395,9 @@ impl BatchBuilder<'_> {
             crate::registry::ENTITY_TYPE_NOTE,
             occurred,
             learned_at,
-            data,
+            core,
         ));
+        self.note_births.push((*id, markdown.to_owned()));
         self
     }
 

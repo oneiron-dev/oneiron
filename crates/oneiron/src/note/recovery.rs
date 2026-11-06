@@ -44,12 +44,6 @@ pub(crate) fn guard(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId) -> Res
     if vault.local_hard_delete_marker_exists_in_txn(txn, &note)? {
         return Err(invalid("erased NOTE cannot be recovered"));
     }
-    #[cfg(feature = "sync")]
-    if crate::entity_doc::has_record_head(&vault.store, txn, &note)? {
-        return Err(invalid(
-            "generic EntityDoc recovery needs its own value adapter",
-        ));
-    }
     if SYNC_DS_E.contains(&vault.store, txn, &HexId(note))?
         || SYNC_QN_E
             .iter_from(&vault.store, txn, format!("{}:", note.to_hex()).as_bytes())?

@@ -91,7 +91,8 @@ impl RowBody<'_> {
 }
 
 /// Historical/archive-only NOTE rows may intentionally carry a different
-/// body. Only the NOTE codec's live rows use its editor.
+/// body. Only the NOTE codec's live rows, its stored cores, use its editor:
+/// each is exported as its core and its document's live text (FIX 7783).
 fn note_body<'b>(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
@@ -100,7 +101,7 @@ fn note_body<'b>(
     body: &'b [u8],
 ) -> Result<Cow<'b, [u8]>> {
     if entity_type == ENTITY_TYPE_NOTE
-        && crate::store::note_body::decode_note_body_using(
+        && crate::store::note_body::decode_note_core_using(
             body,
             crate::store::note_body::NoteKind::wire,
         )
