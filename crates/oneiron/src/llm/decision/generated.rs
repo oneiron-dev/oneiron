@@ -537,6 +537,7 @@ fn answers(
                     paired,
                     person: None,
                     served: None,
+                    cost_per_thousand: None,
                 };
             };
             let mut top = 0;
@@ -557,6 +558,7 @@ fn answers(
                 paired,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             }
         })
         .collect())

@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::config::models::{BigReply, BigSettings};
 use crate::models::{CallDeadline, ModelRuntime};
 
+mod cost;
 mod joint;
 mod note;
 mod route;
@@ -434,6 +435,7 @@ fn abstained() -> ProviderDecision {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     }
 }
 
@@ -550,6 +552,7 @@ impl DecisionModel for BigModel {
                 .map_err(|_| failed("model trial usage lock"))?
                 .push(response.usage.clone());
         }
+        let cost = self.completion_cost(&binding.rung.model, &response.usage);
         let served = served.map(|model| ProviderPin {
             rung: self.pin.rung,
             model: model.to_string(),
@@ -570,7 +573,11 @@ impl DecisionModel for BigModel {
             let decision = joint
                 .decision(&call.question.contract, response.token_scores.as_ref())
                 .unwrap_or_else(abstained);
-            return Ok(ProviderDecision { served, ..decision });
+            return Ok(ProviderDecision {
+                served,
+                cost_per_thousand: Some(cost),
+                ..decision
+            });
         }
         let Some((answer, probability)) = self.reply.read(&text) else {
             return Ok(ProviderDecision {
@@ -585,6 +592,7 @@ impl DecisionModel for BigModel {
                 paired: None,
                 person: None,
                 served,
+                cost_per_thousand: Some(cost),
             },
             None => ProviderDecision {
                 served,
