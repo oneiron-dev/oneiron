@@ -16,8 +16,13 @@
 //! None of it runs without a mesh: a link with no peer dialer
 //! (`SyncClientConfig::peer_dialer`, set only while a mesh listener runs
 //! here) never counts its home down.
+//!
+//! The serving side reads [`authority_fold_settled`]: a machine serves a
+//! peer only while its own authority fold is settled. Both ends leave a
+//! [`PeerSyncReceipt`] naming the other machine and the session.
 
 use crate::error::Result;
+use crate::sync::mesh_path::{MeshPathDirection, MeshPathOutcome, MeshPathReceipt, SYNC_ALPN};
 use crate::sync::transport;
 use crate::{EntityId, Vault};
 
@@ -125,4 +130,114 @@ pub const fn peer_ignores_frame(tag: u8) -> bool {
         transport::TAG_SEALED_UPDATE | transport::TAG_LEAF_KEY_REQUEST
             ..=transport::TAG_LEAF_KEY_FAILURE | transport::TAG_LEASE_GRANTED
     )
+}
+
+/// FIX 4748 engine call (CALLS "FIX 4748 peer serve settled fold"): whether
+/// this machine's authority fold is settled enough to serve a peer; it fails
+/// closed otherwise ("It fails closed while the authority fold is
+/// unsettled"). Settled is all of: the fold reads (no history it lacks
+/// refuses it), its vault root is not in conflict, every row its own rows
+/// and checkpoint name is held ([`Vault::authority_missing_history`]), and
+/// this machine's own chains do not rest on an unsettled roster root (no
+/// chain `admitter_unsettled`, the retired-signer conflict mark).
+///
+/// # Errors
+///
+/// Storage errors, and a fold fault other than missing history.
+pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
+    {
+        let txn = vault.store.env.read_txn()?;
+        let fold = match vault.authority_view_readonly_in_txn(&txn) {
+            Ok(fold) => fold,
+            Err(error) if crate::authority::is_history_incomplete(&error) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if fold.vault_root_is_conflicted() {
+            return Ok(false);
+        }
+        let Some(local) = crate::identity::read_machine_id_in_txn(vault, &txn)? else {
+            return Ok(false);
+        };
+        let settled = fold
+            .machine(local)
+            .is_some_and(|machine| !machine.chains().any(|(_, chain)| chain.admitter_unsettled));
+        if !settled {
+            return Ok(false);
+        }
+    }
+    Ok(vault.authority_missing_history()?.is_complete())
+}
+
+/// The part one end of a peer sync session plays (FIX 4748).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerSyncPart {
+    /// This machine dialed the peer while its home was down.
+    Asked,
+    /// This machine served the peer that dialed it.
+    Served,
+}
+
+impl PeerSyncPart {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Asked => "asked",
+            Self::Served => "served",
+        }
+    }
+}
+
+/// One end's receipt of a peer sync session (FIX 4748: "both ends write a
+/// receipt"), so the owner can see which peer served whom. It is a mesh path
+/// receipt row ([`MeshPathReceipt`], local only, never synced) on the sync
+/// ALPN: `machine` names the other machine, `direction` this end's part, and
+/// `detail` the session, by the upgrade proof's nonce both ends read, with
+/// this end's part or why it refused. It is written when the session opens
+/// or is refused, and again with its close time when it ends.
+#[derive(Debug, Clone)]
+pub struct PeerSyncReceipt {
+    receipt: MeshPathReceipt,
+}
+
+impl PeerSyncReceipt {
+    /// Leaves the receipt of session `session` with `peer`, which this end
+    /// played as `part`; `refused` names why this end refused it, and the
+    /// receipt is then `Refused`. A receipt that does not land is logged.
+    #[must_use]
+    pub fn leave(
+        vault: &Vault,
+        part: PeerSyncPart,
+        peer: EntityId,
+        session: &str,
+        refused: Option<&str>,
+    ) -> Self {
+        let direction = match part {
+            PeerSyncPart::Asked => MeshPathDirection::Outbound,
+            PeerSyncPart::Served => MeshPathDirection::Inbound,
+        };
+        let outcome = match refused {
+            Some(_) => MeshPathOutcome::Refused,
+            None => MeshPathOutcome::Admitted,
+        };
+        let mut receipt = MeshPathReceipt::new(direction, outcome, SYNC_ALPN);
+        receipt.machine = Some(peer.to_hex());
+        let part = part.label();
+        receipt.detail = Some(match refused {
+            Some(reason) => format!("peer sync session {session}: {part}, refused: {reason}"),
+            None => format!("peer sync session {session}: {part}"),
+        });
+        if let Some(id) = vault.leave_mesh_path_receipt(&receipt) {
+            receipt.id = id;
+        }
+        Self { receipt }
+    }
+
+    /// Writes the session's end on its receipt; one that never landed stays
+    /// unwritten.
+    pub fn close(mut self, vault: &Vault) {
+        if self.receipt.id.is_empty() {
+            return;
+        }
+        self.receipt.closed_at_ms = Some(crate::unix_millis_now());
+        let _ = vault.leave_mesh_path_receipt(&self.receipt);
+    }
 }

@@ -39,6 +39,9 @@ pub(super) async fn handle_sync_message(
                 .await
                 .map(ControlFlow::Continue)
         }
+        // The leaf-key relay is the home's: a peer's socket carries none
+        // (FIX 4748).
+        SyncMessage::LeafKey { .. } if conn_state.peer_served => Ok(ControlFlow::Continue(())),
         SyncMessage::LeafKey { tag, payload } => {
             super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
                 .map(ControlFlow::Continue)
@@ -162,6 +165,15 @@ pub(super) async fn handle_sync_message(
             for encoded in canonical_ephemeral_frames(server, &states)? {
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             }
+            Ok(ControlFlow::Continue(()))
+        }
+        // The lease registrar writes the root, which is the home's: a peer
+        // answers no lease request (FIX 4748).
+        SyncMessage::LeaseRequest { .. } if conn_state.peer_served => {
+            tracing::debug!(
+                conn_id,
+                "lease request left to the home: this socket is a peer's"
+            );
             Ok(ControlFlow::Continue(()))
         }
         SyncMessage::LeaseRequest {
@@ -404,6 +416,20 @@ fn answer_app_message(
                 ProtocolError::InvalidPayload("invalid RPC request")
             }
         })?;
+        // FIX 4748: a peer serves state only. The residence lane (owed
+        // machine history, authority log ranges and checkpoints, sealed
+        // bundles, home handoffs) is the home's; each call is refused.
+        if state.peer_served && request.method.starts_with("residence.") {
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            for frame in crate::livequery::peer_refused_rpc(server, request)?.queued(conn) {
+                direct_tx
+                    .send(frame)
+                    .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            }
+            return Ok(None);
+        }
         if request.method == "auth.bind" {
             let binding = (|| {
                 // A bind is the connection's, and carries no call context.

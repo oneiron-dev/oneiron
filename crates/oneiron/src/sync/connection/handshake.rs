@@ -298,6 +298,10 @@ impl SyncConnection {
                     let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                 }
             }
+            // A peer session's receipt takes its end (FIX 4748).
+            if let Some(receipt) = client.peer_receipt.take() {
+                receipt.close(self.manager.vault());
+            }
 
             if !renegotiate && !home_returned && !self.config.auto_reconnect {
                 break;
@@ -330,6 +334,10 @@ impl SyncConnection {
             }
         }
 
+        // A peer session the run ended in takes its end too (FIX 4748).
+        if let Some(receipt) = client.peer_receipt.take() {
+            receipt.close(self.manager.vault());
+        }
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);
@@ -494,6 +502,17 @@ impl SyncConnection {
             return Err(format!(
                 "peer {} proved no machine of its own on the upgrade; no peer session",
                 peer.to_hex()
+            ));
+        }
+        // This end's receipt of the session, by the upgrade proof's nonce,
+        // which the serving end reads too.
+        if let Some(peer) = peer {
+            client.peer_receipt = Some(crate::sync::peer_route::PeerSyncReceipt::leave(
+                self.manager.vault(),
+                crate::sync::peer_route::PeerSyncPart::Asked,
+                peer,
+                binding.map_or("unbound", |binding| binding.nonce.as_str()),
+                None,
             ));
         }
 

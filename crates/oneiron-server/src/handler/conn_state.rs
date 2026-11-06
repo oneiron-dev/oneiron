@@ -82,6 +82,11 @@ pub(super) struct ConnState {
     /// The peer asked for sealed world updates on this socket: stored ones
     /// are pushed to it from then on.
     pub(super) sealed_updates_live: bool,
+    /// This machine serves the socket as a peer of another machine of its
+    /// vault while their home is down (FIX 4748, `handler::peer_serve`): it
+    /// serves state only, and none of the home's residence lane, lease
+    /// registrar, sealed update relay or leaf-key relay.
+    pub(super) peer_served: bool,
 }
 
 impl ConnState {
@@ -114,6 +119,7 @@ impl ConnState {
             asset_bodies: std::sync::Mutex::default(),
             sealed_world_updates: false,
             sealed_updates_live: false,
+            peer_served: false,
         }
     }
 

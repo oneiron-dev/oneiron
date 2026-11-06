@@ -122,6 +122,9 @@ pub struct SyncClient {
     /// session confirms nothing: no queue or document journal clears on its
     /// answers, and it takes none of the home's relays or roles.
     pub(crate) peer_session: Option<crate::EntityId>,
+    /// The open peer session's receipt, written again with its end (FIX
+    /// 4748); `None` for a home session.
+    pub(crate) peer_receipt: Option<crate::sync::peer_route::PeerSyncReceipt>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -237,6 +240,7 @@ impl SyncClient {
             sealed_updates: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
             peer_session: None,
+            peer_receipt: None,
             status: SyncStatus::Disconnected,
             event_tx,
         };
