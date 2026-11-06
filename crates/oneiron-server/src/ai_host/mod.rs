@@ -43,6 +43,7 @@ mod confession_wording;
 mod connector_event;
 pub(crate) use connector_event::{repair_connector_reply_witnesses, run_connector_reply_job};
 mod contribution;
+mod drafter;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
 mod dreamer_thing;
