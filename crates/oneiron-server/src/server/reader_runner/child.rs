@@ -139,7 +139,7 @@ impl Child {
         // A scoped child its own host profiled (FIX 7508) runs on that
         // profile's backend and its parent's meter, never the host's.
         if let Some(profile) = self.profile() {
-            return self.metered_on_profile(vault, session, door, &profile);
+            return self.metered_on_profile(vault, session, door, &profile, caller);
         }
         let (guard, recorded) = match self.meter(vault) {
             Ok(meter) => meter,
@@ -507,7 +507,8 @@ impl Child {
             Ok(reactor) => reactor,
             Err(error) => return failed("reader_reactor_failed", &error),
         };
-        let mut compaction = compaction.and_then(|binding| self.compaction(&dispatcher, binding));
+        let mut compaction =
+            compaction.and_then(|binding| self.compaction(&dispatcher, binding, profile));
         let mut runtime = provider.reader_runtime();
         let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
         let executor = match session {

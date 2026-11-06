@@ -2,7 +2,9 @@
 
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::claim::CallerLocality;
-use oneiron::code_run::{HostSelfDispatcher, ReaderRunEnd, bind_compaction_caller};
+use oneiron::code_run::{
+    HostSelfDispatcher, ReaderRunEnd, ScopedChildProfile, bind_compaction_caller,
+};
 use oneiron::engine_executor::{EngineNativeExecutor, RunCompaction, WindowFullReason};
 use std::time::Duration;
 
@@ -14,17 +16,31 @@ pub(in crate::server::reader_runner) struct CompactionBinding {
 }
 
 impl Child {
+    pub(in crate::server::reader_runner) fn profiled_compaction_binding(
+        caller: CallerLocality,
+    ) -> CompactionBinding {
+        CompactionBinding {
+            caller,
+            spend: None,
+        }
+    }
+
     pub(super) fn compaction(
         &self,
         dispatcher: &HostSelfDispatcher<'_>,
         binding: CompactionBinding,
+        profile: Option<&ScopedChildProfile>,
     ) -> Option<RunCompaction> {
         let host = bind_compaction_caller(dispatcher.actor(), binding.caller, None);
         // A nominal queue label, never a credential or a grant. Siblings take
         // one parent's turn; the job's actor and scope bind authority and spend.
         let queue = format!("reader:{}", self.job.binding.parent_run.to_hex());
-        self.provider
-            .compaction(host, &queue, binding.spend.as_ref())
+        match profile {
+            Some(profile) => self.provider.profiled_compaction(host, &queue, profile),
+            None => self
+                .provider
+                .compaction(host, &queue, binding.spend.as_ref()),
+        }
     }
 
     pub(super) fn join_compaction(

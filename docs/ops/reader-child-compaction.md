@@ -28,12 +28,30 @@ that entry can read or call a model. A wait that expires settles at the existing
 cutoff. A disconnected pass goes through its original refusal path. A full
 window with no pass in flight keeps the existing `window_full` disposition.
 
-## Remaining scope
+## Host-profiled children
 
-A host-profiled scoped child keeps its existing profile backend and parent guard.
-The standard host compaction factory cannot represent that custom guard. This
-change does not substitute the host's payer or claim to provide profiled-child
-compaction. That part of FIX 1841 remains open.
+A host-profiled scoped child keeps its own generation backend. Its compaction
+uses the ordinary house or agent memory profile, prompt and compaction route,
+but spends on the same parent guard as its generation. It never substitutes a
+reader-attempt scope or the host's code-mode meter.
+
+The host supplies an interface to its original generation count. Each compaction
+call admits once while that generation is open and not stopped, then settles
+its response's input plus output units once. An error, an unsent warm-prefix
+call or a dropped ticket settles zero, matching the existing generation
+accounting. The original session alone closes the count. Calls still in flight
+at that close remain owed and settle against the original attempt's line.
+The call carries the same work deadline, cancellation identity, task and parent
+admission as the original generation. An admitted call can finish after a stop;
+no new call is admitted after it.
+
+An agent's self-written live fork is admitted on the role the profiled host
+actually supplied for its generation, both when capturing the live rung and
+when sending the fork. The extraction backend is not reused as a compaction
+backend. An absent generation interface or provider factory keeps the existing
+raw window. No second counter, clock or queue is created.
+
+## Source integration
 
 The nested-reader implementation in PR #5403 is separate. At their source join,
 keep the same compaction seat outside its outer nested-wait/executor-rebuild loop;
