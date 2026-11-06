@@ -77,6 +77,11 @@ pub struct SyncClient {
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
+    /// This connection's sealed world updates whose isolated check waits on
+    /// an edge endpoint, in their envelopes: their capsules install once the
+    /// check passes (FIX 10474). Their bytes share the bound of
+    /// `staged_world_updates`. Cleared at every connect.
+    pub(crate) deferred_sealed_updates: Vec<super::window_pads::DeferredSealedUpdate>,
     pub(crate) root_bootstrapped: bool,
     /// This connection's home replies to opened-item queue sends, keyed by
     /// sequence and bound to the raw row's BLAKE3. Only Durable retires a row;
@@ -85,6 +90,7 @@ pub struct SyncClient {
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
+    pub(crate) document_parts: Mutex<crate::sync::transport::DocumentAssembly>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -208,9 +214,11 @@ impl SyncClient {
             requested_windows: Mutex::new(HashSet::new()),
             pending_world_windows: Mutex::new(HashSet::new()),
             staged_world_updates: Vec::new(),
+            deferred_sealed_updates: Vec::new(),
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             window_pads: Mutex::default(),
+            document_parts: Mutex::default(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
