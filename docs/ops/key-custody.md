@@ -190,6 +190,17 @@ each outcome failed, and a claim the erase's shell. Activating an archived vault
 way and reads every body it keeps back under its own custody before the archive lifts; its report
 carries `custody_note` and `training_note` as a restore's does.
 
+An outbound call's frozen record (its request, server, tool, endpoint and binding) and its attempt
+binding sit in the call's own compartment. Its accounting and state (budget marker, recorded
+outcome, delivery uncertainty, state and clocks) and its per-tool bound row sit outside it. A
+restore that cannot open the call, because an erase retired the compartment, lands neither its
+record nor its binding. It lands the call's accounting row and bound row instead: the call still
+counts toward its per-tool bound, and it is never admitted again. The attempt or caller that asks
+it again gets the call as the owner's erase left it: delivered if it was acked, otherwise stopped
+for the erase, keeping whether it may have crossed the wire. It is not asked, gated, sent or paid
+for twice. A call whose record comes back keeps no accounting row. An image taken before
+accounting rows existed carries none.
+
 The server's own row-held responses are instances the same way: each HTTP idempotency entry
 (request, headers, target and response) and each kept media job with each of its clips. An entry
 is stamped with its caller beside the rows it served and re-admits; a job with the actor that
