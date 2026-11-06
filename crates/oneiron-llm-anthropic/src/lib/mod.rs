@@ -19,6 +19,7 @@ pub use self::transport::{
 };
 pub use self::wire::{
     build_anthropic_messages_request, classify_anthropic_status, parse_anthropic_messages_response,
+    parse_anthropic_usage,
 };
 
 // The flat lib.rs module used to provide these names to the test module
