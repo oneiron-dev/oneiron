@@ -53,6 +53,11 @@ pub use sealed_updates::{
     SEALED_UPDATE_EPOCH_LEN, SEALED_UPDATE_FRAME_ID_LEN, SealedUpdateFrame, TAG_SEALED_UPDATE,
     decode_sealed_update_frame, encode_sealed_update_frame, sealed_update_sub_tags,
 };
+mod document_parts;
+pub use document_parts::{
+    DocumentAssembly, DocumentPartFrames, JoinedDocument, decode_unsplit_document,
+    encode_unsplit_document,
+};
 mod documents;
 pub use documents::{
     DocumentFrame, DocumentWaitedOut, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT,
