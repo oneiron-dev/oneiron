@@ -64,6 +64,9 @@ sync = []
 # fault, race and raw-key hooks of the store modules moved out of core). Never
 # installs an allocator; each crate's own test binary registers one.
 test-support = []
+# Forwarded by `oneiron/test-hooks`: the retrieval deadline's still clock and
+# slow-stage seam, which core's test-hooks build names. No production effect.
+test-hooks = []
 
 [lints]
 workspace = true

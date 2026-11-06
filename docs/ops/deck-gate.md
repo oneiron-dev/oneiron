@@ -44,6 +44,15 @@ The case set is `scripts/office/pptx-live-v1.json`:
 Each step's outcome is the worse of its two halves. An unrun, timed-out or
 unsupported case is inconclusive, and the gate stays closed.
 
+## Held SVG picture fallbacks
+
+The projector can add a derived PNG for a held SVG in the existing closed SVG
+geometry subset, preserving the original and naming the conversion on the export
+receipt. Existing raster fallbacks and unsupported SVG paths stay unchanged.
+See [held SVG compatibility fallback](held-svg-fallback.md) for scope, resource
+residuals and the projector-version change. This does not open the gate or claim
+an Office oracle run.
+
 ## Before you start
 
 - The Mac mini's PowerPoint, macOS, PDFKit, observer and locale must match

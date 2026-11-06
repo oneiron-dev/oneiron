@@ -101,6 +101,16 @@ impl Memory<'_> {
         if lands_nothing {
             unproven.take();
         }
+        if matches!(sink, WitnessSink::Base(_))
+            && matches!(admission.turn, AdmittedTurn::Mint { .. })
+        {
+            crate::conversation_dag::permit_core_turn_in_txn(
+                self.vault,
+                wtxn,
+                &plan.conversation_id,
+                plan.turn_id,
+            )?;
+        }
         let mut landed = match sink {
             WitnessSink::Base(base) => {
                 let receipt = self.stage_base_landing_in_txn(
@@ -132,6 +142,17 @@ impl Memory<'_> {
                 Landed::Overlay { segment, aliases }
             }
         };
+        if matches!(sink, WitnessSink::Base(_))
+            && matches!(admission.turn, AdmittedTurn::Mint { .. })
+        {
+            crate::conversation_dag::join_core_turn_in_txn(
+                self.vault,
+                wtxn,
+                &plan.conversation_id,
+                plan.turn_id,
+                plan.learned_at,
+            )?;
+        }
         if let Some(terminal) = write.terminal
             && let [planned] = plan.messages.as_slice()
             && admission.message_exists.as_slice() == [false]

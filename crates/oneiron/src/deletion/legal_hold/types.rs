@@ -142,6 +142,18 @@ impl LegalHold {
         self.lifted_at.is_none()
     }
 
+    /// Whether this hold keeps its records in the live vault, its backups
+    /// and its body keys: a standing customer hold, the owner's own "keep
+    /// these records". A host order never does (LEGAL-HOLD-USE = B as a
+    /// clone, owner 2026-11-05): what the order covers is copied into the
+    /// host's separate legal-hold store, and the vault's own erases, scrubs,
+    /// compaction and backup expiry run as they would without it. Its row,
+    /// its log and its notice stay.
+    #[must_use]
+    pub fn keeps_vault_data(&self) -> bool {
+        self.kind == LegalHoldKind::Customer && self.stands()
+    }
+
     /// An order forbids telling the owner about it at `now`.
     #[must_use]
     pub fn secret_at(&self, now: u64) -> bool {

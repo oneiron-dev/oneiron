@@ -38,10 +38,8 @@ impl Memory<'_> {
         predicate: Option<&str>,
         limit: usize,
     ) -> MemoryResult<MemoryPack> {
-        if limit == 0 || limit > 1000 {
-            return Err(MemoryError::bad_request(
-                "view limit must be between 1 and 1000",
-            ));
+        if limit == 0 {
+            return Err(MemoryError::bad_request("view limit must be at least 1"));
         }
         let world = scope
             .world_ref

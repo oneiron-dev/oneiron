@@ -17,3 +17,7 @@ pub struct CodePathRetirement {
     pub operation_receipt: EntityId,
     pub review_ref: EntityId,
 }
+
+pub mod commit_metadata;
+pub mod file_frontiers;
+pub mod tree_codec;

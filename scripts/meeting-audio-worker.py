@@ -46,11 +46,28 @@ class Port:
             models = native.alignment_models() if self.stage == "alignment" else {}
             ready = bool(models) if self.stage == "alignment" else native.available(self.stage)
             selected = "uk_alignment" if self.stage == "alignment" and runtime.ALIGNER not in models.values() else self.stage
+            if self.stage == "alignment":
+                window_models = []
+                if ready:
+                    if runtime.ALIGNER in models.values():
+                        mid, dg = native.model_identity("alignment")
+                        window_models.append(mid + "@" + dg)
+                    if runtime.UK_ALIGNER in models.values():
+                        mid, dg = native.model_identity("uk_alignment")
+                        window_models.append(mid + "@" + dg)
+                unit_models = {"alignment_window": window_models}
+            else:
+                if ready:
+                    mid, dg = native.model_identity(self.stage)
+                    unit_models = {"diarization": [mid + "@" + dg]}
+                else:
+                    unit_models = {"diarization": []}
             return {"available": ready, "stage": self.stage, "runtime_binding": self.binding,
                     "model_id": native.profile[selected]["model_id"] if ready else None,
                     "models_by_language": models,
                     "model_files_sha256": hashlib.sha256(json.dumps(native.profile[selected]["files"],
                         ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest() if ready else None,
+                    "unit_models": unit_models,
                     "model_execution": False}, b""
         if self.stage == "alignment" and operation == "align_words":
             if (set(options) != {"transcript", "language"} or not isinstance(options["transcript"], str)

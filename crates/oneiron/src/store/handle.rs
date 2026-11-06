@@ -318,6 +318,10 @@ pub struct StoreCore {
     /// Where this vault's queued code-run reader children are woken, none
     /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
     pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
+    /// The host that serves this vault's drafter bindings on its own managed
+    /// worker, none until one attaches (FIX 14976,
+    /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
+    pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).

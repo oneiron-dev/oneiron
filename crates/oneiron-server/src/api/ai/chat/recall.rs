@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use oneiron::claim::CallerLocality;
 use oneiron::memory::resolve_entity_ref;
-use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
+use oneiron::{EntityId, LlmMessage, LlmMessageRole, ModelLocality, Vault};
 use serde::Serialize;
 
 use super::{assistant, chat_request, text_message};
@@ -63,13 +63,16 @@ impl BoardOmission {
 /// does. Its rows then meet the hold of a prompt that goes back to the caller
 /// and as far as that route may take the call (FIX 7257), judged again here
 /// and on the admitted call, so a route that moved since never carries them
-/// off the device.
+/// off the device. `answering_agent` is admission's original agent: it
+/// selects that agent's board layout only (BOARD-LAYOUT), never content
+/// scope; the second `assistant` lookup below still shapes recall.
 pub(super) async fn turn_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     text: &str,
     conversation_ref: &str,
     agent_ref: Option<&str>,
+    answering_agent: EntityId,
 ) -> Result<Option<ChatBoard>, BoardOmission> {
     if auth.require(CoreScope::Read).is_err()
         || auth.require(CoreScope::Write).is_err()
@@ -94,12 +97,13 @@ pub(super) async fn turn_board(
     } else {
         CallerLocality::OffDevice
     };
-    let board = match crate::api::context_board::chat_turn_board(
+    let board = match crate::api::context_board::chat_turn_board_deferred(
         server,
         auth.clone().at(reads_at),
         conversation,
         agent,
         text,
+        Some(answering_agent),
     )
     .await
     {

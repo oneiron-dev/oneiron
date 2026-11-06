@@ -61,8 +61,9 @@ pub enum Redrive {
     Landed(Vec<PendingProposalView>),
     /// Still no node; the reason is on its row.
     Waiting(String),
-    /// A node ran it and it failed there, or its landing was refused; the
-    /// row keeps the failure until released.
+    /// The held call stopped being current before dispatch, a node failed,
+    /// or its landing was refused. A failed run's row keeps the failure
+    /// until released.
     Failed(String),
     /// The host's mesh stop cut it short (FIX 4755): its row stays held, as
     /// it was, for the next start.
@@ -267,6 +268,11 @@ impl OrganRouter {
         wait: OrganWait,
         asks: &AskHandlers<'_>,
     ) -> Result<Redrive, HostError> {
+        if !vault.organ_wait_is_current(&wait)? {
+            return Ok(Redrive::Failed(
+                "the held call is no longer current".to_owned(),
+            ));
+        }
         let artifact = wait.artifact_id;
         let now = vault.now_recorded_at();
         let failed = |detail: String| -> Result<Redrive, HostError> {

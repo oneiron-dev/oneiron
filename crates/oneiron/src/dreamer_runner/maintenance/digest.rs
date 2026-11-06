@@ -1,7 +1,8 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
 //! A regular digest also carries the cleanup cron's after-notice (OF-449),
 //! the NOTE tombstone review's open proposals (OF-073) and the Dreamer's
-//! applied-maintenance after-notice (FIX 3226).
+//! applied-maintenance after-notice (FIX 3226) and the drafter line (FIX
+//! 14977).
 //! Each digest is stored once, under a stable locator with a content hash
 //! (FIX 2332), and every read, answer and delivery of it is its viewer's
 //! own view, screened of private thread words they do not read (FIX 6411).
@@ -282,6 +283,10 @@ pub struct ProactivityDigest {
     /// applied writes no digest carried yet (FIX 3226).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied: Option<DigestApplied>,
+    /// The drafter line, on a regular digest with drafter events no digest
+    /// carried yet (FIX 14977).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafter: Option<crate::drafter::DigestDrafter>,
     /// The Coach's agent-health cards opened, updated or settled since the
     /// last regular digest (OF-568), concern first and newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -316,6 +321,9 @@ struct DigestState {
     /// Applied maintenance receipts a digest already carried.
     #[serde(default)]
     applied_seen: std::collections::BTreeSet<String>,
+    /// The newest drafter event a digest already carried (FIX 14977).
+    #[serde(default, with = "crate::serialize::entity_ref::optional")]
+    drafter_seen: Option<EntityId>,
     /// Results an urgent digest carried, by the one owner it went to (FIX
     /// 8952): they leave that owner's own digests, and every other reader's
     /// digest still carries them.
@@ -398,6 +406,8 @@ impl Vault {
             && unseen_cleanup(self, &txn, &state)?.is_none()
             && unseen_note_tombstones(self, &txn, &state)?.is_none()
             && after_notice::unseen_in_txn(self, &txn, &state.applied_seen)?.is_none()
+            && !crate::drafter::unseen_drafter_line_in_txn(&self.store, &txn, state.drafter_seen)?
+                .is_some_and(|line| line.arms())
         {
             // Health cards alone arm it too (FIX 1979). A card touched since
             // the last regular digest joins the first digest whose period

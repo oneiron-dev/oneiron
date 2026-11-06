@@ -19,9 +19,13 @@ use crate::write_envelope::provenance::made_by::{
 use super::provenance::BlobVersionProvenance;
 
 /// The class the authenticated writer and the version's own provenance imply.
+/// Queue-check exhaust concludes its run (like an agent run), even though
+/// its author data is the original Human approver (FIX 7227).
 fn version_process_class(actor: &WriteActor, provenance: &BlobVersionProvenance) -> MadeByClass {
     match provenance {
-        BlobVersionProvenance::AgentRun { .. } => MadeByClass::Concluded,
+        BlobVersionProvenance::AgentRun { .. } | BlobVersionProvenance::QueueCheck { .. } => {
+            MadeByClass::Concluded
+        }
         _ if actor.actor_class() == EdgeActorClass::Human => MadeByClass::Stated,
         _ => MadeByClass::Concluded,
     }

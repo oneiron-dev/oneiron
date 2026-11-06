@@ -126,6 +126,15 @@ pub(super) async fn weights(
     hub_token_env: Option<&str>,
 ) -> Result<InstalledWeights, LaunchFailure> {
     let manifest = match &artifact.source {
+        // A vault's own load set is verified by its launch, never installed
+        // through the shared artifact store (FIX 14976).
+        ArtifactSource::VaultLoadSet(_) => {
+            return Err(permanent(
+                WorkerFailure::LoadFailed,
+                "a vault's own drafter is never installed through the model artifact store"
+                    .to_owned(),
+            ));
+        }
         ArtifactSource::Catalog(id) => house_artifact(id).cloned().ok_or_else(|| {
             permanent(
                 WorkerFailure::LoadFailed,

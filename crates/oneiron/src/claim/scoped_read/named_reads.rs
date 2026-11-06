@@ -51,7 +51,7 @@ impl PointReadOutcome {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// [`Self::read`] for a door whose caller named each target (FIX 5226):
     /// each slot is its row, `None` where every collection read omits it (a
     /// missing or withheld row, as before), or the refusal of the legal
@@ -116,7 +116,7 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         read: &PointRead<'_>,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<(PointReadOutcome, usize)> {
         let (row, withheld) = match read.target {
             ReadTarget::Id(id) => self.id_row_in(txn, policy, filter, id, read.mode, authority)?,
@@ -187,7 +187,7 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         id: EntityId,
         mode: ReadMode,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<Option<Error>> {
         if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &id)?.is_none() {
             return Ok(None);

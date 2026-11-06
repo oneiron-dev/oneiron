@@ -169,7 +169,8 @@ pub(super) fn finalize_job(
                 .map(String::as_str)
                 .collect();
             // A receipt another device attested is its device's to complete
-            // (FIX 2596).
+            // (FIX 2596), unless the owner named this install that device
+            // key's successor (FIX 11135).
             if receipt_ids != job_ids
                 || !receipt_attested_by_this_device_in_txn(vault, &*wtxn, &id, &receipt)?
             {

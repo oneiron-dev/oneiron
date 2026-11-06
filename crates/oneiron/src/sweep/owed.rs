@@ -71,7 +71,7 @@ pub(super) fn owed_compactions(vault: &Vault) -> Result<Vec<OwedCompaction>> {
 /// completes when its row settles, so the sweep's audit counts it owed, not
 /// dropped. A row that names no window never settles and covers none, as an
 /// undecodable `h:` row covers none.
-pub(super) fn receipts_owed_compaction_in_txn(
+pub(crate) fn receipts_owed_compaction_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {

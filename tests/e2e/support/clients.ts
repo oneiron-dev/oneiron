@@ -213,7 +213,7 @@ export class CliClient {
   }
   async json<T = unknown>(args: readonly string[], input?: unknown): Promise<T> {
     const result = await this.run(args,input === undefined ? undefined : JSON.stringify(input));
-    if (result.exitCode !== 0) throw new CliError(result);
+    if (result.exitCode !== 0) throw new CliError(result,"cli-json");
     return JSON.parse(result.stdout) as T;
   }
   /** Typed facade only. A designed verb without this typed call remains test.todo. */
@@ -221,9 +221,12 @@ export class CliClient {
     return this.json(["api","call",verb,"--data","-"],input);
   }
 }
+type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
 export class CliError extends Error {
   override name = "CliError";
-  constructor(readonly result: ProcessResult) { super(`CLI exited ${result.exitCode}`) }
+  constructor(readonly result: ProcessResult, readonly stage: CliStage = "cli") {
+    super(`CLI exited ${result.exitCode} at ${stage} (signal ${result.signal ?? "none"})`);
+  }
 }
 export type SdkOperation =
   | { readonly verb:"witness";readonly input:WitnessTurn }
@@ -265,7 +268,7 @@ try {
   }catch(e){return {ok:false,error:error(e)}}});
   process.stdout.write(JSON.stringify(results));
  }
-}catch(e){process.stdout.write(JSON.stringify({error:error(e)}));process.exitCode=1;}
+}catch(e){const failure=JSON.stringify({error:error(e)});process.stdout.write(failure);process.stderr.write(failure);process.exitCode=1;}
 `;
 const PY_DRIVER = String.raw`
 import json,sys
@@ -289,15 +292,15 @@ try:
   except Exception as e: results.append({'ok':False,'error':err(e)})
  json.dump(results,sys.stdout)
 except Exception as e:
- json.dump({'error':err(e)},sys.stdout);sys.exit(1)
+ failure={'error':err(e)};json.dump(failure,sys.stdout);json.dump(failure,sys.stderr);sys.exit(1)
 `;
 export class SdkProcessDriver {
-  constructor(readonly build:BuildManifest,readonly cwd:string,readonly env:Readonly<Record<string,string>>) {}
+  constructor(readonly build:BuildManifest,readonly cwd:string,readonly env:Readonly<Record<string,string>>,readonly artifacts?:Artifacts) {}
   async pair(link:string): Promise<{credential:string;pin:unknown}> {
     redactor.add(link);
     const result=await runProcess([requireAsset(this.build,"node"),"--input-type=module","-e",JS_DRIVER],
-      {cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),pair:link}),privateOutput:true,label:"sdk-pair"});
-    if(result.exitCode!==0) throw new CliError(result);
+      {cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),pair:link}),privateOutput:true,label:"sdk-pair",...(this.artifacts ? {artifacts:this.artifacts} : {})});
+    if(result.exitCode!==0) throw new CliError(result,"sdk-pair");
     const paired=JSON.parse(result.stdout) as {credential:string;pin:unknown};credentialParts(paired.credential);return paired;
   }
   /** Python inputs use the Python SDK's native snake_case fields; no harness casing conversion. */
@@ -310,8 +313,8 @@ export class SdkProcessDriver {
       throw new TypeError("Embedded SDK requires its own absolute vault path, never the served vault");
     if(target.mode==="remote") credentialParts(target.credential);
     const argv=language==="python" ? [requireAsset(this.build,"python"),"-c",PY_DRIVER] : [requireAsset(this.build,"node"),"--input-type=module","-e",JS_DRIVER];
-    const result=await runProcess(argv,{cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),target,operations}),privateOutput:true,label:`sdk-${language}`});
-    if(result.exitCode!==0) throw new CliError(result);
+    const result=await runProcess(argv,{cwd:this.cwd,env:this.env,input:JSON.stringify({module:requireAsset(this.build,"sdk-js"),target,operations}),privateOutput:true,label:`sdk-${language}`,...(this.artifacts ? {artifacts:this.artifacts} : {})});
+    if(result.exitCode!==0) throw new CliError(result,`sdk-${language}`);
     return {process:result,results:JSON.parse(result.stdout) as SdkDriverResult["results"]};
   }
 }

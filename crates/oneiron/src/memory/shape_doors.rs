@@ -15,9 +15,26 @@ impl Memory<'_> {
     /// `vault.shape.read`: the stored seed and the live arrangement.
     pub fn shape_read(&self) -> MemoryResult<ShapeRead> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        Ok(self
+        let mut shape = self
             .vault
-            .shape_read_visible(&mut |id| read.is_entity_readable(id))?)
+            .shape_read_visible(&mut |id| read.is_entity_readable(id))?;
+        self.withhold_learning_outcome(&mut shape.applies)?;
+        Ok(shape)
+    }
+
+    /// `receipts` as this handle's actor reads them (FIX 10752): the
+    /// conversation-learning outcome an apply carries reaches only a reader
+    /// of the vault's learning setting, as
+    /// [`crate::Vault::conversation_learning_view`] admits one. Every other
+    /// caller reads the apply without it.
+    fn withhold_learning_outcome(&self, receipts: &mut [ShapeApplyReceipt]) -> MemoryResult<()> {
+        if self.vault.conversation_learning_reader(self.actor)? {
+            return Ok(());
+        }
+        for receipt in receipts {
+            receipt.conversation_learning = None;
+        }
+        Ok(())
     }
 
     /// `describe(vault)`: the vault's shape card, over the rows the caller
@@ -119,7 +136,13 @@ impl Memory<'_> {
         };
         let visible = &mut |id: &EntityId| read.is_entity_readable(id);
         let (receipt, rows) = self.vault.apply_shape_listing(applier, input, now, visible);
-        (receipt.map_err(MemoryError::from), rows)
+        // A resumed apply's receipt carries the learning outcome its creator's
+        // apply stored (FIX 10752).
+        let receipt = receipt.map_err(MemoryError::from).and_then(|mut receipt| {
+            self.withhold_learning_outcome(std::slice::from_mut(&mut receipt))?;
+            Ok(receipt)
+        });
+        (receipt, rows)
     }
 }
 

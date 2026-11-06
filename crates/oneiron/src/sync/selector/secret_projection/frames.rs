@@ -22,7 +22,8 @@
 //! held row write becomes a causally equivalent delete in an empty map;
 //! its source stays unchanged. Full snapshots can retain these neutral causal
 //! units through a same-span snapshot; shallow tails can too when their root
-//! is unchanged and independently readable. Other coupled and mixed-edge
+//! is independently readable, with only the matching held frontier winner
+//! retargeted to the same neutral causal unit. Other coupled and mixed-edge
 //! holds retain their whole-blob hold path.
 //!
 //! A blob nothing marked touches goes as it came. One the checkpoint cannot

@@ -72,6 +72,9 @@ impl Vault {
         actor: WriteActor,
         at: u64,
     ) -> Result<StrandedEditProposal> {
+        if super::artifact_retention_deleted_in_txn(&self.store, txn, artifact_id)? {
+            return Err(Error::EntityNotFound);
+        }
         let row = StrandedEditProposal {
             artifact_ref: artifact_id.to_hex(),
             proposal_ref: proposal.run_ref.clone(),
@@ -97,4 +100,15 @@ impl Vault {
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("stranded edit proposal")
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in STRANDED.scan_keys(store, txn, artifact_id.as_bytes())? {
+        STRANDED.delete(store, txn, &key)?;
+    }
+    Ok(())
 }
