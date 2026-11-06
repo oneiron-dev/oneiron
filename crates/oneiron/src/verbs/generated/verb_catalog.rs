@@ -739,6 +739,7 @@ pub enum AgentVerb {
     VaultCodeCacheGet,
     VaultCodeCacheReuse,
     VaultCodeSnapshotsIngest,
+    VaultCodeSnapshotsCapture,
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
@@ -2028,6 +2029,7 @@ impl AgentVerb {
         Self::VaultCodeCacheGet,
         Self::VaultCodeCacheReuse,
         Self::VaultCodeSnapshotsIngest,
+        Self::VaultCodeSnapshotsCapture,
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
@@ -3344,6 +3346,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => "vault.code.cache.get",
             Self::VaultCodeCacheReuse => "vault.code.cache.reuse",
             Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
+            Self::VaultCodeSnapshotsCapture => "vault.code.snapshots.capture",
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
@@ -4645,6 +4648,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -5963,6 +5967,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -7418,6 +7423,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -8347,6 +8353,7 @@ impl AgentVerb {
                 | Self::VaultCodeViewsBuild
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
                 | Self::VaultCodeMergeQueueRequeueSurvivors
@@ -9451,6 +9458,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => &["spec"],
             Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsCapture => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
@@ -10741,6 +10749,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => &["spec"],
             Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsCapture => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
@@ -13471,6 +13480,9 @@ impl AgentVerb {
             }
             Self::VaultCodeSnapshotsIngest => {
                 "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
+            }
+            Self::VaultCodeSnapshotsCapture => {
+                "Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque."
             }
             Self::VaultCodeSnapshotsGet => {
                 "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."

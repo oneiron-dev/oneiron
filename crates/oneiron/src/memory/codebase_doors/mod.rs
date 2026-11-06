@@ -1,7 +1,6 @@
-//! Typed code snapshot doors (DOOR-118): the import of one committed local
-//! Git tree, its pinned manifest, its frozen source bytes and exact-name Rust
-//! symbol definitions within it. Each projects an engine path that exists;
-//! none registers a repository, enforces an editable whitelist, grants repo
+//! Typed code snapshot doors (DOOR-118): committed Git import and current-folder
+//! capture, pinned manifests, frozen source bytes and exact-name Rust symbols.
+//! None registers a repository, enforces an editable whitelist, grants repo
 //! membership, mints a receipt or answers a calls, imports or refs query.
 //!
 //! Authority is the owner's live proof alone (`Memory::codebase_owner`),
