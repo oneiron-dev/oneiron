@@ -155,6 +155,13 @@ pub struct RepoProposalSubmitInput {
     /// declaration is bound either way; naming another is a stale lease.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declaration: Option<EntityId>,
+    /// The failed proposal this change replaces (FIX 4364), if any: one the
+    /// run's lane reads, of the same repository, that a terminal queue batch
+    /// quarantined or rolled back, or whose standalone attempt failed. The
+    /// new proposal is fresh and is reviewed and queued anew; the run needs
+    /// no part in the source, and gains no authority from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<EntityId>,
 }
 
 /// `self.code.proposal_resolve`: one file resolving a typed repo conflict,
@@ -317,6 +324,16 @@ pub struct RepoQueueEntryView {
     /// The TASKs whose live declarations it waits behind now; empty once it
     /// may stage. Order only, never a refusal.
     pub blockers: Vec<EntityId>,
+    /// Its `repo.queue_admission` receipt (FIX 4338): the stored fact that
+    /// the queue accepted this entry, a waiting one included. The batch id
+    /// and the queue sequence are not it.
+    pub admission_receipt: Option<EntityId>,
+    /// Its `repo.queue_completion` receipt once terminal: green advanced,
+    /// rolled back, quarantined or cancelled. A landed head is not one.
+    pub completion_receipt: Option<EntityId>,
+    /// The `repo.proposal_admission` receipt of each of its proposals the
+    /// run's lane reads, in batch order, as its queue admission bound them.
+    pub proposal_admission_receipts: Vec<EntityId>,
 }
 
 /// `self.code.merge_queue.enqueue`'s answer: the accepted entry.
@@ -359,6 +376,10 @@ pub struct RepoSymbolsReleaseOutput {
 pub struct RepoProposalSubmitOutput {
     /// The engine-minted proposal id.
     pub proposal: EntityId,
+    /// Its `repo.proposal_admission` receipt (FIX 4338): the stored fact
+    /// that the engine admitted this candidate into custody. It is not a
+    /// queue admission.
+    pub admission_receipt: EntityId,
     pub work: EntityId,
     pub path: String,
     /// The green commit the proposal is pinned at, 40 lower-hex characters.

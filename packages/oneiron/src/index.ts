@@ -2269,7 +2269,7 @@ export class Oneiron {
         declare: (input: Facade.CodeSymbolsDeclareRequest): Facade.CodeSymbolsDeclared => this.#call(() => this.#client.vaultCodeSymbolsDeclare(input) as Facade.CodeSymbolsDeclared),
         /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
         renew: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolLeaseView => this.#call(() => this.#client.vaultCodeSymbolsRenew(input) as Facade.CodeSymbolLeaseView),
-        /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing. */
+        /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver. */
         release: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolsReleased => this.#call(() => this.#client.vaultCodeSymbolsRelease(input) as Facade.CodeSymbolsReleased),
         /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
         definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
@@ -2409,7 +2409,7 @@ export class Oneiron {
         reuse: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheReuse(input) as Facade.CodeCacheOutcome),
       },
       snapshots: {
-        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
         /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
         get: (input: Facade.CodeSnapshotRequest): Facade.CodeSnapshotView | null => this.#call(() => this.#client.vaultCodeSnapshotsGet(input) as Facade.CodeSnapshotView | null),
@@ -2500,7 +2500,7 @@ export class Oneiron {
         revoke: (input: Facade.GitPushGrantRevokeInput): Facade.GitPushGrantRevokeOutput => this.#call(() => this.#client.vaultRepoGitPushRevoke(input) as Facade.GitPushGrantRevokeOutput),
       },
       anchor: {
-        /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+        /** The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership. */
         bind: (input: Facade.RepoAnchorBindInput): Facade.RepoAnchorBindOutput => this.#call(() => this.#client.vaultRepoAnchorBind(input) as Facade.RepoAnchorBindOutput),
       },
       snapshots: {

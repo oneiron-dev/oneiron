@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1263 facade rows, 4573 generated types.
+// UniFFI census: 1263 facade rows, 4575 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -39210,6 +39210,8 @@ pub struct CodeProposalSubmitRequest {
     pub op_provenance: CodeOpProvenance,
     #[serde(rename = "catalog", default, skip_serializing_if = "Option::is_none")]
     pub catalog: Option<LensCatalog>,
+    #[serde(rename = "repair_of", default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<String>,
 }
 
 /// `oneiron::memory::code_doors::types::CodeProposalSubmitted`.
@@ -39217,6 +39219,8 @@ pub struct CodeProposalSubmitRequest {
 pub struct CodeProposalSubmitted {
     #[serde(rename = "proposal")]
     pub proposal: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
     #[serde(rename = "repo")]
     pub repo: String,
     #[serde(rename = "actor")]
@@ -39458,6 +39462,19 @@ pub struct RepoProposalSettlement {
     pub settled_at: u64,
 }
 
+/// `oneiron::memory::code_doors::conflict_types::CodeProposalReplacementView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeProposalReplacementView {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "replacement")]
+    pub replacement: String,
+    #[serde(rename = "replacement_base")]
+    pub replacement_base: String,
+}
+
 /// `oneiron::memory::code_doors::conflict_types::CodeProposalSettlementView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeProposalSettlementView {
@@ -39491,6 +39508,22 @@ pub struct CodeProposalSettlementView {
         skip_serializing_if = "Option::is_none"
     )]
     pub resolution: Option<String>,
+    #[serde(
+        rename = "admission_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub admission_receipt: Option<String>,
+    #[serde(rename = "attempt_receipts")]
+    pub attempt_receipts: Vec<String>,
+    #[serde(rename = "repair_of", default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<CodeProposalReplacementView>,
+    #[serde(
+        rename = "replaced_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replaced_by: Option<CodeProposalReplacementView>,
 }
 
 /// `oneiron::memory::code_doors::conflict_types::CodeProposalSettleRequest`.
@@ -42952,6 +42985,12 @@ pub struct CodeSnapshotIngestRequest {
     pub project_id: String,
     #[serde(rename = "pointer")]
     pub pointer: CodeRepoPointer,
+    #[serde(
+        rename = "repository",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repository: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.
@@ -42971,6 +43010,12 @@ pub struct CodeSnapshotView {
     pub scope_key: String,
     #[serde(rename = "files")]
     pub files: Vec<CodeSnapshotFile>,
+    #[serde(
+        rename = "repository",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repository: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotRequest`.
@@ -43154,6 +43199,20 @@ pub struct MergeQueueBatchView {
     pub quarantine: Option<Quarantine>,
     #[serde(rename = "selected_tests")]
     pub selected_tests: AffectedTests,
+    #[serde(
+        rename = "admission_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub admission_receipt: Option<String>,
+    #[serde(
+        rename = "completion_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completion_receipt: Option<String>,
+    #[serde(rename = "proposal_admission_receipts")]
+    pub proposal_admission_receipts: Vec<String>,
 }
 
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueBatchRequest`.
@@ -44217,20 +44276,48 @@ pub struct ConnectorWitnessReadGrantRevoked {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindInput {
-    #[serde(rename = "repo")]
-    pub repo: String,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(
+        rename = "local_folder",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub local_folder: Option<String>,
     #[serde(rename = "project")]
     pub project: String,
+    #[serde(rename = "anchor", default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    #[serde(rename = "editable", default, skip_serializing_if = "Option::is_none")]
+    pub editable: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::git_push_grant::RepoRegistrationView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoRegistrationView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "editable")]
+    pub editable: Vec<String>,
 }
 
 /// `oneiron::verbs::git_push_grant::RepoAnchorBindOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindOutput {
-    #[serde(rename = "repo")]
-    pub repo: String,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
     #[serde(rename = "anchor")]
     pub anchor: GitPushRepo,
+    #[serde(rename = "portable")]
+    pub portable: String,
+    #[serde(
+        rename = "registration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub registration: Option<RepoRegistrationView>,
     #[serde(rename = "changed")]
     pub changed: bool,
 }
@@ -44488,6 +44575,20 @@ pub struct RepoQueueEntryView {
     pub landed_head: Option<String>,
     #[serde(rename = "blockers")]
     pub blockers: Vec<String>,
+    #[serde(
+        rename = "admission_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub admission_receipt: Option<String>,
+    #[serde(
+        rename = "completion_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completion_receipt: Option<String>,
+    #[serde(rename = "proposal_admission_receipts")]
+    pub proposal_admission_receipts: Vec<String>,
 }
 
 /// `oneiron::memory::repo_doors::types::RepoMergeQueueObserveOutput`.
@@ -44759,6 +44860,8 @@ pub struct RepoProposalSubmitInput {
         skip_serializing_if = "Option::is_none"
     )]
     pub declaration: Option<String>,
+    #[serde(rename = "repair_of", default, skip_serializing_if = "Option::is_none")]
+    pub repair_of: Option<String>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoProposalSubmitInput`.
@@ -44776,6 +44879,8 @@ pub struct LiveRunRequestRepoProposalSubmitInput {
 pub struct RepoProposalSubmitOutput {
     #[serde(rename = "proposal")]
     pub proposal: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
     #[serde(rename = "work")]
     pub work: String,
     #[serde(rename = "path")]

@@ -14,6 +14,12 @@ use std::fmt;
 use std::io::Read;
 use std::path::PathBuf;
 
+/// What a caller names to import: the folder, and its own statement of the
+/// paths it means to edit. That statement is never edit authority (FIX
+/// 4299, CODE-CUSTODY-01): the importer never reads it. A registered
+/// repository's retained whitelist (`vault.repo.anchor.bind`) is the one
+/// edit ceiling, and an unregistered capture names no anchor and confers
+/// no edit authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RepoIngestConfig {
