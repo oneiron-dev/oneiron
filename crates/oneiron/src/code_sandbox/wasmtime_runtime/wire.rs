@@ -16,7 +16,7 @@ use crate::engine_executor::{
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
 use describe::{names_one_target, result_ref, secret_handle};
-use reply::fit_reply;
+use reply::guest_reply;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -266,8 +266,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             } else {
                 admitted(cancel, || state.host.dispatch_self(call))?
             };
-            let body = fit_reply(state.host, cancel, reply_body(&answered.outcome)?)?;
-            Ok(answered.guest_json(body).to_string())
+            guest_reply(state.host, cancel, &answered)
         }
     }
 }
