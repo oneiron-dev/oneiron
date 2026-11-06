@@ -212,12 +212,13 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             let work = self.model_pack_retirement_work_in_txn(txn, access, today)?;
+            let before = self.model_pack_in_effect_in_txn(txn)?;
             if let Some(preference) = &work.preference {
                 PREFERENCE.put(&self.store, txn, &(), preference)?;
             }
             let migrated = work.preference.is_some() || work.active_retired;
             if migrated {
-                self.note_active_model_pack_in_txn(txn, ModelPackChangeCause::Retirement)?;
+                self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Retirement)?;
             }
             let sent_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let owners = crate::policy_model::owners_in_txn(self, txn)?;

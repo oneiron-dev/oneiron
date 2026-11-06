@@ -12,9 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::ModelId;
 use super::manifest::{ModelManifest, ModelRole};
 use super::run_admission::{OfferBinding, Payer};
+use super::{ModelId, ModelLocality};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -70,12 +70,12 @@ impl AccessSnapshot {
         snapshot
     }
 
-    /// Adds the access `offer` runs on, serving its model.
+    /// Adds the access `offer` runs on, serving its model. An offer that
+    /// holds no pack access ([`model_pack_access_for`]) adds nothing.
     pub fn insert_offer(&mut self, offer: &OfferBinding) {
-        self.insert(
-            model_pack_access_for(offer.payer, &offer.model),
-            offer.model.clone(),
-        );
+        if let Some(access) = model_pack_access_for(offer) {
+            self.insert(access, offer.model.clone());
+        }
     }
 
     /// Adds `access`, serving `model`.
@@ -96,7 +96,8 @@ impl AccessSnapshot {
 
     /// Whether `variant` runs here. An engine call (CALLS, FIX 5366): an
     /// offer must serve the variant's model on the variant's access; holding
-    /// the access alone does not run a model no offer serves.
+    /// the access alone does not run a model no offer serves. A local-GPU
+    /// variant runs only where an on-device offer serves its model.
     #[must_use]
     pub fn runs(&self, variant: &ModelPackVariant) -> bool {
         self.access
@@ -113,16 +114,26 @@ impl AccessSnapshot {
 /// The access an offer runs on. An engine call (CALLS, FIX 5366): the
 /// host's payer names it. Host-paid is our hosted credits; the customer's
 /// key or cloud account is their own keys; a signed-in vendor CLI or plan
-/// is a seat; the vault's own node or a paired device is a local GPU. The
-/// provider is the model id's provider segment.
+/// is a seat; a local-payer offer on this device or on the owner's own
+/// model server is a local GPU. A local-payer offer at a third party (a
+/// keyless remote) holds no pack access: a local-GPU pick never sends input
+/// to a third party. The provider is the model id's provider segment.
 #[must_use]
-pub fn model_pack_access_for(payer: Payer, model: &ModelId) -> ModelPackAccess {
-    let provider = model.provider().to_owned();
-    match payer {
-        Payer::Host => ModelPackAccess::Hosted { provider },
-        Payer::CustomerKey | Payer::CustomerAccount => ModelPackAccess::OwnKey { provider },
-        Payer::CustomerSeat => ModelPackAccess::Seat { provider },
-        Payer::Local => ModelPackAccess::LocalGpu,
+pub fn model_pack_access_for(offer: &OfferBinding) -> Option<ModelPackAccess> {
+    let provider = || offer.model.provider().to_owned();
+    match offer.payer {
+        Payer::Host => Some(ModelPackAccess::Hosted {
+            provider: provider(),
+        }),
+        Payer::CustomerKey | Payer::CustomerAccount => Some(ModelPackAccess::OwnKey {
+            provider: provider(),
+        }),
+        Payer::CustomerSeat => Some(ModelPackAccess::Seat {
+            provider: provider(),
+        }),
+        Payer::Local => {
+            (offer.locality != ModelLocality::ThirdParty).then_some(ModelPackAccess::LocalGpu)
+        }
     }
 }
 
@@ -317,6 +328,29 @@ pub struct ModelPackSetting {
     pub installed: Vec<ModelPackView>,
 }
 
+/// The pack the vault followed before the one it follows now, for the
+/// owner's view, from the last recorded change. When the effective active
+/// pack is the recorded one, that change's `previous`. When it differs, the
+/// vault moved off the recorded pack with no change recorded (the followed
+/// pack retired, and a read writes nothing), so the recorded pack is the one
+/// it followed before. The day-clock retirement pass (FIX 5368) records that
+/// move as a change with its notice; this read stays truthful until it runs.
+fn previous_model_pack(
+    recorded: &ModelPackChange,
+    active: Option<&ModelPackReceipt>,
+) -> Option<ModelPackReceipt> {
+    let followed = match (recorded.active.as_ref(), active) {
+        (Some(was), Some(now)) => was.same_pack(now),
+        (None, None) => true,
+        _ => false,
+    };
+    if followed {
+        recorded.previous.clone()
+    } else {
+        recorded.active.clone()
+    }
+}
+
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("model pack: {reason}"))
 }
@@ -407,11 +441,11 @@ impl Vault {
         packs.sort_by(|left, right| {
             model_pack_recency(&right.pack).cmp(&model_pack_recency(&left.pack))
         });
-        let (previous, change_ref) = ACTIVE
-            .get(&self.store, txn, &())?
-            .map_or((None, None), |change| {
-                (change.previous, Some(change.change_ref))
-            });
+        let recorded = ACTIVE.get(&self.store, txn, &())?;
+        let previous = recorded.as_ref().and_then(|change| {
+            previous_model_pack(change, active.as_ref().map(|view| &view.receipt))
+        });
+        let change_ref = recorded.map(|change| change.change_ref);
         Ok(ModelPackSetting {
             preference,
             active,
@@ -455,43 +489,68 @@ impl Vault {
                     }
                 }
             }
+            let before = self.model_pack_in_effect_in_txn(txn)?;
             PREFERENCE.put(&self.store, txn, &(), &preference)?;
-            self.note_active_model_pack_in_txn(txn, ModelPackChangeCause::Preference)?;
+            self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Preference)?;
             self.model_pack_setting_in_txn(txn)
         })
     }
 
+    /// The receipt of the pack in effect now, as routing selects it: what a
+    /// change's caller reads before it installs, removes, re-prefers,
+    /// reverts or migrates, so the change it records keeps the pack the
+    /// vault really followed.
+    pub(crate) fn model_pack_in_effect_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<ModelPackReceipt>> {
+        Ok(self
+            .active_model_pack_in_txn(txn)?
+            .map(|installed| ModelPackReceipt::of(&installed)))
+    }
+
     /// Records a change of the pack the vault follows, in the caller's
-    /// transaction: when the active pack differs from the one last recorded,
-    /// the record keeps the one it replaced as `previous`, under a new
-    /// change id, and every owner gets the change's notice with its one-tap
-    /// revert (FIX 5367, 5369). The install, removal, preference, revert and
-    /// retirement doors call it, each naming itself as `cause`.
+    /// transaction (FIX 5367, 5369). `before` is the pack in effect just
+    /// before the caller's change ([`Self::model_pack_in_effect_in_txn`]).
+    /// When the change moves the pack in effect, `previous` is `before`.
+    /// When it does not, but a retirement had already moved the selection
+    /// off the recorded pack (FIX 5368's day pass records that on the day
+    /// itself), the record catches up with `previous` the recorded pack.
+    /// Each recorded change gets a new change id and `cause`, and every
+    /// owner gets its notice with its one-tap revert. The install, removal,
+    /// preference, revert and retirement doors call it, each naming itself
+    /// as `cause`.
     pub(crate) fn note_active_model_pack_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        before: Option<ModelPackReceipt>,
         cause: ModelPackChangeCause,
     ) -> Result<()> {
-        let active = self
-            .active_model_pack_in_txn(txn)?
-            .map(|installed| ModelPackReceipt::of(&installed));
+        let active = self.model_pack_in_effect_in_txn(txn)?;
         let prior = ACTIVE.get(&self.store, txn, &())?;
-        let recorded = prior.as_ref().and_then(|change| change.active.as_ref());
-        let unchanged = match (recorded, active.as_ref()) {
-            (Some(recorded), Some(active)) => recorded.same_pack(active),
-            (None, None) => true,
-            _ => false,
+        let recorded = prior.as_ref().and_then(|change| change.active.clone());
+        let same =
+            |left: Option<&ModelPackReceipt>, right: Option<&ModelPackReceipt>| match (left, right)
+            {
+                (Some(left), Some(right)) => left.same_pack(right),
+                (None, None) => true,
+                _ => false,
+            };
+        let previous = if same(before.as_ref(), active.as_ref()) {
+            if same(recorded.as_ref(), active.as_ref()) {
+                return Ok(());
+            }
+            recorded
+        } else {
+            before
         };
-        if unchanged {
-            return Ok(());
-        }
         let changed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         let change_ref =
             change::model_pack_change_ref(prior.as_ref(), active.as_ref(), changed_at)?;
         let change = ModelPackChange {
             change_ref,
             cause,
-            previous: prior.and_then(|change| change.active),
+            previous,
             active,
             changed_at,
         };

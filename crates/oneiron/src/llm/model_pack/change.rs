@@ -264,13 +264,14 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let blocked = match self.model_pack_revert_target_in_txn(txn, &request.change_ref)? {
                 Ok(previous) => {
+                    let before = self.model_pack_in_effect_in_txn(txn)?;
                     PREFERENCE.put(
                         &self.store,
                         txn,
                         &(),
                         &model_pack_revert_preference(&previous),
                     )?;
-                    self.note_active_model_pack_in_txn(txn, ModelPackChangeCause::Revert)?;
+                    self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Revert)?;
                     None
                 }
                 Err(block) => Some(block),
