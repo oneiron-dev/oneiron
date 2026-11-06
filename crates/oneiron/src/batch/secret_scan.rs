@@ -51,7 +51,7 @@ pub(crate) use self::mask::side_row::{
     admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
-    BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
+    AdmissionCustody, BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
