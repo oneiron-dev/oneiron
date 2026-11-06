@@ -297,6 +297,28 @@ complete error-prefix accounting. The native payment primitive stays uncalled;
 new funding, aggregate subtraction, automatic payment and the generated-only
 opening policy remain unchanged.
 
+### Captured House response quantities on errors
+
+The same retained native admission also stores the original read's completion
+request observations. Each request records its actual prompt count. A parsed HTTP
+response records its status and each answer's native `index`, `tokens_evaluated`
+and `tokens_predicted` when present, before status, batch or label validation.
+Malformed shapes and missing counters remain explicit unknowns. Native zero
+counts remain zero data; they do not replace the existing accounting output floor.
+
+A transport failure or work-cutoff cancellation leaves that request unresolved.
+Earlier observed responses remain on the same source list, even when a later
+retry has no response. List position is local request order, not a corrective
+financial ordinal or proof that bytes reached a model. A tokenizer failure before
+any completion request creates no response observation.
+
+The optional write occurs after the original read returns, including its unchanged
+error, and freezes this source list without changing the terminal invoice. The
+existing complete/stopped-prefix invoice, logical validation, retry order and
+single permit settlement remain unchanged. A partial or malformed response does
+not become a complete invoice, paid fact, exact NET/GROSS coverage or payment
+activation. These source observations do not yet close error-prefix accounting.
+
 ### Captured House post-settlement meter intervals
 
 A successful pre-byte input registration also binds a set-once weak reference to
