@@ -124,6 +124,7 @@ mod outbound;
 mod owner_door;
 mod presented_credential;
 mod queued_identity_hint;
+mod queued_room_hint;
 pub(crate) mod read_capture;
 mod read_lane;
 mod read_selection;
@@ -310,6 +311,7 @@ pub use outbound::{
     OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub(crate) use queued_identity_hint::QueuedIdentityHintReader;
+pub(crate) use queued_room_hint::QueuedRoomHintRuntime;
 pub use read_selection::RecallWorlds;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
