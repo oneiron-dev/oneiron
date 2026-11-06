@@ -23,7 +23,21 @@ pub struct ProviderDecision {
     /// Cost per thousand units from this answer's own measurement. An outer `None`
     /// uses the provider's rate; `Some(None)` records an unknown measured cost and
     /// must not fall back to a rate for a different model.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_measured_cost"
+    )]
     pub cost_per_thousand: Option<Option<f64>>,
+}
+
+fn deserialize_measured_cost<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer).map(Some)
 }
 
 /// A yes/no reading beside the answer ("does this need more thinking?" or "ask a
