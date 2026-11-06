@@ -200,7 +200,7 @@ impl SyncConnection {
     /// Publishes the count of valid run-buffer updates an explicit leave arm
     /// discards unqueued (OF-158), then clears that buffer as the explicit
     /// owner discard. After an arm's single-try `queue_on_exit`, a Pause
-    /// writes nothing; an admitted flush drains the buffer, so this adds 0.
+    /// writes nothing; an admitted flush leaves only failed queue writes.
     /// A leave that interrupts a send publishes its owned buffer directly,
     /// without another queue admission. Additive (`fetch_add`, never a
     /// storing overwrite) plus the
@@ -221,12 +221,19 @@ impl SyncConnection {
 
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
-    async fn stop_for_leave(&self) {
+    /// Stops the lane for a confirmed leave: no new connect starts once
+    /// `left` is set, and this waits for the running loop to end. Returns
+    /// whether the lane actually stopped: a loop still importing past the
+    /// quiesce timeout must refuse confirmation and retry, never purge
+    /// under a live writer.
+    async fn stop_for_leave(&self) -> bool {
         self.left.send_replace(true);
         let mut running = self.running.subscribe();
         // A loop that does not stop in time may queue its last buffer after
         // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running))
+            .await
+            .is_ok()
     }
 
     /// Asks the sync server for this member's own leave notices with the
@@ -348,7 +355,11 @@ impl SyncConnection {
         let Some(notice) = confirmed else {
             return Ok(None);
         };
-        self.stop_for_leave().await;
+        if !self.stop_for_leave().await {
+            return Err(TransportError::Storage(
+                "the sync lane did not quiesce for the leave; retry next round".to_owned(),
+            ));
+        }
         // Bind after the wait, with no await before confirmation: cancellation
         // while waiting must not strand this count on an unconfirmed notice.
         // Keep this owner on a failed transaction so its retry keeps the count.
@@ -356,11 +367,10 @@ impl SyncConnection {
             .leave_unqueued_receipt
             .get_or_init(|| notice.outcome().receipt_id.clone())
             == &notice.outcome().receipt_id;
-        // Published before `running=false` when the wait succeeded: the leave
-        // arms publish before any `Close`/cleanup await, and the final slot
-        // before `running=false`. 0 when every flush was admitted. When the
-        // 10s wait expired before publish, the count is missed and the receipt
-        // undercounts (FIX 12816, NOT fixed here).
+        // Published before `running=false`: the leave arms publish before any
+        // `Close`/cleanup await, and the final slot before `running=false`.
+        // A failed quiesce returned above, before binding or confirmation.
+        // 0 when every flush was admitted.
         let unqueued = if owns_unqueued {
             self.leave_unqueued
                 .load(std::sync::atomic::Ordering::Acquire)
@@ -732,22 +742,25 @@ impl SyncConnection {
     }
 }
 
-/// Flush all buffered local updates to the persistent offline queue.
-/// Logs errors but does not fail — best-effort during disconnect/shutdown.
+/// Flush buffered local updates to the persistent offline queue.
+/// Logs errors and keeps failed updates in the buffer; shutdown stays best-effort.
 fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
-    for local_update in buffer.drain(..) {
+    buffer.retain(|local_update| {
         if parse_window_key_str(&local_update.window_key).is_none() {
             tracing::error!(
                 "Rejected invalid local update window key during queue flush: {}",
                 local_update.window_key
             );
-            continue;
+            return false;
         }
-        let queue_result = queue.push(&local_update.window_key, &local_update.update_bytes);
-        if let Err(e) = queue_result {
-            tracing::error!("Failed to persist update to offline queue: {e}");
+        match queue.push(&local_update.window_key, &local_update.update_bytes) {
+            Ok(_) => false,
+            Err(e) => {
+                tracing::error!("Failed to persist update to offline queue: {e}");
+                true
+            }
         }
-    }
+    });
 }
 
 /// Reason the steady-state loop exited.

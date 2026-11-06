@@ -1,10 +1,15 @@
 //! The arm's model gateway (PR-S1): one strict call of a captured step's
 //! request, by the pattern of the contribution forks' exact call, never its
 //! code: the whole request as stored, bound to the model and locality that
-//! answered it, admitted as a raw call naming that model meets, sent on the
-//! one model's own ladder with no fallback, and only while that ladder's
-//! route prompt and route pin (route, offer, catalog revision, wire model,
-//! prompt digest) are the ones the capture pinned. Each call takes a policy
+//! answered it, admitted as a raw call naming that model meets, through the
+//! route clamp of the role whose admission sent it (FIX 6359), sent on the
+//! one rung that answered it with no fallback: the role's rung, else the
+//! model's raw rung (FIX 18546). It goes only while that rung's route prompt
+//! and route pin (route, offer, catalog revision, wire model, prompt digest)
+//! are the ones the capture pinned, by digest. Only then is
+//! the capture's route prompt read from its capsule's body, each secret in
+//! it its custody handle, and sent on that call alone in place of the one
+//! configured (FIX 6255): no pin holds its text. Each call takes a policy
 //! guard of its own, and its receipts are kept for the arm beside the host's
 //! own sink. A call with no answer still has its receipt: what it used is
 //! never a fictitious zero.
@@ -18,18 +23,17 @@
 
 use std::sync::Arc;
 
-use oneiron::code_run::CapsuleRungBinding;
+use oneiron::code_run::StoredRungBinding;
 use oneiron::code_run::shadow_runner::{
     PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowMeterContext, ShadowModelPin,
     ShadowModelReceipt, ShadowUnavailable, ShadowUnavailableReason as Reason, ShadowUsage,
+    shadow_route_prompt,
 };
 use oneiron::engine_executor::StepCancellation;
 use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
 use oneiron::llm::{BudgetDenied, BudgetGuard, DEFAULT_BUDGET_RESERVE_UNITS, mark_solo};
 use oneiron::{BudgetExhaustionPolicy, EntityId, Error, LlmError, LlmResponse, Vault};
 
-use super::super::CHAT_ROLE;
-use crate::models::RoleCall;
 use crate::server::SyncServer;
 
 /// One call's receipts, kept for the arm and passed on to the host's own
@@ -100,16 +104,27 @@ impl Gateway<'_> {
         // alone on an own server that batches (INF 1). The sent body records
         // the marker; the source digest stays the capture's.
         mark_solo(&mut request);
-        // The model a raw call naming it meets, never swapped for the role's
-        // route, which still clamps it: a model not served here now is no
-        // replay, and no other model stands in.
-        let Ok(RoleCall { request, ladder }) =
-            runtime.admit_seat_bound(self.vault, CHAT_ROLE, request)
-        else {
+        // The captured model, never swapped for the role's pick. The role's
+        // route still clamps it: a model not served here now is no replay,
+        // and no other model stands in. The role is the one whose admission
+        // sent the captured call (FIX 6359), and no other role stands in.
+        let Ok(admission) = runtime.admit_replay(self.vault, binding.role, request) else {
             let unavailable = ShadowUnavailable::new(Reason::ModelUnavailable, "model_not_served");
             return Ok(refused(receipt, unavailable));
         };
-        if ladder.exact_prompt() != Some(binding.prompt.as_deref()) {
+        let (request, routes) = (admission.request, admission.routes);
+        // The rung that answered the capture, as it is configured now: on
+        // the role's route, else on the model's raw route (FIX 18546). No
+        // such rung is no exact replay.
+        let Some((ladder, replay)) =
+            routes.exact_rung(&binding.model, binding.locality, binding.prompt_digest)
+        else {
+            let unavailable = ShadowUnavailable::new(Reason::RouteUnavailable, "no_exact_rung");
+            return Ok(refused(receipt, unavailable));
+        };
+        // Its configured prompt is the one the capture was sent under, by
+        // its digest (FIX 6356), before the stored prompt takes its place.
+        if replay.exact_prompt_digest() != binding.prompt_digest {
             let unavailable =
                 ShadowUnavailable::new(Reason::RouteUnavailable, "route_prompt_moved");
             return Ok(refused(receipt, unavailable));
@@ -128,6 +143,10 @@ impl Gateway<'_> {
         if let Some(withheld) = self.store.source_withheld() {
             return Ok(refused(receipt, withheld));
         }
+        let prompt = match self.route_prompt(prepared, &binding).await? {
+            Ok(prompt) => prompt,
+            Err(unavailable) => return Ok(refused(receipt, unavailable)),
+        };
         let sent = serde_json::to_vec(&request)
             .map_err(|error| Error::InvalidConfig(format!("shadow model request: {error}")))?;
         let path = format!("shadow/{step:06}/call-{call_id:03}.request.json");
@@ -160,8 +179,8 @@ impl Gateway<'_> {
         let cancel = self.cancel;
         let may_send = move || !cancel.is_cancelled();
         let wait = ladder.exact_replay_wait();
-        let answered = ladder
-            .generate_exact_within(&run, request, None, &may_send, wait)
+        let answered = replay
+            .generate_exact_within(&run, request, None, prompt.as_deref(), &may_send, wait)
             .await;
         let rows = kept.rows();
         let dispatched = rows
@@ -212,6 +231,20 @@ impl Gateway<'_> {
 }
 
 impl Gateway<'_> {
+    /// The route prompt `binding` names for `prepared`'s captured call, read
+    /// from its capsule's body on a blocking worker at the call (FIX 6255):
+    /// the custody read guard is never waited on by a runtime thread. Its
+    /// reader's typed unavailable when it does not read.
+    async fn route_prompt(
+        &self,
+        prepared: &PreparedShadowStep,
+        binding: &StoredRungBinding,
+    ) -> oneiron::Result<std::result::Result<Option<String>, ShadowUnavailable>> {
+        let vault = Arc::clone(self.server.vault());
+        let (step, binding) = (*prepared.step(), binding.clone());
+        off_runtime(move || shadow_route_prompt(&vault, &step, &binding)).await
+    }
+
     /// The answer `response` a sent call returned, stored at `path` as the
     /// side-row wall admits it, or the typed unavailable that stands in for
     /// it (Engine ruling 4; CALLS C5718-20): `SourceWithheld`, never
@@ -251,11 +284,13 @@ async fn off_runtime<T: Send + 'static>(
 /// The pins a strict call goes out on (CALLS "strict pins required on the
 /// new path only"): the capture must have pinned both the answering rung
 /// and its route, and the caller's pins must be exactly those. Only this
-/// new path asks it: live steps and the contribution forks never do.
+/// new path asks it: live steps and the contribution forks never do. The
+/// rung is compared by its metadata and its route prompt's ref and digest;
+/// no prompt text is read here (FIX 6255).
 fn strict_pins<'p>(
     prepared: &'p PreparedShadowStep,
     pin: &ShadowModelPin,
-) -> std::result::Result<&'p CapsuleRungBinding, ShadowUnavailable> {
+) -> std::result::Result<&'p StoredRungBinding, ShadowUnavailable> {
     let (Some(binding), Some(route)) = (prepared.binding(), prepared.route_pin()) else {
         return Err(ShadowUnavailable::new(Reason::RoutePinMissing, "capture"));
     };

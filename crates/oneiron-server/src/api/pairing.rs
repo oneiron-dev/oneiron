@@ -11,7 +11,11 @@ use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+mod redeem_backoff;
 mod renewal_error;
+
+pub(crate) use redeem_backoff::PairingRedeemBackoff;
+use redeem_backoff::{RedeemBackoffRules, RedeemSource, retry_after_secs};
 
 pub(super) async fn descriptor() -> Json<PairingDescriptor> {
     Json(PairingDescriptor::default())
@@ -110,7 +114,17 @@ pub(super) async fn oauth_exchange(
         .and_then(|value| value.strip_prefix("Bearer "))
         .filter(|token| !token.starts_with("v2.slip."))
         .ok_or_else(ApiError::unauthorized)?;
-    let identity = crate::oauth_relay::verify_oauth_relay_identity(raw, &server.config)?;
+    // The token's key set may need an HTTPS fetch: verify on a blocking
+    // worker, never on the async request worker (FIX 9529).
+    let identity = {
+        let token = raw.to_owned();
+        let verifier = Arc::clone(&server);
+        tokio::task::spawn_blocking(move || {
+            crate::oauth_relay::verify_oauth_relay_identity(&token, &verifier.config)
+        })
+        .await
+        .map_err(|_| ApiError::unauthorized())??
+    };
     let actor =
         oneiron::EntityId::from_hex(&identity.subject).map_err(|_| ApiError::unauthorized())?;
     if server
@@ -272,8 +286,21 @@ fn paired_home(vault: &oneiron::Vault) -> Option<PairedHome> {
 }
 pub(super) async fn redeem(
     State(server): State<Arc<SyncServer>>,
+    RedeemSource(address): RedeemSource,
     Json(request): Json<RedeemLink>,
 ) -> Result<Json<Paired>, EnvelopedApiError> {
+    // Each redemption from one address counts as failed until one succeeds,
+    // and an address past its free failures waits before its next code is
+    // read (FIX 12477).
+    if let Some(address) = address {
+        let rules = RedeemBackoffRules::of(&server.config.limits);
+        if let Err(wait) = server
+            .pairing_backoff
+            .admit(address, rules, std::time::Instant::now())
+        {
+            return Err(ApiError::too_many_attempts(retry_after_secs(wait)).into());
+        }
+    }
     // Pairing creates a capability for a named existing actor; it never enrolls
     // a roster authority key or manufactures a principal from an arbitrary label.
     let actor =
@@ -311,6 +338,9 @@ pub(super) async fn redeem(
             possession.as_ref(),
         )
     })?;
+    if let Some(address) = address {
+        server.pairing_backoff.succeeded(address);
+    }
     let slip = &redeemed.slip;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
