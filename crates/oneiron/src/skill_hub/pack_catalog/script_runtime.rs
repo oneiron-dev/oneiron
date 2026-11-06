@@ -7,7 +7,7 @@ use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::code_run::ProgramStepFeedback;
 use crate::code_sandbox::source::prepare_source;
-use crate::code_sandbox::{ProposalSpoolFloor, SandboxProposalBody};
+use crate::code_sandbox::ProposalSpoolFloor;
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{
     EntityId, Result, Vault,
@@ -26,7 +26,7 @@ use crate::{
 use crate::{
     code_sandbox::microvm::{
         CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmOutputSpool,
-        MicroVmSandboxAdapter,
+        MicroVmOutputStreamBodies, MicroVmSandboxAdapter,
     },
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
@@ -68,10 +68,10 @@ pub struct PackScriptOutcome {
     pub inbound: Vec<SurfaceEventAdmission>,
     pub verbs: Vec<OutboundIntent>,
     pub wakes: Vec<ConnectorWakeDecision>,
-    /// Finish when the guest reports done, otherwise console; retained on the host's floor.
-    pub observation: Option<SandboxProposalBody>,
-    /// Output files in first-seen order, retaining their admitted bodies without materialization.
-    pub output_files: Vec<(String, SandboxProposalBody)>,
+    /// The guest's optional step result, as returned; typed pack output remains the overlay.
+    pub step_result: Option<String>,
+    /// Each stream role and first-seen output file, retaining the host's admitted bodies.
+    pub output_streams: MicroVmOutputStreamBodies,
     pub session_manifest: Option<oneiron_container::SessionManifest>,
     pub sandbox_receipt: Option<String>,
     /// The adapter script's type feedback as it stood when the run ended,
@@ -79,11 +79,6 @@ pub struct PackScriptOutcome {
     /// kept on the vault's rows under the run's identity, its late result
     /// read by its `check_ref` as the owner.
     pub program_steps: Vec<ProgramStepFeedback>,
-}
-
-#[derive(Deserialize)]
-struct ScriptStepResult {
-    done: bool,
 }
 
 #[derive(Deserialize)]
@@ -418,13 +413,7 @@ impl Vault {
                 return Err(invalid("duplicate script connector event"));
             }
         }
-        let step: ScriptStepResult = serde_json::from_str(
-            exit.result_json
-                .as_deref()
-                .ok_or_else(|| invalid("pack script returned no step result"))?,
-        )
-        .map_err(|_| invalid("pack script returned invalid step result"))?;
-        let streamed = streamed.into_step_bodies(step.done)?;
+        let output_streams = streamed.into_stream_bodies()?;
         let mut inbound = Vec::new();
         let mut wakes = Vec::new();
         self.with_write_txn_grouped(|txn| {
@@ -460,8 +449,8 @@ impl Vault {
             inbound,
             verbs,
             wakes,
-            observation: streamed.observation,
-            output_files: streamed.files,
+            step_result: exit.result_json,
+            output_streams,
             session_manifest,
             sandbox_receipt,
             program_steps: vec![check.feedback()],
