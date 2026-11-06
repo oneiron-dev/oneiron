@@ -480,7 +480,10 @@ impl SyncServer {
         backend: Arc<dyn oneiron::llm::SingleRouteBackend>,
         budget: oneiron::BudgetGuard,
     ) -> Self {
-        self.llm = Some(crate::models::RawInference::injected(backend, budget));
+        self.llm = Some(
+            crate::models::RawInference::injected(backend, budget)
+                .with_native_allocation(self.native_runs()),
+        );
         self
     }
 

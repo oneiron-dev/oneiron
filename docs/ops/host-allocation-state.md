@@ -7,8 +7,10 @@ in-memory allocation meters. `RunAdmission::with_persistent_allocation` explicit
 selects the native ledger with a required `AllocationProducer`. It uses no
 reflected allocation meter for admission. The server's explicit
 `with_native_usage_metering` binding selects this constructor for its
-`undeclared_run` factory. Ordinary startup and other run constructors remain
-unchanged. No Cloud wallet or price conversion is implemented by this backend.
+`undeclared_run` factory. When selected before `AiHost::attach`, the same
+backend and observer are passed into the original model runtime before it is
+shared or starts work. Ordinary startup remains unchanged. No Cloud wallet or
+price conversion is implemented by this backend.
 
 ## Authority and state
 
@@ -138,11 +140,26 @@ committed native admission and terminal; it does not feed those rows through
 calls on that factory keep the ordinary usage leg, and chosen observers and
 budget-hit hooks remain attached.
 
-Other model, media and House run factories still need their original native
-binding joins; selecting this server factory is not a claim that those paths
-were converted. The original hosted grant-delivery adapter, durable terminal
-crash recovery and accepted-terminal reconciliation remain open. A false
-dispatch observation is never permission to release an old hold.
+The configured model runtime's undeclared, room-funded and attributed calls
+now retain their original run meter, payer and attribution while selecting the
+same native backend. Declared calls with no explicit host override retain
+their exact declaration and line on that backend; an explicit host account
+still selects its original ordinary path. Configured raw calls and the
+server's injected raw backend carry that same native selection, including
+both owned builder orderings for the injected backend. Existing settlement
+capture, original request/source overlays and chosen observers remain attached.
+The attachment passes these owned bindings before `Arc<ModelRuntime>` exists;
+it neither mutates worker identity nor retargets an already shared runtime.
+Select native metering before attaching the AI host or starting its workers.
+
+Media job factories, standalone House gates and direct non-runtime run
+factories still need their original native binding joins. Existing kept media
+jobs retain their current restore path: they are not blindly re-admitted as
+new native holds on restart. Converting that path requires its actual original
+hold/lease and terminal recovery, not another grant or a new refusal. The
+original hosted grant-delivery adapter, durable terminal crash recovery and
+accepted-terminal reconciliation remain open. A false dispatch observation is
+never permission to release an old hold.
 
 Cloud accepted-terminal identity, serving-retirement reconciliation and backing
 return remain the hosted control plane's responsibility. Native revisions,
