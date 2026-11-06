@@ -119,18 +119,25 @@ impl ScopedRead<'_> {
         skip_rescore: bool,
         session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        // The key's own filter (B) and the candidates its own live Grants
+        // add (A, FIX 7528): the search ranks both, and each candidate takes
+        // the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let plan_admits = self.plan_admits(&filter, &policy, &excluded);
+        let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
@@ -140,7 +147,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted);
         let results = match channel {
@@ -210,18 +217,25 @@ impl ScopedRead<'_> {
         as_of: Option<u64>,
         session_scope: Option<&SessionScope>,
     ) -> Result<RevisionedHits> {
-        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
-        if filter.deny_all {
+        // The key's own filter (B) and the candidates its own live Grants
+        // add (A, FIX 7528): the search ranks both, and each candidate takes
+        // the row gate, B first.
+        let super::search::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = self.search_plan(requested)?;
+        if candidates.deny_all {
             return Ok(RevisionedHits {
                 vector_refinement: None,
                 embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
-                receipt: self.receipt_for(requested, &policy, &filter, 0),
+                receipt: self.receipt_for(requested, &policy, &candidates, 0),
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let plan_admits = self.plan_admits(&filter, &policy, &excluded);
+        let plan_admits = self.plan_admits(&filter, &policy, &excluded, requested);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 Ok(plan_admits(store, txn, id)?
@@ -231,7 +245,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .reading(self.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted)
             .search_text(query, limit)
