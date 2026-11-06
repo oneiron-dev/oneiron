@@ -5,6 +5,11 @@
 use super::*;
 
 impl AiHandle {
+    /// The wording resolved when this host was built, including model-free defaults.
+    pub(super) fn dreamer_wording(&self) -> &crate::config::models::DreamerWording {
+        &self.dreamer_wording
+    }
+
     /// The control the Dreamer's passes read their pause through, when this
     /// host attached under one: `None` where no owner pause can hold a pass.
     pub(crate) fn dreamer_control(&self) -> Option<DreamerControl> {
@@ -66,12 +71,28 @@ impl AiHandle {
             summaries: false,
             decisions: Arc::default(),
             coach_heal_wake: Arc::default(),
+            coach_host_wake: Arc::default(),
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
+            dreamer_wording: Arc::new(
+                models
+                    .map(|models| models.dreamer.wording.clone())
+                    .unwrap_or_default(),
+            ),
             confession: confession_wording::of(models),
             dreamer_control: None,
+            runner_seats: models.and_then(|models| models.dreamer.runner_seats.clone()),
         }
+    }
+
+    /// The owner's runner-seat policy (`[models.dreamer] runner_seats`) the
+    /// seat host routes a bound runner work's end under (FIX 9320, FIX
+    /// 10625); `None` when the config names none.
+    pub(crate) fn runner_seats(
+        &self,
+    ) -> Option<&crate::runtime::seat_login::RunnerSeatPolicySettings> {
+        self.runner_seats.as_ref()
     }
 
     /// What the Dreamer's wake policy samples before each decision (ARCH-0026
