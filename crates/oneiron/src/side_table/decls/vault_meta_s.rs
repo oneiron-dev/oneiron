@@ -237,6 +237,10 @@ side_tables! {
     /// hours between and the newest kept, one row for the whole choice. Absent is no choice, and
     /// the deployment's `[backup]` section decides. Key: ().
     BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
+    /// The owner's board layout settings (BOARD-LAYOUT): the board cap, the default layout an
+    /// agent's board renders under until it lays out its own, and the override whose sections win
+    /// over every agent's own. Absent reads empty. Key: ().
+    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
@@ -368,6 +372,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// Last short-id counter per runtime (pack) kind, by its stable short-id prefix, kept across
+    /// uninstall, slot collection and reinstall (FIX 7741). Key: string.
+    SHORT_ID_KIND_COUNTER: VaultMeta b"sid_kind_counter:" Raw;
     /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.
@@ -678,6 +685,18 @@ side_tables! {
     /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
     /// receipt string.
     SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
+    /// One change to a source audience's readers, its receipt (FIX 12559); the policy entry's
+    /// scrub forgets an erased actor here too. Key: id16(policy) + u64be revision.
+    SOURCE_AUDIENCE_EVENT: VaultMeta b"source_audience:event:v1:" Named;
+    /// One source audience: a mail or calendar source's readers, or one thread's shares (FIX
+    /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
+    SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
+        => crate::source_audience::erase_actor_in_txn;
+    /// The source audience a row was born under; it never moves (FIX 12559). Key: id16(row).
+    SOURCE_AUDIENCE_RECORD: VaultMeta b"source_audience:record:v1:" Named;
+    /// One source thread's audience policy (FIX 12559). Key: id16(source policy) + blake3 (32)
+    /// of the source's thread key.
+    SOURCE_AUDIENCE_THREAD: VaultMeta b"source_audience:thread:v1:" Named;
     /// A planned spawn under one asker's intent key (DOOR-111): the asker, the original ask and
     /// its digest, the custody phase and fence, the placed stamp and plan receipt or the kept
     /// refusal, and a launched team's frozen start and pack and its leader runs' exposures. An

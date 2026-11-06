@@ -88,7 +88,8 @@ pub struct ProposalScope {
     /// Registry kind name of the op's primary target entity (the merge
     /// survivor / the split original), e.g. `"PERSON"`.
     pub target_class: String,
-    /// The proposing actor's entity ref in hex, or
+    /// The proposing actor's opaque handle (`proposer:` and 64 hex digits,
+    /// FIX 9870), never its entity ref, or
     /// [`PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED`](super::PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED) when the proposal bound none.
     pub actor: String,
 }
