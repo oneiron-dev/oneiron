@@ -96521,6 +96521,7 @@
      "path": "src/client.rs",
      "purpose": "The daemon's side of the socket",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 10,
       "struct": 4
@@ -96534,7 +96535,7 @@
      "purpose": "One call's deadline (FIX 8559)",
      "surface": {
       "const": 1,
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -96544,6 +96545,7 @@
      "path": "src/digest.rs",
      "purpose": "The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth…",
      "surface": {
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -96583,7 +96585,52 @@
      "purpose": "The wire between the daemon and the broker, one connection per call",
      "surface": {
       "const": 4,
-      "crate-vis": 15
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitCallHeader",
+      "GitExchange",
+      "GitRepository",
+      "GitRequestDigest",
+      "GitService",
+      "GitTarget"
+     ],
+     "path": "src/git_http.rs",
+     "purpose": "The git smart-HTTP adapter (ARCH-0069 OSH-3, the broker's second adapter after model keys): one exchange of…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 17,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitReply",
+      "PreparedGitCall"
+     ],
+     "path": "src/git_http/client.rs",
+     "purpose": "The daemon's side of a git exchange (see the parent module's steps): the header and the spooled body first…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_http/serve.rs",
+     "purpose": "The broker's side of a git exchange, from its header on (see the parent module's steps): spool and check the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -96598,7 +96645,7 @@
       "enum": 1,
       "fn": 1,
       "mod": 2,
-      "re-export": 13
+      "re-export": 15
      }
     },
     {
@@ -96640,7 +96687,7 @@
      "path": "src/send.rs",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "struct": 1
      }
     },
@@ -96806,6 +96853,13 @@
      "layout": "file",
      "purpose": "The wire between the daemon and the broker, one connection per call"
     },
+    "git_http": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The git smart-HTTP adapter (ARCH-0069 OSH-3, the broker's second adapter after model keys): one exchange of…"
+    },
     "peer": {
      "files": 1,
      "impl_vault": false,
@@ -96865,7 +96919,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 20,
+   "source_files": 23,
    "test_files": 5
   },
   "oneiron-browser": {
