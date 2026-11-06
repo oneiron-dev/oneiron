@@ -108,6 +108,8 @@ pub struct SkillOptimizeBrief {
     pub(crate) native_verdict_sources: Option<super::coach_read::NativeFamilySources>,
     /// Partial original discovery scan; not a complete model source declaration.
     pub(crate) native_discovery_sources: Option<super::coach_read::NativeFamilySources>,
+    /// Partial rule scan, including raw rows ignored by ordinary classification.
+    pub(crate) native_rule_outcome_sources: Option<super::coach_read::NativeFamilySources>,
     /// Partial original judgment scan; includes rows the later filters discard.
     pub(crate) native_judgment_sources: Option<super::coach_read::NativeFamilySources>,
 }
@@ -395,7 +397,9 @@ pub(super) fn optimize_brief_with_read_at(
     // projected claim never cites, so the brief cites them from the rule rows
     // themselves, in the same receipt-id shape. Unreadable rows were already
     // skipped with a WARN at the read; a failed read cites nothing.
-    cited_receipts.extend(rule_outcome_citations(vault, &candidate.skill, &dev));
+    let (rule_citations, native_rule_outcome_sources) =
+        rule_outcome_citations(vault, &candidate.skill, &dev, source_read);
+    cited_receipts.extend(rule_citations);
     // The rows the author's call carries (FIX 7102, FIX 12088): the DEV attempt
     // rows, the forwarded defect judgments and discovery proposals by their own
     // row ids, the forwarded substitution proposals, the rejected verdicts with
@@ -460,6 +464,7 @@ pub(super) fn optimize_brief_with_read_at(
         native_verdict_sources,
         native_discovery_sources,
         native_judgment_sources,
+        native_rule_outcome_sources,
     })
 }
 
@@ -579,17 +584,31 @@ fn reliability_citations(
 /// in the same shape as [`reliability_citations`] (FIX 10879). Read from the
 /// rule OUTCOME rows in this brief's own read snapshot; a read that fails cites
 /// nothing rather than failing the brief.
-fn rule_outcome_citations(vault: &Vault, skill: &EntityId, dev: &HashSet<String>) -> Vec<String> {
-    let cited: Result<Vec<String>> = (|| {
-        let rtxn = vault.store.env.read_txn()?;
-        let receipts = crate::skill_reliability::rule_outcome_receipts_in_txn(vault, &rtxn, skill)?;
-        Ok(receipts
+fn rule_outcome_citations(
+    vault: &Vault,
+    skill: &EntityId,
+    dev: &HashSet<String>,
+    source_read: Option<&super::coach_read::CoachReadRequest>,
+) -> (Vec<String>, Option<super::coach_read::NativeFamilySources>) {
+    let cited: Result<_> = (|| {
+        let (receipts, sources) = match source_read {
+            Some(read) => read.rule_outcome_receipts(vault, skill)?,
+            None => {
+                let rtxn = vault.store.env.read_txn()?;
+                (
+                    crate::skill_reliability::rule_outcome_receipts_in_txn(vault, &rtxn, skill)?,
+                    None,
+                )
+            }
+        };
+        let receipts = receipts
             .into_iter()
             .filter(|receipt| {
                 receipt.starts_with(crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX)
                     && dev.contains(receipt)
             })
-            .collect())
+            .collect();
+        Ok((receipts, sources))
     })();
     match cited {
         Ok(cited) => cited,
@@ -599,7 +618,7 @@ fn rule_outcome_citations(vault: &Vault, skill: &EntityId, dev: &HashSet<String>
                 %error,
                 "the brief's rule outcome citations are unreadable; they were skipped"
             );
-            Vec::new()
+            (Vec::new(), None)
         }
     }
 }
