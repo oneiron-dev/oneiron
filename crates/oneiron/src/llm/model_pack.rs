@@ -103,11 +103,10 @@ impl AccessSnapshot {
 /// The access an offer runs on. An engine call (CALLS, FIX 5366): the
 /// host's payer names it. Host-paid is our hosted credits; the customer's
 /// key or cloud account is their own keys; a signed-in vendor CLI or plan
-/// is a seat; a local-payer offer on this device is a local GPU. A
-/// local-payer offer at any other locality, a keyless remote or a model
-/// server reached over HTTP, holds no pack access: a local-GPU pick never
-/// sends input off the device. The provider is the model id's provider
-/// segment.
+/// is a seat; a local-payer offer on this device or on the owner's own
+/// model server is a local GPU. A local-payer offer at a third party (a
+/// keyless remote) holds no pack access: a local-GPU pick never sends input
+/// to a third party. The provider is the model id's provider segment.
 #[must_use]
 pub fn model_pack_access_for(offer: &OfferBinding) -> Option<ModelPackAccess> {
     let provider = || offer.model.provider().to_owned();
@@ -122,7 +121,7 @@ pub fn model_pack_access_for(offer: &OfferBinding) -> Option<ModelPackAccess> {
             provider: provider(),
         }),
         Payer::Local => {
-            (offer.locality == ModelLocality::OnDevice).then_some(ModelPackAccess::LocalGpu)
+            (offer.locality != ModelLocality::ThirdParty).then_some(ModelPackAccess::LocalGpu)
         }
     }
 }

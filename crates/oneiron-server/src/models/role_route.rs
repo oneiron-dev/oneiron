@@ -277,10 +277,15 @@ impl ModelRuntime {
         let Some((served, ladder)) = router.served_at(&model, route) else {
             return Ok(None);
         };
-        // A local-GPU pick runs on device alone: with no on-device view,
-        // `served_at` falls back to the model's default route, which may
-        // send input off the device.
-        if served > route {
+        // A local-GPU pick runs on this device or the owner's own model
+        // server, never at a third party: with no on-device view, `served_at`
+        // falls back to the model's default route, which may be remote.
+        let widest = if choice.variant.access == ModelPackAccess::LocalGpu {
+            ModelLocality::OwnServer
+        } else {
+            ModelLocality::ThirdParty
+        };
+        if served > widest {
             return Ok(None);
         }
         if self.stays_on_device.contains(&role) && served == ModelLocality::ThirdParty {
