@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1257 facade rows, 4554 declarations.
-Inputs: 1188 of 1257 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1091 of 1257 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 120; unread shapes: 0.
+Census: 1263 facade rows, 4578 declarations.
+Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -9402,6 +9402,154 @@ class ReservoirSourcePreview(TypedDict):
     carried: int
     excluded: dict[str, int]
     sources: list[ReservoirSourceRow]
+class DrafterTarget(TypedDict):
+    model: str
+    tokenizer: str
+    runtime: str
+class DrafterListRequest(TypedDict):
+    target: NotRequired[DrafterTarget | None]
+class DrafterServingVersion(TypedDict):
+    version: EntityId
+DrafterServing = Literal["stock"] | DrafterServingVersion
+DrafterVersionState = Literal["prepared", "training", "returned", "qualified", "rejected", "erased"]
+class DrafterVersionView(TypedDict):
+    id: EntityId
+    target: DrafterTarget
+    parent: DrafterServing
+    recipe: str
+    state: DrafterVersionState
+    generation: int
+    created_at: int
+    updated_at: int
+    sources: int
+    retained: bool
+    serving: bool
+    revertible: bool
+class DrafterStatusRequest(TypedDict):
+    events_after: NotRequired[EntityId | None]
+class DrafterRecipe(TypedDict):
+    id: str
+    revision: SourcePin
+    settings: Any
+    gpu_seconds: int
+    device_memory_mib: int
+class DrafterActorOwner(TypedDict):
+    owner: EntityId
+class DrafterActorAgent(TypedDict):
+    agent: EntityId
+DrafterActor = Literal["coach", "host", "erase", "erased"] | DrafterActorOwner | DrafterActorAgent
+class DrafterPolicy(TypedDict):
+    enabled: bool
+    excluded_worlds: list[EntityId]
+    recipe: NotRequired[DrafterRecipe | None]
+    revision: int
+    set_by: NotRequired[DrafterActor | None]
+    set_at: NotRequired[int | None]
+class DrafterBinding(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    previous: DrafterServing
+    changed_by: NotRequired[EntityId | None]
+    changed_at: int
+DrafterUnservedReason = Literal["no_serving_host", "no_serving_worker", "unsupported_shared_worker", "unsupported_external_worker", "unsupported_runtime", "vault_locked", "version_not_servable", "load_set_unverified", "worker_rejected", "superseded"]
+class DrafterServedView(TypedDict):
+    target: DrafterTarget
+    serving: NotRequired[DrafterServing | None]
+    generation: NotRequired[int | None]
+    draft_digest: NotRequired[str | None]
+    worker: NotRequired[str | None]
+    epoch: NotRequired[str | None]
+    applying: bool
+    reason: NotRequired[DrafterUnservedReason | None]
+DrafterSkipReason = Literal["policy_off"]
+DrafterHoldReason = Literal["no_trainer_recipe", "no_drafter_target", "policy_moved", "empty_corpus", "corpus_missing", "training_in_progress", "no_admission"]
+DrafterTrainingFailure = Literal["refused", "trainer_failed", "receipt_unverified", "seal_failed", "over_budget", "lost", "cancelled", "erased"]
+class DrafterRetrainOutcomeSkippedBody(TypedDict):
+    reason: DrafterSkipReason
+class DrafterRetrainOutcomeSkipped(TypedDict):
+    skipped: DrafterRetrainOutcomeSkippedBody
+class DrafterRetrainOutcomeHeldBody(TypedDict):
+    reason: DrafterHoldReason
+class DrafterRetrainOutcomeHeld(TypedDict):
+    held: DrafterRetrainOutcomeHeldBody
+class DrafterRetrainOutcomeTrainedBody(TypedDict):
+    version: EntityId
+class DrafterRetrainOutcomeTrained(TypedDict):
+    trained: DrafterRetrainOutcomeTrainedBody
+class DrafterRetrainOutcomeFailedBody(TypedDict):
+    version: EntityId
+    reason: DrafterTrainingFailure
+class DrafterRetrainOutcomeFailed(TypedDict):
+    failed: DrafterRetrainOutcomeFailedBody
+DrafterRetrainOutcome = DrafterRetrainOutcomeSkipped | DrafterRetrainOutcomeHeld | DrafterRetrainOutcomeTrained | DrafterRetrainOutcomeFailed
+DrafterRollbackReason = Literal["slowdown", "output_mismatch", "worker_error"]
+class DrafterEventKindRetrainBody(TypedDict):
+    attempt: AttemptId
+    policy_revision: int
+    cutoff: int
+    outcome: DrafterRetrainOutcome
+class DrafterEventKindRetrain(TypedDict):
+    retrain: DrafterEventKindRetrainBody
+class DrafterEventKindQualifyBody(TypedDict):
+    version: EntityId
+    passed: bool
+    evaluation: NotRequired[EntityId | None]
+class DrafterEventKindQualify(TypedDict):
+    qualify: DrafterEventKindQualifyBody
+class DrafterEventKindActivateBody(TypedDict):
+    version: EntityId
+class DrafterEventKindActivate(TypedDict):
+    activate: DrafterEventKindActivateBody
+class DrafterEventKindRollbackBody(TypedDict):
+    version: EntityId
+    reason: DrafterRollbackReason
+class DrafterEventKindRollback(TypedDict):
+    rollback: DrafterEventKindRollbackBody
+class DrafterEventKindRevertBody(TypedDict):
+    version: EntityId
+class DrafterEventKindRevert(TypedDict):
+    revert: DrafterEventKindRevertBody
+class DrafterEventKindEraseBody(TypedDict):
+    versions: list[EntityId]
+    jobs: list[AttemptId]
+class DrafterEventKindErase(TypedDict):
+    erase: DrafterEventKindEraseBody
+class DrafterEventKindPolicyBody(TypedDict):
+    revision: int
+class DrafterEventKindPolicy(TypedDict):
+    policy: DrafterEventKindPolicyBody
+class DrafterEventKindServedBody(TypedDict):
+    target: DrafterTarget
+    serving: DrafterServing
+    generation: int
+    draft_digest: NotRequired[str | None]
+class DrafterEventKindServed(TypedDict):
+    served: DrafterEventKindServedBody
+DrafterEventKind = DrafterEventKindRetrain | DrafterEventKindQualify | DrafterEventKindActivate | DrafterEventKindRollback | DrafterEventKindRevert | DrafterEventKindErase | DrafterEventKindPolicy | DrafterEventKindServed
+DrafterBindingChange = TypedDict("DrafterBindingChange", {"target": DrafterTarget, "from": DrafterServing, "to": DrafterServing, "generation": int})
+class DrafterEvent(TypedDict):
+    id: EntityId
+    at: int
+    by: DrafterActor
+    kind: DrafterEventKind
+    change: NotRequired[DrafterBindingChange | None]
+class DrafterStatus(TypedDict):
+    policy: DrafterPolicy
+    bindings: list[DrafterBinding]
+    served: list[DrafterServedView]
+    events: list[DrafterEvent]
+class DrafterPolicySetRequest(TypedDict):
+    expected_revision: int
+    enabled: bool
+    excluded_worlds: NotRequired[list[EntityId]]
+    recipe: NotRequired[DrafterRecipe | None]
+class DrafterRevertRequest(TypedDict):
+    version: EntityId
+    expected_binding_generation: int
+class DrafterRevertReceipt(TypedDict):
+    binding: DrafterBinding
+    event: NotRequired[DrafterEvent | None]
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig

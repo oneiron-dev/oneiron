@@ -512,6 +512,12 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultDraftersList(input: unknown): unknown
+vaultDraftersListAs(input: unknown): unknown
+vaultDraftersStatus(input: unknown): unknown
+vaultDraftersPolicySet(input: unknown): unknown
+vaultDraftersRevert(input: unknown): unknown
+vaultDraftersRevertAs(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
