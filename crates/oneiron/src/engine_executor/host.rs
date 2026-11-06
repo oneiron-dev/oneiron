@@ -139,8 +139,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
 /// Whether the gate an act takes over the run's results (a store, a fold, a
 /// summary, a spawn) counts the stored skills its callables loaded and the
 /// other runs' results they read, as each read's gate does (FIX 5460). Off:
-/// such an act runs as it did before those rows were counted.
-const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
+/// such an act runs as it did before those rows were counted. A shadow arm's
+/// store reads its sources under the same gate (FIX 6352).
+pub(crate) const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
 
 /// A result a reference names for this run: one of its own, the source a
 /// reader child reads in its parent's record, or a finding of one of the

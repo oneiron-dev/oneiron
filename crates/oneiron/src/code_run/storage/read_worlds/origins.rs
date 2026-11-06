@@ -14,7 +14,8 @@ use crate::{EntityId, Result};
 /// The origins of `run`'s results as its ledger stands in `txn` through
 /// `dbs`, when the ledger is complete there: it began with the run, misses
 /// nothing, and the one epoch it holds open is the one `seal` names. Every
-/// world it holds, and the scope of each row whose every proof agrees
+/// world it holds, the scope of each row whose every proof agrees, and each
+/// row whose proofs disagree or one of which proves no scope
 /// ([`OriginsUnion`]). `None` when the ledger is not complete.
 fn result_origins_in(
     dbs: &impl SideTableDbs,
@@ -36,7 +37,10 @@ fn result_origins_in(
     prefix.push(ROW_TAG);
     for row in ROW_SCOPES.iter_from(dbs, txn, &prefix)? {
         let (key, proof) = row?;
-        union.add_row_scope(key.row, &proof.scope);
+        match &proof.scope {
+            Some(scope) => union.add_row_scope(key.row, scope),
+            None => union.add_conflicted_row(key.row),
+        }
     }
     Ok(Some(union.finish()))
 }

@@ -184,9 +184,10 @@ impl HostSelfDispatcher<'_> {
 
     /// Notes what a read of another run's result serves `run` at bridge
     /// position `at` (FIX 7084): the worlds and row scopes its descriptor
-    /// froze. A result whose origins are unknown marks the ledger
-    /// `RetainedResult`. The source run's ledger as it stands now is never
-    /// read here.
+    /// froze, and a proof of no scope for each row it froze as conflicted,
+    /// so no other proof gives that row a scope. A result whose origins are
+    /// unknown marks the ledger `RetainedResult`. The source run's ledger as
+    /// it stands now is never read here.
     pub(crate) fn read_worlds_retained(
         &self,
         run: EntityId,
@@ -198,7 +199,7 @@ impl HostSelfDispatcher<'_> {
             return;
         };
         if self.read_worlds_noted(run, at, &origins.worlds) {
-            self.read_rows_noted(run, at, &origins.row_scopes);
+            self.read_rows_noted(run, at, &origins.row_scopes, &origins.conflicted_rows);
         }
     }
 
@@ -247,7 +248,7 @@ impl HostSelfDispatcher<'_> {
             }
         }
         let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);
-        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows);
+        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows, &BTreeSet::new());
         if worlds_noted && rows_noted {
             let mut live = self.read_worlds.get();
             live.covered = true;
@@ -307,7 +308,7 @@ impl HostSelfDispatcher<'_> {
             }
         }
         let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);
-        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows);
+        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows, &BTreeSet::new());
         if worlds_noted && rows_noted {
             let mut live = self.read_worlds.get();
             live.covered = true;
@@ -333,14 +334,24 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// Notes `rows` and their scopes as served to `run` at bridge position
-    /// `at`: `true` once the ledger holds them. A write that fails marks the
+    /// `at`, and each row of `conflicted` with a proof of no scope (FIX
+    /// 7084): `true` once the ledger holds them. A write that fails marks the
     /// ledger unknown and leaves the epoch open.
-    fn read_rows_noted(&self, run: EntityId, at: u64, rows: &BTreeMap<EntityId, Scope>) -> bool {
-        if rows.is_empty() {
+    fn read_rows_noted(
+        &self,
+        run: EntityId,
+        at: u64,
+        rows: &BTreeMap<EntityId, Scope>,
+        conflicted: &BTreeSet<EntityId>,
+    ) -> bool {
+        if rows.is_empty() && conflicted.is_empty() {
             return true;
         }
         let mut live = self.live_for(run);
-        let noted = self.storage.note_read_rows(run, at, rows).is_ok();
+        let noted = self
+            .storage
+            .note_read_rows(run, at, rows, conflicted)
+            .is_ok();
         live.clean &= noted;
         self.read_worlds.set(live);
         if !noted {
