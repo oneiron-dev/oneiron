@@ -36,7 +36,10 @@ same reply as simple HTML (paragraphs, links, lists, quotes, emphasis); it
 sends beside the plain text, which must still read as the whole reply. An
 image, style or script is refused.
 
-A reply goes to the message's `Reply-To`, else its sender. Set `reply_all` to
+A reply goes to the message's `Reply-To`, else its sender. For a Google
+mailbox, these addresses and the message's To and Cc are read from the message
+at Gmail each time you draft; if that read fails, the draft is refused, so
+draft it again. Set `reply_all` to
 send it to the message's own To and Cc too, in their roles, and name more
 people in `cc` (bare addresses). The mailbox's own address is left out, and
 each address goes once. At most 50 recipients in all; more is refused, never

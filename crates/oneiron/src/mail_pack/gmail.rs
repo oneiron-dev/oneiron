@@ -21,14 +21,16 @@ use reqwest::header::AUTHORIZATION;
 use serde_json::Value;
 
 use super::credential::WireReads;
+use super::mime::MimeMessage;
 use super::rest::{
     self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
     text_of,
 };
 use super::source::MailProvider;
 use super::wire::{
-    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
-    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
+    MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
+    MailSyncSource,
 };
 use crate::Vault;
 use crate::channel_identity_provider::gmail::GMAIL_CONNECTOR_EFFECTOR;
@@ -227,6 +229,35 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             }
         }
         Ok(Some(full_from(headers, parts)))
+    }
+
+    fn raw_address_headers(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<Option<MailAddressHeaders>> {
+        // Gmail's `metadata` and `full` headers come with their encoded
+        // words decoded, so an encoded comma or address would split a
+        // mailbox; only `raw` keeps each one's bounds as the sender wrote
+        // them (fix list row 20520).
+        let params = [("format", "raw".to_owned())];
+        let answer = self
+            .get(source, &Self::message_url(provider_id)?, &params)?
+            .ok_or_else(|| refused("gmail_mail_message_not_found"))?;
+        let raw = answer
+            .get("raw")
+            .and_then(Value::as_str)
+            .ok_or_else(|| refused("gmail_mail_raw_message_missing"))?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(raw.trim_end_matches('='))
+            .map_err(|_| refused("gmail_mail_raw_message_unreadable"))?;
+        let message = MimeMessage::parse(&bytes);
+        Ok(Some(MailAddressHeaders {
+            from: message.address_header("From"),
+            reply_to: message.address_header("Reply-To"),
+            to: message.address_header("To"),
+            cc: message.address_header("Cc"),
+        }))
     }
 
     fn history(
