@@ -7,21 +7,23 @@
 //! [`run_job_verdict`], under this job's one line, the vault owner as payer,
 //! the Coach's own scoped read and the time the job has left on its one
 //! clock; no merge-specific classifier, no fixed rate, no owner setup. A
-//! question no rung serves now, or one asked after the job's clock ran out,
-//! leaves the candidate pending for the next job.
+//! question no rung serves now, one the ladder abstained on because no rung
+//! up to its ceiling could take it or the deadline cut it, or one asked
+//! after the job's clock ran out, leaves the candidate pending for the next
+//! job; only a rung's own abstain or refusal is an answer.
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::identity_topology::{
     TopologyAuditAnswer, TopologyAuditCase, TopologyAuditRecipe, TopologyAuditReviewer,
 };
-use oneiron::llm::decision::{AnswerContract, DecisionAnswer};
+use oneiron::llm::decision::{AnswerContract, DecisionAnswer, HumanAskReason};
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory};
 use oneiron::task_verb::sdk::AiVerdictRequest;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, WriteActor};
 
-use crate::decision_verdict::{JobVerdictLine, run_job_verdict};
+use crate::decision_verdict::{JobVerdict, JobVerdictLine, run_job_verdict};
 use crate::server::SyncServer;
 
 /// The recipe's name; its id derives from it.
@@ -105,9 +107,11 @@ struct HostRecipe<'a> {
 impl HostRecipe<'_> {
     /// One yes-or-no `question` about `case` on the general ladder, under
     /// the job's line, payer, read and clock. Every record the case names is
-    /// read, or the question is refused. With `whole`, an answer the ladder
-    /// gave over evidence it cut to fit is refused too: a review judges the
-    /// whole decision or nothing.
+    /// read, or the question is refused. A ladder that gave no answer because
+    /// no rung could take the step or the deadline cut it is not asked again
+    /// in this job: the candidate stays pending and nothing is kept. With
+    /// `whole`, an answer the ladder gave over evidence it cut to fit is
+    /// refused: a review judges the whole decision or nothing.
     fn ask(&self, question: &str, case: &TopologyAuditCase, whole: bool) -> TopologyAuditAnswer {
         if unix_ms() >= self.until_ms {
             return TopologyAuditAnswer::Deferred;
@@ -136,21 +140,25 @@ impl HostRecipe<'_> {
         };
         let mut read = Vec::new();
         match run_job_verdict(self.server, &job, &self.reader, &request, &mut read) {
-            Ok(verdict) if whole && verdict.evidence_cut_at_bytes.is_some() => {
+            Ok(JobVerdict {
+                no_answer: Some(HumanAskReason::ProviderUnavailable | HumanAskReason::Deadline),
+                ..
+            }) => TopologyAuditAnswer::Deferred,
+            Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
+                TopologyAuditAnswer::Deferred
+            }
+            Ok(JobVerdict { verdict, .. }) if whole && verdict.evidence_cut_at_bytes.is_some() => {
                 TopologyAuditAnswer::Refused {
                     code: EVIDENCE_CUT.to_owned(),
                 }
             }
-            Ok(verdict) => TopologyAuditAnswer::Answered {
+            Ok(JobVerdict { verdict, .. }) => TopologyAuditAnswer::Answered {
                 yes: match verdict.answer {
                     DecisionAnswer::Noul(yes) => Some(yes),
                     _ => None,
                 },
                 decision_receipt: serde_json::to_string(&verdict.receipt).ok(),
             },
-            Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
-                TopologyAuditAnswer::Deferred
-            }
             Err(error) => TopologyAuditAnswer::Refused { code: error.code },
         }
     }

@@ -36,8 +36,8 @@ use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
-    LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
-    cut_text, fit_state_with_budget, routine_choice,
+    HumanAskReason, LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider,
+    RoutineOutcome, RoutineTrail, cut_text, fit_state_with_budget, routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
@@ -319,6 +319,13 @@ pub(crate) struct JobVerdictLine<'a> {
     pub(crate) session_ref: Option<&'a str>,
 }
 
+/// One job verdict: the answer, and why the ladder gave none when it gave
+/// none, which the wire answer does not carry.
+pub(crate) struct JobVerdict {
+    pub(crate) verdict: AiVerdict,
+    pub(crate) no_answer: Option<HumanAskReason>,
+}
+
 /// Asks `request` through the host's ladder as one question of an admitted
 /// job (FIX 7817, L07-A): the same question family, evidence rule and
 /// ladder as [`run_verdict`], with every rung spending on the job's own line
@@ -328,6 +335,9 @@ pub(crate) struct JobVerdictLine<'a> {
 /// reserve of its own, so a job's verdicts draw the job's budget, not a
 /// fresh one each; [`run_verdict`] stays the door for a caller with no job.
 /// The caller's spend check counts what this verdict drew from the line.
+/// Beside the answer it names why the ladder gave none, so the job tells a
+/// ladder that could not take the step, or ran out of time, from a judged
+/// abstain.
 ///
 /// Every model rung blocks on the server's runtime: call this on a blocking
 /// thread.
@@ -337,13 +347,13 @@ pub(crate) fn run_job_verdict(
     reader: &Memory<'_>,
     request: &AiVerdictRequest,
     evidence_read: &mut Vec<EntityId>,
-) -> MemoryResult<AiVerdict> {
+) -> MemoryResult<JobVerdict> {
     let vault = server.vault();
     let before = job.meter.read().used_units;
     let answered = model_calls::scoped(job.principal, job.session_ref, || {
         on_caller_meter(job.meter, || {
             on_caller_payer(job.payer, || {
-                answer_verdict(
+                answer_verdict_reasoned(
                     server,
                     job.principal,
                     job.class,
@@ -383,7 +393,7 @@ pub(crate) fn run_job_verdict(
             tracing::warn!(%error, "the ai.verdict spend check was not kept");
         }
     }
-    answered
+    answered.map(|(verdict, no_answer)| JobVerdict { verdict, no_answer })
 }
 
 /// [`run_verdict`]'s question through the ladder, on whatever line the
@@ -402,6 +412,39 @@ fn answer_verdict(
     request: &AiVerdictRequest,
     evidence_read: &mut Vec<EntityId>,
 ) -> MemoryResult<AiVerdict> {
+    answer_verdict_reasoned(
+        server,
+        principal,
+        class,
+        reader,
+        lane,
+        held,
+        request,
+        evidence_read,
+    )
+    .map(|(verdict, _)| verdict)
+}
+
+/// [`answer_verdict`], with the ladder's reason when it gave no answer (FIX
+/// 7817): no rung up to the ceiling could take the step, the deadline cut
+/// it, or the read was uncertain. A rung's own abstain carries no reason or
+/// an uncertain one. The verdict's wire shape carries no such reason, so a
+/// job that must tell an unavailable ladder from a judged abstain reads it
+/// here.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "run_verdict's axes and its evidence list"
+)]
+fn answer_verdict_reasoned(
+    server: &SyncServer,
+    principal: EntityId,
+    class: EdgeActorClass,
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    held: Option<DecisionImage>,
+    request: &AiVerdictRequest,
+    evidence_read: &mut Vec<EntityId>,
+) -> MemoryResult<(AiVerdict, Option<HumanAskReason>)> {
     let started = Instant::now();
     oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
     let ceiling = request.ceiling.unwrap_or(DecisionRung::Big);
@@ -524,13 +567,17 @@ fn answer_verdict(
             }
             .record(outcome)
         });
-        return Ok(AiVerdict {
-            outcome,
-            screenshot,
-            until_ms: Some(until_ms),
-            evidence_cut_at_bytes: cut_at,
-            ..located_verdict(located)
-        });
+        let no_answer = located.human_ask();
+        return Ok((
+            AiVerdict {
+                outcome,
+                screenshot,
+                until_ms: Some(until_ms),
+                evidence_cut_at_bytes: cut_at,
+                ..located_verdict(located)
+            },
+            no_answer,
+        ));
     }
     if request.routine {
         let routine = ladder
@@ -550,13 +597,17 @@ fn answer_verdict(
             misses: request.misses,
         };
         let screenshot = trail.record(&routine.outcome);
-        return Ok(AiVerdict {
-            outcome: Some(routine.outcome),
-            screenshot,
-            until_ms: Some(until_ms),
-            evidence_cut_at_bytes: cut_at,
-            ..routine.decision.into()
-        });
+        let no_answer = routine.decision.human_ask;
+        return Ok((
+            AiVerdict {
+                outcome: Some(routine.outcome),
+                screenshot,
+                until_ms: Some(until_ms),
+                evidence_cut_at_bytes: cut_at,
+                ..routine.decision.into()
+            },
+            no_answer,
+        ));
     }
     let decision = ladder
         .run_images(
@@ -571,11 +622,15 @@ fn answer_verdict(
             &deadline,
         )
         .map_err(failed)?;
-    Ok(AiVerdict {
-        until_ms: Some(until_ms),
-        evidence_cut_at_bytes: cut_at,
-        ..decision.into()
-    })
+    let no_answer = decision.human_ask;
+    Ok((
+        AiVerdict {
+            until_ms: Some(until_ms),
+            evidence_cut_at_bytes: cut_at,
+            ..decision.into()
+        },
+        no_answer,
+    ))
 }
 
 /// The ladder's state for a verdict, fitted by the engine's own cut step

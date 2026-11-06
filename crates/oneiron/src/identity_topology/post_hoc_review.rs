@@ -430,21 +430,34 @@ fn enqueue_drain_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, now: u64) -> R
     Ok(())
 }
 
-/// Drops every candidate that names the erased `id`, as its decision or as
-/// one of its subjects, with its selection and result: the review of a
-/// decision about an erased record is not kept. A no-op for an id none
-/// names.
+/// Drops every candidate that names the erased `id`, as its decision, as
+/// one of its subjects or as a record its review read, with its selection
+/// and result: the review of a decision about an erased record is not kept.
+/// A no-op for an id none names.
 pub(crate) fn erase_topology_audit_sources_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    for (audit, intent) in INTENTS.scan(store, &*txn)? {
-        if intent.event == *id || intent.disposition == *id || intent.subjects.contains(id) {
-            INTENTS.delete(store, txn, &audit)?;
-            SELECTIONS.delete(store, txn, &audit)?;
-            RESULTS.delete(store, txn, &audit)?;
-        }
+    let mut named: Vec<[u8; 32]> = INTENTS
+        .scan(store, &*txn)?
+        .into_iter()
+        .filter(|(_, intent)| {
+            intent.event == *id || intent.disposition == *id || intent.subjects.contains(id)
+        })
+        .map(|(audit, _)| audit)
+        .collect();
+    named.extend(
+        RESULTS
+            .scan(store, &*txn)?
+            .into_iter()
+            .filter(|(_, result)| result.evidence_refs.contains(id))
+            .map(|(audit, _)| audit),
+    );
+    for audit in named {
+        INTENTS.delete(store, txn, &audit)?;
+        SELECTIONS.delete(store, txn, &audit)?;
+        RESULTS.delete(store, txn, &audit)?;
     }
     Ok(())
 }
