@@ -53288,6 +53288,11 @@ pub enum LabelReadFailure {
 /// `oneiron_model::llm::error::FatalLlmError`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum FatalLlmError {
+    #[serde(rename = "HostStore")]
+    HostStore {
+        #[serde(rename = "operation")]
+        operation: String,
+    },
     #[serde(rename = "InvalidRequest")]
     InvalidRequest,
     #[serde(rename = "InvalidRequestDetail")]

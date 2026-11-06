@@ -9,7 +9,8 @@ use std::cell::RefCell;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::admission::RunAdmission;
-use super::receipt::{RunEvent, RunReceipt};
+use super::super::{BudgetDenied, BudgetGuard};
+use super::receipt::{RunEvent, RunReceipt, RunReceiptSink};
 
 /// The settlements a capture keeps, in the order their runs recorded them.
 type Kept = Arc<Mutex<Vec<RunReceipt>>>;
@@ -58,10 +59,46 @@ fn capture<T>(work: impl FnOnce() -> T, shared: bool) -> (T, Vec<RunReceipt>) {
     (done, settled)
 }
 
+/// A receipt sink bound to the captures visible now. A caller that buffers
+/// receipts until its terminal privacy check can publish them through this
+/// sink only after that check; constructing a run binds no extra capture.
+#[must_use]
+pub fn captured_sink(sink: Arc<dyn RunReceiptSink>) -> Arc<dyn RunReceiptSink> {
+    let kept = CAPTURE.with(|slot| slot.borrow().clone());
+    if kept.is_empty() {
+        sink
+    } else {
+        Arc::new(CapturedSink {
+            sink,
+            capture: SettlementCapture {
+                kept,
+                native_admission: None,
+            },
+        })
+    }
+}
+
+struct CapturedSink {
+    sink: Arc<dyn RunReceiptSink>,
+    capture: SettlementCapture,
+}
+
+impl RunReceiptSink for CapturedSink {
+    fn record(&self, receipt: RunReceipt) {
+        self.capture.record(&receipt);
+        self.sink.record(receipt);
+    }
+
+    fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
+        self.sink.budget_hit(seat, guard, denied);
+    }
+}
+
 /// The capture targets bound to a handle, copied to each permit it admits.
 #[derive(Clone, Default)]
 pub(super) struct SettlementCapture {
     kept: Vec<Kept>,
+    native_admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
 }
 
 impl RunAdmission {
@@ -89,12 +126,25 @@ impl RunAdmission {
 }
 
 impl SettlementCapture {
+    pub(super) fn native_admission(&self) -> Option<&crate::dreamer_wake::DecisionCallAdmission> {
+        self.native_admission.as_ref()
+    }
+
+    pub(super) fn bind_native_admission(
+        &mut self,
+        admission: Option<crate::dreamer_wake::DecisionCallAdmission>,
+    ) {
+        self.native_admission = admission;
+    }
+
     pub(super) fn record(&self, receipt: &RunReceipt) {
         if matches!(receipt.event, RunEvent::Settled { .. }) {
             for kept in &self.kept {
+                let mut captured = receipt.clone();
+                captured.native_admission = self.native_admission.clone();
                 kept.lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .push(receipt.clone());
+                    .push(captured);
             }
         }
     }

@@ -34,6 +34,9 @@ pub enum RunDenied {
     UnitMismatch { from: LeaseUnit, to: LeaseUnit },
     #[error("budget: {denied}")]
     Budget { denied: BudgetDenied },
+    /// Native producer/writer failure, not exhausted funds or an admission rule.
+    #[error("allocation storage failed during {operation}")]
+    AllocationStorage { operation: &'static str },
     #[error("the host has delivered no allocation")]
     NoAllocation,
     #[error("the allocation is spent")]
@@ -63,6 +66,11 @@ impl From<RunDenied> for LlmError {
     fn from(denied: RunDenied) -> Self {
         match denied {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
+            RunDenied::AllocationStorage { operation } => {
+                Self::Fatal(crate::llm::FatalLlmError::HostStore {
+                    operation: operation.to_owned(),
+                })
+            }
             RunDenied::NoAllocation
             | RunDenied::AllocationExhausted
             | RunDenied::ResidentShareSpent { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),

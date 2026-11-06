@@ -94,6 +94,7 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | FatalLlmError::ContentFiltered
             | FatalLlmError::EmptyResponse
             | FatalLlmError::JobLost
+            | FatalLlmError::HostStore { .. }
             | FatalLlmError::LabelRead(_) => false,
         },
     }

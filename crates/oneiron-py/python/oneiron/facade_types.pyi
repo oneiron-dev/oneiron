@@ -16920,6 +16920,10 @@ class UnsupportedCapability(TypedDict):
     model: NotRequired[ModelId | None]
     reason: NotRequired[str | None]
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "TokenCap", "MissingLabels", "Malformed"]
+class FatalLlmErrorHostStoreBody(TypedDict):
+    operation: str
+class FatalLlmErrorHostStore(TypedDict):
+    HostStore: FatalLlmErrorHostStoreBody
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
     code: NotRequired[str | None]
@@ -16929,7 +16933,7 @@ class FatalLlmErrorUnsupported(TypedDict):
     Unsupported: UnsupportedCapability
 class FatalLlmErrorLabelRead(TypedDict):
     LabelRead: LabelReadFailure
-FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased", "JobLost"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
+FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased", "JobLost"] | FatalLlmErrorHostStore | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
 ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
 TransportFaultKind = Literal["not_sent", "io_after_send", "refused", "unexpected_frame", "ended_with_error"]
 class TransportFault(TypedDict):
