@@ -762,7 +762,7 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "crate-vis": 4,
-      "fn": 17,
+      "fn": 18,
       "re-export": 17
      }
     },
@@ -34403,7 +34403,7 @@
      "path": "src/edit_roundtrip/slides_review.rs",
      "purpose": "Typed slide review model and API seam",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 2,
       "re-export": 4,
@@ -34427,7 +34427,7 @@
      "path": "src/edit_roundtrip/slides_review/doors.rs",
      "purpose": "Vault access and policy admission for slide reviews",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -41196,7 +41196,7 @@
      "path": "src/graph_fs/claim_ids.rs",
      "purpose": "Claim listings in id order, `/claims/by-id` and an entity's `claims`: each page reads one bounded run of…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -41206,7 +41206,7 @@
      "path": "src/graph_fs/coreutils.rs",
      "purpose": "grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 6
      }
     },
@@ -57147,7 +57147,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorResumeProtocol",
@@ -57159,7 +57159,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -57192,6 +57192,22 @@
      "purpose": "Resuming a held connector call the ledger already admitted (ONE-2510)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorSentClearer",
+      "SentGeneration",
+      "SentGenerations"
+     ],
+     "path": "src/outbound_consent/connector_call_sent.rs",
+     "purpose": "What a live connector exchange presented, across its sends and its resumes (fix list row 10550, the FIX…",
+     "surface": {
+      "enum": 1,
+      "fn": 9,
+      "struct": 2
      }
     },
     {
@@ -57308,7 +57324,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -66219,7 +66235,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -92549,7 +92565,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93181,7 +93197,7 @@
    },
    "over_bar": 175,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6572,
+   "source_files": 6573,
    "test_files": 895
   },
   "oneiron-android": {
@@ -122181,7 +122197,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/connector_call_host/live_exchange.rs",
@@ -122197,7 +122213,7 @@
      "path": "src/connector_call_host/presenting.rs",
      "purpose": "What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -131291,7 +131307,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 54,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1662,
    "test_files": 182
@@ -136990,7 +137006,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -137176,7 +137192,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
