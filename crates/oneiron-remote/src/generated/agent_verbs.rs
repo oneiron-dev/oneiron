@@ -5816,6 +5816,8 @@ impl OneironClient {
     }
     /// Exports the whole vault as one re-importable archive (a ZIP of JSONL
     /// records, files by BLAKE3 and a manifest), custody secrets included.
+    /// It carries every world wherever it goes; `notices` names each world
+    /// the owner's recipient choice would keep from there, and why.
     pub fn vault_export(
         &self,
         format: Option<&str>,

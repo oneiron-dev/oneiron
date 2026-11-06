@@ -2509,9 +2509,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n",
-          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */",
-          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
+          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n    /// It carries every world wherever it goes; `notices` names each world\n    /// the owner's recipient choice would keep from there, and why.\n",
+          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
+          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
         }
       }
     },
