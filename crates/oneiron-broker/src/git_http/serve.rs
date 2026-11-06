@@ -24,7 +24,7 @@ use crate::frame::{
     STREAM_CHUNK, read_chunk, read_segment, write_chunk, write_segment, write_stream_end,
     write_stream_header,
 };
-use crate::send::{Sender, encoded, git_watchable, push_wiped, reply_headers};
+use crate::send::{Sender, encoded, git_echo_form, git_watchable, push_wiped, reply_headers};
 use crate::{Failure, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader};
 
 /// The user agent of a git exchange: a smart-HTTP server serves its smart
@@ -201,8 +201,8 @@ struct GitCredential {
 /// trimmed: visible ASCII and spaces, a scheme, then its credentials. The
 /// token watched for is the credentials, or for `Basic` the password the
 /// base64 holds (its user name when the password is empty or GitHub's
-/// `x-oauth-basic`). The token must be one the reply's echo watch can hold
-/// back ([`git_watchable`]): its literal forms, any bytes.
+/// `x-oauth-basic`). Any token up to [`MAX_SECRET`] bytes goes
+/// ([`git_watchable`]); the reply's echo watch searches its literal forms.
 fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     let value = secret.trim_ascii();
     if value.is_empty()
@@ -420,7 +420,7 @@ impl EchoWatch {
     fn new(token: &[u8]) -> Self {
         let mut forms = crate::strip::forms(token);
         forms.extend(crate::strip::base64_forms(token));
-        forms.retain(|form| !form.is_empty());
+        forms.retain(|form| git_echo_form(form));
         let keep = forms
             .iter()
             .map(|form| form.len())
