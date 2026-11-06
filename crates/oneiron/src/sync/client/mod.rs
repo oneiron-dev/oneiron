@@ -69,6 +69,7 @@ pub(crate) use self::leaf_keys::send_leaf_key_requests;
 pub(in crate::sync) use self::own_device::OwnDeviceImport;
 pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
+pub(crate) use self::residence::default_claim_vector;
 pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
 pub use self::residence::kit_fetch::fetch_custody_with_kit;
 pub use self::residence::{
