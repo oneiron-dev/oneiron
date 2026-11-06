@@ -260,7 +260,36 @@ field, and pending prepared storage frees before its guard. Tree cloning does
 not duplicate an in-flight prepared destination. Existing allocating clones
 may retain the original reservation through an Arc; that does not admit their
 new allocations. This slice covers the original parser/render element-owned
-vectors, not arbitrary public attribute extraction or later mutations. Input
-Tag/formatting vectors, atomic value copies, merge wrapping/name temporaries,
-allocating clones, guard metadata and allocator-private overhead remain
-separate gaps. Full FIX 9615 stays PART; no cap, timer or default is added.
+vectors, not arbitrary public attribute extraction or later mutations. Atomic
+value copies, merge wrapping/name temporaries, external allocating clones,
+guard metadata and allocator-private overhead remain separate gaps. Full
+FIX 9615 stays PART; no cap, timer or default is added.
+
+A separate pre-input tag-attribute reservation now admits the tokenizer's actual
+attribute vector before each new entry. Its native carrier keeps the vector
+before its owned guard; token, formatting-entry and owning-iterator moves retain
+both until the allocation frees. Growth admits full old-plus-new storage,
+settles reported capacity, publishes both replacement fields, frees the old
+allocation and then returns its old admission. Every internal checked tag or
+attribute-vector clone reserves its own independent destination before copying.
+Order-insensitive formatting comparison uses two independently admitted copies
+and allocation-free unstable sorting; equal attribute multiplicities are kept.
+The ordinary unhooked parser and public allocating Clone APIs stay unadmitted.
+
+The same checked builder installs native element and attribute-merge consumers
+alongside that reservation. They receive the whole input carrier by move, not a
+separate guard stash or a plain-vector copy-out. Prepared element construction
+and guarded merges consume its owning iterator, which frees all remaining input
+entries and vector storage before releasing the input guard, including early
+drop. Final DOM-vector admission remains independent and overlaps input storage.
+The unprepared public constructor retains an original-input hold because atomic
+wrapping may reuse that allocation; that hold does not admit a distinct wrapping
+destination or later replacement. Existing original-name duplicate filtering,
+node-arena preflight order, flags and first typed error channel are unchanged.
+Tag field storage is now the native TagAttributes carrier; mutable borrows expose
+only the attribute slice, and plain Vec extraction returns the carrier instead
+when it still has an owned guard. No markup5ever trait, package version, manifest,
+content cap, default, deadline or configuration setting changes. Atomic payload
+copies, original-name scratch, public extraction/mutations/clones, other parser
+vectors, boxed callback/guard metadata, allocator-private work and opaque native
+intervals remain unadmitted; this does not complete FIX 9615.
