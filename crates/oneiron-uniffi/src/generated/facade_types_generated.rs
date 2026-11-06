@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1266 facade rows, 4593 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1218.
+// UniFFI census: 1267 facade rows, 4597 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1219.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), MemoryResult (an untyped union), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -27531,6 +27531,40 @@ pub struct EvalAuthoringInventory {
     pub candidates: Vec<EvalCandidate>,
     #[serde(rename = "seats")]
     pub seats: Vec<SeatInventory>,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_nomination::EvalRepairNominationRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairNominationRequest {
+    #[serde(
+        rename = "subject_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subject_ref: Option<String>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_nomination::EvalRepairSourceNominations`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EvalRepairSourceNominations {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "metadata")]
+    pub metadata: crate::WireJson,
+    #[serde(rename = "tasks")]
+    pub tasks: Vec<crate::WireJson>,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_nomination::EvalRepairNominations`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EvalRepairNominations {
+    #[serde(rename = "sources")]
+    pub sources: Vec<EvalRepairSourceNominations>,
+    #[serde(rename = "receipt")]
+    pub receipt: ScopedReadReceipt,
 }
 
 /// `oneiron::skill_optimize::eval_set::repair_task::EvalRepairTaskSource`.
@@ -59755,6 +59789,18 @@ pub struct AgUiCustomMapping {
     pub outcome: Option<String>,
 }
 
+/// `oneiron::ingest::ag_ui::file::AgUiRepairTaskDeclaration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgUiRepairTaskDeclaration {
+    #[serde(rename = "outcome_ordinal")]
+    pub outcome_ordinal: u64,
+    #[serde(rename = "task_pointer")]
+    pub task_pointer: String,
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+}
+
 /// `oneiron::ingest::ag_ui::file::AgUiFileImport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -59767,6 +59813,8 @@ pub struct AgUiFileImport {
     pub app_id: String,
     #[serde(rename = "custom_mappings")]
     pub custom_mappings: Vec<AgUiCustomMapping>,
+    #[serde(rename = "repair_tasks")]
+    pub repair_tasks: Vec<AgUiRepairTaskDeclaration>,
     #[serde(rename = "jsonl")]
     pub jsonl: String,
 }
@@ -59875,6 +59923,8 @@ pub struct AgUiFileView {
     pub app_id: String,
     #[serde(rename = "custom_mappings")]
     pub custom_mappings: Vec<AgUiCustomMapping>,
+    #[serde(rename = "repair_tasks")]
+    pub repair_tasks: Vec<AgUiRepairTaskDeclaration>,
     #[serde(rename = "jsonl")]
     pub jsonl: String,
     #[serde(rename = "event_count")]

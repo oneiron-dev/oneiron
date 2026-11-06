@@ -2261,6 +2261,11 @@ export_facade! {
     let output = client.vault_evals_inventory(&input)?;
     crate::codec::lift_record("vault.evals.inventory", &output)
 };
+"vault.evals.repair.nominate" => fn vault_evals_repair_nominate(&self, input: EvalRepairNominationRequest) -> EvalRepairNominations = |client| {
+    let input: oneiron::skill_optimize::EvalRepairNominationRequest = crate::codec::lower_record("vault.evals.repair.nominate", input)?;
+    let output = client.vault_evals_repair_nominate(&input)?;
+    crate::codec::lift_record("vault.evals.repair.nominate", &output)
+};
 "vault.evals.repair.prepare" => fn vault_evals_repair_prepare(&self, input: EvalRepairTaskSource) -> EvalRepairCasePreparation = |client| {
     let input: oneiron::skill_optimize::EvalRepairTaskSource = crate::codec::lower_record("vault.evals.repair.prepare", input)?;
     let output = client.vault_evals_repair_prepare(&input)?;

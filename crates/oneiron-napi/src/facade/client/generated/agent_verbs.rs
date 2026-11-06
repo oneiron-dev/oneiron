@@ -3924,6 +3924,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_evals_repair_nominate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.evals.repair.nominate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_evals_repair_prepare(
         &self,
         input: serde_json::Value,

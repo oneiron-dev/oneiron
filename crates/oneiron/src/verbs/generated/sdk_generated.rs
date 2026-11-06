@@ -2412,6 +2412,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.evals.repair.nominate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::EvalRepairNominationRequest,
+                >(),
+            ),
+            (
                 "vault.evals.repair.prepare",
                 crate::code_run::vault_read::request_schema::<
                     crate::skill_optimize::EvalRepairTaskSource,
@@ -7605,6 +7611,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.archive.repropose",
     "vault.research.archive.coverage",
     "vault.evals.inventory",
+    "vault.evals.repair.nominate",
     "vault.evals.repair.prepare",
     "vault.evals.repair.record",
     "vault.evals.repair.cohorts.setup",
@@ -9150,6 +9157,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.evals.inventory" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringInventory,
+        >(),
+        "vault.evals.repair.nominate" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalRepairNominations,
         >(),
         "vault.evals.repair.prepare" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalRepairCasePreparation,
@@ -14072,6 +14082,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.evals.inventory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.repair.nominate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21238,6 +21255,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.evals.inventory" => {
             let _input: crate::task_verb::sdk::EvalInventoryWire = decode(value.clone())?;
         }
+        "vault.evals.repair.nominate" => {
+            let input: crate::skill_optimize::EvalRepairNominationRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
         "vault.evals.repair.prepare" => {
             let _input: crate::skill_optimize::EvalRepairTaskSource = decode(value.clone())?;
         }
@@ -25064,6 +25085,9 @@ pub fn invoke(
             encode(vault_research_archive_coverage(memory, decode(value)?)?)
         }
         "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
+        "vault.evals.repair.nominate" => {
+            encode(vault_evals_repair_nominate(memory, decode(value)?)?)
+        }
         "vault.evals.repair.prepare" => encode(vault_evals_repair_prepare(memory, decode(value)?)?),
         "vault.evals.repair.record" => encode(vault_evals_repair_record(memory, decode(value)?)?),
         "vault.evals.repair.cohorts.setup" => {
@@ -30563,6 +30587,13 @@ pub fn vault_evals_inventory(
         &memory.embedded_owner("vault.evals.inventory")?,
         input,
     )
+}
+pub fn vault_evals_repair_nominate(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalRepairNominationRequest,
+) -> MemoryResult<crate::skill_optimize::EvalRepairNominations> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.nominate_eval_repairs(&input)
 }
 pub fn vault_evals_repair_prepare(
     memory: &Memory<'_>,

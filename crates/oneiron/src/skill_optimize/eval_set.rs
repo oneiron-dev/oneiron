@@ -52,6 +52,7 @@ pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, f
 mod measurement;
 mod released_task;
 mod repair_case;
+mod repair_nomination;
 mod repair_task;
 mod replay_input;
 mod sufficiency;
@@ -92,6 +93,9 @@ pub use released_task::{EvalReleasedTask, EvalTaskRead};
 pub use repair_case::{
     EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe, EvalRepairCaseReference,
     EvalRepairCaseRequest,
+};
+pub use repair_nomination::{
+    EvalRepairNominationRequest, EvalRepairNominations, EvalRepairSourceNominations,
 };
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,

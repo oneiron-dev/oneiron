@@ -456,6 +456,7 @@ pub enum AgentVerb {
     VaultResearchArchiveRepropose,
     VaultResearchArchiveCoverage,
     VaultEvalsInventory,
+    VaultEvalsRepairNominate,
     VaultEvalsRepairPrepare,
     VaultEvalsRepairRecord,
     VaultEvalsRepairCohortsSetup,
@@ -1747,6 +1748,7 @@ impl AgentVerb {
         Self::VaultResearchArchiveRepropose,
         Self::VaultResearchArchiveCoverage,
         Self::VaultEvalsInventory,
+        Self::VaultEvalsRepairNominate,
         Self::VaultEvalsRepairPrepare,
         Self::VaultEvalsRepairRecord,
         Self::VaultEvalsRepairCohortsSetup,
@@ -3051,6 +3053,7 @@ impl AgentVerb {
             Self::VaultResearchArchiveRepropose => "vault.research.archive.repropose",
             Self::VaultResearchArchiveCoverage => "vault.research.archive.coverage",
             Self::VaultEvalsInventory => "vault.evals.inventory",
+            Self::VaultEvalsRepairNominate => "vault.evals.repair.nominate",
             Self::VaultEvalsRepairPrepare => "vault.evals.repair.prepare",
             Self::VaultEvalsRepairRecord => "vault.evals.repair.record",
             Self::VaultEvalsRepairCohortsSetup => "vault.evals.repair.cohorts.setup",
@@ -4368,6 +4371,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
+                | Self::VaultEvalsRepairNominate
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
                 | Self::VaultEvalsRepairCohortsSetup
@@ -5688,6 +5692,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
+                | Self::VaultEvalsRepairNominate
                 | Self::VaultEvalsRepairPrepare
                 | Self::VaultEvalsRepairRecord
                 | Self::VaultEvalsRepairCohortsSetup
@@ -6648,6 +6653,7 @@ impl AgentVerb {
                 | Self::VaultSearchVector
                 | Self::AiChatCompletions
                 | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultEvalsRepairNominate
                 | Self::Mount
                 | Self::GraphFsReaddir
                 | Self::GraphFsReadFile
@@ -9182,6 +9188,7 @@ impl AgentVerb {
             Self::VaultResearchArchiveRepropose => &["spec"],
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
+            Self::VaultEvalsRepairNominate => &["spec"],
             Self::VaultEvalsRepairPrepare => &["spec"],
             Self::VaultEvalsRepairRecord => &["spec"],
             Self::VaultEvalsRepairCohortsSetup => &["spec"],
@@ -10474,6 +10481,7 @@ impl AgentVerb {
             Self::VaultResearchArchiveRepropose => &["spec"],
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
+            Self::VaultEvalsRepairNominate => &["spec"],
             Self::VaultEvalsRepairPrepare => &["spec"],
             Self::VaultEvalsRepairRecord => &["spec"],
             Self::VaultEvalsRepairCohortsSetup => &["spec"],
@@ -12654,6 +12662,9 @@ impl AgentVerb {
             }
             Self::VaultEvalsInventory => {
                 "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."
+            }
+            Self::VaultEvalsRepairNominate => {
+                "Discover source-declared Repair recipes through scoped native reads. Returns pins, receipts and errors, never task inputs or expected responses."
             }
             Self::VaultEvalsRepairPrepare => {
                 "Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case."

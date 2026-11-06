@@ -7091,6 +7091,25 @@
       "openapi": true
     },
     {
+      "name": "vault.evals.repair.nominate",
+      "description": "Discover source-declared Repair recipes through scoped native reads. Returns pins, receipts and errors, never task inputs or expected responses.",
+      "input": "crate::skill_optimize::EvalRepairNominationRequest",
+      "output": "crate::skill_optimize::EvalRepairNominations",
+      "call": "memory.nominate_eval_repairs(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "openapi": true,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
+    },
+    {
       "name": "vault.evals.repair.prepare",
       "description": "Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case.",
       "input": "crate::skill_optimize::EvalRepairTaskSource",

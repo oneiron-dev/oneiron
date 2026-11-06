@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1266 facade rows, 4594 declarations.
-Inputs: 1196 of 1266 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1098 of 1266 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1267 facade rows, 4601 declarations.
+Inputs: 1197 of 1267 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1098 of 1267 fully typed, 169 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -8887,6 +8887,96 @@ class SeatInventory(TypedDict):
     cohorts: list[CohortSummary]
     uncut: list[UncutFamily]
 EvalAuthoringInventory = TypedDict("EvalAuthoringInventory", {"inventory_digest": str, "built_at": int, "from": int, "groups": list[EvalSourceGroup], "candidates": list[EvalCandidate], "seats": list[SeatInventory]})
+class EvalRepairNominationRequest(TypedDict):
+    subject_ref: NotRequired[str | None]
+    limit: int
+class MemoryGateDenial(TypedDict):
+    outcome: str
+    reason_codes: list[str]
+    ask_ref: NotRequired[str | None]
+    approval_digest: NotRequired[str | None]
+class MemoryPolicyExceptionProposal(TypedDict):
+    action: str
+    row_ref: str
+    required_role: str
+class MemoryPolicyDenial(TypedDict):
+    level: str
+    row_ref: str
+    role: str
+    exception_proposal: MemoryPolicyExceptionProposal
+class MemoryWrongRoot(TypedDict):
+    attempted: str
+    replacement: str
+    schemaRef: str
+class VerbHookStopSkipped(TypedDict):
+    status: Literal["skipped"]
+    hook: str
+    reason: str
+class VerbHookStopPending(TypedDict):
+    status: Literal["pending"]
+    invocation: str
+    ask: str
+class VerbHookStopHidden(TypedDict):
+    status: Literal["hidden"]
+    hook: str
+class VerbHookStopCompleted(TypedDict):
+    status: Literal["completed"]
+    invocation: str
+    result: Any
+class VerbHookStopCompletedWithError(TypedDict):
+    status: Literal["completed_with_error"]
+    invocation: str
+    code: str
+    message: str
+    receipt_ref: NotRequired[str | None]
+VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
+LegalHoldState = Literal["retained_for_law", "use_restricted"]
+LegalHoldBoundKind = Literal["law"]
+class LegalHoldBound(TypedDict):
+    kind: LegalHoldBoundKind
+    order_ref: NotRequired[str | None]
+    legal_basis_ref: NotRequired[str | None]
+    jurisdiction: NotRequired[str | None]
+    issuing_authority_ref: NotRequired[str | None]
+    ends_at: NotRequired[int | None]
+class LegalHoldNotice(TypedDict):
+    state: LegalHoldState
+    bound: LegalHoldBound
+    works_self_hosted: bool
+    self_hosted_note: str
+class FacadeMemoryError(TypedDict):
+    attempted: NotRequired[str]
+    replacement: NotRequired[str]
+    schemaRef: NotRequired[str]
+    code: str
+    message: str
+    suggestions: list[str]
+    successor_short_id: NotRequired[str | None]
+    gate_denial: NotRequired[MemoryGateDenial | None]
+    narrowing: NotRequired[ScopedReadReceipt | None]
+    policy_denial: NotRequired[MemoryPolicyDenial | None]
+    hook: NotRequired[VerbHookStop | None]
+    retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
+    reason_codes: NotRequired[list[str]]
+    legal_hold: NotRequired[LegalHoldNotice | None]
+class MemoryResultOk(TypedDict, Generic[T]):
+    Ok: T
+class MemoryResultErr(TypedDict):
+    Err: FacadeMemoryError
+MemoryResult = MemoryResultOk[T] | MemoryResultErr
+class AgUiRepairTaskDeclaration(TypedDict):
+    outcome_ordinal: int
+    task_pointer: str
+    seat: EvalSeat
+class AgUiFileMetadata(TypedDict):
+    claim_ref: str
+    source_hash: str
+    source_at: int
+    repair_tasks: list[AgUiRepairTaskDeclaration]
+class AgUiFileMetadataRead(TypedDict):
+    source: NotRequired[AgUiFileMetadata | None]
+    receipt: ScopedReadReceipt
 class EvalRepairTaskSource(TypedDict):
     claim_ref: str
     source_hash: str
@@ -8898,6 +8988,13 @@ class EvalRepairCaseRecipe(TypedDict):
     task_hash: list[int]
 class EvalRepairCasePreparation(TypedDict):
     recipe: NotRequired[EvalRepairCaseRecipe | None]
+    receipt: ScopedReadReceipt
+class EvalRepairSourceNominations(TypedDict):
+    claim_ref: str
+    metadata: MemoryResult[AgUiFileMetadataRead]
+    tasks: list[MemoryResult[EvalRepairCasePreparation]]
+class EvalRepairNominations(TypedDict):
+    sources: list[EvalRepairSourceNominations]
     receipt: ScopedReadReceipt
 class EvalRepairCaseRequest(TypedDict):
     recipe: EvalRepairCaseRecipe
@@ -10315,14 +10412,6 @@ class LegalHoldLiftAndEraseRequest(TypedDict):
     claim_free_partition: NotRequired[bool]
     shown_state: LiftAndEraseShownState
 ErasePendingReason = Literal["historical_sweep", "custody_retirement", "veto_window"]
-LegalHoldBoundKind = Literal["law"]
-class LegalHoldBound(TypedDict):
-    kind: LegalHoldBoundKind
-    order_ref: NotRequired[str | None]
-    legal_basis_ref: NotRequired[str | None]
-    jurisdiction: NotRequired[str | None]
-    issuing_authority_ref: NotRequired[str | None]
-    ends_at: NotRequired[int | None]
 class LegalHoldEraseStateErased(TypedDict):
     state: Literal["erased"]
     receipt_ref: NotRequired[str | None]
@@ -18320,12 +18409,6 @@ ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | 
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
-LegalHoldState = Literal["retained_for_law", "use_restricted"]
-class LegalHoldNotice(TypedDict):
-    state: LegalHoldState
-    bound: LegalHoldBound
-    works_self_hosted: bool
-    self_hosted_note: str
 class RecordRefusal(TypedDict):
     reason: RefusalReason
     code: str
@@ -19044,6 +19127,7 @@ class AgUiFileImport(TypedDict):
     project_ref: str
     app_id: str
     custom_mappings: list[AgUiCustomMapping]
+    repair_tasks: list[AgUiRepairTaskDeclaration]
     jsonl: str
 class AgUiFileReceipt(TypedDict):
     claim_ref: str
@@ -19076,6 +19160,7 @@ class AgUiFileView(TypedDict):
     project_ref: str
     app_id: str
     custom_mappings: list[AgUiCustomMapping]
+    repair_tasks: list[AgUiRepairTaskDeclaration]
     jsonl: str
     event_count: int
     observations: list[AgUiAppObservation]
@@ -19291,62 +19376,6 @@ class EsignEventRow(TypedDict):
     event: EsignEvent
     actor: EsignAuditActor
     at: int
-class MemoryGateDenial(TypedDict):
-    outcome: str
-    reason_codes: list[str]
-    ask_ref: NotRequired[str | None]
-    approval_digest: NotRequired[str | None]
-class MemoryPolicyExceptionProposal(TypedDict):
-    action: str
-    row_ref: str
-    required_role: str
-class MemoryPolicyDenial(TypedDict):
-    level: str
-    row_ref: str
-    role: str
-    exception_proposal: MemoryPolicyExceptionProposal
-class MemoryWrongRoot(TypedDict):
-    attempted: str
-    replacement: str
-    schemaRef: str
-class VerbHookStopSkipped(TypedDict):
-    status: Literal["skipped"]
-    hook: str
-    reason: str
-class VerbHookStopPending(TypedDict):
-    status: Literal["pending"]
-    invocation: str
-    ask: str
-class VerbHookStopHidden(TypedDict):
-    status: Literal["hidden"]
-    hook: str
-class VerbHookStopCompleted(TypedDict):
-    status: Literal["completed"]
-    invocation: str
-    result: Any
-class VerbHookStopCompletedWithError(TypedDict):
-    status: Literal["completed_with_error"]
-    invocation: str
-    code: str
-    message: str
-    receipt_ref: NotRequired[str | None]
-VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
-class FacadeMemoryError(TypedDict):
-    attempted: NotRequired[str]
-    replacement: NotRequired[str]
-    schemaRef: NotRequired[str]
-    code: str
-    message: str
-    suggestions: list[str]
-    successor_short_id: NotRequired[str | None]
-    gate_denial: NotRequired[MemoryGateDenial | None]
-    narrowing: NotRequired[ScopedReadReceipt | None]
-    policy_denial: NotRequired[MemoryPolicyDenial | None]
-    hook: NotRequired[VerbHookStop | None]
-    retry_after: NotRequired[int | None]
-    resets_at: NotRequired[list[int]]
-    reason_codes: NotRequired[list[str]]
-    legal_hold: NotRequired[LegalHoldNotice | None]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus

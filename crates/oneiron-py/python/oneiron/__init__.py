@@ -3193,6 +3193,9 @@ class Oneiron:
     class _VaultEvalsRepairVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def nominate(self, input: dict[str, Any]) -> Any:
+            """Discover source-declared Repair recipes through scoped native reads. Returns pins, receipts and errors, never task inputs or expected responses."""
+            return json.loads(_translate(lambda: self._client.vault_evals_repair_nominate(json.dumps(input, allow_nan=False))))
         def prepare(self, input: dict[str, Any]) -> Any:
             """Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case."""
             return json.loads(_translate(lambda: self._client.vault_evals_repair_prepare(json.dumps(input, allow_nan=False))))

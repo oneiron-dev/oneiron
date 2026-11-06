@@ -4,12 +4,12 @@ mod file;
 pub(crate) use file::project_ag_ui_file;
 mod observations;
 pub use file::{
-    AG_UI_FILE_PREDICATE, AgUiFileImport, AgUiFileRead, AgUiFileReadInput, AgUiFileReceipt,
-    AgUiFileView,
+    AG_UI_FILE_PREDICATE, AgUiFileImport, AgUiFileMetadata, AgUiFileMetadataRead, AgUiFileRead,
+    AgUiFileReadInput, AgUiFileReceipt, AgUiFileView,
 };
 pub use observations::{
     AgUiAppObservation, AgUiCustomMapping, AgUiObservationKind, AgUiRepairLink,
-    AgUiRepairLinkStatus,
+    AgUiRepairLinkStatus, AgUiRepairTaskDeclaration,
 };
 
 use std::collections::BTreeMap;

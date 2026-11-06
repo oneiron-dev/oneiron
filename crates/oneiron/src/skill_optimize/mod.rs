@@ -196,6 +196,7 @@ pub use self::eval_set::{
 pub use self::eval_set::{
     EvalRepairAction, EvalRepairCasePreparation, EvalRepairCaseRead, EvalRepairCaseRecipe,
     EvalRepairCaseReference, EvalRepairCaseRequest, EvalRepairGrader, EvalRepairPrecondition,
+    EvalRepairNominationRequest, EvalRepairNominations, EvalRepairSourceNominations,
     EvalRepairTask, EvalRepairTaskRead, EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
 };
 pub(crate) use self::eval_set::{
