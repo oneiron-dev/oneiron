@@ -9,7 +9,6 @@ use super::model::{
 };
 use super::threads::thread_from_head;
 use crate::Vault;
-use crate::codebase::CodebaseSnapshot;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShift};
 use crate::entity_id::EntityId;
@@ -625,22 +624,26 @@ impl Vault {
         Ok(summary)
     }
 
-    /// Moves a code artifact's threads onto `snapshot`, the tree just put
-    /// for it in `wtxn` (FIX 7905): each live, non-drifted thread whose code
-    /// locator names another commit. A path the new tree lacks or withholds
-    /// drifts; the same file hash moves to the new commit as it is; any other
-    /// file moves the span by the text diff a plain-text span uses, and the
-    /// span drifts when none of its characters survives. Heads keep
-    /// [`CODE_ANCHOR_VERSION`]. The engine moves them as the vault's owner,
-    /// as the body-anchor sweep writes.
+    /// Moves a code artifact's threads onto the snapshot that stands for it
+    /// in `wtxn` (FIX 7905): each live, non-drifted thread whose code
+    /// locator names another commit. The sweep reads that snapshot in its
+    /// own write, so a late sweep never moves threads back to a tree a later
+    /// put replaced; no snapshot moves nothing. A path the tree lacks or
+    /// withholds drifts; the same file hash moves to the new commit as it
+    /// is; any other file moves the span by the text diff a plain-text span
+    /// uses, and the span drifts when none of its characters survives. Heads
+    /// keep [`CODE_ANCHOR_VERSION`]. The engine moves them as the vault's
+    /// owner, as the body-anchor sweep writes.
     pub(crate) fn reanchor_code_threads_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         artifact_id: &EntityId,
-        snapshot: &CodebaseSnapshot,
     ) -> Result<()> {
+        let Some(snapshot) = self.get_codebase_snapshot_in_txn(wtxn, artifact_id)? else {
+            return Ok(());
+        };
         let threads = self.effect_annotation_threads_for_artifact_in_txn(wtxn, artifact_id)?;
-        let Some(code) = CodeReanchor::load(self, wtxn, snapshot, &threads)? else {
+        let Some(code) = CodeReanchor::load(self, wtxn, &snapshot, &threads)? else {
             return Ok(());
         };
         let actor = WriteActor::new(
