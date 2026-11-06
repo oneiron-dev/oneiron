@@ -339,3 +339,19 @@ serialization, matching and field-removal receipts are unchanged. The complete
 fallback helper moves to `native_patch/table/rebuilt.rs` without changing its
 parent caller. This is source-only retention work, not proof of Office fidelity
 or completion of the full table-cell fallback or OF-509/OF-510.
+
+
+## Wholly retained native table runs and breaks
+
+In an actually reused field-free paragraph, a nonempty ordinary `a:r` or direct
+`a:br` whose complete existing text interval lies in the retained common prefix
+or suffix now keeps its original XML span. This retains its own attributes,
+original text XML and other child XML under the same original paragraph and
+body ancestors. A direct break contributes its existing U+000B character. The
+disjoint prefix/suffix intervals select each such whole nonempty span at most
+once; no raw run or break is copied into added paragraphs or the replacement
+template. Partial runs keep the prior static serialization. Empty segments,
+field-containing paragraphs (including conversion of fields to static text),
+unknown opaque segments, gap selection, matching and field-removal receipts
+keep their prior paths. This remains source-only work; full table-cell fallback,
+OF-509/OF-510 and Office fidelity are not claimed complete.
