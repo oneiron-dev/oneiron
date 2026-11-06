@@ -185,12 +185,15 @@ fn complete_read_back<T: OutboundTransport>(
             now_ms / 1_000,
         );
     })?;
-    Ok(effect_result(
-        &done,
+    // Its settled budget warnings go out with it, as an acked send's do.
+    let mut result = effect_result(
+        &done.record,
         Some(OutboundSendOutcome::Acked),
         replayed,
         None,
-    ))
+    );
+    result.budget_settlement_events = done.budget_events;
+    Ok(result)
 }
 
 #[cfg(test)]
