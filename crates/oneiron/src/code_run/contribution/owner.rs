@@ -314,11 +314,19 @@ pub(crate) fn settle_owner_pair_in_txn(
     let Some(((with_passed, without_passed), judgment)) = verdict else {
         return close_owner_pair_in_txn(vault, txn, &key, ask, now);
     };
-    let Some(judged) =
-        judge_owner_pair_in_txn(vault, txn, &key, with_passed, without_passed, judgment)?
-    else {
-        return close_owner_pair_in_txn(vault, txn, &key, ask, now);
-    };
+    // The ask is settled, so a pair the writer refuses closes for any
+    // reason; the writer names it as the fork writers do (FIX 6256).
+    let judged =
+        match judge_owner_pair_in_txn(vault, txn, &key, with_passed, without_passed, judgment)? {
+            Ok(judged) => judged,
+            Err(reason) => {
+                tracing::debug!(
+                    reason = reason.as_str(),
+                    "an owner-judged pair closes unscored"
+                );
+                return close_owner_pair_in_txn(vault, txn, &key, ask, now);
+            }
+        };
     let contribution = ContributionPair {
         attempt_receipt: judged.attempt_receipt.clone(),
         outcome_receipt: judged.scoring.outcome_receipt.clone(),
@@ -431,6 +439,8 @@ impl Runner<'_> {
     /// Keeps this pair's pending pair, once: a fresh blinded mapping, the
     /// owner it asks, its presentation's ids and texts' digests, and the
     /// frozen criterion. A pair another pass kept first is returned as kept.
+    /// A pair its writer does not keep is unavailable for that writer's own
+    /// reason (FIX 6256).
     fn reserve_owner_pair(
         &self,
         prepared: &Prepared,
@@ -514,8 +524,7 @@ impl Runner<'_> {
             presentation,
             route: OwnerPairRoute::Reserved,
         };
-        let kept = put_owner_pair(self.vault, &self.pair, &self.provenance, &pair)?;
-        Ok(kept.ok_or(Unavailable::Unreadable))
+        put_owner_pair(self.vault, &self.pair, &self.provenance, &pair)
     }
 
     /// The texts the owner reads, both answers read again from the bodies

@@ -542,6 +542,8 @@ impl Runner<'_> {
     /// An engine step's fork with its program's outcome settled or pending,
     /// kept before either fork is scored: as kept when it is settled, else
     /// its kept answer's program run now. A workflow step's fork as it is.
+    /// An outcome its writer does not keep is unavailable for that writer's
+    /// own reason (FIX 6256).
     pub(super) fn executed(
         &self,
         prepared: &Prepared,
@@ -592,12 +594,11 @@ impl Runner<'_> {
         let (answer, pin) = (fork.response, frozen.pin);
         let capsule = &prepared.capsule;
         // Its bodies, its execution and their erase ownership commit together.
-        let kept = store_fork_execution(self.vault, capsule, &self.pair, &fork, &bodies, |refs| {
+        store_fork_execution(self.vault, capsule, &self.pair, &fork, &bodies, |refs| {
             executed
                 .record(answer, pin, &paths, refs)
                 .map(ForkExecutionOutcome::Executed)
-        })?;
-        Ok(kept.ok_or(Unavailable::Unreadable))
+        })
     }
 
     /// `fork` with its program kept unavailable for `unavailable`: pending
@@ -615,10 +616,9 @@ impl Runner<'_> {
             ForkExecutionOutcome::Unavailable(unavailable)
         };
         let (vault, capsule) = (self.vault, &prepared.capsule);
-        let kept = store_fork_execution(vault, capsule, &self.pair, &fork, &[], |_| {
+        store_fork_execution(vault, capsule, &self.pair, &fork, &[], |_| {
             Some(outcome.clone())
-        })?;
-        Ok(kept.ok_or(Unavailable::Unreadable))
+        })
     }
 
     /// A fork's executed program, as its scorer reads it in `mode`: `None`
