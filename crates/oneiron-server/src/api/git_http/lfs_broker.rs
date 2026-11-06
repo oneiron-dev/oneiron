@@ -1,24 +1,29 @@
 //! A Git-LFS transfer through the credential broker on a served host
 //! (ARCH-0069 OSH-3, FIX 19876): the transport the engine's LFS
-//! orchestration (`oneiron::origin::lfs::upload_lfs_objects`) sends each
-//! batch call and object action of one remote through. The orchestration
-//! keeps the batches, their order, which answer names which object, and
-//! every store check; this transport carries each exchange once.
+//! orchestration (`oneiron::origin::lfs::upload_lfs_objects` for a mirror,
+//! `download_lfs_objects` for an outside import) sends each batch call and
+//! object action of one remote through. The orchestration keeps the
+//! batches, their order, which answer names which object, and every store
+//! and door check; this transport carries each exchange once.
 //!
 //! - **Exchange.** Each exchange is judged again by the remote's custody
-//!   (a mirror still the destination its run read), then framed as the
-//!   broker's typed target: a batch call to the remote's repository under
-//!   its operation, or an action under the digest of the batch call whose
-//!   answer named it, the object's id and the size the batch asked for, its
-//!   href and the headers that answer named for it, as given. Its body (the
-//!   encoded batch, a verify's `{oid, size}`, or an upload's spool, which
-//!   the orchestration wrote above the vault disk's reserve) is digested in
-//!   the LFS digest domain and handed to the broker, which spools it and
-//!   acknowledges. Only then is the remote's credential released at the
-//!   custody door, the same `Authorization` value the direct path builds,
-//!   copied once and handed to the broker: for a batch call that names the
-//!   remote's credential, and for an action whose headers name the broker's
-//!   placeholder for it. Every other exchange goes with no credential.
+//!   (a mirror still the destination its run read; an import's call
+//!   credential not revoked and its binding, if any, still admitting it),
+//!   then framed as the broker's typed target: a batch call to the remote's
+//!   repository under its operation, or an action under the digest of the
+//!   batch call whose answer named it, the object's id and the size the
+//!   batch asked for, its href and the headers that answer named for it, as
+//!   given. Its body (the encoded batch, a verify's `{oid, size}`, or an
+//!   upload's spool, which the orchestration wrote above the vault disk's
+//!   reserve) is digested in the LFS digest domain and handed to the
+//!   broker, which spools it and acknowledges. Only then is the remote's
+//!   credential released at the custody door (a mirror's, the same
+//!   `Authorization` value the direct path builds; an import's, its
+//!   binding's header), copied once and handed to the broker: for a batch
+//!   call that names the remote's credential, and for an action of such a
+//!   call whose headers name the broker's placeholder for it. Every other
+//!   exchange goes with no credential: an anonymous batch call and each of
+//!   its actions too.
 //! - **Reply.** A batch call's or a download's body streams to the
 //!   orchestration as a reader whose end is clean only when the broker's
 //!   is: a cut or broken reply is a read error, never a short body. An
@@ -97,7 +102,9 @@ struct Framed<'r> {
     target: LfsTarget,
     headers: Vec<(String, String)>,
     body: ExchangeBody<'r>,
-    /// Whether a batch call names the remote's credential.
+    /// Whether the batch call names the remote's credential: a batch
+    /// call's own slot, or an action's, the slot of the batch call whose
+    /// answer named it.
     remote_credential: bool,
 }
 
@@ -194,11 +201,11 @@ impl<'a> BrokeredLfsTransport<'a> {
             self.idle,
             reply_limit,
         );
-        let carries = if header.target.is_batch() {
-            remote_credential
-        } else {
-            header.names_credential_placeholder()
-        };
+        // An action carries the credential only where its batch call
+        // installed it and the reply handed it back: an anonymous batch's
+        // placeholder is the remote's own text, sent as given.
+        let carries = remote_credential
+            && (header.target.is_batch() || header.names_credential_placeholder());
         let runtime = self.broker.runtime();
         let (prepared, isolation) = runtime.block_on(async {
             let (connection, isolation) =
@@ -277,19 +284,19 @@ impl<'a> BrokeredLfsTransport<'a> {
                 target: LfsTarget::ObjectUpload(self.action_target(action)?),
                 headers: action_headers(action),
                 body: ExchangeBody::Spool(body),
-                remote_credential: false,
+                remote_credential: names_remote_credential(action),
             },
             LfsRequest::Verify { action, body } => Framed {
                 target: LfsTarget::Verify(self.action_target(action)?),
                 headers: action_headers(action),
                 body: ExchangeBody::Verify(body),
-                remote_credential: false,
+                remote_credential: names_remote_credential(action),
             },
             LfsRequest::ObjectDownload(action) => Framed {
                 target: LfsTarget::ObjectDownload(self.action_target(action)?),
                 headers: action_headers(action),
                 body: ExchangeBody::Empty,
-                remote_credential: false,
+                remote_credential: names_remote_credential(action),
             },
         })
     }
@@ -405,6 +412,12 @@ impl LfsTransport for BrokeredLfsTransport<'_> {
     fn spool_floor(&self) -> Option<&dyn SpillFloor> {
         Some(self.floor)
     }
+}
+
+/// Whether the batch call whose answer named `action` went under the
+/// remote's credential.
+fn names_remote_credential(action: LfsActionRequest<'_>) -> bool {
+    action.batch().credential() == LfsBatchCredential::Remote
 }
 
 /// The headers the batch answer named for `action`, as given, in the order
