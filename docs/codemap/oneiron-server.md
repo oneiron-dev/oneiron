@@ -1031,7 +1031,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/recall.rs` | src | s | 1 struct · 4 crate-vis | RecallConfig | The `[recall]` section: how recall behaves at this server |
 | `src/config/recall_tests.rs` | test | s | — | — | Resolution rows for the `[recall]` section |
 | `src/config/remote_embedder.rs` | src | s | 2 struct · 1 enum · 2 crate-vis | EgressPolicy, RemoteEmbedderConfig, RemoteEvidenceRule | Host-configured remote rung and cached per-entity egress decisions |
-| `src/config/self_heal.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | DetectorConfig, DetectorTier, SelfHealConfig | The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry… |
+| `src/config/self_heal.rs` | src | s | 2 struct · 1 enum · 2 fn · 4 crate-vis | DetectorConfig, DetectorTier, SelfHealConfig | The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry… |
 | `src/config/serve_args.rs` | src | L | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
 | `src/config/serve_args/debug.rs` | src | s | — | — | `ServeArgs`'s redacting `Debug` |
 | `src/config/server_config.rs` | src | m | 3 struct · 1 enum · 5 fn · 1 crate-vis | EmbeddedHolderOverrides, IngressAuth, ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
