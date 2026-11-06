@@ -95,6 +95,8 @@ mod tests;
 mod portable;
 mod portable_binding;
 mod setup_plan;
+mod setup_execution;
+pub(crate) mod setup_trace;
 pub(crate) use setup_plan::{
     PreparedSetupOwner, SetupEntityPut, setup_entity_type_in_txn, take_setup_owner_before,
 };

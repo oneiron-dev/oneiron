@@ -123,9 +123,9 @@ impl PreparedAgentSetup {
         )
     }
 
-    /// Consumes the native setup tuples after the caller's Allow decision.
-    /// The caller owns effect admission, credential spending and commit.
-    pub(crate) fn apply_after_allow_in_txn(
+    /// Consumes the native tuples once inside the caller's isolated child.
+    /// The caller owns the complete effect judgment and merges only on Allow.
+    pub(crate) fn apply_in_private_child(
         self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,

@@ -117,6 +117,7 @@ pub(crate) fn backfill_task_base(
 /// Retire an id's scope sidecar in the same transaction that erases its body.
 /// A later same-id write never inherits the deleted record's birth position.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    crate::agent_def::setup_trace::observe_position_retirement(store, txn, id)?;
     SCOPE_RECORD.delete(store, txn, &id)?;
     bump_scope_revision(store, txn)
 }
@@ -411,6 +412,17 @@ fn stored_scope(
     let scope = note_world::note_position(store, txn, id, kind, stamp.scope);
     Ok(Some(scope))
 }
+/// The existing positive stamp at a native setup mutation's actual prefix.
+/// An existing unstamped row remains unstamped; a future birth is not inferred.
+pub(crate) fn setup_stored_position(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<Option<Scope>> {
+    stored_scope(store, txn, id, kind)
+}
+
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
 /// every read that checks a world asks. A CLAIM, key pad or key wrap names its own; a
 /// TASK and its authority facts sit where `stamp_task_birth` settled them,
