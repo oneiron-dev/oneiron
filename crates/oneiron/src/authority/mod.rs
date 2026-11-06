@@ -115,6 +115,7 @@ mod machine_profile;
 mod machine_standing;
 mod machine_write;
 mod managed_owner_check;
+mod membership_execution;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
