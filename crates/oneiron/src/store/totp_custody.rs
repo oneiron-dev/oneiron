@@ -20,6 +20,9 @@ use crate::store::key_custody::{
     stage_erasable_retirement_in_txn,
 };
 
+/// Random seed bytes for the authenticator-app enrollment.
+pub(crate) const SEED_BYTES: usize = 32;
+
 const RECIPIENT: &[u8] = b"oneiron/step-up/totp-seed/v1";
 const AEAD: SuiteId = SuiteId::AES256GCM_V1;
 const EPOCH: u64 = 1;
@@ -44,7 +47,7 @@ fn aad(person: EntityId, enrollment: &[u8; 32]) -> [u8; 48] {
     aad
 }
 
-pub(super) fn seal(
+pub(crate) fn seal(
     store: &Store,
     txn: &mut RwTxn<'_>,
     person: EntityId,
@@ -88,7 +91,7 @@ fn local(store: &Store) -> Result<LocalCustody<'_>> {
     store.core.key_custody.local().ok_or_else(corrupt)
 }
 
-pub(super) fn live(
+pub(crate) fn live(
     store: &Store,
     txn: &RoTxn<'_>,
     person: EntityId,
@@ -105,7 +108,7 @@ pub(super) fn live(
     )
 }
 
-pub(super) fn open(
+pub(crate) fn open(
     store: &Store,
     txn: &RoTxn<'_>,
     person: EntityId,
@@ -139,13 +142,13 @@ pub(super) fn open(
             &aad(person, enrollment),
         )
         .map_err(|_| corrupt())?;
-    if seed.len() != super::SEED_BYTES {
+    if seed.len() != SEED_BYTES {
         return Err(corrupt());
     }
     Ok(seed)
 }
 
-pub(super) fn retire(
+pub(crate) fn retire(
     store: &Store,
     txn: &mut RwTxn<'_>,
     person: EntityId,
@@ -162,7 +165,7 @@ pub(super) fn retire(
 }
 
 /// An actor erase includes an aborted enrollment writer's orphan leaves.
-pub(super) fn retire_person(store: &Store, txn: &mut RwTxn<'_>, person: EntityId) -> Result<()> {
+pub(crate) fn retire_person(store: &Store, txn: &mut RwTxn<'_>, person: EntityId) -> Result<()> {
     let mut items: BTreeSet<ErasableItem> = erasable_refs_of_in_txn(
         store,
         txn,

@@ -233,6 +233,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.digest_feedback.put", post(facade_route))
         .route("/vault.weave.owner.digest.render", post(facade_route))
         .route("/vault.inbox.concerns.review", post(facade_route))
+        .route("/vault.proactivity.digest", post(facade_route))
         .route("/vault.inbox.lens", post(facade_route))
         .route("/vault.inbox.groups", post(facade_route))
         .route("/vault.inbox.groups.resolve", post(facade_route))

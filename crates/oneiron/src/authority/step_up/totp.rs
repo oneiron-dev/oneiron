@@ -1,7 +1,7 @@
 //! Optional authenticator-app step-up, using the same slip-bound record
 //! and Admin witness as passkeys (MFA-1 A; FIX 17552).
 
-mod custody;
+use crate::store::totp_custody::{self as custody, SEED_BYTES};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,6 @@ use crate::side_table::{self, Named, SideTable};
 
 pub use oneiron_crypto::totp::{TOTP_DIGITS, TOTP_DRIFT_STEPS, TOTP_PERIOD_SECS};
 
-/// Random seed bytes for the authenticator-app enrollment.
-const SEED_BYTES: usize = 32;
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const REFUSED: &str = "step_up_totp_refused: the code did not verify or its step was already spent";
 

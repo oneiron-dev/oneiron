@@ -726,6 +726,9 @@ impl OneironClient {
                 "vault.inbox.concerns.review" => remote_agent_verb_output::<
                     oneiron::memory::DreamerAttemptRef,
                 >(client, verb, &input),
+                "vault.proactivity.digest" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+                >(client, verb, &input),
                 "vault.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
@@ -6808,6 +6811,21 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.inbox.concerns.review", value)
+    }
+    pub fn vault_proactivity_digest(
+        &self,
+        input: &oneiron::memory::ProactivityDigestRequest,
+    ) -> Result<
+        Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.proactivity.digest", value)
     }
     pub fn vault_inbox_lens(
         &self,

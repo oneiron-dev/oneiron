@@ -229,6 +229,7 @@ pub enum AgentVerb {
     VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
+    VaultProactivityDigest,
     VaultInboxLens,
     VaultInboxGroups,
     VaultInboxGroupsResolve,
@@ -1523,6 +1524,7 @@ impl AgentVerb {
         Self::VaultWeaveDigestFeedbackPut,
         Self::VaultWeaveOwnerDigestRender,
         Self::VaultInboxConcernsReview,
+        Self::VaultProactivityDigest,
         Self::VaultInboxLens,
         Self::VaultInboxGroups,
         Self::VaultInboxGroupsResolve,
@@ -2820,6 +2822,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => "vault.weave.digest_feedback.put",
             Self::VaultWeaveOwnerDigestRender => "vault.weave.owner.digest.render",
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
+            Self::VaultProactivityDigest => "vault.proactivity.digest",
             Self::VaultInboxLens => "vault.inbox.lens",
             Self::VaultInboxGroups => "vault.inbox.groups",
             Self::VaultInboxGroupsResolve => "vault.inbox.groups.resolve",
@@ -4150,6 +4153,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -5473,6 +5477,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -6947,6 +6952,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultProactivityDigest
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
                 | Self::VaultInboxGroupsResolve
@@ -8974,6 +8980,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultProactivityDigest => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
             Self::VaultInboxGroupsResolve => &["spec"],
@@ -10269,6 +10276,7 @@ impl AgentVerb {
             Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultProactivityDigest => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
             Self::VaultInboxGroupsResolve => &["spec"],
@@ -12008,6 +12016,9 @@ impl AgentVerb {
             }
             Self::VaultInboxConcernsReview => {
                 "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."
+            }
+            Self::VaultProactivityDigest => {
+                "Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."
             }
             Self::VaultInboxLens => {
                 "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
@@ -14299,7 +14310,7 @@ impl AgentVerb {
                 "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
+                "Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."
