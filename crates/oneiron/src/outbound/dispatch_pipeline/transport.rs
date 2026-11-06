@@ -36,74 +36,16 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         &mut self,
         call: &crate::outbound_intent_ledger::FrozenOutboundCall,
     ) -> crate::outbound_intent_ledger::OutboundSendOutcome {
-        if call.server() != self.request.intent.channel
-            || call.tool() != self.verb_contract.kind
-            || call.resolved_endpoint().is_some()
-        {
-            return invalid_frozen_call();
-        }
-        // The last in-process boundary before the connector: the hygiene
-        // headers come out of the frozen bytes, never out of the live request.
-        let Ok(hygiene_headers) = crate::outbound_chokepoint::frozen_call_hygiene_headers(call)
-        else {
+        let sink = &mut *self.sink;
+        let Some(mut execution) = with_execution_request(
+            self.vault,
+            self.request,
+            self.verb_contract,
+            call,
+            |execution_request| sink.execute(execution_request),
+        ) else {
             return invalid_frozen_call();
         };
-        // CAL-04, same discipline: a `calendar.invite` send resolves its
-        // `text/calendar` part from the FROZEN blob ref here, at the last
-        // in-process boundary, and never recomputes a UID, a SEQUENCE, or the
-        // document itself. A verb-registered invite whose frozen bytes carry no
-        // five-field body — or whose blob ref no longer dereferences — fails
-        // closed rather than going out as a plain email about a meeting.
-        let calendar_invite = if self.verb_contract.kind == crate::calendar::CALENDAR_INVITE_VERB {
-            let Ok(payload) = crate::calendar::decode_frozen_calendar_invite(call.payload()) else {
-                return invalid_frozen_call();
-            };
-            let Ok(part) = crate::calendar::build_calendar_invite_mime_part(self.vault, &payload)
-            else {
-                return invalid_frozen_call();
-            };
-            Some(part)
-        } else {
-            None
-        };
-        let Ok(space_posting) =
-            crate::channel_identity_autonomy::frozen_space_posting(call.payload())
-        else {
-            return invalid_frozen_call();
-        };
-        // FIX 8791: the sink's own profile-read hold waits for the seat's
-        // daily reset, named on the request's clock.
-        let linkedin_sandbox_policy = self
-            .request
-            .linkedin_sandbox_policy
-            .clone()
-            .map(|policy| policy.with_caps_reset_after(self.request.occurred_at));
-        let execution_request = OutboundExecutionRequest {
-            intent_ref: &self.request.intent_ref,
-            intent: &self.request.intent,
-            // Only provider-native and replace-safe verbs expose the frozen
-            // ledger key to the transport. Queue-emulated dedupe does not make
-            // an ambiguous provider call safe to resend.
-            idempotency_key: if call.idempotency_supported() {
-                call.idempotency_key()
-            } else {
-                None
-            },
-            verb_contract: self.verb_contract,
-            channel_identity_ref: self.request.channel_identity_ref,
-            counterparty_ref: self.request.counterparty_ref.as_deref(),
-            linkedin_sandbox_policy: linkedin_sandbox_policy.as_ref(),
-            hygiene_headers,
-            apns_interruption_level: self.request.delivery_window_apns_interruption_level,
-            calendar_invite,
-            space_posting,
-        };
-        if !crate::task_verb::validate_ask_soft_confirm_dispatch(self.vault, self.request)
-            .unwrap_or(false)
-        {
-            return invalid_frozen_call();
-        }
-        let mut execution = self.sink.execute(&execution_request);
         // Only the pipeline may author the normalized re-arm authority, even
         // when the adapter's raw `retry_after` is missing or malformed.
         execution.receipt_fields.remove(PROVIDER_RETRY_AFTER_FIELD);
@@ -177,7 +119,100 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                 .sink
                 .known_non_delivery(&self.request.intent_ref, call.idempotency_key())
     }
+
+    /// The sink's read-back of `call`, for a call this transport would send,
+    /// through the request it would execute (FIX 8814 follow-up).
+    fn read_back_delivery(
+        &self,
+        call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        let sink = &*self.sink;
+        with_execution_request(
+            self.vault,
+            self.request,
+            self.verb_contract,
+            call,
+            |execution_request| sink.read_back_delivery(execution_request),
+        )
+        .unwrap_or(crate::outbound_intent_ledger::DeliveryReadBack::Unknown)
+    }
 }
+
+/// Builds the request the sink gets for `call`, the frozen call the
+/// transport would send, and hands it to `with`: `None` for a call it would
+/// refuse. The send and its read-back (FIX 8814 follow-up) both build it
+/// here, so a sink reads back exactly the call it executed.
+fn with_execution_request<R>(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    verb_contract: &'static OutboundVerbContract,
+    call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    with: impl FnOnce(&OutboundExecutionRequest<'_>) -> R,
+) -> Option<R> {
+    if call.server() != request.intent.channel
+        || call.tool() != verb_contract.kind
+        || call.resolved_endpoint().is_some()
+    {
+        return None;
+    }
+    // The last in-process boundary before the connector: the hygiene
+    // headers come out of the frozen bytes, never out of the live request.
+    let Ok(hygiene_headers) = crate::outbound_chokepoint::frozen_call_hygiene_headers(call) else {
+        return None;
+    };
+    // CAL-04, same discipline: a `calendar.invite` send resolves its
+    // `text/calendar` part from the FROZEN blob ref here, at the last
+    // in-process boundary, and never recomputes a UID, a SEQUENCE, or the
+    // document itself. A verb-registered invite whose frozen bytes carry no
+    // five-field body — or whose blob ref no longer dereferences — fails
+    // closed rather than going out as a plain email about a meeting.
+    let calendar_invite = if verb_contract.kind == crate::calendar::CALENDAR_INVITE_VERB {
+        let Ok(payload) = crate::calendar::decode_frozen_calendar_invite(call.payload()) else {
+            return None;
+        };
+        let Ok(part) = crate::calendar::build_calendar_invite_mime_part(vault, &payload) else {
+            return None;
+        };
+        Some(part)
+    } else {
+        None
+    };
+    let Ok(space_posting) = crate::channel_identity_autonomy::frozen_space_posting(call.payload())
+    else {
+        return None;
+    };
+    // FIX 8791: the sink's own profile-read hold waits for the seat's
+    // daily reset, named on the request's clock.
+    let linkedin_sandbox_policy = request
+        .linkedin_sandbox_policy
+        .clone()
+        .map(|policy| policy.with_caps_reset_after(request.occurred_at));
+    let execution_request = OutboundExecutionRequest {
+        intent_ref: &request.intent_ref,
+        intent: &request.intent,
+        // Only provider-native and replace-safe verbs expose the frozen
+        // ledger key to the transport. Queue-emulated dedupe does not make
+        // an ambiguous provider call safe to resend.
+        idempotency_key: if call.idempotency_supported() {
+            call.idempotency_key()
+        } else {
+            None
+        },
+        verb_contract,
+        channel_identity_ref: request.channel_identity_ref,
+        counterparty_ref: request.counterparty_ref.as_deref(),
+        linkedin_sandbox_policy: linkedin_sandbox_policy.as_ref(),
+        hygiene_headers,
+        apns_interruption_level: request.delivery_window_apns_interruption_level,
+        calendar_invite,
+        space_posting,
+    };
+    if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, request).unwrap_or(false) {
+        return None;
+    }
+    Some(with(&execution_request))
+}
+
 /// A frozen call the dispatch transport cannot honor verbatim.
 fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
     crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
