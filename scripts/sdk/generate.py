@@ -1524,8 +1524,9 @@ def facade_dispatch(facade_rows):
                 let (output, rows) = super::export_transfer::vault_export_answer(server, call, &input, proof, action, owner)?;
                 Ok::<_, FacadeApiError>((output, rows))
                 }}.await;
-                let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
-                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }})
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+                let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error.with_hook_notice(hook_notice)); }} }};
+                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: Some(rows), hook_notice }})
             }}\n'''
             continue
         if r.get('host_door'):
@@ -1551,7 +1552,7 @@ def facade_dispatch(facade_rows):
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
-            failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error); }'
+            failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error.with_hook_notice(hook_notice)); }'
             # FIX 10425: a browser batch's or library run's answer counts the
             # decisions its hooks' verdicts answered among its own, as its
             # code-mode door does, so `model_free` reads them. Record only.
@@ -1568,11 +1569,13 @@ def facade_dispatch(facade_rows):
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::support::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?, rows: super::host_doors::support::ListedRows::rows(listed), hook_notice }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
+                let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
                 let output = match ran {{ Ok(output) => output, {failed} }};{landed}
-                Ok(FacadeCallOutput::unlisted({post_hooks}.await?))''')
+                Ok(FacadeCallOutput::unlisted({post_hooks}.await.map_err(|error| error.with_hook_notice(hook_notice))?).with_hook_notice(hook_notice))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
                            # FIX 6867: a lane door judges its records in its engine door.
@@ -1593,13 +1596,17 @@ def facade_dispatch(facade_rows):
         room_guard, ref_guard = '', ''
         # A task-decision row invokes on its worker's own server and call.
         on = '&server, &call' if takes_task_decisions(r) else 'server, call'
-        result = f'facade_invoke({on}, actor, class, "{name}", value, &producers)?'
+        invoke = 'facade_invoke'
+        invoke_args = f'{on}, actor, class, "{name}", value, &producers'
         if takes_task_work_turn(r):
             # Rule 5: the engine call runs on the turn the dispatch awaited.
-            result = f'facade_invoke_in_turn({on}, actor, class, "{name}", value, &producers, Some(turn))?'
+            invoke = 'facade_invoke_in_turn'
+            invoke_args += ', Some(turn)'
         if r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope'):
-            result = f'facade_invoke_born({on}, actor, class, "{name}", value, position, &producers)?'
-        result += ';'
+            invoke = 'facade_invoke_born'
+            invoke_args = f'{on}, actor, class, "{name}", value, position, &producers'
+        result = f'{invoke}({invoke_args})?;'
+        notice_result = f'{invoke}_with_notice({invoke_args})?;'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
         # so the refusal says nothing about the target the lookup would read.
@@ -1661,6 +1668,7 @@ def facade_dispatch(facade_rows):
                 result = ('{ let (output, wake) = facade_invoke_concern_move(server, call, actor, class, value, &producers)?; '
                           'if wake { server.ai.turn_landed_by(server.vault(), actor, class); } '
                           'output };')
+                notice_result = None
             else:
                 landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
@@ -1702,10 +1710,18 @@ def facade_dispatch(facade_rows):
         {branch_turn}{producers}{output}{landed}
         Ok::<_, FacadeApiError>((output, rows))
         }}.await;
-        let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
-        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
+        let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+        let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error.with_hook_notice(hook_notice)); }} }};
+        Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await.map_err(|error| error.with_hook_notice(hook_notice))?, rows, hook_notice }})
         }}\n'''
             continue
+        if notice_result is not None:
+            result = notice_result
+            output_binding = '(output, hook_notice)'
+            call_output = 'FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true))'
+        else:
+            output_binding = 'output'
+            call_output = 'FacadeCallOutput::listed(output, &producers)'
         # Rule 5: a task-work row's turn, bound on the surface its engine call
         # runs on and held until that call returns.
         turn = '\nlet turn = Arc::new(server.admit_task_work(actor).await);' if takes_task_work_turn(r) else ''
@@ -1721,8 +1737,8 @@ def facade_dispatch(facade_rows):
         super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = {result}{landed}
-        Ok(FacadeCallOutput::listed(output, &producers))
+        let {output_binding} = {result}{landed}
+        Ok({call_output})
         }})
         .await
         .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("{name}")))?
@@ -1730,8 +1746,8 @@ def facade_dispatch(facade_rows):
             continue
         dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
         let producers = oneiron::memory::ProducerRows::default();
-        let output = {result}{landed}
-        Ok(FacadeCallOutput::listed(output, &producers))
+        let {output_binding} = {result}{landed}
+        Ok({call_output})
         }}\n'''
     # 2690: each row's nested readable paths, which a hook's rewrite meets
     # again (`facade_admit_rewritten_paths`), as a top-level `*_ref` does.
@@ -1870,12 +1886,15 @@ def outputs():
     # ARCH-0080 §3: every door that runs a row by name crosses its verb hooks
     # here, once; no caller of `invoke` wraps it again.
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n"
-    core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))); }\n'
+    core += "invoke_with_notice(memory, verb, value).0\n}\n"
+    core += "/// The row's result and its actual hook-chain notice bit; a source without metadata returns None.\n"
+    core += "pub fn invoke_with_notice(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> (MemoryResult<serde_json::Value>, Option<bool>) {\n"
+    core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return (Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), None); }\n'
     # G10: an embedded handle has no anonymous model host. Refuse it before
     # hooks can retain even a hash or an ask containing the anonymous input.
-    core += 'if verb == "ai.anonymous_chat" { return encode(ai_anonymous_chat(memory, decode(value)?)?); }\n'
+    core += 'if verb == "ai.anonymous_chat" { return ((|| encode(ai_anonymous_chat(memory, decode(value)?)?))(), None); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
-    core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
+    core += "crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {\n"
     for r in facade_rows:
         method = r['name'].replace('.', '_')
         if r.get('board_host'):

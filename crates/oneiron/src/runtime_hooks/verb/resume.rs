@@ -184,7 +184,7 @@ impl Vault {
             return Ok(false);
         }
         let mut receipt = None;
-        let ran = match resume {
+        let (ran, hook_notice) = match resume {
             VerbResume::Row(plain) => plain_resume::run(
                 self,
                 invocation,
@@ -203,14 +203,14 @@ impl Vault {
                     credential::resume(self, key, group, verb, actor, class, args, reference)?;
                 match resumed {
                     VerbAskResumed::Ran(ran) => ran,
-                    VerbAskResumed::Refused(refusal) => Err(refusal.error()),
+                    VerbAskResumed::Refused(refusal) => (Err(refusal.error()), None),
                 }
             }
         };
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
             // A result over the cap saves that it completed, not the result.
-            Ok(value) => (ask::SavedOutcome::result(&value)?, false),
+            Ok(value) => (ask::SavedOutcome::result(&value, hook_notice)?, false),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
                 // or this one no longer reads as settled.
@@ -226,7 +226,7 @@ impl Vault {
                 hook => {
                     let transient = run_failed_transient(&error);
                     (
-                        ask::SavedOutcome::error(error.code, &error.message),
+                        ask::SavedOutcome::error(error.code, &error.message, hook_notice),
                         transient,
                     )
                 }

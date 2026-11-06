@@ -681,6 +681,12 @@ pub fn decodes<T: DeserializeOwned>(value: &Value) -> bool {
     <T as serde::Deserialize>::deserialize(value).is_ok()
 }
 
+/// The content-free notice carried beside an HTTP verb's typed result.
+pub const CALLER_NOTICE_HEADER: &str = "x-oneiron-hook-notice";
+/// A notice of the change itself, with no target, argument or caller detail.
+pub const CALLER_NOTICE_SUMMARY: &str =
+    "A hook changed this take-away call's arguments, or the engine ignored a proposed change.";
+
 /// A call-scoped notice of the restrictive target changes its hooks made or
 /// ignored. Transports can return it beside the typed result, including when
 /// a post hook refuses that result. It carries no invocation or caller id.

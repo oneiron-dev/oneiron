@@ -200,8 +200,10 @@ impl McpCallContext {
         ceiling: &[u8; 32],
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        (oneiron::memory::MemoryResult<Value>, Option<bool>),
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         // Only a generated tool-first row is a door a connector's call
         // comes back by.
@@ -269,8 +271,10 @@ impl McpCallContext {
         connection: &str,
         call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
         drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
-    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
-    {
+    ) -> Result<
+        (oneiron::memory::MemoryResult<Value>, Option<bool>),
+        oneiron::runtime_hooks::verb::VerbAskRefusal,
+    > {
         use oneiron::runtime_hooks::verb::VerbAskRefusal;
         if !matches!(
             try_registered_surface(McpSurfaceMode::ToolFirst)
@@ -309,7 +313,10 @@ async fn rerun_saved_call(
     server: &Arc<SyncServer>,
     context: &McpCallContext,
     call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
-) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal> {
+) -> Result<
+    (oneiron::memory::MemoryResult<Value>, Option<bool>),
+    oneiron::runtime_hooks::verb::VerbAskRefusal,
+> {
     use oneiron::runtime_hooks::verb::VerbAskRefusal;
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
@@ -327,18 +334,23 @@ async fn rerun_saved_call(
     ))
     .await;
     match ran {
-        Err(error) => Ok(Err(mcp_saved_error(error))),
-        Ok((output, ..)) => {
+        Err(error) => {
+            let (error, hook_notice) = mcp_saved_error(error);
+            Ok((Err(error), hook_notice))
+        }
+        Ok((output, _, _, _, hook_notice)) => {
+            let hook_notice = hook_notice.is_some().then_some(true);
             // A board read answers the settlement here: the receipt its hook
             // rows owe is recorded and their blocks spent as the answer
             // returns (OF-579).
             if let Some(mut hooks) = board_hooks {
                 if let Err(error) = hooks.record_receipt(server).await {
-                    return Ok(Err(mcp_saved_error(error)));
+                    let (error, receipt_notice) = mcp_saved_error(error);
+                    return Ok((Err(error), hook_notice.or(receipt_notice)));
                 }
                 hooks.spend(server);
             }
-            Ok(Ok(output))
+            Ok((Ok(output), hook_notice))
         }
     }
 }
@@ -347,7 +359,8 @@ async fn rerun_saved_call(
 /// its kind as the code and its hook stop kept; an internal failure is the
 /// engine's own, which leaves the call for the next pass.
 #[cfg(feature = "code-sandbox-wasmtime")]
-fn mcp_saved_error(error: McpGatewayError) -> oneiron::MemoryError {
+fn mcp_saved_error(error: McpGatewayError) -> (oneiron::MemoryError, Option<bool>) {
+    let hook_notice = error.hook_notice.is_some().then_some(true);
     let code = if error.legal_hold.is_some() {
         oneiron::memory::MEMORY_CODE_INVALID_STATE
     } else if error.code == -32603 {
@@ -359,5 +372,5 @@ fn mcp_saved_error(error: McpGatewayError) -> oneiron::MemoryError {
     saved.hook = error.hook;
     saved.legal_hold = error.legal_hold;
     saved.reason_codes = error.reason_codes;
-    saved
+    (saved, hook_notice)
 }

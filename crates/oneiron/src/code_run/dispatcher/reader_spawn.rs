@@ -288,6 +288,7 @@ impl HostSelfDispatcher<'_> {
         ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some());
         (self.reader_child.is_some() && !admitted).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect,
                 outcome: READER_CHILD_READ_ONLY.to_owned(),
                 reason_codes: Vec::new(),
@@ -305,6 +306,7 @@ impl HostSelfDispatcher<'_> {
         };
         (!scoped_child_call_allowed(spec, call.verb)).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: SCOPED_CHILD_PORT_NOT_LENT.to_owned(),
                 reason_codes: Vec::new(),

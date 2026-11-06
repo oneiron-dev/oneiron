@@ -318,8 +318,8 @@ pub struct VerbAskSavedCall {
 /// What the host's check did with a saved call.
 #[derive(Debug)]
 pub enum VerbAskResumed {
-    /// The door ran the call: what it returned, or its error.
-    Ran(MemoryResult<Value>),
+    /// The door ran the call: its result and any actual notice metadata.
+    Ran((MemoryResult<Value>, Option<bool>)),
     /// The call was refused before it ran.
     Refused(VerbAskRefusal),
 }

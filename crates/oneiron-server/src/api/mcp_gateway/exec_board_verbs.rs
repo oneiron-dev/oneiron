@@ -88,6 +88,11 @@ pub(crate) async fn execute_mcp_execute_code(
             })
         })
         .collect::<Vec<_>>();
+    let hook_notices = steps
+        .iter()
+        .filter_map(|step| step.pointer("/outcome/hook_notice").and_then(Value::as_str))
+        .filter_map(|notice| serde_json::from_str::<Value>(notice).ok())
+        .collect::<Vec<_>>();
     let terminal = matches!(
         outcome.status,
         oneiron::engine_executor::EngineExecutorStatus::Complete
@@ -137,6 +142,9 @@ pub(crate) async fn execute_mcp_execute_code(
             args.cache,
         ),
     });
+    if !hook_notices.is_empty() {
+        structured["meta"]["hook_notices"] = json!(hook_notices);
+    }
     // The run's named results, so a stored value or a stored answer can be
     // found and read with `read_result`. They are released below with the
     // rest of the answer, under its checks.

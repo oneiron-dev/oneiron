@@ -96,6 +96,7 @@ impl HostSelfDispatcher<'_> {
             }
             if !crate::off_record::OffRecordSession::writes_verb(call.verb) {
                 return Ok(answered(Err(AgentVerbRefusal {
+                    hook_notice: None,
                     code: AGENT_VERB_SESSION_BOUND.to_owned(),
                 })));
             }
@@ -103,6 +104,7 @@ impl HostSelfDispatcher<'_> {
         }
         let Some(door) = &self.agent_verbs else {
             return Ok(answered(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             })));
         };
@@ -203,6 +205,7 @@ impl HostSelfDispatcher<'_> {
             )?,
             Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
                 answered(Err(AgentVerbRefusal {
+                    hook_notice: None,
                     code: VERB_HOOK_HIDDEN.to_owned(),
                 }))
             }
@@ -324,6 +327,7 @@ impl HostSelfDispatcher<'_> {
         if let Some(Err(refusal)) = door.map(|door| door.admit_run_call(RunCall::RecordedOutput)) {
             let rejected = super::gate_rejection(&refusal.code);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code.clone(),
                 reason_codes: vec![KEPT_ANSWER_REFUSED.to_owned()],
@@ -633,6 +637,7 @@ fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
 /// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect: SelfEffect::AgentVerb,
         outcome: why.to_owned(),
         reason_codes: vec![why.to_owned()],
@@ -674,6 +679,7 @@ fn answered(
     outcome.map_or_else(
         |refusal| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: refusal.hook_notice,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code,
                 reason_codes: Vec::new(),
