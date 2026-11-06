@@ -419,6 +419,27 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             .transpose()
     }
 
+    /// Reads one row, reporting its encoded key capacity before the read and any
+    /// owned raw-value capacity before decoding. Borrowed values add no backing.
+    pub(crate) fn get_with_backing_capacity(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &RoTxn<'_>,
+        key: &K,
+        mut observe: impl FnMut(u64),
+    ) -> Result<Option<V>> {
+        let full = self.key_bytes(key);
+        observe(full.capacity() as u64);
+        self.get_raw(dbs, txn, &full)?
+            .map(|bytes| {
+                if let Cow::Owned(value) = &bytes {
+                    observe(value.capacity() as u64);
+                }
+                self.decode_value(&bytes)
+            })
+            .transpose()
+    }
+
     /// The stored bytes of one row, undecoded, for a reader that must check them before it
     /// decodes (a digest over the stored bytes, a size budget).
     pub(crate) fn get_bytes(

@@ -576,6 +576,32 @@ as do exclusions for decoded values, transient raw values and unretained row
 copies, overlay copies, database pages, transaction scratch and allocation peaks. No extra encode, copy, lease,
 admission, wait or configured limit is introduced.
 
+The pre-put and direct trace-fork retrieval-run lookups also record any owned
+raw read buffer before decoding it. The typed table reports the original
+encoded key's actual capacity before its one database read. If that read returns
+`Cow::Owned(Vec<u8>)`, it reports that vector's actual capacity once before the
+same decode. Session-overlay present rows can return this distinct owned copy;
+base and passthrough reads borrow the transaction's bytes and add no raw-buffer
+charge. Capacity is read from the actual vector, not inferred from its length.
+
+The initial retained-finalizer lookup uses the same observer for its original
+encoded key and owned raw buffer. Its missing-row marker cleanup and return,
+mutable decoded record, mutations, writes and errors stay unchanged. The
+pre-put lookup still propagates its read or decode error; the direct trace-fork
+lookup still falls back to its full-family scan. A missing row or storage error
+adds no raw-buffer charge. A decode error records an owned buffer before
+returning the same error.
+
+Each lookup uses the same optional caller lease, with no new read, copy, decode,
+lease or admission. The raw buffer drops after decoding, before the decoded
+record reaches its caller. The encoded key stays alive through the decode and
+drops at the typed method's end. Their known charge remains conservative until
+the caller lease drops; it is not an exact early release or an allocation-peak
+bound. Decoded records have distinct backing and keep their existing accounting.
+Unbound calls keep their existing behavior without recording capacities. Other
+raw-read families, overlay storage, database pages and transaction scratch
+remain outside these charges.
+
 These finalization charges do not cover remaining backing, input construction
 before its first measurement, synchronous inputs before their existing moves,
 other mutation copies, config-map storage, number internals,
