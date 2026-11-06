@@ -132,19 +132,24 @@ pub(crate) fn restore(
         .iter()
         .map(|record| record.stored_for_note(note))
         .collect();
-    let held = super::document_store::load(vault, txn, note)?;
-    let old = held.view()?;
-    if old.markdown == text && held.metadata()? == *metadata && old.authorship == authorship {
-        return Ok(());
-    }
-    // An erased twin keeps its record (ErasedWins); a live actor never
-    // resurrects over an erased one.
-    if old
-        .authorship
-        .iter()
-        .any(|record| !authorship.iter().any(|kept| record.kept_by(kept)))
-    {
-        return Err(invalid("NOTE recovery would discard admitted provenance"));
+    // A vault that holds no document of the NOTE yet (its core arrived
+    // first) holds no previous value or provenance: the validated snapshot's
+    // rebuilds it (FIX 7783).
+    if let Some(held) = super::storage::stored_document(vault, txn, note)? {
+        let held = NoteDocument::from_loro(note, held)?;
+        let old = held.view()?;
+        if old.markdown == text && held.metadata()? == *metadata && old.authorship == authorship {
+            return Ok(());
+        }
+        // An erased twin keeps its record (ErasedWins); a live actor never
+        // resurrects over an erased one.
+        if old
+            .authorship
+            .iter()
+            .any(|record| !authorship.iter().any(|kept| record.kept_by(kept)))
+        {
+            return Err(invalid("NOTE recovery would discard admitted provenance"));
+        }
     }
     let doc = NoteDocument::from_loro(note, rebuild(note, text, metadata, &authorship)?)?;
     let key_prefix = format!("{}:", note.to_hex()).into_bytes();
