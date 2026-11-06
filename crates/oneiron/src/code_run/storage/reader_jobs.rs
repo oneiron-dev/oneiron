@@ -8,6 +8,7 @@
 mod scoped;
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
@@ -1039,11 +1040,22 @@ impl ExecutorStorage<'_> {
         })
     }
 
-    /// Up to `limit` queued children, oldest first.
-    pub(crate) fn queued_reader_jobs(&self, limit: usize) -> Result<Vec<ReaderJob>> {
+    /// Up to `limit` queued children after `after` in enqueue-time/task order.
+    pub(crate) fn queued_reader_jobs(
+        &self,
+        limit: usize,
+        after: Option<(u64, EntityId)>,
+    ) -> Result<Vec<ReaderJob>> {
         self.reader_read(|txn, dbs| {
+            let first = vec![b'q'];
+            let end = vec![b'q' + 1];
+            let after = after.map(|(enqueued_ms, task)| queued_key(enqueued_ms, task));
+            let start = match &after {
+                Some(after) => Bound::Excluded(after),
+                None => Bound::Included(&first),
+            };
             let mut jobs = Vec::new();
-            for row in INDEX.iter_from(&dbs, txn, b"q")? {
+            for row in INDEX.iter_range(&dbs, txn, start, Bound::Excluded(&end))? {
                 if jobs.len() >= limit {
                     break;
                 }
@@ -1407,9 +1419,9 @@ impl<'a> ReaderJobs<'a> {
         })
     }
 
-    /// Up to `limit` queued children, oldest first.
-    pub fn queued(&self, limit: usize) -> Result<Vec<ReaderJob>> {
-        self.storage.queued_reader_jobs(limit)
+    /// Up to `limit` queued children after `after` in enqueue-time/task order.
+    pub fn queued(&self, limit: usize, after: Option<(u64, EntityId)>) -> Result<Vec<ReaderJob>> {
+        self.storage.queued_reader_jobs(limit, after)
     }
 
     pub fn job(&self, task: EntityId) -> Result<Option<ReaderJob>> {
