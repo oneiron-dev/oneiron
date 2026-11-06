@@ -18,7 +18,12 @@ use super::posterior::{SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosteri
 use super::read::read_skill;
 
 mod sources;
+mod outcome_requests;
 pub(super) use sources::weighted_read;
+pub use outcome_requests::{
+    record_resident_skill_contributing_win_with_position, record_skill_contributing_win_with_position,
+};
+pub(crate) use outcome_requests::record_skill_settled_loss_with_position;
 
 use super::outcome_position::OutcomePlacement;
 use super::outcome_row::LedgerOutcomeRow;
@@ -365,34 +370,7 @@ pub fn record_skill_contributing_win(
     receipt_ref: &str,
     at: u64,
 ) -> Result<()> {
-    let record = read_skill(vault, skill)?;
-    if crate::skill::resident_of(&record)?.is_some() {
-        return Err(invalid("resident win requires its attributed actor"));
-    }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
-        return Err(invalid("contributing win cites an unstamped receipt"));
-    };
-    if receipt.outcome != ATTEMPT_OUTCOME_COMPLETED {
-        return Err(invalid(
-            "a contributing win requires a completed attempt receipt",
-        ));
-    }
-    if !receipt_manifest_names_skill(&receipt, &record) {
-        return Err(invalid(
-            "contributing win names a skill absent from the receipt manifest",
-        ));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        record_outcome_in_txn(
-            vault,
-            wtxn,
-            skill,
-            receipt_executor(&receipt),
-            receipt_ref,
-            true,
-            at,
-        )
-    })
+    record_skill_contributing_win_with_position(vault, skill, receipt_ref, at, None)
 }
 
 /// Charges one LOSS against a skill from an outcome its host settled, not a
@@ -408,29 +386,7 @@ pub(crate) fn record_skill_settled_loss(
     receipt_ref: &str,
     at: u64,
 ) -> Result<()> {
-    let record = read_skill(vault, skill)?;
-    if crate::skill::resident_of(&record)?.is_some() {
-        return Err(invalid("resident loss requires its attributed actor"));
-    }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
-        return Err(invalid("settled loss cites an unstamped receipt"));
-    };
-    if !receipt_manifest_names_skill(&receipt, &record) {
-        return Err(invalid(
-            "settled loss names a skill absent from the receipt manifest",
-        ));
-    }
-    vault.with_write_txn_grouped(|wtxn| {
-        record_outcome_in_txn(
-            vault,
-            wtxn,
-            skill,
-            receipt_executor(&receipt),
-            receipt_ref,
-            false,
-            at,
-        )
-    })
+    record_skill_settled_loss_with_position(vault, skill, receipt_ref, at, None)
 }
 
 /// Credits a resident fork only from its own attributed outcome. The
@@ -442,43 +398,14 @@ pub fn record_resident_skill_contributing_win(
     receipt_ref: &str,
     at: u64,
 ) -> Result<()> {
-    let record = read_skill(vault, skill)?;
-    if crate::skill::resident_of(&record)? != Some(*resident)
-        || crate::skill::resident::receipt_resident(vault, receipt_ref)? != Some(*resident)
-        || !crate::skill::resident::receipt_loaded_skill(vault, receipt_ref, skill)?
-    {
-        return Err(invalid(
-            "resident win names a foreign or unowned skill or attempt",
-        ));
-    }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
-        return Err(invalid("contributing win cites an unstamped receipt"));
-    };
-    if receipt.outcome != ATTEMPT_OUTCOME_COMPLETED {
-        return Err(invalid(
-            "a contributing win requires a completed attempt receipt",
-        ));
-    }
-    let Some(manifest) = receipt.pack_manifest_skills() else {
-        return Err(invalid("resident win needs a versioned manifest"));
-    };
-    if !manifest.iter().any(|entry| {
-        ManifestEntry::parse_wire_form(entry)
-            .is_some_and(|(name, version)| name == record.skill_id && version == record.version)
-    }) {
-        return Err(invalid("resident win needs its exact revision"));
-    }
-    vault.with_write_txn_grouped(|txn| {
-        record_outcome_in_txn(
-            vault,
-            txn,
-            skill,
-            receipt_executor(&receipt),
-            receipt_ref,
-            true,
-            at,
-        )
-    })
+    record_resident_skill_contributing_win_with_position(
+        vault,
+        resident,
+        skill,
+        receipt_ref,
+        at,
+        None,
+    )
 }
 
 /// The manifest chokepoint BOTH outcome doors run: did the pack that stamped
