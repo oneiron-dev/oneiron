@@ -4,9 +4,10 @@ use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer as _};
 
 use super::{
-    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalBaseEdge,
-    CanonicalCustodyTransition, CanonicalEntity, CanonicalPinCarrier, CanonicalRoomFact,
-    CanonicalRoomTurn, CanonicalSnapshot, CanonicalTombstone,
+    BoundedWriter, ByteBudget, CANONICAL_SNAPSHOT_MAX_BYTES, CanonicalAssetBodyRef,
+    CanonicalBaseEdge, CanonicalCustodyTransition, CanonicalEntity, CanonicalHeadMove,
+    CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn, CanonicalRowBirth,
+    CanonicalSnapshot, CanonicalTombstone,
 };
 use crate::error::Result;
 
@@ -81,7 +82,7 @@ impl CanonicalEncoding {
             ("doc_snapshots", &Rows(doc_snapshots, false)),
             ("entity_documents", &Rows(entity_documents, false)),
             ("document_heads", &Rows(document_heads, false)),
-            ("head_move_receipts", &Rows(head_move_receipts, false)),
+            ("head_move_receipts", &ByteRows(head_move_receipts, false)),
             ("note_forks", &Rows(note_forks, false)),
             ("note_proposals", &Rows(note_proposals, false)),
             ("container_manifests", &Rows(container_manifests, false)),
@@ -92,9 +93,9 @@ impl CanonicalEncoding {
             ("room_facts", &ByteRows(room_facts, true)),
             ("document_pins", &ByteRows(document_pins, true)),
             ("peer_origins", &Rows(peer_origins, true)),
-            ("row_births", &Rows(row_births, true)),
+            ("row_births", &ByteRows(row_births, true)),
             ("withdrawn_cutoffs", &Rows(withdrawn_cutoffs, true)),
-            ("asset_body_refs", &Rows(asset_body_refs, true)),
+            ("asset_body_refs", &ByteRows(asset_body_refs, true)),
         ];
         for _ in 0..units.max(1) {
             if !self.started {
@@ -252,6 +253,26 @@ impl ByteRow for CanonicalCustodyTransition {
     }
 }
 
+impl ByteRow for CanonicalHeadMove {
+    fn bytes(&self) -> &[u8] {
+        &self.receipt
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalHeadMove {
+            id,
+            entity_id,
+            receipt: _,
+        } = self;
+        write_struct_header(out, "CanonicalHeadMove", 3)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "entity_id")?;
+        write_named(out, entity_id)?;
+        write_named(out, "receipt")
+    }
+}
+
 impl ByteRow for CanonicalRoomTurn {
     fn bytes(&self) -> &[u8] {
         &self.row
@@ -291,6 +312,34 @@ impl ByteRow for CanonicalPinCarrier {
         write_named(out, "key")?;
         write_named(out, key)?;
         write_named(out, "row")
+    }
+}
+
+impl ByteRow for CanonicalRowBirth {
+    fn bytes(&self) -> &[u8] {
+        &self.value
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalRowBirth { id, value: _ } = self;
+        write_struct_header(out, "CanonicalRowBirth", 2)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "value")
+    }
+}
+
+impl ByteRow for CanonicalAssetBodyRef {
+    fn bytes(&self) -> &[u8] {
+        &self.value
+    }
+
+    fn write_prefix(&self, out: &mut BoundedWriter) -> Result<()> {
+        let CanonicalAssetBodyRef { id, value: _ } = self;
+        write_struct_header(out, "CanonicalAssetBodyRef", 2)?;
+        write_named(out, "id")?;
+        write_named(out, id)?;
+        write_named(out, "value")
     }
 }
 
