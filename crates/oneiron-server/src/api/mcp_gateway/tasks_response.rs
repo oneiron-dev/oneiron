@@ -496,6 +496,17 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
         VerbHookStop::CompletedWithError { .. } => "verb_hook_completed_with_error",
     };
     let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
+    error.hook_notice = matches!(
+        &stop,
+        VerbHookStop::Completed {
+            hook_notice: Some(true),
+            ..
+        } | VerbHookStop::CompletedWithError {
+            hook_notice: Some(true),
+            ..
+        }
+    )
+    .then(|| oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY.to_owned());
     error.hook = Some(Box::new(stop));
     error
 }
