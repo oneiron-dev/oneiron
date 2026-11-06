@@ -873,6 +873,47 @@ pub(super) fn external_workers(
     bound
 }
 
+/// The direct transcription rung's external ASR worker, captured while its
+/// configured row and provider still match the hosted instance (FIX 9200).
+/// A different endpoint or a brokered wire has no binding here.
+pub(super) fn external_asr_worker(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+    wire_model: &str,
+) -> Option<InferenceWorker> {
+    if provider.key_secret.is_some()
+        || !matches!(
+            provider.kind,
+            crate::config::models::ProviderKind::LocalOpenaiCompat
+                | crate::config::models::ProviderKind::OpenaiCompat
+        )
+    {
+        return None;
+    }
+    let host = HOST.get()?;
+    let workers = host.lock();
+    for row in rows {
+        if row.binding.provider != provider_name
+            || row.binding.model != wire_model
+            || row.mode != WorkerMode::External
+            || row.kind != WorkerKind::Asr
+            || row.endpoint.as_deref().is_some_and(|endpoint| {
+                endpoint.trim_end_matches('/') != provider.base_url.trim_end_matches('/')
+            })
+        {
+            continue;
+        }
+        let Some(hosted) = workers.get(&row.id) else {
+            continue;
+        };
+        if hosted.row == *row && hosted.provider == *provider {
+            return Some(hosted.worker.clone());
+        }
+    }
+    None
+}
+
 /// Whether `worker` is still its row's hosted supervisor: a replaced row's
 /// old clone is not. The host lock is released before the caller probes.
 pub(super) fn is_current(worker: &InferenceWorker) -> bool {
