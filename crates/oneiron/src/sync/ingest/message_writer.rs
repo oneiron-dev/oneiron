@@ -48,8 +48,7 @@ const DOMAIN: &[u8] = b"oneiron/sync-message-writer/v1";
 /// row's digest (32 bytes) for a row this install's local put wrote, or a
 /// whole proof ([`PROOF_LEN`] bytes) for a row the own-device lane admitted.
 /// Key: hex32 (MESSAGE id).
-const WRITTEN: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::SYNC_MESSAGE_WRITER);
+const WRITTEN: SideTable<HexId, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_MESSAGE_WRITER);
 
 /// A proof's bytes: the row digest, the writer machine, the signature.
 const PROOF_LEN: usize = 32 + 16 + 64;
@@ -99,8 +98,7 @@ fn digest(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn is_message(row: &[u8]) -> bool {
-    EntityMetadataHeader::parse(row)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_MESSAGE)
+    EntityMetadataHeader::parse(row).is_some_and(|header| header.entity_type == ENTITY_TYPE_MESSAGE)
 }
 
 fn carries_writers(doc: &LoroDoc) -> bool {
@@ -123,7 +121,9 @@ pub(crate) fn note_message_put_in_txn(
         lane_proof.map(<[u8]>::to_vec)
     } else {
         let staged = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, id)?;
-        staged.filter(|row| is_message(row)).map(|row| digest(&row).to_vec())
+        staged
+            .filter(|row| is_message(row))
+            .map(|row| digest(&row).to_vec())
     };
     match record {
         Some(record) => WRITTEN.put(store, wtxn, &HexId(*id), &record),
@@ -264,7 +264,10 @@ pub(in crate::sync) fn verified_writer_in_txn(
     };
     let signed = transcript(&genesis, &proof.writer, id, &proof.row);
     let signature = ed25519_dalek::Signature::from_bytes(&proof.signature);
-    Ok(key.verify_strict(&signed, &signature).is_ok().then_some(proof.writer))
+    Ok(key
+        .verify_strict(&signed, &signature)
+        .is_ok()
+        .then_some(proof.writer))
 }
 
 /// The proof `doc` carries for the row at `id`, as it carries it.
@@ -303,10 +306,7 @@ pub(in crate::sync) fn copy_writer_proofs(source: &LoroDoc, out: &LoroDoc) -> Re
 /// Drops the proof `doc` carries for each of `ids` whose row it no longer
 /// holds with the bytes the proof names. Returns whether any went; the
 /// caller commits.
-pub(in crate::sync) fn forget_stale_writer_proofs(
-    doc: &LoroDoc,
-    ids: &[EntityId],
-) -> Result<bool> {
+pub(in crate::sync) fn forget_stale_writer_proofs(doc: &LoroDoc, ids: &[EntityId]) -> Result<bool> {
     if !carries_writers(doc) {
         return Ok(false);
     }
