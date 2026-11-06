@@ -149,6 +149,12 @@ pub struct VaultVmConfig {
     /// with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
+    /// The node's shared model bundles, in a root-owned read-only ext4 image.
+    /// Attached after the config drive and before a restore source, mounted
+    /// at `/models`, and admitted by the existing shared-model-root policy.
+    /// Without it the guest keeps its ordinary per-vault model paths.
+    #[serde(default)]
+    pub model_disk: Option<PathBuf>,
     /// The vault's provision binding (FIX 6308): the UID its engine runs as,
     /// its derivation owner, `vault_disk`'s filesystem UUID and its fscrypt
     /// key's identifier. Required: a profile without a valid one never boots,
@@ -496,6 +502,14 @@ impl VaultVm {
         if config.config_disk.is_some() {
             boot_args.push_str(" oneiron.config=1");
         }
+        if config.model_disk.is_some() {
+            boot_args.push_str(" oneiron.models=");
+            boot_args.push_str(if config.config_disk.is_some() {
+                "/dev/vdd"
+            } else {
+                "/dev/vdc"
+            });
+        }
         if config.artifact_origin {
             boot_args.push_str(" oneiron.artifact_origin=1");
         }
@@ -541,7 +555,19 @@ impl VaultVm {
             )
             .await?;
         }
-        // After them, `/dev/vdc` or `/dev/vdd` in the guest.
+        // The model drive follows config on both ordinary and restore boots.
+        if let Some(model_disk) = &config.model_disk {
+            self.api(
+                "PUT",
+                "/drives/models",
+                json!({
+                    "drive_id": "models", "path_on_host": model_disk,
+                    "is_root_device": false, "is_read_only": true,
+                }),
+            )
+            .await?;
+        }
+        // After config and models, `/dev/vdc`, `/dev/vdd` or `/dev/vde`.
         if let Some(source) = config.restore_source_disk.as_ref().filter(|_| with_source) {
             self.api(
                 "PUT",
