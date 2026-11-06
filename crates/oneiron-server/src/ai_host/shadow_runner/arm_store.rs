@@ -35,7 +35,7 @@ const HELD_LOCK: &str = ".held";
 type Arms = HashMap<ShadowArmLease, Arc<ArmEntry>>;
 
 /// One arm's bodies, while its lease or a reader holds them.
-pub(super) struct ArmEntry {
+pub(crate) struct ArmEntry {
     store: ShadowBodyStore,
     /// The actor whose step the arm runs: its source run's content is this
     /// actor's.
@@ -44,7 +44,7 @@ pub(super) struct ArmEntry {
 
 impl ArmEntry {
     /// The arm's store.
-    pub(super) const fn store(&self) -> &ShadowBodyStore {
+    pub(crate) const fn store(&self) -> &ShadowBodyStore {
         &self.store
     }
 }
@@ -58,8 +58,9 @@ impl Drop for ArmEntry {
     }
 }
 
-/// One runner's arms.
-pub(super) struct ArmRegistry {
+/// One runner's arms; a contribution pass's forks' scratch stores too (FIX
+/// 3607).
+pub(crate) struct ArmRegistry {
     root: PathBuf,
     /// Held while the registry lives: a later runner's sweep takes it only
     /// once this one is gone.
@@ -71,7 +72,7 @@ impl ArmRegistry {
     /// A runner's arms, in a directory of its own under the host's
     /// temporary directory, once every runner directory there that no live
     /// runner holds is removed.
-    pub(super) fn open() -> Result<Self> {
+    pub(crate) fn open() -> Result<Self> {
         let scratch = std::env::temp_dir().join(ARMS_SCRATCH);
         make_private_dir(&scratch)?;
         sweep(&scratch);
@@ -89,7 +90,7 @@ impl ArmRegistry {
     /// A new arm under `lease`, its store made, of a step `source_actor`'s
     /// source run `source_run` is for, each of its reads and publications
     /// asking `hold`, each of its writes admitted under `vault`'s custody.
-    pub(super) fn open_arm(
+    pub(crate) fn open_arm(
         &self,
         lease: ShadowArmLease,
         (source_actor, source_run): (EntityId, EntityId),
@@ -132,7 +133,7 @@ impl ArmRegistry {
 
     /// Releases `lease`: its arm's bodies go once no reader holds them.
     /// Whether it held an arm.
-    pub(super) fn release(&self, lease: &ShadowArmLease) -> bool {
+    pub(crate) fn release(&self, lease: &ShadowArmLease) -> bool {
         let released = self.arms().remove(lease);
         released.is_some()
     }
