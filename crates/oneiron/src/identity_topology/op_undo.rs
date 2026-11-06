@@ -235,17 +235,16 @@ impl Vault {
         // not its immutable core. The forks are judged against each actor a
         // carrier names, this vault's own first, and the one that re-derives
         // them exactly is their writer (FIX 9869): an unsigned peer carrier
-        // cannot veto the undo. One no carrier names is judged as unattributed;
-        // a redacted one re-derives no actor its forks carry, so its forks
-        // read as touched: undo fails closed.
-        let candidates: Vec<Option<WriteActor>> = {
-            let actors = super::attribution::carrier_authors_in_txn(&self.store, &*wtxn, *event)?;
-            if actors.is_empty() {
-                vec![None]
-            } else {
-                actors.into_iter().map(Some).collect()
-            }
-        };
+        // cannot veto the undo. Unattributed is always the last candidate,
+        // so carriers naming actors never veto an event born with none; a
+        // redacted one re-derives no actor its forks carry, so its forks read
+        // as touched: undo fails closed.
+        let candidates: Vec<Option<WriteActor>> =
+            super::attribution::carrier_authors_in_txn(&self.store, &*wtxn, *event)?
+                .into_iter()
+                .map(Some)
+                .chain(std::iter::once(None))
+                .collect();
         let mut fork_writer: Option<SuccessionWriter> = None;
         // Only an event the effective ledger admitted and applied, and no
         // counter-event has reverted, undoes. A stored row still waiting for
