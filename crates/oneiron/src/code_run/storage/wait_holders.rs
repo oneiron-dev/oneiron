@@ -6,14 +6,15 @@
 //! to come. A run's waiter and delivery rows go once it resumed, so they are
 //! no membership; these rows are, and they outlive them.
 //!
-//! An erase of an actor ([`erase_actor_wait_holds_in_txn`], from the same
-//! actor scrub as its runs' replay replies, so a soft delete runs it too and
-//! it only releases) marks its runs' memberships erased and leaves each
-//! delivery its runs were given its erased form; a code consent wait bound to
-//! one of its runs, which that run alone holds, keeps its settled row in its
-//! erased form too. Every other holder's membership and delivery, a shared
-//! settled reply, and a consent wait's digests and receipts stay. Nothing is
-//! deleted for want of a waiter.
+//! The actor scrub of an actor's runs' replay replies reaches their waits
+//! too ([`erase_actor_wait_holds_in_txn`]), release only. A soft delete's
+//! scrub (FIX 15532) marks its runs' memberships Deleted, keeping the actor
+//! only so its later erase still selects them (FIX 6591); an erase's marks
+//! them Erased. Either leaves each delivery its runs were given its erased
+//! form; a code consent wait bound to one of its runs, which that run alone
+//! holds, keeps its settled row in its erased form too. Every other holder's
+//! membership and delivery, a shared settled reply, and a consent wait's
+//! digests and receipts stay. Nothing is deleted for want of a waiter.
 //!
 //! The erase fences every later delivery and read of the actor's runs
 //! ([`holder_erased_in_txn`]): a run whose membership is erased, whose
@@ -42,6 +43,7 @@ use std::collections::BTreeSet;
 use super::super::consent_wait::code_consent_waits_bound_to_in_txn;
 use super::records::REPLAY_RECORDS;
 use super::replay_capsule::{actor_gone_in_store, actor_gone_in_txn};
+use super::response_erase::ResponseScrub;
 use super::response_owners::response_owner_in_txn;
 use super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery, WaitKey};
 use crate::side_table::{Erased, SideKey, SideTableDbs};
@@ -272,11 +274,13 @@ pub(super) fn wait_holder_runs_in_txn(
     Ok(runs)
 }
 
-/// The actor scrub of `actor` over its runs' wait replies (FIX 5718), in the
-/// erase's own writer, release only: each membership that names `actor`, a
-/// soft delete's Deleted one included (FIX 6591), or whose run is one of
-/// `runs` (its runs, as their replay rows name them) says Erased; each
-/// delivery those runs were given takes its erased form (when
+/// The actor scrub `scrub` of `actor` over its runs' wait replies (FIX
+/// 5718), in the delete's or the erase's own writer, release only: each
+/// membership that names `actor`, a soft delete's Deleted one included (FIX
+/// 6591), or whose run is one of `runs` (its runs, as their replay rows name
+/// them) says Deleted for a soft delete, keeping the actor it names, or
+/// Erased for an erase; each delivery those runs were given takes its erased
+/// form (when
 /// it came and the rows its reply was derived from stay, its reply goes);
 /// and so does the settled row of each code consent wait bound to one of
 /// them, which that run alone holds. Another run's membership and delivery,
@@ -292,6 +296,7 @@ pub(super) fn erase_actor_wait_holds_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
     runs: &BTreeSet<EntityId>,
+    scrub: ResponseScrub,
 ) -> Result<()> {
     let store = &vault.store;
     let mut held = Vec::new();
@@ -300,24 +305,23 @@ pub(super) fn erase_actor_wait_holds_in_txn(
         let Some(key) = <(EntityId, EntityId, u64) as SideKey>::decode_key(&key) else {
             continue;
         };
-        let names = HOLDERS
-            .decode_value(&bytes)
-            .is_ok_and(|holder| holder.retirement_actor() == Some(*actor));
+        let holder = HOLDERS.decode_value(&bytes).ok();
+        let names = holder.is_some_and(|holder| holder.retirement_actor() == Some(*actor));
         if names || runs.contains(&key.1) {
-            held.push(key);
+            held.push((key, holder));
         }
     }
     let mut scope = runs.clone();
     let mut called = BTreeSet::new();
-    for &(wait, run, generation) in &held {
+    for &((wait, run, generation), _) in &held {
         if generation == CALLER_GENERATION {
             called.insert(wait);
         } else {
             scope.insert(run);
         }
     }
-    for key in held {
-        HOLDERS.put(store, wtxn, &key, &WaitHolder::Erased)?;
+    for (key, holder) in held {
+        HOLDERS.put(store, wtxn, &key, &scrubbed_holder(scrub, holder, *actor))?;
     }
     for run in &scope {
         let mut delivered = Vec::new();
@@ -329,7 +333,9 @@ pub(super) fn erase_actor_wait_holds_in_txn(
             }
         }
         for ((_, wait, generation), erased, delivery) in delivered {
-            HOLDERS.put(store, wtxn, &(wait, *run, generation), &WaitHolder::Erased)?;
+            let key = (wait, *run, generation);
+            let holder = HOLDERS.get_lenient(store, wtxn, &key)?;
+            HOLDERS.put(store, wtxn, &key, &scrubbed_holder(scrub, holder, *actor))?;
             // An erased reply, the marker of an opaque one among them,
             // stays erased as it is (FIX 9390).
             if erased {
@@ -348,6 +354,20 @@ pub(super) fn erase_actor_wait_holds_in_txn(
         erase_settled_unheld_in_txn(store, wtxn, wait)?;
     }
     Ok(())
+}
+
+/// The membership `prior` once the actor scrub `scrub` of `actor` takes
+/// it: Deleted, keeping the actor it names, for a soft delete (FIX 6591),
+/// and Erased for an erase.
+const fn scrubbed_holder(
+    scrub: ResponseScrub,
+    prior: Option<WaitHolder>,
+    actor: EntityId,
+) -> WaitHolder {
+    match scrub {
+        ResponseScrub::Delete => WaitHolder::deleted(prior, actor),
+        ResponseScrub::Erase => WaitHolder::Erased,
+    }
 }
 
 /// Joins `caller`, the actor whose connector call settles wait `wait_id`,

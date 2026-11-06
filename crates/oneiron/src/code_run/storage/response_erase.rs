@@ -5,17 +5,21 @@
 //! record lists and each body its own descriptors hold at a code-run output
 //! path that holds reply content, such as a raw put's (FIX 7365).
 //!
-//! The actor scrub ([`erase_actor_responses_in_txn`], from the capsule
-//! table's one callback) runs on a soft delete too, so it only releases: each
-//! record keeps what its run did and loses what it was answered
-//! ([`super::replay_bodies::erase_replies`]), each reply body's occurrence
-//! is released with its own taint and secret marks, and the record's owner
-//! row says Erased. Another holder of the same bytes keeps them. The hard
-//! erase cause comes from the provenance door alone
-//! ([`retire_actor_responses_in_txn`], called with the erase's own cause):
-//! it retires the body instances of the same occurrences, and of the
-//! actor's capsules' request, start and fork answers (FIX 6278), gathered
-//! before anything releases them.
+//! The actor scrub only releases: each record keeps what its run did and
+//! loses what it was answered ([`super::replay_bodies::erase_replies`]), and
+//! each reply body's occurrence is released with its own taint and secret
+//! marks. Another holder of the same bytes keeps them. A soft delete runs it
+//! in its own writer, before the actor's body is truncated
+//! ([`soft_delete_actor_responses_in_txn`], FIX 15532): the record's owner
+//! row says Deleted and keeps the actor and each reply body it released
+//! (FIX 6591). An erase runs it from the capsule table's one callback
+//! ([`erase_actor_responses_in_txn`]): the row says Erased. The hard erase
+//! cause comes from the provenance door alone
+//! ([`retire_actor_responses_in_txn`], called with the erase's own cause,
+//! before that scrub): it retires the body instances of the same
+//! occurrences, of those a soft delete released, and of the actor's
+//! capsules' request, start and fork answers (FIX 6278), gathered before
+//! anything releases them.
 //!
 //! Every later write of a record meets the erase in its own writer
 //! ([`fence_replay_in_txn`]): a record whose owner row is erased, or whose
@@ -34,7 +38,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
 use super::records::REPLAY_RECORDS;
 use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, erase_replies};
-use super::replay_capsule::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_actor};
+use super::replay_capsule::{
+    actor_gone_in_txn, capsule_bodies_in_txn, capsule_runs_in_txn, names_no_actor,
+};
 use super::response_owners::{
     ReleasedReplyBody, ResponseOwner, mark_response_deleted_in_txn, mark_response_erased_in_txn,
     owner_rows_of_in_txn, response_owner_in_txn,
@@ -51,6 +57,18 @@ use crate::{EntityId, Result, Vault};
 /// One body occurrence a run holds: the run, the path and the body's handle.
 type Occurrence = (EntityId, String, String);
 
+/// Which writer an actor scrub runs in, and what it leaves of each owner
+/// row and wait membership it takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResponseScrub {
+    /// A soft delete's (FIX 15532): each says Deleted, keeping the actor
+    /// and the reply bodies released, for the actor's later erase (FIX
+    /// 6591).
+    Delete,
+    /// An erase's: each says Erased, its actor link and kept bodies with it.
+    Erase,
+}
+
 /// The actor scrub of `actor` over its runs' reply content, in the erase's
 /// own writer: each replay record whose replies are `actor`'s (its owner
 /// rows, a live run binding or a turn program's attempt naming it, the runs
@@ -59,8 +77,8 @@ type Occurrence = (EntityId, String, String);
 /// it names are released, and its owner row says Erased; then the wait
 /// replies those runs were delivered take their erased form (FIX 5718 part
 /// 2). A record that does not decode keeps its row as it is, and erasing an
-/// erased one again changes nothing. Nothing retires here: a soft delete
-/// runs this too.
+/// erased one again changes nothing. Nothing retires here: the provenance
+/// door's retirement ran before it.
 ///
 /// # Errors
 ///
@@ -71,22 +89,68 @@ pub(crate) fn erase_actor_responses_in_txn(
     actor: &EntityId,
     runs: &[EntityId],
 ) -> Result<()> {
+    scrub_actor_responses_in_txn(vault, wtxn, actor, runs, ResponseScrub::Erase)
+}
+
+/// The response scrub of a soft delete of `actor` (FIX 15532), in the
+/// delete's own writer: a user delete's, before the actor's body is
+/// truncated, or an accepted replayed soft tombstone's. It is
+/// [`erase_actor_responses_in_txn`]'s scrub over the runs of `actor`'s
+/// capsules, the records its owner rows name and the runs its wait
+/// memberships name, release only, each row left Deleted (FIX 6591). The
+/// capsules' requests, the actor's fields and every other record stay, and
+/// an archive never runs it. An id whose entity is no actor scans nothing;
+/// one whose entity is gone still scans, since rows it owned may remain.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(crate) fn soft_delete_actor_responses_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(&vault.store, wtxn, actor)? {
+        return Ok(());
+    }
+    let runs = capsule_runs_in_txn(&vault.store, wtxn, actor)?;
+    scrub_actor_responses_in_txn(vault, wtxn, actor, &runs, ResponseScrub::Delete)
+}
+
+/// The actor scrub `scrub` of `actor` (FIX 5718): each record its replies
+/// are in is put back in its erased form and its reply bodies are
+/// released; its owner row says Deleted, with the bodies released, or
+/// Erased; then the wait replies its runs were delivered take their erased
+/// form, each membership as its owner row.
+fn scrub_actor_responses_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    runs: &[EntityId],
+    scrub: ResponseScrub,
+) -> Result<()> {
     let store = &vault.store;
     let mut scope = runs.to_vec();
     scope.extend(wait_holder_runs_in_txn(store, wtxn, actor)?);
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
     for (&record_id, &run) in &records {
+        let mut released = Vec::new();
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            release_reply_outputs_in_txn(store, wtxn, &record)?;
+            released = release_reply_outputs_in_txn(store, wtxn, &record)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         }
-        mark_response_erased_in_txn(store, wtxn, record_id, run)?;
+        match scrub {
+            ResponseScrub::Delete => {
+                mark_response_deleted_in_txn(store, wtxn, record_id, run, *actor, released)?;
+            }
+            ResponseScrub::Erase => mark_response_erased_in_txn(store, wtxn, record_id, run)?,
+        }
     }
     let held: BTreeSet<EntityId> = records
         .into_iter()
         .flat_map(|(id, run)| [id, run])
         .collect();
-    erase_actor_wait_holds_in_txn(vault, wtxn, actor, &held)
+    erase_actor_wait_holds_in_txn(vault, wtxn, actor, &held, scrub)
 }
 
 /// `record` as its writer may put it, read in that writer (FIX 5718): as

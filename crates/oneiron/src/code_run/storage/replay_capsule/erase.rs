@@ -2,10 +2,11 @@
 //! own writer. Each capsule of the actor's steps keeps what the step was and
 //! loses what it held: its request, start and fork answers are released as
 //! the run's occurrences, each with only its own taint and secret marks, so
-//! another holder of the same bytes keeps them and its marks. A soft delete
-//! runs this scrub too, so it retires no body instance: the erase cause
-//! comes from the provenance door alone (KS-2B1), and a release keeps the
-//! restore window. A restore runs this again for every erased actor, so a
+//! another holder of the same bytes keeps them and its marks. It retires no
+//! body instance: the erase cause comes from the provenance door alone
+//! (KS-2B1). A soft delete keeps the capsules and runs only the response
+//! scrub (FIX 15532), reading their runs ([`capsule_runs_in_txn`]). A
+//! restore runs this again for every erased actor, so a
 //! restored capsule stays erased. It is also the one callback the actor's
 //! erase reaches its runs' reply content by (FIX 5718,
 //! `response_erase`); the hard erase's retirement of the same bodies comes
@@ -91,6 +92,23 @@ pub(in crate::code_run::storage) fn capsule_bodies_in_txn(
         );
     }
     Ok(bodies)
+}
+
+/// The runs of `actor`'s capsules, read for its soft delete's response
+/// scrub (FIX 15532), which leaves the capsules as they are.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::code_run::storage) fn capsule_runs_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(owned_capsules_in_txn(dbs, txn, actor)?
+        .into_iter()
+        .map(|(_, capsule)| capsule.run)
+        .collect())
 }
 
 /// The capsules that hold `actor`'s steps, by their keys. A row that does
