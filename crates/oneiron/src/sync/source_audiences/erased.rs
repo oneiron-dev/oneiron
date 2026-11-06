@@ -98,11 +98,19 @@ pub(crate) fn erase_carriers_in_txn(
     // its window that no scan above reads (FIX 17210): rewritten the same
     // way, then kept cut at its head.
     crate::world_keys::rewrite_mirrors_in_txn(vault, wtxn, |wtxn, doc| {
-        let Some(rewrite) = plan_in_txn(vault, wtxn, doc, actor)? else {
-            return Ok(false);
+        let audiences = match plan_in_txn(vault, wtxn, doc, actor)? {
+            Some(rewrite) => {
+                edit_map(doc, &rewrite)?;
+                true
+            }
+            None => false,
         };
-        edit_map(doc, &rewrite)?;
-        Ok(true)
+        // The actor's row births go from the mirror in the same pass (FIX
+        // 17210 follow-up): the birth erase reads stored windows only.
+        let births = crate::sync::row_birth::actor_erase::drop_actor_births_from_mirror_in_txn(
+            vault, wtxn, doc, actor,
+        )?;
+        Ok(audiences || births)
     })
 }
 

@@ -395,6 +395,8 @@ impl WindowManager {
                 let rtxn = vault.store.env.read_txn()?;
                 crate::sync::source_audiences::history_names_erased_actor_in(
                     vault, &rtxn, &mirror, &from,
+                )? || crate::sync::row_birth::actor_erase::history_births_made_by_erased_in(
+                    vault, &rtxn, &mirror, &from,
                 )?
             };
             if named {
