@@ -9,7 +9,8 @@
 //! - **IMAP.** Submitted over SMTP (RFC 6409) to the server the mailbox's
 //!   credential names, read at the source's door with effector
 //!   `connector:smtp`: a credential bound for reading only sends nothing.
-//!   One `RCPT` per recipient; any refused resets before the data goes.
+//!   One `RCPT` per recipient; a refused one is `smtp_envelope_refused`, as
+//!   for a send to one, and a reply to several resets before the data goes.
 //! - **Microsoft 365.** One MIME `POST /me/sendMail` on Graph with the
 //!   mailbox's own token (effector `connector:microsoft365`), once `/me`
 //!   shows the token is the mailbox's. A `202` is the send taken; a token

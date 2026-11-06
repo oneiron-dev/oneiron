@@ -18,11 +18,104 @@ use crate::outbound::{OutboundRecipient, OutboundRecipientRole};
 /// rather than cut.
 pub(super) const MAX_REPLY_RECIPIENTS: usize = 50;
 
+/// Whether the address header whose entries are `entries`, as its provider
+/// split it at its top-level commas, names an RFC 5322 group with members
+/// (`Friends: Alice <a@x>, b@y;`): a `:` outside a quoted string, a comment,
+/// an angle address and a domain literal opens a group, its `;` closes it,
+/// and anything but blanks, commas and comments between them is a member.
+/// Read before any display name or group boundary is stripped. An empty
+/// group (`undisclosed-recipients:;`) names none; a list's own address
+/// (`team@example.com`) is no group, nor is an unquoted display name with a
+/// `:` and no `;` after it, as a provider's recipient object may render.
+fn names_group_members(entries: &[String]) -> bool {
+    let header = entries.join(",");
+    let (mut quoted, mut escaped, mut angled, mut literal) = (false, false, false, false);
+    let mut comment = 0_usize;
+    // Inside a group: whether it has named a member yet.
+    let mut group: Option<bool> = None;
+    for character in header.chars() {
+        let member = if escaped {
+            escaped = false;
+            comment == 0
+        } else if quoted {
+            match character {
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+            true
+        } else if comment > 0 {
+            match character {
+                '\\' => escaped = true,
+                '(' => comment += 1,
+                ')' => comment -= 1,
+                _ => {}
+            }
+            false
+        } else if angled {
+            angled = character != '>';
+            true
+        } else if literal {
+            literal = character != ']';
+            true
+        } else {
+            match character {
+                '"' => {
+                    quoted = true;
+                    true
+                }
+                '(' => {
+                    comment = 1;
+                    false
+                }
+                '<' => {
+                    angled = true;
+                    true
+                }
+                '[' => {
+                    literal = true;
+                    true
+                }
+                // A second `:` inside a group is more of what it names.
+                ':' if group.is_some() => true,
+                ':' => {
+                    group = Some(false);
+                    false
+                }
+                ';' => {
+                    if group.take() == Some(true) {
+                        return true;
+                    }
+                    false
+                }
+                ',' => false,
+                other => !other.is_whitespace(),
+            }
+        };
+        if member && let Some(named) = group.as_mut() {
+            *named = true;
+        }
+    }
+    false
+}
+
+/// The refusal of a reply whose answered message names a group with
+/// members in its `header`: its members are never read out of the group.
+fn group_refused(header: &str, hint: &str) -> MemoryError {
+    MemoryError::bad_request_with(
+        format!(
+            "the answered message names a group (`Name: a@x, b@y;`) in its {header}, and a \
+             group is not expanded into its members"
+        ),
+        &[hint],
+    )
+}
+
 /// The mailboxes of one address header value, a comma-separated list
 /// (`Name <a@b>, c@d`): each one's bare address. Commas inside a quoted
 /// display name or an angle address do not split it. An empty group
-/// (`undisclosed-recipients:;`) names no mailbox; a group that names
-/// members keeps its syntax, which no address grammar takes.
+/// (`undisclosed-recipients:;`) names no mailbox; a header whose group
+/// names members never reaches here ([`names_group_members`]).
 fn mailboxes(text: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut angled) = (0, false, false);
@@ -116,11 +209,18 @@ pub(super) fn reply_recipients(
         own,
         named: Vec::new(),
     };
-    if parent.reply_to.is_empty() {
-        list.name_header(OutboundRecipientRole::To, parent.from.as_slice())?;
+    let (answered_header, answered) = if parent.reply_to.is_empty() {
+        ("From", parent.from.as_slice())
     } else {
-        list.name_header(OutboundRecipientRole::To, &parent.reply_to)?;
+        ("Reply-To", parent.reply_to.as_slice())
+    };
+    if names_group_members(answered) {
+        return Err(group_refused(
+            answered_header,
+            "Answer the group's members in a new message.",
+        ));
     }
+    list.name_header(OutboundRecipientRole::To, answered)?;
     if reply_all {
         let lists = parent.recipients.as_ref().ok_or_else(|| {
             MemoryError::new(
@@ -129,6 +229,14 @@ pub(super) fn reply_recipients(
                 &["sync the mailbox again, then reply to all"],
             )
         })?;
+        for (header, entries) in [("To", &lists.to), ("Cc", &lists.cc)] {
+            if names_group_members(entries) {
+                return Err(group_refused(
+                    header,
+                    "Reply without reply_all, and name in cc each recipient you mean.",
+                ));
+            }
+        }
         list.name_header(OutboundRecipientRole::To, &lists.to)?;
         list.name_header(OutboundRecipientRole::Cc, &lists.cc)?;
     }

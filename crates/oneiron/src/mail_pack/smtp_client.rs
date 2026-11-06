@@ -4,12 +4,12 @@
 //! `STARTTLS` on the submission port (587), one command at a time. It
 //! authenticates only over TLS (`PLAIN`, `LOGIN`, or `XOAUTH2` with a
 //! token), names one sender and every recipient of the one message it
-//! sends (fix list row 17645). A server that refuses any recipient is told
-//! `RSET` before any data goes: the message reaches all of its recipients or
-//! none of them. Every reply is bounded, and every command ends by a
-//! deadline. Once the data's final dot is written, a missing answer is no
-//! proof the message was not taken: the submission is uncertain, never
-//! refused.
+//! sends (fix list row 17645). A server that refuses any recipient of a
+//! message to several is told `RSET` before any data goes: the message
+//! reaches all of its recipients or none of them. Every reply is bounded,
+//! and every command ends by a deadline. Once the data's final dot is
+//! written, a missing answer is no proof the message was not taken: the
+//! submission is uncertain, never refused.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -282,8 +282,10 @@ impl SmtpSession {
     }
 
     /// Submits `message` from `from` to every address of `recipients`, one
-    /// `RCPT` each, its data dot-stuffed. A refused recipient resets the
-    /// transaction before `DATA`: no subset of the recipients is sent to.
+    /// `RCPT` each, its data dot-stuffed. Any refused envelope command is
+    /// `smtp_envelope_refused`, as for a send to one. A message to several
+    /// whose recipient is refused resets the transaction before `DATA`: no
+    /// subset of its recipients is sent to.
     pub(super) fn submit(&mut self, from: &str, recipients: &[&str], message: &[u8]) -> Submitted {
         if recipients.is_empty()
             || !envelope_address(from)
@@ -300,18 +302,17 @@ impl SmtpSession {
             match self.command(&format!("RCPT TO:<{address}>")) {
                 Ok(250 | 251) => {}
                 Ok(_) => {
-                    self.reset();
-                    return Submitted::NotSent("smtp_recipient_refused");
+                    if recipients.len() > 1 {
+                        self.reset();
+                    }
+                    return Submitted::NotSent("smtp_envelope_refused");
                 }
                 Err(_) => return Submitted::NotSent("smtp_connection_lost"),
             }
         }
         match self.command("DATA") {
             Ok(354) => {}
-            Ok(_) => {
-                self.reset();
-                return Submitted::NotSent("smtp_envelope_refused");
-            }
+            Ok(_) => return Submitted::NotSent("smtp_envelope_refused"),
             Err(_) => return Submitted::NotSent("smtp_connection_lost"),
         }
         self.wire.set_deadline(Instant::now() + DATA_DEADLINE);
