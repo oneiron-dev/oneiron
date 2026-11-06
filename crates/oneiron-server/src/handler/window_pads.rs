@@ -15,7 +15,8 @@
 
 use oneiron::sync::WindowKey;
 use oneiron::sync::transport::{
-    WindowPadArrival, WindowPadEnvelope, WindowPadReadiness, WindowPadReceipt,
+    ReceivedWindowPadEnvelope, WindowPadArrival, WindowPadEnvelope, WindowPadReadiness,
+    WindowPadReceipt,
 };
 use oneiron::sync::window::{carrier_window_pads, prepare_window_pads};
 
@@ -31,7 +32,7 @@ pub(super) enum Inbound {
     /// Done with here: a part still to come, a broken delivery or a receipt.
     Done,
     /// A whole envelope, with the sub-tag its first frame came under.
-    Envelope(u8, WindowPadEnvelope),
+    Envelope(u8, ReceivedWindowPadEnvelope),
 }
 
 fn invalid(error: oneiron::sync::TransportError) -> ProtocolError {

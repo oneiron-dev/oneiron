@@ -107,6 +107,8 @@ pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_work
 pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 12477: the redeem door's per-address failure backoff, held by the server.
+pub(crate) use self::pairing::PairingRedeemBackoff;
 // FIX 922: the kit door to the sealed cloud bundle.
 mod recovery_bundle;
 mod sessions;

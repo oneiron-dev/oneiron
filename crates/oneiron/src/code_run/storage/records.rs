@@ -33,6 +33,7 @@ pub(crate) use self::admitted::ReplyBody;
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
     code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
+    retire_unlanded_inline_body_keys_in_txn,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
