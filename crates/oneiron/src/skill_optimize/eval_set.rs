@@ -69,6 +69,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::limit_ask::EngineLimit;
 
+pub use authoring::EvalRepairAuthoringPlan;
 pub use authoring::{
     CandidateLabel, CaseDecision, CohortSummary, CutDecision, EvalAuthoringInventory,
     EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCohortDecision,
