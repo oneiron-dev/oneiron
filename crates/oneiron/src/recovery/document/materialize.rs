@@ -46,6 +46,95 @@ impl NoteScopeRows {
     }
 }
 
+#[derive(Default)]
+enum PlanSourceStage {
+    #[default]
+    Heads,
+    Documents,
+    Receipts,
+    Forks,
+    Bundles,
+    Complete,
+}
+
+/// Source-only lookups. No store view, admission decision or cleanup survives a turn.
+#[derive(Default)]
+pub(crate) struct NotePlanRows {
+    stage: PlanSourceStage,
+    next: usize,
+    live: BTreeSet<([u8; 16], [u8; 16])>,
+    expected_docs: BTreeSet<(EntityId, EntityId)>,
+    invalid_document: Option<usize>,
+    receipts: BTreeMap<[u8; 16], usize>,
+    forks: BTreeMap<EntityId, usize>,
+    bundles: BTreeMap<EntityId, usize>,
+}
+
+impl NotePlanRows {
+    pub(in crate::recovery) fn advance(
+        &mut self,
+        snapshot: &CanonicalSnapshot,
+        max_rows: usize,
+    ) -> bool {
+        for _ in 0..max_rows.max(1) {
+            loop {
+                match self.stage {
+                    PlanSourceStage::Heads => {
+                        if let Some(row) = snapshot.document_heads.get(self.next) {
+                            self.live.insert((row.entity_id, row.head));
+                            break;
+                        }
+                        self.stage = PlanSourceStage::Documents;
+                    }
+                    PlanSourceStage::Documents => {
+                        if let Some(row) = snapshot.doc_snapshots.get(self.next) {
+                            if self.invalid_document.is_none()
+                                && !self.live.contains(&(row.entity_id, row.head))
+                            {
+                                match id(row.entity_id)
+                                    .and_then(|note| id(row.head).map(|head| (note, head)))
+                                {
+                                    Ok(key) => {
+                                        self.expected_docs.insert(key);
+                                    }
+                                    Err(_) => self.invalid_document = Some(self.next),
+                                }
+                            }
+                            break;
+                        }
+                        self.stage = PlanSourceStage::Receipts;
+                    }
+                    PlanSourceStage::Receipts => {
+                        if let Some(row) = snapshot.head_move_receipts.get(self.next) {
+                            self.receipts.insert(row.id, self.next);
+                            break;
+                        }
+                        self.stage = PlanSourceStage::Forks;
+                    }
+                    PlanSourceStage::Forks => {
+                        if let Some(row) = snapshot.note_forks.get(self.next) {
+                            self.forks.insert(row.fork, self.next);
+                            break;
+                        }
+                        self.stage = PlanSourceStage::Bundles;
+                    }
+                    PlanSourceStage::Bundles => {
+                        if let Some(row) = snapshot.note_proposals.get(self.next) {
+                            self.bundles.insert(row.id, self.next);
+                            break;
+                        }
+                        self.stage = PlanSourceStage::Complete;
+                    }
+                    PlanSourceStage::Complete => return true,
+                }
+                self.next = 0;
+            }
+            self.next += 1;
+        }
+        false
+    }
+}
+
 /// One stale row this pass drops: a proposal document, or a receipt/fork/
 /// bundle row addressed by its typed table.
 enum StaleMetadata {
@@ -83,18 +172,18 @@ fn same_fork(previous: &NoteFork, expected: &NoteFork) -> Option<NoteFork> {
 /// one bundle: `held` as a carrier holds it here, each waiting fork the
 /// artifact names settled by [`same_fork`], and who each member names by the
 /// carrier rule (FIX 3878).
-fn same_bundle(
+fn same_bundle<'source>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     held: NoteReviewBundle,
     expected: &NoteReviewBundle,
-    forks: &BTreeMap<EntityId, &NoteFork>,
+    forks: impl Fn(&EntityId) -> Option<&'source NoteFork>,
 ) -> Result<Option<NoteReviewBundle>> {
     let Some(mut held) = held.carried_here(vault, txn)? else {
         return Ok(None);
     };
     for fork in &mut held.waiting {
-        if let Some(expected) = forks.get(&fork.fork) {
+        if let Some(expected) = forks(&fork.fork) {
             let Some(merged) = same_fork(fork, expected) else {
                 return Ok(None);
             };
@@ -109,6 +198,7 @@ fn plan(
     txn: &heed::RoTxn<'_>,
     snapshot: &CanonicalSnapshot,
     admitted: &Scope,
+    prepared: Option<&NotePlanRows>,
 ) -> Result<Cleanup> {
     let mut cleanup = Cleanup {
         docs: Vec::new(),
@@ -117,17 +207,22 @@ fn plan(
     if admitted.is_empty() && snapshot.note_proposals.is_empty() {
         return Ok(cleanup);
     }
-    let live: BTreeSet<_> = snapshot
-        .document_heads
-        .iter()
-        .map(|row| (row.entity_id, row.head))
-        .collect();
-    let expected_docs: BTreeSet<(EntityId, EntityId)> = snapshot
-        .doc_snapshots
-        .iter()
-        .filter(|row| !live.contains(&(row.entity_id, row.head)))
-        .map(|row| Ok((id(row.entity_id)?, id(row.head)?)))
-        .collect::<Result<_>>()?;
+    let mut source_rows;
+    let rows = match prepared {
+        Some(rows) => rows,
+        None => {
+            source_rows = NotePlanRows::default();
+            while !source_rows.advance(snapshot, usize::MAX) {}
+            &source_rows
+        }
+    };
+    // Preserve the first source-id error at the original plan point, not while paging.
+    if let Some(at) = rows.invalid_document {
+        let row = &snapshot.doc_snapshots[at];
+        id(row.entity_id)?;
+        id(row.head)?;
+    }
+    let expected_docs = &rows.expected_docs;
     for owner in admitted {
         let note = id(*owner)?;
         crate::note::recovery::guard(vault, txn, note)?;
@@ -139,11 +234,7 @@ fn plan(
             }
         }
     }
-    let receipts: BTreeMap<_, _> = snapshot
-        .head_move_receipts
-        .iter()
-        .map(|row| (row.id, row))
-        .collect();
+    let receipts = &rows.receipts;
     let mut stored_receipts = BTreeMap::new();
     for (receipt_id, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
         stored_receipts.insert(receipt.id, receipt.clone());
@@ -155,7 +246,10 @@ fn plan(
         if receipt_id != receipt.id {
             return Err(invalid("stored receipt key"));
         }
-        match receipts.get(receipt.id.as_bytes()) {
+        match receipts
+            .get(receipt.id.as_bytes())
+            .map(|&at| &snapshot.head_move_receipts[at])
+        {
             // Who a receipt names settles by the carrier rule (FIX 3878).
             Some(expected) => {
                 let held = receipt.erased_here(vault, txn)?;
@@ -166,11 +260,7 @@ fn plan(
             None => cleanup.metadata.push(StaleMetadata::Receipt(receipt_id)),
         }
     }
-    let expected_forks: BTreeMap<_, _> = snapshot
-        .note_forks
-        .iter()
-        .map(|fork| (fork.fork, fork))
-        .collect();
+    let expected_forks = &rows.forks;
     let mut stored_forks = BTreeMap::new();
     for (fork_id, fork) in NOTE_FORK.scan(&vault.store, txn)? {
         // Even an out-of-scope row cannot alias an admitted immutable id.
@@ -178,7 +268,10 @@ fn plan(
             if fork_id != fork.fork {
                 return Err(invalid("stored fork key"));
             }
-            match expected_forks.get(&fork.fork) {
+            match expected_forks
+                .get(&fork.fork)
+                .map(|&at| &snapshot.note_forks[at])
+            {
                 Some(expected) => {
                     if same_fork(&fork.clone().erased_here(vault, txn)?, expected).is_none() {
                         return Err(invalid("immutable fork divergence"));
@@ -189,11 +282,7 @@ fn plan(
         }
         stored_forks.insert(fork.fork, fork);
     }
-    let expected_bundles: BTreeMap<_, _> = snapshot
-        .note_proposals
-        .iter()
-        .map(|bundle| (bundle.id, bundle))
-        .collect();
+    let expected_bundles = &rows.bundles;
     for bundle in &snapshot.note_proposals {
         if !workflow::bundle_notes(bundle).is_subset(admitted) {
             return Err(invalid("proposal was only partially admitted"));
@@ -249,9 +338,16 @@ fn plan(
                 return Err(invalid("stored landed fork binding"));
             }
         }
-        match expected_bundles.get(&bundle.id) {
+        match expected_bundles
+            .get(&bundle.id)
+            .map(|&at| &snapshot.note_proposals[at])
+        {
             Some(expected) => {
-                if same_bundle(vault, txn, bundle, expected, &expected_forks)?.is_none() {
+                if same_bundle(vault, txn, bundle, expected, |id| {
+                    expected_forks.get(id).map(|&at| &snapshot.note_forks[at])
+                })?
+                .is_none()
+                {
                     return Err(invalid("immutable proposal divergence"));
                 }
             }
@@ -281,7 +377,18 @@ impl CanonicalSnapshot {
         txn: &heed::RoTxn<'_>,
         scope: &BTreeSet<[u8; 16]>,
     ) -> Result<()> {
-        plan(vault, txn, self, scope).map(|_| ())
+        plan(vault, txn, self, scope, None).map(|_| ())
+    }
+
+    /// Uses only immutable source lookups prepared before taking this transaction.
+    pub(crate) fn preflight_note_recovery_with_rows(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        scope: &BTreeSet<[u8; 16]>,
+        rows: &NotePlanRows,
+    ) -> Result<()> {
+        plan(vault, txn, self, scope, Some(rows)).map(|_| ())
     }
 }
 
@@ -316,7 +423,7 @@ pub(crate) fn run_in_txn(
         }
         admitted.insert(head.entity_id);
     }
-    let cleanup = plan(vault, txn, snapshot, &admitted)?;
+    let cleanup = plan(vault, txn, snapshot, &admitted, None)?;
     for key in cleanup.docs {
         NOTE_PROPOSAL_DOC.delete(&vault.store, txn, &key)?;
     }
@@ -424,7 +531,7 @@ pub(crate) fn run_in_txn(
     }
     for bundle in &snapshot.note_proposals {
         let value = match NOTE_PROPOSAL_BUNDLE.get(&vault.store, txn, &bundle.id)? {
-            Some(held) => same_bundle(vault, txn, held, bundle, &forks)?
+            Some(held) => same_bundle(vault, txn, held, bundle, |id| forks.get(id).copied())?
                 .ok_or(invalid("immutable proposal divergence"))?,
             None => bundle.clone(),
         };

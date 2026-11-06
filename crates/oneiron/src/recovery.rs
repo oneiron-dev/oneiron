@@ -34,7 +34,7 @@ pub use canonical::*;
 pub(crate) use document::note_fork_decided;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 #[cfg(feature = "sync")]
-pub(crate) use document::{materialize_window_documents, validate_window_documents};
+pub(crate) use document::{NotePlanRows, materialize_window_documents, validate_window_documents};
 pub use ladder::*;
 #[cfg(feature = "sync")]
 pub use maintenance::{WindowRebootstrapReport, WindowRecoveryReport};
