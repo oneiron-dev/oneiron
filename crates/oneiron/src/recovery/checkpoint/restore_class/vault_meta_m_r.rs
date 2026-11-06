@@ -38,6 +38,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // older image neither drops the live ones nor brings back retired ones.
     (&t::MAIL_PACK_REPLY_MANIFEST, LIVE),
     (&t::MAIL_PACK_REPLY_PLAN_STUB, LIVE),
+    // Its revision floor stands too: no image lowers it, so no revision, send
+    // or approval of the draft repeats after a restore.
+    (&t::MAIL_PACK_REPLY_REVISION_FLOOR, LIVE),
     // A source's owner, custody name and settings are live configuration.
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),

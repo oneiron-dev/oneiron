@@ -53,7 +53,9 @@ use super::reply_attachments::{
     held_manifest_in, reader_reads_attachments_in, readmit_reply_attachments_in,
     reply_send_completed, standing_refusal_in,
 };
-use super::reply_erase::{retire_reply_revision_in_txn, retire_reply_send_in_txn};
+use super::reply_erase::{
+    reply_revision_floor_in, retire_reply_revision_in_txn, retire_reply_send_in_txn,
+};
 use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
 use super::reply_recipients::{addresses_in, reply_recipients};
 use super::reply_send::{ReplySink, ReplyTransport};
@@ -793,11 +795,14 @@ impl Memory<'_> {
                 input.request_key.as_bytes(),
             ],
         )?;
-        let (source, row, messages, prior) = {
+        let (source, row, messages, prior, floor) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             let (source, row, messages) = thread_in(vault, &txn, actor, conversation)?;
             let prior = DRAFTS.get(&vault.store, &txn, &id)?;
-            (source, row, messages, prior)
+            // The highest revision it landed with files, kept past an erase
+            // that dropped it (fix list row 17645).
+            let floor = reply_revision_floor_in(&vault.store, &txn, &id)?;
+            (source, row, messages, prior, floor)
         };
         let route = reply_route(&row)?;
         // Files ride a Google mailbox's reply alone: an IMAP or Microsoft 365
@@ -875,7 +880,16 @@ impl Memory<'_> {
                 }
             }
         }
-        let revision = prior.as_ref().map_or(1, |prior| prior.revision + 1);
+        // Above the prior revision and above every revision the draft landed
+        // with files, so a draft an erase dropped and drafted again repeats
+        // no revision, send, ledger attempt, Ask or approval of the one it
+        // was (fix list row 17645). A draft that never carried files has no
+        // floor (`None` is below every revision).
+        let revision = prior
+            .as_ref()
+            .map(|prior| prior.revision)
+            .max(floor)
+            .map_or(1, |landed| landed + 1);
         let send_ref = format!("mail-reply:{}:{revision}", id.to_hex());
         let now = crate::unix_seconds_now();
         let raw_html = input.body_html.as_deref();
@@ -916,9 +930,7 @@ impl Memory<'_> {
                                 .chain([source]),
                         );
                         // Its custody refs derive from the nonce this
-                        // landing draws, so a draft an erase dropped and
-                        // drafted again, revision 1 again, never meets a
-                        // retired ref.
+                        // landing draws, so no landing meets a retired ref.
                         let reply = freeze_gmail_reply(
                             plan,
                             admitted,
@@ -984,9 +996,12 @@ impl Memory<'_> {
         };
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
             // The draft lands only over exactly the row this call read, a
-            // proposed one or none: a concurrent revision, approval or
-            // discard wins.
-            if DRAFTS.get(&vault.store, txn, &id)? != prior {
+            // proposed one or none, and the revision floor it read: a
+            // concurrent revision, approval, discard, or erase and redraft
+            // wins, and no two landings take one revision.
+            if DRAFTS.get(&vault.store, txn, &id)? != prior
+                || reply_revision_floor_in(&vault.store, txn, &id)? != floor
+            {
                 return Err(crate::Error::InvalidConfig(
                     "the draft changed while it was redrafted".to_owned(),
                 )

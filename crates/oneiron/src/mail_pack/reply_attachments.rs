@@ -39,7 +39,7 @@ use super::reply_custody::{
     open_reply_message_in, open_reply_plan_stub_in, reply_carrier_ref, seal_reply_manifest_in_txn,
     seal_reply_message_in_txn, seal_reply_plan_stub_in_txn,
 };
-use super::reply_erase::register_reply_dependencies_in_txn;
+use super::reply_erase::{raise_reply_revision_floor_in_txn, register_reply_dependencies_in_txn};
 use super::source::{MailProvider, MailSourceKind, MailSourceStatus, SOURCES};
 use super::state::{MailOccurrence, MailPresence, OCCURRENCES};
 use crate::Vault;
@@ -127,9 +127,8 @@ pub(super) struct ReplyManifestRef {
     pub(super) carrier: String,
     /// The nonce the revision's landing drew at random: its message's, its
     /// kept plan's and its manifest's custody refs each derive from it with
-    /// the draft and the revision (`reply_custody`), so a draft an erase
-    /// dropped and drafted again under its request key, revision 1 again,
-    /// seals under refs custody never held.
+    /// the draft and the revision (`reply_custody`), so each landing seals
+    /// under refs custody never held.
     #[serde(default)]
     pub(super) custody_nonce: ReplyCustodyNonce,
 }
@@ -538,7 +537,7 @@ impl FrozenGmailReply {
     /// `wtxn`, the writer that lands its row, after the revision it replaces
     /// was retired there: its message, its kept plan and its manifest, each
     /// sealed under the revision's own key, derived from the nonce its row
-    /// keeps, and its index rows.
+    /// keeps, its index rows, and the draft's revision floor, raised to it.
     ///
     /// # Errors
     ///
@@ -558,6 +557,7 @@ impl FrozenGmailReply {
         seal_reply_message_in_txn(store, wtxn, draft, revision, nonce, &self.message)?;
         seal_reply_plan_stub_in_txn(store, wtxn, draft, revision, nonce, &self.plan.stub()?)?;
         seal_reply_manifest_in_txn(store, wtxn, draft, revision, nonce, &manifest)?;
+        raise_reply_revision_floor_in_txn(store, wtxn, draft, revision)?;
         register_reply_dependencies_in_txn(store, wtxn, draft, &self.dependencies)
     }
 }

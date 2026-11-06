@@ -13,10 +13,16 @@
 //! A revision's own end (a redraft, a discard, a settled send) retires its
 //! message and plan in its own writer; the draft, its manifest and its index
 //! rows stay while the draft names its files, and a redraft ends them too.
+//!
+//! The draft's revision floor, the highest revision of it that landed with
+//! files, outlives the erase: the draft drafted again under its request key
+//! lands above it, so no revision, send, ledger attempt, Ask or approval of
+//! the erased draft is ever met again. Only a revision with files is ever
+//! dropped, so only one raises it.
 
 use std::collections::BTreeSet;
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use super::reply::{DRAFTS, MailReplyDraftRow};
 use super::reply_custody::{
@@ -32,6 +38,45 @@ use crate::store::Store;
 /// id16(draft).
 const DEPENDENTS: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::MAIL_PACK_REPLY_DEPENDENCY);
+
+/// The highest revision of each drafted reply that landed with files. Key:
+/// id16(draft). Value: u64be.
+const REVISION_FLOOR: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::MAIL_PACK_REPLY_REVISION_FLOOR);
+
+/// The highest revision of the draft `draft` that landed with files, read in
+/// `txn`, whether the draft still stands or an erase dropped it; `None` for a
+/// draft that never carried files. Its next revision lands above it.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn reply_revision_floor_in(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    draft: &EntityId,
+) -> Result<Option<u64>> {
+    REVISION_FLOOR.get(store, txn, draft)
+}
+
+/// Raises, in `wtxn`, the writer that lands revision `revision` of the draft
+/// `draft` with files, the draft's revision floor to that revision. No
+/// eraser lowers or drops it.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn raise_reply_revision_floor_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    draft: &EntityId,
+    revision: u64,
+) -> Result<()> {
+    let floor = REVISION_FLOOR
+        .get(store, wtxn, draft)?
+        .map_or(revision, |floor| floor.max(revision));
+    REVISION_FLOOR.put(store, wtxn, draft, &floor)
+}
 
 /// Records, in `wtxn`, the writer that lands one of its revisions, that the
 /// draft `draft` depends on each of `dependencies`.
@@ -141,7 +186,8 @@ pub(crate) fn erase_reply_attachment_dependents_in_txn(
 /// Drops the draft `draft` whole in `wtxn`: its retained message, its kept
 /// plan, its manifest, its Ask and its row; the caller drops its index rows.
 /// A row that does not read still loses everything sealed beside it and its
-/// row.
+/// row. Its revision floor stays, so it is never drafted again at a revision
+/// it already was.
 fn drop_reply_draft_in_txn(
     write: &CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,

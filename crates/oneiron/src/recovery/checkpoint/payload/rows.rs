@@ -503,11 +503,11 @@ families! {
     Class::Structure => PROVENANCE_ACTOR_STAMP_TOKEN PROVENANCE_ACTOR_STAMP_TOKEN_USE;
     // A drafted reply's retained message, its kept plan and its files' manifest are each
     // sealed under its revision's own ConnectorResume key, which stays in custody and retires
-    // with the send or the revision; the rows it depends on are two ids, no payload (fix list
-    // row 17645).
+    // with the send or the revision; the rows it depends on are two ids, no payload, and its
+    // revision floor is one number (fix list row 17645).
     Class::Other(Client::Sealed(CustodyKind::ConnectorResume)) => MAIL_PACK_REPLY_COPY
         MAIL_PACK_REPLY_MANIFEST MAIL_PACK_REPLY_PLAN_STUB;
-    Class::Structure => MAIL_PACK_REPLY_DEPENDENCY;
+    Class::Structure => MAIL_PACK_REPLY_DEPENDENCY MAIL_PACK_REPLY_REVISION_FLOOR;
     Class::Other(Client::Dispatch(OtherClient::Body)) => PROVENANCE_BODY_ERASE
         PROVENANCE_BODY_ERASED PROVENANCE_BODY_INLINE PROVENANCE_BODY_KEY;
     Class::Other(Client::Dispatch(OtherClient::Response)) => PROVENANCE_BODY_RESPONSE
