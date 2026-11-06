@@ -42,7 +42,7 @@ impl Vault {
         let at = ResultOccurrence::of(owner, output)?;
         let mut sink = self.code_run_output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output_sourced(
+        let mut finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
@@ -50,6 +50,7 @@ impl Vault {
             self.limit_watch(),
             |digest| self.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = output.producing_step_start;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
