@@ -8,8 +8,8 @@
 use std::collections::BTreeSet;
 
 use oneiron::context_board::{
-    BoardRenderMode, BoardStreamFrame, FrameKind, PendingDiaryReview, StreamConnectionId,
-    SubscriptionScope, WakeEnvelope,
+    BoardRenderMode, BoardStreamFrame, FrameKind, PendingDiaryReview, PendingRoomWake,
+    StreamConnectionId, SubscriptionScope, WakeEnvelope,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,16 +21,21 @@ use crate::server::SyncServer;
 pub(crate) struct BoardDelivery {
     pub(crate) wakes: Vec<WakeEnvelope>,
     pub(crate) frames: Vec<BoardStreamFrame>,
+    /// The batch's wake opener (FIX 15011), rendered at the handoff after
+    /// the read checks; never stored with a notice, never a frame. Absent
+    /// when no wake survives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) opener: Option<String>,
 }
 
 impl BoardDelivery {
     /// Only notices selected by the host's existing adapters may carry rows.
-    /// A review wake names no TASK, so it keeps no row.
+    /// A review wake or a room wake names no TASK, so it keeps no row.
     pub(super) fn retain_frames(&mut self) {
         let keys: BTreeSet<_> = self
             .wakes
             .iter()
-            .filter(|wake| wake.review_ref.is_none())
+            .filter(|wake| wake.review_ref.is_none() && wake.room_ref.is_none())
             .map(|wake| format!("tasks:{}", wake.task_ref))
             .collect();
         self.frames.retain_mut(|frame| {
@@ -74,10 +79,41 @@ pub(crate) fn review_wake_pending(
     }
 }
 
+/// Whether one room wake still names a live wake of `actor`'s (FIX 15647):
+/// the envelope is bound to `actor`, its id is that wake's, and `actor`
+/// still stands in the room while nobody holds the turn's claim. The answer
+/// is yes or no and nothing of the turn, so it grants no read. A failed read
+/// drops the wake; the room turn stays in the vault.
+pub(crate) fn room_wake_pending(
+    vault: &oneiron::Vault,
+    actor: oneiron::EntityId,
+    wake: &WakeEnvelope,
+) -> bool {
+    let parse = |id: Option<&str>| id.and_then(|id| oneiron::EntityId::from_hex(id).ok());
+    let (Some(room), Some(turn)) = (
+        parse(wake.room_ref.as_deref()),
+        parse(wake.turn_ref.as_deref()),
+    ) else {
+        return false;
+    };
+    if wake.actor_ref != actor.to_hex() || wake.event_ref != PendingRoomWake::wake_ref(actor, turn)
+    {
+        return false;
+    }
+    match PendingRoomWake::is_pending(vault, actor, room, turn) {
+        Ok(pending) => pending,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "room wake could not be read again; dropped, the room turn stays in its room");
+            false
+        }
+    }
+}
+
 /// Runs on the poll's blocking worker. Re-read each TASK under the current
 /// reader and use its current line, not queued text from before a refresh.
-/// A review wake is read again as the reader's own pending review and rides
-/// alone, with no `tasks:` row.
+/// A review wake is read again as the reader's own pending review, and a
+/// room wake as the reader's own live room wake; each rides alone, with no
+/// `tasks:` row.
 pub(crate) fn coalesced(
     server: &SyncServer,
     reader: &McpResolvedActor,
@@ -121,6 +157,17 @@ pub(crate) fn coalesced(
                 && instance_subscribed.contains(&scope)
                 && reader.subscription_ceiling.contains(&scope)
                 && review_wake_pending(&server.vault, reader.actor_ref, &wake)
+            {
+                delivery.wakes.push(wake);
+            }
+            continue;
+        }
+        if wake.room_ref.is_some() {
+            let scope = SubscriptionScope::RoomTurns;
+            if subscribed.contains(&scope)
+                && instance_subscribed.contains(&scope)
+                && reader.subscription_ceiling.contains(&scope)
+                && room_wake_pending(&server.vault, reader.actor_ref, &wake)
             {
                 delivery.wakes.push(wake);
             }

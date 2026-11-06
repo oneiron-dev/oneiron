@@ -62,6 +62,10 @@ pub(super) struct DreamerWordingFile {
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
     commitment_reminder_personas: BTreeMap<String, String>,
+    coach_heal_route_prompt: Option<String>,
+    coach_heal_route_prompt_file: Option<PathBuf>,
+    coach_health_draft_prompt: Option<String>,
+    coach_health_draft_prompt_file: Option<PathBuf>,
 }
 
 impl DreamerWordingFile {
@@ -132,6 +136,20 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(default_reminder_instruction);
+        let coach_heal_route = super::levels::prompt_text(
+            "models.dreamer.wording.coach_heal_route_prompt",
+            self.coach_heal_route_prompt,
+            self.coach_heal_route_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_COACH_HEAL_ROUTE.to_owned());
+        let coach_health_draft = super::levels::prompt_text(
+            "models.dreamer.wording.coach_health_draft_prompt",
+            self.coach_health_draft_prompt,
+            self.coach_health_draft_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_COACH_HEALTH_DRAFT.to_owned());
         Ok(DreamerWording {
             code_fix_reproduced,
             code_fix_fixed,
@@ -143,6 +161,8 @@ impl DreamerWordingFile {
             coach_producer_fix,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
+            coach_heal_route,
+            coach_health_draft,
         })
     }
 }
@@ -160,6 +180,8 @@ pub struct DreamerWording {
     coach_producer_fix: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
+    coach_heal_route: String,
+    coach_health_draft: String,
 }
 
 impl DreamerWording {
@@ -223,6 +245,18 @@ impl DreamerWording {
     pub fn commitment_reminder_persona(&self, reference: &str) -> Option<&str> {
         self.reminder_personas.get(reference).map(String::as_str)
     }
+
+    /// The Coach's existing heal-route question.
+    #[must_use]
+    pub fn coach_heal_route(&self) -> &str {
+        &self.coach_heal_route
+    }
+
+    /// The system instruction for a Coach health-card proposal.
+    #[must_use]
+    pub fn coach_health_draft(&self) -> &str {
+        &self.coach_health_draft
+    }
 }
 
 impl Default for DreamerWording {
@@ -239,6 +273,8 @@ impl Default for DreamerWording {
             coach_producer_fix: DEFAULT_COACH_PRODUCER_FIX.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
+            coach_heal_route: DEFAULT_COACH_HEAL_ROUTE.to_owned(),
+            coach_health_draft: DEFAULT_COACH_HEALTH_DRAFT.to_owned(),
         }
     }
 }
@@ -252,3 +288,6 @@ fn default_reminder_instruction() -> String {
         .expect("shipped commitment reminder wording decodes")
         .instruction
 }
+
+const DEFAULT_COACH_HEAL_ROUTE: &str = include_str!("../../../prompts/coach-heal-route.md");
+const DEFAULT_COACH_HEALTH_DRAFT: &str = include_str!("../../../prompts/coach-health-draft.md");

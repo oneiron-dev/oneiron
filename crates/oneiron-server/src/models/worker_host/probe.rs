@@ -23,7 +23,9 @@
 //! actual render or transcription ([`super::media_worker::probe`]).
 //!
 //! A pinned value the answer contradicts is `Failed`; a pin or a piece of
-//! evidence that is missing is `Unverified`; no answer is `Unreachable`.
+//! evidence that is missing is `Unverified`; no answer is `Unreachable`. A
+//! launch that names its draft's identity (FIX 14976) is pinned to it the
+//! same way: a vault's own draft qualifies only when the answer names it.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::PoisonError;
@@ -435,10 +437,25 @@ pub(super) fn judge_pins(
             return failed(failure, Some(observed));
         }
     }
+    // A launch that names its draft's identity (FIX 14976): an answer naming
+    // another draft contradicts it, and one naming none is unverified.
+    let draft_pins: Vec<&String> = pins
+        .iter()
+        .filter_map(|pin| pin.draft_weights_digest.as_ref())
+        .collect();
+    let draft_contradicted = draft_pins.iter().any(|want| {
+        seen.draft_weights_digest
+            .as_ref()
+            .is_some_and(|got| got != *want)
+    });
+    if draft_contradicted {
+        return failed(WorkerFailure::ModelMismatch, Some(observed));
+    }
     let pinned = |field: Field| pins.iter().any(|pin| field(pin).is_some());
     let complete = required
         .iter()
         .all(|&field| pinned(field) && field(seen).is_some())
+        && (draft_pins.is_empty() || seen.draft_weights_digest.is_some())
         && (!pinned(tokenizer) || seen.tokenizer.is_some())
         && seen.backend_epoch.is_some()
         && observed.build_evidence == WorkerBuildEvidence::VerifiedArtifacts;
