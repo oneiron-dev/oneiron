@@ -40,7 +40,7 @@
 //! to take it back if the owner turns the switch off. A window held open, or
 //! a member a keep rule holds, waits for the next pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use loro::VersionVector;
 
@@ -48,8 +48,11 @@ use crate::EntityId;
 use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::store::legal_hold::{HoldActor, is_hold_refusal};
-use crate::store::local_replica::{KeepControls, KeepReason, remove_local_replica_window_in_txn};
+use crate::store::local_replica::{
+    KeepControls, KeepReason, remove_local_members_in_txn, remove_local_replica_window_in_txn,
+};
 use crate::sync::WindowKey;
 
 /// Whether `fold` keeps `world` on one machine other than `me`, by the owner's
@@ -176,9 +179,13 @@ pub fn evict_worlds_placed_elsewhere(vault: &Vault) -> Result<WorldEviction> {
 /// every window of it goes as the pass's would, its queued sends and the
 /// rows its local writes still owed it with it, once the owner keeps the
 /// world on one other machine. The owner's act: nothing here waits for the
-/// home. A window with a member its document does not carry, or one with
-/// local work pending, stays whole, named on the report
-/// ([`WorldEviction::windows_with_local_members`]).
+/// home. A member its document does not carry, or one whose only pending
+/// local work is its promotion pickup, document frames or NOTE requests,
+/// goes too, with that work and every edge it touches (Engine 11-06 08:34 =
+/// A); a pending tombstone still travels, as an id. Then every CLAIM of the
+/// world its claim posting list names, still in one of its windows, goes the
+/// same way. What a legal hold, a control or the fold's own records keep
+/// stays.
 ///
 /// # Errors
 /// An owner proof that no longer stands; [`Error::InvalidConfig`] while this
@@ -247,6 +254,16 @@ fn evict(
                     Progress::Unconfirmed => report.windows_unconfirmed += 1,
                 }
             }
+        }
+    }
+    // The owner's discard takes the world's CLAIMs its windows no longer
+    // list too (FIX 14534, Engine 11-06 08:34 = A).
+    if matches!(confirmation, Confirmation::Owner) {
+        for world in worlds {
+            let leftover = discard_leftover_claims(vault, *world)?;
+            report.removed += leftover.removed;
+            report.kept += leftover.kept;
+            report.windows_busy += leftover.windows_busy;
         }
     }
     if report.windows_busy == 0
@@ -390,6 +407,87 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
 /// marker. A queued send for it defers the step, unless the owner discards
 /// the copy, whose sends go with its last step. Returns the rows removed,
 /// the members kept and whether the window's rows are gone.
+/// The tear's keep controls on each path. The automatic pass leaves a window
+/// whole while a member only this install may hold stays; the owner's
+/// discard releases such a member, with its local work and every edge it
+/// touches, and keeps what every other rule keeps (FIX 14534).
+fn keep_controls(confirmation: Confirmation) -> KeepControls {
+    let discard = matches!(confirmation, Confirmation::Owner);
+    KeepControls {
+        defer_on_queued_writes: !discard,
+        defer_on_local_members: !discard,
+        release_local_members: discard,
+        ..KeepControls::default()
+    }
+}
+
+/// The world CLAIMs a discard took after their windows' rows went.
+#[derive(Default)]
+struct Leftover {
+    removed: usize,
+    kept: usize,
+    windows_busy: usize,
+}
+
+/// The CLAIMs one page of the world's claim posting list reads.
+const LEFTOVER_PAGE: usize = 256;
+
+/// Takes the CLAIMs of `world` this install still keeps after its windows'
+/// rows went: each one its claim posting list names whose row still sits in
+/// one of the world's windows, through the tear's own rules for that window,
+/// held closed ([`remove_local_members_in_txn`]). A claim a keep rule holds
+/// stays; a window held open waits for the next discard.
+fn discard_leftover_claims(vault: &Vault, world: EntityId) -> Result<Leftover> {
+    let mut leftover = Leftover::default();
+    let keep = keep_controls(Confirmation::Owner);
+    let mut after = None;
+    loop {
+        let mut by_window: HashMap<WindowKey, Vec<EntityId>> = HashMap::new();
+        let page = {
+            let txn = vault.store.env.read_txn()?;
+            let page = crate::store::claim_projection::claim_ids_for_world_page_in_txn(
+                &vault.store,
+                &txn,
+                world,
+                after,
+                LEFTOVER_PAGE,
+            )?;
+            for id in &page {
+                let Some(raw) = vault.store.port_entity_raw(&txn, id)? else {
+                    continue;
+                };
+                let Ok(window) = super::residence_window_for_blob(&raw) else {
+                    continue;
+                };
+                if window.world() == Some(world) {
+                    by_window.entry(window).or_default().push(*id);
+                }
+            }
+            page
+        };
+        for (window, ids) in by_window {
+            vault.unload_idle_window(&window)?;
+            let step = vault.while_window_closed(&window, || {
+                vault.with_write_txn_grouped(|txn| {
+                    remove_local_members_in_txn(&vault.store, txn, &window, &ids, keep.clone())
+                })
+            });
+            match step {
+                None => leftover.windows_busy += 1,
+                Some(step) => {
+                    let step = step?;
+                    leftover.removed += step.removed.len();
+                    leftover.kept += step.kept.len();
+                }
+            }
+        }
+        match page.last() {
+            Some(last) if page.len() == LEFTOVER_PAGE => after = Some(*last),
+            _ => return Ok(leftover),
+        }
+    }
+}
+
 /// How far one window's eviction got.
 enum Progress {
     /// Its copy is gone.
@@ -415,11 +513,7 @@ fn evict_window(
     confirmation: Confirmation,
 ) -> Result<WindowStep> {
     let discard = matches!(confirmation, Confirmation::Owner);
-    let keep = KeepControls {
-        defer_on_queued_writes: !discard,
-        defer_on_local_members: true,
-        ..KeepControls::default()
-    };
+    let keep = keep_controls(confirmation);
     let mut removed = 0;
     loop {
         let step = vault.with_write_txn_grouped(|txn| {

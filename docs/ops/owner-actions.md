@@ -338,6 +338,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `gate_decision_retention` | hour, and at start | gate decisions past the horizon you set |
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
+| `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -1582,6 +1583,17 @@ exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
 can therefore be shown as waiting or filling while the old index still serves;
 answering the offer does not mean that its new binding is already applied.
 
+For an approved stock embedder with no compatible declared space, the media worker now
+observes its native vector width from the first eligible stored input. It uses the existing
+configured offer order for that exact model and the ordinary inference, source-release,
+egress and device-local checks. It never guesses a width from the old index or sends a
+synthetic input. The space accepts the kinds the current text-slot incumbent serves and
+encodes those same query kinds through the ordinary `ai.embed` operation. The worker declares
+it only while the complete approval and kind-slot snapshot still match, then the ordinary
+space move begins. The old index keeps serving throughout. With no admitted input, the
+binding stays waiting until a later pass has one. Existing compatible spaces, refills and
+trained embedder bindings keep their current paths; this does not supply a trained-weight loader.
+
 ## Swap in a trained model
 
 When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
@@ -2157,6 +2169,12 @@ lays these rows under each planned spawn. The narrowest pin comes first, then th
 an owner pin replaces the spawn call's own seed, and the call's own pin always stands. A model
 row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
 width is passed over for the next row, and a budget only ever narrows the caller's budget.
+
+An unplanned named-agent launch with no explicit budget also takes the owner's budget pin or
+seed, for its inherited project and placed task type. Its launch preview reads the same setting;
+actual admission records and reserves under that cap through the normal spend path. An explicit
+budget always stands. Planned launches, workflows and reader loans keep their existing handling.
+The setting supplies a cap, not funds, and does not change the identity of a retried request.
 
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
