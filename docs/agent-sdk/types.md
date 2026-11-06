@@ -295,8 +295,17 @@ export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 
+/** Caller-selected worlds, within the caller's existing read authority. */
+export type RecallWorlds =
+  | { kind: "all" }
+  | { kind: "base" }
+  | { kind: "world"; worldRef: string; includeBase: boolean }
+  | { kind: "worlds"; worldRefs: string[]; includeBase: boolean }
+
 /** Recall scoping: narrowing only; unset is the vault floor. */
 export type RecallScope = {
+  /** Explicit world selection; mutually exclusive with `worldRef`. */
+  worlds?: RecallWorlds
   worldRef?: string
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
@@ -393,6 +402,8 @@ export type MemoryItem = {
   stale?: MemoryStaleStamp
   world?: string
   facet?: string
+  /** The claim's explicit project audience, not a topic or a WORLD. */
+  projectRef?: string
   salience?: number
   /** A conversation record's current reactions, one grouped line per glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item. */
   reactions: string[]
@@ -755,6 +766,7 @@ class RecallResidence(TypedDict):
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
+    narrowing: Facade.ScopedReadReceipt
     scope_honesty: ScopeHonesty
     retrieval_meta: RetrievalMeta
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.

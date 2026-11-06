@@ -327,7 +327,7 @@ impl ActorScopedVault {
         let request = oneiron::task_verb::sdk::RecallRequest {
             query,
             effort: Some(effort),
-            scope: Some(recall_scope_to_engine(scope)),
+            scope: Some(recall_scope_to_engine(scope).map_err(facade_error)?),
             limit: Some(limit),
             format,
             token_budget,
