@@ -10,7 +10,7 @@ use serde::Serialize;
 use super::super::host_issuer;
 use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock_for_secret_checked};
 use super::{INSTEAD, emit, read_kit_passphrase, read_kit_pieces};
-use crate::cli::RecoveryKitAuthorityArgs;
+use crate::cli::{KitPieceArgs, RecoveryKitAuthorityArgs, VaultUnlockArgs};
 use crate::config::{ServeConfig, resolve_serve_config};
 use crate::owner::host_owner;
 use crate::owner::vault_key::hex;
@@ -24,7 +24,7 @@ struct Enrolled {
 
 pub(super) fn enroll(args: RecoveryKitAuthorityArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    let (vault, secret) = open_material(&config, &args)?;
+    let (vault, secret) = open_material(&config, &args.kit, &args.unlock)?;
     let named = args
         .machine
         .as_deref()
@@ -44,17 +44,18 @@ pub(super) fn enroll(args: RecoveryKitAuthorityArgs) -> anyhow::Result<()> {
     })
 }
 
-fn open_material(
+pub(super) fn open_material(
     config: &ServeConfig,
-    args: &RecoveryKitAuthorityArgs,
+    kit: &KitPieceArgs,
+    unlock: &VaultUnlockArgs,
 ) -> anyhow::Result<(Vault, RestoredKitSecret)> {
-    let pieces = read_kit_pieces(&args.kit.pieces)?;
+    let pieces = read_kit_pieces(&kit.pieces)?;
     let vault = open_with_unlock_for_secret_checked(
         config,
-        &UnlockRequest::of(&args.unlock),
+        &UnlockRequest::of(unlock),
         KeyNeed::Open,
         INSTEAD,
-        |opened| reads_stdin_before_open(config, opened, &pieces, args),
+        |opened| reads_stdin_before_open(config, opened, &pieces, kit),
         "the kit passphrase",
         "--secret-file",
     )?;
@@ -63,7 +64,7 @@ fn open_material(
         .vault_id
         .ok_or_else(|| anyhow::anyhow!("the vault has no authority genesis"))?;
     let kept = keeps_piece(&vault, &pieces);
-    let passphrase = read_kit_passphrase(args.kit.secret_file.as_deref(), pieces.len(), kept)?;
+    let passphrase = read_kit_passphrase(kit.secret_file.as_deref(), pieces.len(), kept)?;
     let given: Vec<&KitPiece> = pieces.iter().collect();
     let secret = vault.restore_kit_here(
         vault_id,
@@ -85,9 +86,9 @@ fn reads_stdin_before_open(
     config: &ServeConfig,
     opened: Option<&Vault>,
     pieces: &[KitPiece],
-    args: &RecoveryKitAuthorityArgs,
+    kit: &KitPieceArgs,
 ) -> anyhow::Result<bool> {
-    if args.kit.secret_file.is_some() || pieces.len() > 1 {
+    if kit.secret_file.is_some() || pieces.len() > 1 {
         return Ok(false);
     }
     let kept = match opened {
