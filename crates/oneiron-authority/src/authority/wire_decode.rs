@@ -72,6 +72,25 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             }
             Ok(AuthorityOp::SlipGrantRevoke { grant_ref })
         }
+        OP_KIND_REMOVAL_ARCHIVE_CONSUME => {
+            validate_keys(
+                entries,
+                &[
+                    OP_KEY_KIND,
+                    SLIP_KEY_SLIP_ID,
+                    REMOVAL_ARCHIVE_CONSUME_KEY_MEMBER,
+                ],
+            )?;
+            let slip_id = decode_hash(required(entries, SLIP_KEY_SLIP_ID)?)?;
+            let member_hex = required(entries, REMOVAL_ARCHIVE_CONSUME_KEY_MEMBER)?
+                .as_str()
+                .ok_or_else(invalid_authority)?;
+            let member = EntityId::from_hex(member_hex).map_err(|_| invalid_authority())?;
+            if member.to_hex() != member_hex {
+                return Err(invalid_authority());
+            }
+            Ok(AuthorityOp::RemovalArchiveConsume { slip_id, member })
+        }
         OP_KIND_GENESIS => {
             validate_keys(
                 entries,
@@ -250,6 +269,9 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
         OP_KIND_ORIGIN_CUT => super::origin_cut::decode_origin_cut(entries),
         OP_KIND_DEVICE_SUCCESSION => super::device_succession::decode_device_succession(entries),
+        OP_KIND_MEMBERSHIP_EXECUTION => {
+            super::membership_execution::decode_membership_execution(entries)
+        }
         _ => Err(invalid_authority()),
     }
 }
@@ -482,7 +504,7 @@ pub fn decode_hash(value: &Value) -> Result<[u8; 32]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
-fn decode_16(value: &Value) -> Result<[u8; 16]> {
+pub fn decode_16(value: &Value) -> Result<[u8; 16]> {
     bytes(value)?.try_into().map_err(|_| invalid_authority())
 }
 
