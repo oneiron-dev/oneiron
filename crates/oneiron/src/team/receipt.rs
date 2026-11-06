@@ -56,6 +56,8 @@ struct StoredTeamReceipt {
     input_source: Option<TeamInputSource>,
     /// The native start projection read by this receipt's own writer.
     team_start_source: Option<super::run_binding::TeamStartSource>,
+    /// Native dispatch publications retained from the exact status reads.
+    attempt_sources: Vec<super::run::TeamAttemptSource>,
 }
 
 impl StoredTeamReceipt {
@@ -357,6 +359,7 @@ pub(crate) fn record_team_receipt_sourced_in_txn(
         outcome_sources,
         None,
         None,
+        Vec::new(),
     )
 }
 
@@ -368,6 +371,7 @@ pub(crate) fn record_team_receipt_with_input_in_txn(
     outcome_sources: Option<Vec<EntityId>>,
     input_source: Option<TeamInputSource>,
     team_start_source: Option<super::run_binding::TeamStartSource>,
+    attempt_sources: Vec<super::run::TeamAttemptSource>,
 ) -> Result<()> {
     receipt.validate()?;
     crate::task_type::validate_type_ref_in_txn(vault, txn, receipt.project, &receipt.type_ref)?;
@@ -377,6 +381,7 @@ pub(crate) fn record_team_receipt_with_input_in_txn(
         outcome_sources: receipt.outcome.as_ref().and(outcome_sources),
         input_source,
         team_start_source,
+        attempt_sources,
     };
     put_team_receipt_in_txn(vault, txn, &stored)
 }

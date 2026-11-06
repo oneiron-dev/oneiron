@@ -7,8 +7,13 @@ pub const DREAMER_RUNNER_ATTEMPT_KIND: &str = "dreamer";
 pub const DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION: u64 = 1;
 
 /// Pinned on-disk MessagePack key set for Dreamer attempt payloads.
-pub const DREAMER_ATTEMPT_PAYLOAD_KEYS: [&str; 4] =
-    ["schema_version", "job_type", "input", "parent_job"];
+pub const DREAMER_ATTEMPT_PAYLOAD_KEYS: [&str; 5] = [
+    "schema_version",
+    "job_type",
+    "input",
+    "parent_job",
+    "producer_source",
+];
 
 /// Claim predicate used for durable Dreamer attempt milestones.
 pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";

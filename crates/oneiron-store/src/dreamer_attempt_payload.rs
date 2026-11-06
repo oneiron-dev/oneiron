@@ -27,6 +27,8 @@ pub const KEY_SCHEMA_VERSION: &str = "schema_version";
 pub const KEY_ATTEMPT_TYPE: &str = "job_type";
 pub const KEY_INPUT: &str = "input";
 pub const KEY_PARENT_ATTEMPT: &str = "parent_job";
+/// Optional engine-owned publication metadata. Typed payload rewrites retire it.
+pub const KEY_PRODUCER_SOURCE: &str = "producer_source";
 
 /// Encodes a Dreamer attempt payload in canonical MessagePack field order.
 pub fn encode_dreamer_attempt_payload(payload: &DreamerAttemptPayload) -> Result<Vec<u8>> {
@@ -89,6 +91,13 @@ pub fn decode_dreamer_attempt_payload_value(value: &Value) -> Result<DreamerAtte
             }
             KEY_INPUT => input = Some(value.clone()),
             KEY_PARENT_ATTEMPT => parent_attempt = Some(decode_optional_attempt_id(value)?),
+            KEY_PRODUCER_SOURCE => {
+                if !matches!(value, Value::Binary(_)) {
+                    return Err(invalid_dreamer_runner(
+                        "dreamer producer_source must be binary",
+                    ));
+                }
+            }
             _ => unreachable!("index resolved from DREAMER_ATTEMPT_PAYLOAD_KEYS"),
         }
     }
