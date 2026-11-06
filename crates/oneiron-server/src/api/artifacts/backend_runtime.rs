@@ -15,8 +15,9 @@ use oneiron_container::{
     EgressRelay, HostNetFloor, HttpRequest, HttpResponse, SessionLease, SessionManifest,
     SessionTransport, UnmeteredFloor,
 };
+use std::thread::JoinHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::task::{AbortHandle, JoinHandle};
+use tokio::task::AbortHandle;
 
 use crate::config::ArtifactBackendConfig;
 use crate::error::{ApiError, EnvelopedApiError};
@@ -25,6 +26,7 @@ pub(super) struct StagedBackend {
     pub directory: tempfile::TempDir,
     pub source: std::path::PathBuf,
     pub command: Vec<std::ffi::OsString>,
+    pub permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 struct NoEngineEgress;
@@ -69,6 +71,7 @@ fn transport_error(_: impl std::fmt::Display) -> EnvelopedApiError {
 struct SessionGuard {
     lease: Option<Box<dyn SessionLease>>,
     directory: Option<tempfile::TempDir>,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
     connection: Option<AbortHandle>,
     input: Option<JoinHandle<io::Result<u64>>>,
     output: Option<JoinHandle<io::Result<u64>>>,
@@ -82,20 +85,21 @@ impl Drop for SessionGuard {
         }
         let lease = self.lease.take();
         let directory = self.directory.take();
+        let permit = self.permit.take();
         let input = self.input.take();
         let output = self.output.take();
         // Native lease drop stops/reaps the process and wakes pipe IO. Aborting
         // Hyper closes the duplex peer, including a worker waiting on its body.
-        let stopped = self.runtime.spawn_blocking(move || drop(lease));
-        self.runtime.spawn(async move {
-            let _ = stopped.await;
+        self.runtime.spawn_blocking(move || {
+            drop(lease);
             if let Some(input) = input {
-                let _ = input.await;
+                let _ = input.join();
             }
             if let Some(output) = output {
-                let _ = output.await;
+                let _ = output.join();
             }
             drop(directory);
+            drop(permit);
         });
     }
 }
@@ -134,7 +138,7 @@ pub(super) async fn forward(
     request: Request,
 ) -> Result<Response, EnvelopedApiError> {
     let capacity = profile.bridge_buffer_bytes;
-    let (transport, directory) = tokio::task::spawn_blocking(move || {
+    let (transport, directory, permit) = tokio::task::spawn_blocking(move || {
         profile.validate().map_err(io::Error::other)?;
         let spec = profile.spec(staged.source).map_err(io::Error::other)?;
         let backend = oneiron::code_sandbox::microvm::select_backend_for_session(
@@ -148,7 +152,7 @@ pub(super) async fn forward(
             .start_session(&spec, &staged.command, relay.clone())
             .map_err(io::Error::other)?;
         relay.record_session(&transport.manifest)?;
-        Ok::<_, io::Error>((transport, staged.directory))
+        Ok::<_, io::Error>((transport, staged.directory, staged.permit))
     })
     .await
     .map_err(transport_error)?
@@ -163,6 +167,7 @@ pub(super) async fn forward(
     let mut session = SessionGuard {
         lease: Some(lease),
         directory: Some(directory),
+        permit: Some(permit),
         connection: None,
         input: None,
         output: None,
@@ -178,47 +183,55 @@ pub(super) async fn forward(
     session.connection = Some(abort.clone());
     let input_runtime = runtime.clone();
     let input_abort = abort.clone();
-    session.input = Some(tokio::task::spawn_blocking(move || {
-        let mut copy = || -> io::Result<u64> {
-            let mut buffer = vec![0; capacity];
-            let mut bytes = 0;
-            loop {
-                let n = input_runtime.block_on(input.read(&mut buffer))?;
-                if n == 0 {
-                    writer.flush()?;
-                    return Ok(bytes);
+    session.input = Some(
+        std::thread::Builder::new()
+            .spawn(move || {
+                let mut copy = || -> io::Result<u64> {
+                    let mut buffer = vec![0; capacity];
+                    let mut bytes = 0;
+                    loop {
+                        let n = input_runtime.block_on(input.read(&mut buffer))?;
+                        if n == 0 {
+                            writer.flush()?;
+                            return Ok(bytes);
+                        }
+                        writer.write_all(&buffer[..n])?;
+                        writer.flush()?;
+                        bytes += n as u64;
+                    }
+                };
+                let result = copy();
+                if result.is_err() {
+                    input_abort.abort();
                 }
-                writer.write_all(&buffer[..n])?;
-                writer.flush()?;
-                bytes += n as u64;
-            }
-        };
-        let result = copy();
-        if result.is_err() {
-            input_abort.abort();
-        }
-        result
-    }));
-    session.output = Some(tokio::task::spawn_blocking(move || {
-        let mut copy = || -> io::Result<u64> {
-            let mut buffer = vec![0; capacity];
-            let mut bytes = 0;
-            loop {
-                let n = reader.read(&mut buffer)?;
-                if n == 0 {
-                    runtime.block_on(output.shutdown())?;
-                    return Ok(bytes);
+                result
+            })
+            .map_err(transport_error)?,
+    );
+    session.output = Some(
+        std::thread::Builder::new()
+            .spawn(move || {
+                let mut copy = || -> io::Result<u64> {
+                    let mut buffer = vec![0; capacity];
+                    let mut bytes = 0;
+                    loop {
+                        let n = reader.read(&mut buffer)?;
+                        if n == 0 {
+                            runtime.block_on(output.shutdown())?;
+                            return Ok(bytes);
+                        }
+                        runtime.block_on(output.write_all(&buffer[..n]))?;
+                        bytes += n as u64;
+                    }
+                };
+                let result = copy();
+                if result.is_err() {
+                    abort.abort();
                 }
-                runtime.block_on(output.write_all(&buffer[..n]))?;
-                bytes += n as u64;
-            }
-        };
-        let result = copy();
-        if result.is_err() {
-            abort.abort();
-        }
-        result
-    }));
+                result
+            })
+            .map_err(transport_error)?,
+    );
     let response = sender
         .send_request(request)
         .await

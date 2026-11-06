@@ -55,7 +55,8 @@ async fn serve(
     OriginalUri(uri): OriginalUri,
     request: Request,
 ) -> Result<Response, EnvelopedApiError> {
-    let profile = server.artifact_backend.clone().ok_or_else(missing)?;
+    let host = server.artifact_backend.clone().ok_or_else(missing)?;
+    let profile = host.profile.clone();
     let artifact = params.get("artifact").ok_or_else(missing)?;
     let internal: Uri = format!(
         "/a/{}",
@@ -87,12 +88,25 @@ async fn serve(
             auth.principal_ref()
                 .and_then(|id| oneiron::EntityId::from_hex(id).ok())
         });
+    let permit = host
+        .sessions
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::internal_server_error("artifact backend host stopped"))?;
     let vault = server.vault().clone();
     let artifact = route.artifact.clone();
     let token = route.token.clone();
     let selector = route.selector;
     let staged = tokio::task::spawn_blocking(move || {
-        stage(&vault, &artifact, selector, token.as_deref(), principal)
+        stage(
+            &vault,
+            &artifact,
+            selector,
+            token.as_deref(),
+            principal,
+            permit,
+        )
     })
     .await
     .map_err(|_| ApiError::internal_server_error("artifact backend staging failed"))?
@@ -146,22 +160,15 @@ async fn serve(
     let mut response = runtime::forward(profile, staged, Request::from_parts(parts, body)).await?;
     strip_hop_headers(response.headers_mut());
     response.headers_mut().remove("set-cookie");
-    // Root-relative app redirects stay in this app's admitted URL prefix.
+    // CSP ignores source paths after a redirect. App redirects therefore
+    // resolve inside this admitted app, never into another artifact's path.
     if let Some(location) = response
         .headers()
         .get(LOCATION)
         .and_then(|value| value.to_str().ok())
     {
-        let local = location
-            .strip_prefix("http://artifact.invalid")
-            .unwrap_or(location);
-        if local.starts_with('/') && !local.starts_with("//") {
-            let rewritten = format!("{prefix}{}", local.trim_start_matches('/'));
-            let value = HeaderValue::from_str(&rewritten).map_err(|_| {
-                ApiError::internal_server_error("artifact backend redirect invalid")
-            })?;
-            response.headers_mut().insert(LOCATION, value);
-        }
+        let value = backend_location(prefix, &target, location)?;
+        response.headers_mut().insert(LOCATION, value);
     }
     let headers = response.headers_mut();
     headers.insert(CONTENT_SECURITY_POLICY, policy);
@@ -177,6 +184,7 @@ fn stage(
     selector: oneiron::ArtifactSnapshotSelector,
     token: Option<&str>,
     principal: Option<oneiron::EntityId>,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> oneiron::Result<Option<runtime::StagedBackend>> {
     let directory = tempfile::tempdir()?;
     // The private parent stays 0700 on the host. Only its read-only child is
@@ -238,12 +246,67 @@ fn stage(
     Ok(Some(runtime::StagedBackend {
         directory,
         source,
+        permit,
         command: manifest
             .command
             .into_iter()
             .map(std::ffi::OsString::from)
             .collect(),
     }))
+}
+
+fn backend_location(
+    prefix: &str,
+    current: &str,
+    location: &str,
+) -> Result<HeaderValue, EnvelopedApiError> {
+    let (target, fragment) = location.split_once('#').unwrap_or((location, ""));
+    let (current_path, current_query) = current.split_once('?').unwrap_or((current, ""));
+    let target = target.replace('\\', "/");
+    let scheme = target.split_once(':').is_some_and(|(scheme, _)| {
+        !scheme.is_empty()
+            && scheme.bytes().enumerate().all(|(i, byte)| {
+                byte.is_ascii_alphabetic()
+                    || (i > 0 && (byte.is_ascii_digit() || b"+.-".contains(&byte)))
+            })
+    });
+    let (path, query) = if scheme || target.starts_with("//") {
+        let uri: Uri = target
+            .parse()
+            .map_err(|_| ApiError::internal_server_error("artifact backend redirect invalid"))?;
+        (
+            uri.path().to_owned(),
+            uri.query().unwrap_or_default().to_owned(),
+        )
+    } else if target.is_empty() {
+        (current_path.to_owned(), current_query.to_owned())
+    } else {
+        let (path, query) = target.split_once('?').unwrap_or((&target, ""));
+        let path = if path.is_empty() {
+            current_path.to_owned()
+        } else if path.starts_with('/') {
+            path.to_owned()
+        } else {
+            let directory = current_path
+                .rsplit_once('/')
+                .map_or("", |(directory, _)| directory);
+            format!("{directory}/{path}")
+        };
+        (path, query.to_owned())
+    };
+    let path = super::route::backend_redirect_path(&path)?;
+    let query = if query.is_empty() {
+        String::new()
+    } else {
+        format!("?{query}")
+    };
+    let fragment = if fragment.is_empty() {
+        String::new()
+    } else {
+        format!("#{fragment}")
+    };
+    HeaderValue::from_str(&format!("{prefix}{path}{query}{fragment}"))
+        .map_err(|_| ApiError::internal_server_error("artifact backend redirect invalid").into())
 }
 
 fn application_query(query: Option<&str>) -> String {

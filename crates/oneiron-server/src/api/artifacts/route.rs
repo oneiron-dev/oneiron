@@ -207,6 +207,28 @@ impl ArtifactServeQuery {
     }
 }
 
+pub(super) fn backend_redirect_path(encoded: &str) -> Result<String, EnvelopedApiError> {
+    let mut segments = Vec::new();
+    for segment in encoded.split('/') {
+        match decode_component(segment)?.as_str() {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            _ => segments.push(segment),
+        }
+    }
+    let mut path = segments.join("/");
+    let directory = encoded.ends_with('/')
+        || encoded.rsplit('/').next().is_some_and(|last| {
+            decode_component(last).is_ok_and(|last| matches!(last.as_str(), "." | ".."))
+        });
+    if directory && !path.is_empty() {
+        path.push('/');
+    }
+    Ok(path)
+}
+
 pub(super) fn selector_query_pair(raw: &str) -> bool {
     decode_component(raw.split('=').next().unwrap_or_default()).is_ok_and(|key| {
         matches!(key.as_str(), "channel" | "forkHash" | "blobVersion")

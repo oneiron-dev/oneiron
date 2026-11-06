@@ -1,5 +1,12 @@
 # Published artifact backends over HTTP/1 stdio
 
+**Source candidate, not deployment-ready.** The selected native Firecracker
+backend does not yet supply `GuestSpec.read_only_mounts` to its guest. The
+projected `/app` bundle therefore has a known missing-file path on KVM hosts.
+That native producer/consumer must be implemented without bypassing KVM-first
+selection before this candidate is submitted for merge. The contract below
+describes the source and its intended completed behavior, not a runtime proof.
+
 A host can run a published code artifact on its artifact-only listener. This
 initial runtime is one isolated guest per HTTP request. It holds no engine
 credential and has no engine-action grants. Ordinary computation and HTTP
@@ -10,8 +17,12 @@ serving do not require such a grant.
 Set an explicit `[artifact_backend]` section in the served configuration file.
 There are no image or resource defaults, and this section does not reuse
 `[browser]`. Ordinary serve, embedded serve through `build_server`, and managed
-serve pass the same profile to their server. An embedder constructing a server
-directly can use `SyncServer::with_artifact_backend`.
+serve pass the same profile to their server. The explicit `max_concurrent_sessions` host budget
+covers staging, running and cleanup together. A request owns its permit until
+the native process is reaped and both dedicated IO workers have joined.
+The workers do not occupy Tokio blocking-pool slots needed for native cleanup.
+An embedder constructing a server
+directly can use the fallible `SyncServer::with_artifact_backend`.
 
 The following values are an example, not defaults or a provisioned image:
 
@@ -26,6 +37,7 @@ cpu_millis = 1000
 pids = 64
 tmpfs_mib = 64
 bridge_buffer_bytes = 16384
+max_concurrent_sessions = 8
 ```
 
 The host provisions the runtime, pinned image and native fence launcher. The
@@ -57,6 +69,11 @@ On the artifact listener, use `/_apps/<artifact>/`. The native `_t/<token>` and
 `_s/<selector-kind>/<selector-value>` URL positions work after the artifact id,
 just as on `/a/`. Entry URLs redirect to the canonical selector form. Query
 selectors are consumed by the router; other query parameters reach the app.
+App documents should use relative resource URLs; response bodies are not
+rewritten. App-produced redirects resolve within the admitted app root,
+including absolute Location values. They cannot redirect a fetch into another
+artifact on the shared origin. External navigation can use an explicit link
+in the app document instead.
 The guest sees only its application-relative request target and a fixed
 `Host: artifact.invalid`, never the reader's link capability path. Requests
 can use any HTTP method, and their original bodies are streamed, not collected

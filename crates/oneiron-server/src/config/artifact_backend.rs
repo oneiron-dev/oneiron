@@ -19,6 +19,8 @@ pub struct ArtifactBackendConfig {
     pub tmpfs_mib: u32,
     /// Backpressure buffer for each direction, not an HTTP body-size limit.
     pub bridge_buffer_bytes: usize,
+    /// Host-selected requests in staging, execution or native cleanup together.
+    pub max_concurrent_sessions: usize,
 }
 
 impl ArtifactBackendConfig {
@@ -33,8 +35,12 @@ impl ArtifactBackendConfig {
             || self.pids == 0
             || self.tmpfs_mib == 0
             || self.bridge_buffer_bytes == 0
+            || self.max_concurrent_sessions == 0
         {
             anyhow::bail!("artifact_backend resource values must be positive");
+        }
+        if self.max_concurrent_sessions > tokio::sync::Semaphore::MAX_PERMITS {
+            anyhow::bail!("artifact_backend max_concurrent_sessions exceeds semaphore capacity");
         }
         Ok(())
     }

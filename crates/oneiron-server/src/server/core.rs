@@ -198,7 +198,7 @@ pub struct SyncServer {
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
-    pub(crate) artifact_backend: Option<crate::config::ArtifactBackendConfig>,
+    pub(crate) artifact_backend: Option<Arc<crate::runtime::ArtifactBackendHost>>,
     /// The run desktops bound now, for the owner's takeover (CUA-001).
     pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// The run browsers bound now, for the owner's takeover (CUA-001).
@@ -432,9 +432,12 @@ impl SyncServer {
     pub fn with_artifact_backend(
         mut self,
         profile: Option<crate::config::ArtifactBackendConfig>,
-    ) -> Self {
-        self.artifact_backend = profile;
-        self
+    ) -> anyhow::Result<Self> {
+        self.artifact_backend = profile
+            .map(crate::runtime::ArtifactBackendHost::new)
+            .transpose()?
+            .map(Arc::new);
+        Ok(self)
     }
 
     /// Gives code runs a desktop guest, from the `[desktop]` section.
