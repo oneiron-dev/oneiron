@@ -82,6 +82,7 @@ impl McpCodeModeProvider for HeldProvider {
                 [7; oneiron::code_run::CODE_RUN_RNG_SEED_LEN],
             ),
             limits: oneiron::engine_executor::EngineExecutorLimits::default(),
+            wake: None,
         })
     }
 }

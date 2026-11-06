@@ -47,8 +47,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{
-    EdgeDirection, EdgeStoreRead, EntityStoreRead, TimelineQuery, WindowAddress,
-    WindowDeletionRows,
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, TimelineQuery, WindowAddress, WindowDeletionRows,
 };
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
