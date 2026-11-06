@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1269 facade rows, 4596 declarations.
+Census: 1269 facade rows, 4598 declarations.
 Inputs: 1199 of 1269 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1101 of 1269 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -22810,6 +22810,9 @@ class MailThreadShareReceipt(TypedDict):
     shared: bool
     changed: bool
     shared_with: list[str]
+class MailReplyAttachment(TypedDict):
+    artifact_ref: str
+    version: int
 class MailReplyDraftRequest(TypedDict):
     thread_ref: str
     parent_turn_ref: NotRequired[str | None]
@@ -22817,7 +22820,17 @@ class MailReplyDraftRequest(TypedDict):
     body_html: NotRequired[str | None]
     reply_all: NotRequired[bool]
     cc: NotRequired[list[str]]
+    attachments: NotRequired[list[MailReplyAttachment]]
     request_key: str
+class MailReplyAttachmentView(TypedDict):
+    artifact_ref: str
+    version: int
+    name: str
+    media_type: str
+    disposition: str
+    size: int
+    content_blake3: str
+    stored_version_blake3: str
 MailReplyDraftState = Literal["proposed", "approved", "sent", "unsettled", "discarded"]
 class MailReplyDraftView(TypedDict):
     draft_ref: str
@@ -22830,6 +22843,9 @@ class MailReplyDraftView(TypedDict):
     subject: str
     body: str
     body_html: NotRequired[str | None]
+    attachments: NotRequired[list[MailReplyAttachmentView]]
+    message_octets: NotRequired[int | None]
+    message_blake3: NotRequired[str | None]
     plan_ref: str
     state: MailReplyDraftState
     outcome: NotRequired[str | None]

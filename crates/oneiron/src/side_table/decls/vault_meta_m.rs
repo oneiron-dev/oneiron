@@ -49,6 +49,15 @@ side_tables! {
     /// scrubs that message's occurrence. Key: id16(row) + id16(source) + blake3 (32) of the
     /// provider id.
     MAIL_PACK_OCCURRENCE_ROW: VaultMeta b"mail_pack:occurrence_row:v1:" Named;
+    /// A drafted Gmail reply's retained message (fix list row 17645): the exact RFC 5322 bytes
+    /// its current revision sends, written once at draft and sealed under that revision's own
+    /// erasable ConnectorResume key, after the revision (u64be). Key: id16(draft).
+    MAIL_PACK_REPLY_COPY: VaultMeta b"mail_pack:reply_copy:v1:" Raw Ciphertext;
+    /// Which drafted replies with files name a row (fix list row 17645): an artifact, a pinned
+    /// version's CLAIM or ASSET, the thread, the answered TURN or MESSAGE, or the mailbox
+    /// source, so the erase or retirement of any of them reaches each draft whole. Key:
+    /// id16(row) + id16(draft).
+    MAIL_PACK_REPLY_DEPENDENCY: VaultMeta b"mail_pack:reply_dependency:v1:" Raw Engine;
     /// One drafted mail reply (FIX 15420): its thread, the message it
     /// answers, its frozen send plan, its words and where it stands; an
     /// actor's erase forgets its drafter. Key: id16(draft).

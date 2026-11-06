@@ -201,7 +201,10 @@ impl GmailDelegatedAdapter {
                 .intent
                 .content_ref
                 .as_deref()
-                .is_some_and(|content_ref| content_ref.starts_with(GMAIL_SEND_PLAN_REF_PREFIX))
+                .is_some_and(|content_ref| {
+                    content_ref.starts_with(GMAIL_SEND_PLAN_REF_PREFIX)
+                        || content_ref.starts_with(GMAIL_ATTACHED_SEND_PLAN_REF_PREFIX)
+                })
             || !identity.may_send()
             || facts.binding.actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())

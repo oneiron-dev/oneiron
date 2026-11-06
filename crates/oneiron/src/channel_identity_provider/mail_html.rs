@@ -266,10 +266,14 @@ pub(crate) fn push_mail_body(out: &mut String, text: &str, html: Option<&str>) {
     let _ = write!(out, "--{boundary}--\r\n");
 }
 
-/// Writes `bytes` in base64, 76 characters a line.
-fn push_base64(out: &mut String, bytes: &[u8]) {
+/// The characters one base64 body line holds (RFC 2045 6.8); a file's
+/// name folds at the same width ([`super::mail_attachments`]).
+pub(super) const MAIL_LINE_CHARS: usize = 76;
+
+/// Writes `bytes` in base64, [`MAIL_LINE_CHARS`] characters a line.
+pub(super) fn push_base64(out: &mut String, bytes: &[u8]) {
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    for line in encoded.as_bytes().chunks(76) {
+    for line in encoded.as_bytes().chunks(MAIL_LINE_CHARS) {
         out.push_str(std::str::from_utf8(line).unwrap_or_default());
         out.push_str("\r\n");
     }

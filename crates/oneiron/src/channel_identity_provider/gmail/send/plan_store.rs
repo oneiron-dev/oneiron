@@ -3,15 +3,19 @@
 //! after a restart with no host registering it again. A row is checked as it
 //! is read: it rebuilds through the plan's own Message-ID gate and seals to
 //! the ref it is kept under, or it is no plan. A delivered send drops its
-//! plan's row; its receipt keeps the ref.
+//! plan's row; its receipt keeps the ref. A plan with files keeps their
+//! descriptions and its exact message's length and BLAKE3, never the
+//! message: its host holds that (fix list row 17645).
 
 use serde::{Deserialize, Serialize};
 
 use super::{GmailReplyThread, GmailSendPlan};
 use crate::Vault;
+use crate::channel_identity_provider::mail_attachments::{MailAttachment, MailMessageIdentity};
 use crate::error::Result;
 use crate::outbound::OutboundRecipient;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::thread_passport::{CanonicalMessageId, canonical_message_id};
 
 const SEND_PLANS: SideTable<String, StoredPlan, Named> =
@@ -33,6 +37,12 @@ struct StoredPlan {
     date: String,
     message_id: String,
     reply: Option<StoredReply>,
+    /// The files a plan sends, in their order (fix list row 17645).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<MailAttachment>,
+    /// The exact message a plan with files sends: its length and BLAKE3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<MailMessageIdentity>,
 }
 
 /// A reply half's fields as its plan's row keeps them.
@@ -52,6 +62,17 @@ impl GmailSendPlan {
     ///
     /// Storage and encoding errors as they occur.
     pub fn keep(&self, vault: &Vault) -> Result<()> {
+        vault.with_write_txn_grouped(|txn| self.keep_in_txn(&vault.store, txn))
+    }
+
+    /// [`Self::keep`] in `txn`, the writer that publishes what the plan is
+    /// for (fix list row 17645): a drafted reply with files keeps its plan
+    /// in the writer that lands its draft and its message, or not at all.
+    ///
+    /// # Errors
+    ///
+    /// Storage and encoding errors as they occur.
+    pub(crate) fn keep_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         let stored = StoredPlan {
             from_mailbox: self.from_mailbox.clone(),
             from_display_name: self.from_display_name.clone(),
@@ -71,14 +92,16 @@ impl GmailSendPlan {
                     .map(|reference| reference.as_str().to_owned())
                     .collect(),
             }),
+            attachments: self.attachments.clone(),
+            message: self.message,
         };
-        vault.with_write_txn_grouped(|txn| {
-            SEND_PLANS.put(&vault.store, txn, &self.content_ref, &stored)
-        })
+        SEND_PLANS.put(store, txn, &self.content_ref, &stored)
     }
 
     /// The plan `vault` keeps under `content_ref`, when one stands and still
-    /// seals to it.
+    /// seals to it. A plan with files stands only beside the exact message
+    /// it was sealed with, each file's name and type still ones a part
+    /// header carries.
     pub(super) fn kept(vault: &Vault, content_ref: &str) -> Result<Option<Self>> {
         let stored = {
             let txn = vault.store.env.read_txn()?;
@@ -100,6 +123,12 @@ impl GmailSendPlan {
             }),
             None => None,
         };
+        for file in &stored.attachments {
+            file.validate()?;
+        }
+        if !stored.attachments.is_empty() && stored.message.is_none() {
+            return Ok(None);
+        }
         let mut plan = Self {
             from_mailbox: stored.from_mailbox,
             from_display_name: stored.from_display_name,
@@ -111,6 +140,8 @@ impl GmailSendPlan {
             date: stored.date,
             message_id: canonical_message_id(&stored.message_id)?,
             reply,
+            attachments: stored.attachments,
+            message: stored.message,
             content_ref: String::new(),
         };
         plan.seal();
@@ -119,9 +150,17 @@ impl GmailSendPlan {
 
     /// Drops the row kept under `content_ref`, once its send was delivered.
     pub(crate) fn drop_kept(vault: &Vault, content_ref: &str) -> Result<()> {
-        vault.with_write_txn_grouped(|txn| {
-            SEND_PLANS.delete(&vault.store, txn, &content_ref.to_owned())?;
-            Ok(())
-        })
+        vault.with_write_txn_grouped(|txn| Self::drop_kept_in_txn(&vault.store, txn, content_ref))
+    }
+
+    /// [`Self::drop_kept`] in `txn`, the writer that retires the plan's
+    /// draft (fix list row 17645).
+    pub(crate) fn drop_kept_in_txn(
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        content_ref: &str,
+    ) -> Result<()> {
+        SEND_PLANS.delete(store, txn, &content_ref.to_owned())?;
+        Ok(())
     }
 }

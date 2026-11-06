@@ -27,6 +27,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
+    // A drafted reply's retained message and the rows it depends on stand
+    // with the draft as the live vault holds them: no image brings back a
+    // message its revision's end or an erase retired (fix list row 17645).
+    (&t::MAIL_PACK_REPLY_COPY, LIVE),
+    (&t::MAIL_PACK_REPLY_DEPENDENCY, LIVE),
     // A drafted reply stands as the vault held it: its state and its approval.
     (&t::MAIL_PACK_REPLY_DRAFT, LIVE),
     // A source's owner, custody name and settings are live configuration.
