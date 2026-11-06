@@ -10,7 +10,8 @@ mod bind;
 use std::collections::BTreeSet;
 
 use loro::LoroDoc;
-use loro::checkpoint::{AtomId, Parts};
+use loro::checkpoint::{AtomId, Parts, Skeleton};
+use serde::{Deserialize, Serialize};
 
 use super::{
     AtomHome, AtomRef, Holder, OpenedAtom, OpenedSyncAtoms, Placement, SlotCopy, SyncAtom,
@@ -24,7 +25,8 @@ use crate::sync::skill_docs::checkpoint::{RecordDocumentTransport, join};
 
 /// One original value and its withheld key, in the FINAL outer capture.
 /// The skeleton, not a temporary callback ordinal, retains its native site.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RecordDocumentSlot {
     pub(crate) value: AtomId,
     pub(crate) key: Option<AtomId>,
@@ -32,7 +34,8 @@ pub(crate) struct RecordDocumentSlot {
 
 /// Original uses of one source. Every descriptor position keeps every write;
 /// shared slots remain separate uses in each source and each leg.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RecordDocumentSlots {
     pub(crate) head: RecordDocumentSlot,
     pub(crate) rows: Vec<RecordDocumentSlot>,
@@ -190,9 +193,11 @@ impl BoundRecordDocuments {
 /// position empty; it never selects another source sharing an old slot.
 /// The native join validates the actual row, history and immutable FIRST.
 pub(crate) fn open(
+    skeleton: &Skeleton,
     sources: &[JoinedRecordDocument],
     opened: &dyn OpenedSyncAtoms,
 ) -> Result<Vec<Option<OpenedRecordDocument>>> {
+    super::frame::record_documents::validate(skeleton, sources)?;
     sources.iter().map(|source| source.open(opened)).collect()
 }
 
