@@ -65,6 +65,19 @@ object literal. Both slots receive that same literal value, so later `exports.b`
 assignments refer to the new module value. References are collected before applying
 the chain; no admitted link rebinds `module` or targets a property of the replaced
 value. The literal uses the ordinary own-key, spread and `__proto__` rules.
+
+Mixed chains can also contain eligible named properties of the current module value.
+Each property receiver is captured before the right-hand side, and all stores use
+the same terminal object literal in inner-to-outer order. For
+`exports.a = (exports = {})`, `a` remains on the original module value while later
+`exports.b` is detached. For `exports.a = (module.exports = {x: 1})`, the `a` write
+targets the old object, so only `x` belongs to the new module value. Repeated whole
+stores receive that same literal, rather than inventing another replacement object.
+These chains require at least one eligible static named-property reference and one
+whole-slot or wrapper-binding assignment. A property reference must resolve to the
+current module value at capture time; detached `exports` properties, `__proto__`
+property assignments and unknown computed receivers retain the ordinary fallback.
+
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and sequence-valued terminals keep the
 ordinary outer-only handling and unresolved sites. Terminal values are not executed;
