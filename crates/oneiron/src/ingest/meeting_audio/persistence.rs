@@ -21,7 +21,7 @@ use super::ProducedMeetingTranscript;
 use super::provenance::sha256;
 
 /// A native version selection, not an owner credential or import consent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct MeetingTranscriptVersionPin {
     pub artifact: EntityId,
     pub version: u64,
@@ -40,7 +40,7 @@ impl MeetingTranscriptVersionPin {
 
 /// Exact source-audio and transcript versions. The native version ledger
 /// retains their relationship through the source version's claim in made_by.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StoredMeetingTranscript {
     pub source_audio: MeetingTranscriptVersionPin,
     pub transcript: MeetingTranscriptVersionPin,
@@ -164,7 +164,7 @@ impl Vault {
     }
 }
 
-fn stored_transcript(
+pub(super) fn stored_transcript(
     vault: &Vault,
     txn: &RoTxn<'_>,
     stored: &StoredMeetingTranscript,

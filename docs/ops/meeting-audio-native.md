@@ -120,9 +120,9 @@ existing Gate. Speaker labels grant no PERSON, biometric, or send authority.
 
 These doors use ordinary blob version, ASSET, high-water, erase, hold and archive
 machinery. They add no separate lifetime system or global-erasure guarantee.
-Typed SESSION projection, revision-to-SESSION links, served owner routes and host
-receipt retention remain separate work. No text-flattening adapter or duplicate
-SESSION lifecycle is installed, and no voiceprint consent is implied.
+Revision-to-SESSION links, served owner routes and NOTE fallback landing remain
+separate work. No text-flattening adapter or duplicate SESSION lifecycle is
+installed, and no voiceprint consent is implied.
 
 ## Typed SESSION input and selected-artifact reads
 
@@ -139,9 +139,9 @@ Capture time is in seconds. Absolute turn claims use checked capture time times
 1,000 plus the exact start/end millisecond offsets. Without capture time those
 absolute claims stay absent. Source labels remain strings, never PERSON ids or
 TURN roles. This method does not run the FileDrop line parser, mint/close a
-SESSION, or queue either extraction path. The connected meeting SESSION caller
-still needs the native import-source and review propagation in both MESO and
-CHAT before activation; ordinary FileDrop behavior is unchanged.
+SESSION, or queue either extraction path. The owner-bound import door below
+connects those turns to the native lifecycle; ordinary FileDrop behavior is
+unchanged.
 
 ### CHAT source provenance
 
@@ -158,4 +158,37 @@ MESO admissibility role, not proof that the storage owner spoke. Existing
 FileDrop, live chat and history speaker resolution stay unchanged. The host
 keeps the source fields beside the original speaker/text values; it does not
 turn a source label, raw hex string or SESSION owner into a verified speaker.
-This is not activation of the meeting SESSION caller or a new approval door.
+These CHAT changes neither infer speaker identity nor add an approval door.
+
+
+## Owner-bound SESSION import
+
+`Vault::import_meeting_transcript_as_owner` reads the selected native artifact
+under a live owner proof, then calls the existing bulk authorizer outside the
+LMDB writer. Each invocation needs fresh consent for those exact bytes. In the
+committing writer it revalidates the owner, both native version pins, the source
+audio relationship and the artifact bytes before landing anything.
+
+The door reuses the native mint/turn/close/wake path with the owner's actual
+SESSION key and the native machine id. Arrival comes from that writer's clock;
+source capture claims keep their exact projected millisecond offsets. It writes
+`import_source = "meeting-transcript"` on both the CONVERSATION and its TURNs at
+birth. Each TURN retains its native source record/thread ids and version/hash
+pin. The CONVERSATION retains the complete bulk receipt and both selected native
+pins once, rather than copying the whole batch into every TURN. These fields
+record provenance, not a grant, ASR execution proof or factual confirmation.
+
+The existing MESO evidence read derives Imported trust from the native stamp.
+Its promotions remain Imported/Proposed and wait in the actual MESO run's pending
+review group through the existing run-group fallback. No `HistorySource` variant,
+history ledger entry, new review namespace or second consent ledger is added.
+CHAT keeps the imported floor and unknown meeting speaker behavior above.
+
+An already-open sitting returns the native `RetryOpenSession` result. The door
+does not mint another SESSION or silently reuse this receipt for a later call.
+`pending_note_fallback` retains the normalizer's whole-batch NOTE input, including
+when turns land. It is not a NOTE id or a claim that a NOTE landed. An artifact
+with no turns returns that explicit pending input without a synthetic SESSION.
+The exact stored artifact and bulk receipt remain in the returned outcome. A
+source-trust-aware NOTE import door and served caller routes remain unconnected;
+no host-only MACHINE take or owner-authored truth is substituted for them.
