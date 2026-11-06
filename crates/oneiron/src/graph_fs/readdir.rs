@@ -72,7 +72,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         )
     }
 
-    pub(super) fn readdir_with_reader(
+    pub(crate) fn readdir_with_reader(
         &self,
         path: &str,
         cursor: Option<&str>,

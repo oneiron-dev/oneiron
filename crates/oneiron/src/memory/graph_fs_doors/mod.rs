@@ -91,37 +91,66 @@ impl Memory<'_> {
         &self,
         input: GraphFsPathRequest,
     ) -> MemoryResult<GraphFsDirectoryView> {
+        self.graph_fs_readdir_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader::default(),
+        )
+    }
+
+    /// The same directory read, with cooperative container-mask checkpoints.
+    pub fn graph_fs_readdir_with_pacing(
+        &self,
+        input: GraphFsPathRequest,
+        pacing: &crate::batch::ReadPacing,
+    ) -> MemoryResult<GraphFsDirectoryView> {
+        self.graph_fs_readdir_with_reader(
+            input,
+            &crate::batch::secret_scan::ContainerReader {
+                pacing: pacing.clone(),
+            },
+        )
+    }
+
+    fn graph_fs_readdir_with_reader(
+        &self,
+        input: GraphFsPathRequest,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> MemoryResult<GraphFsDirectoryView> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.readdir", &input.path)?;
-        let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
-        let page = tree.readdir(&input.path, cursor.as_deref())?;
+        let cursor = tree.open_public_cursor_with_reader(&call, input.cursor.as_deref(), reader)?;
+        let page = tree.readdir_with_reader(&input.path, cursor.as_deref(), reader)?;
         let entries = page
             .entries()
             .iter()
-            .map(|entry| GraphFsEntryView {
-                name: entry.name().to_owned(),
-                kind: match entry.kind() {
-                    GraphFsEntryKind::Directory => GraphFsKind::Directory,
-                    GraphFsEntryKind::File => GraphFsKind::File,
-                    GraphFsEntryKind::Symlink => GraphFsKind::Symlink,
-                    GraphFsEntryKind::Cursor => GraphFsKind::Cursor,
-                },
-                target: entry.target().map(str::to_owned),
-                cursor: entry
-                    .cursor_token()
-                    .map(|cursor| tree.seal_public_cursor(&call, cursor)),
-                byte_len: entry.byte_len(),
+            .map(|entry| {
+                Ok(GraphFsEntryView {
+                    name: entry.name().to_owned(),
+                    kind: match entry.kind() {
+                        GraphFsEntryKind::Directory => GraphFsKind::Directory,
+                        GraphFsEntryKind::File => GraphFsKind::File,
+                        GraphFsEntryKind::Symlink => GraphFsKind::Symlink,
+                        GraphFsEntryKind::Cursor => GraphFsKind::Cursor,
+                    },
+                    target: entry.target().map(str::to_owned),
+                    cursor: entry
+                        .cursor_token()
+                        .map(|cursor| tree.seal_public_cursor_with_reader(&call, cursor, reader))
+                        .transpose()?,
+                    byte_len: entry.byte_len(),
+                })
             })
-            .collect();
+            .collect::<MemoryResult<Vec<_>>>()?;
         Ok(GraphFsDirectoryView {
             mount: descriptor(&tree, &input.mount),
             path: page.path().to_owned(),
             entries,
             next_cursor: page
                 .next_cursor()
-                .map(|cursor| tree.seal_public_cursor(&call, cursor)),
+                .map(|cursor| tree.seal_public_cursor_with_reader(&call, cursor, reader))
+                .transpose()?,
             read_receipt: page.read_receipt().cloned(),
         })
     }
