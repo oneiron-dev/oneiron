@@ -132,11 +132,13 @@ pub use self::judge::{
     ATTRIBUTION_CALL_PURPOSE_NAME, ATTRIBUTION_DIAL, AttributionDecisions, AttributionNotes,
     AttributionRules, attribution_call_purpose,
 };
+pub use oneiron_skill_attribution::output_requests::AttributionOutputReadRequests;
+
 pub use self::projector::{
     attribution_judgments, pending_edit_proposals, read_attribution_cursor,
     record_attribution_evidence, run_attribution_projector,
-    run_attribution_projector_with_decisions, run_attribution_projector_with_position,
-    run_attribution_projector_with_positions,
+    run_attribution_projector_with_decisions, run_attribution_projector_with_output_requests,
+    run_attribution_projector_with_position, run_attribution_projector_with_positions,
 };
 pub use self::types::{
     AttemptOutcome, AttributionJudgment, AttributionJudgmentReadPosition, AttributionLane,
@@ -191,6 +193,7 @@ mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
+    run_task_attribution_sweep_with_output_requests,
 };
 mod trace;
 pub use trace::{
