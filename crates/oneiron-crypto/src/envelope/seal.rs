@@ -127,11 +127,54 @@ pub fn seal_with_aad<R: TryCryptoRng + ?Sized>(
     extra_aad: &[u8],
     rng: &mut R,
 ) -> Result<Envelope> {
+    seal_with_aad_inner(params, key, plaintext, extra_aad, rng, None)
+}
+
+/// Seals with the same key schedule, header and extra AAD as [`seal_with_aad`],
+/// writing ciphertext directly into the supplied buffer and moving it into the
+/// envelope. Its length must be `plaintext.len() + TAG_LEN`. The caller can
+/// reserve this output fallibly; header, AAD and key derivation may still allocate.
+/// The supplied buffer is wiped on error.
+pub fn seal_with_aad_into<R: TryCryptoRng + ?Sized>(
+    params: &SealParams<'_>,
+    key: SealKey<'_>,
+    plaintext: &[u8],
+    extra_aad: &[u8],
+    rng: &mut R,
+    ciphertext: Vec<u8>,
+) -> Result<Envelope> {
+    seal_with_aad_inner(
+        params,
+        key,
+        plaintext,
+        extra_aad,
+        rng,
+        Some(Zeroizing::new(ciphertext)),
+    )
+}
+
+fn seal_with_aad_inner<R: TryCryptoRng + ?Sized>(
+    params: &SealParams<'_>,
+    key: SealKey<'_>,
+    plaintext: &[u8],
+    extra_aad: &[u8],
+    rng: &mut R,
+    ciphertext: Option<Zeroizing<Vec<u8>>>,
+) -> Result<Envelope> {
     let suite = Suite::require(params.suite, &[SuiteKind::Aead], params.epoch)?;
     check_len("plaintext", plaintext.len(), 0, MAX_PLAINTEXT_LEN)?;
     let mut salt = [0u8; 32];
     fill(rng, &mut salt)?;
-    let mut nonce = vec![0u8; suite.nonce_len()];
+    let mut nonce = if ciphertext.is_some() {
+        let mut nonce = Vec::new();
+        nonce
+            .try_reserve_exact(suite.nonce_len())
+            .map_err(|_| Error::OutOfMemory)?;
+        nonce.resize(suite.nonce_len(), 0);
+        nonce
+    } else {
+        vec![0u8; suite.nonce_len()]
+    };
     fill(rng, &mut nonce)?;
 
     let (wrap, kdf, wrap_params, secret) = match key {
@@ -199,25 +242,49 @@ pub fn seal_with_aad<R: TryCryptoRng + ?Sized>(
 
     let ciphertext_len =
         u32::try_from(plaintext.len() + TAG_LEN).map_err(|_| Error::Primitive("length"))?;
+    let (key_id, recipient, vault_id) = if ciphertext.is_some() {
+        (
+            copy_fallible(params.key_id)?,
+            copy_fallible(params.recipient)?,
+            copy_fallible(params.vault_id)?,
+        )
+    } else {
+        (
+            params.key_id.to_vec(),
+            params.recipient.to_vec(),
+            params.vault_id.to_vec(),
+        )
+    };
     let header = Header {
         suite: params.suite,
         wrap,
         purpose: params.purpose,
         epoch: params.epoch,
-        key_id: params.key_id.to_vec(),
-        recipient: params.recipient.to_vec(),
-        vault_id: params.vault_id.to_vec(),
+        key_id,
+        recipient,
+        vault_id,
         kdf,
         wrap_params,
         nonce,
         ciphertext_len,
     };
     header.validate()?;
-    let header_bytes = header.encode();
+    let header_bytes = if ciphertext.is_some() {
+        header.try_encode()?
+    } else {
+        header.encode()
+    };
     let mut key = Zeroizing::new([0u8; 32]);
     aead_key(&secret, header.kdf.salt(), &header_bytes, &mut key)?;
-    let aad = aad_with_extra(&header_bytes, extra_aad)?;
-    let ciphertext = aead_seal(header.suite, &key, &header.nonce, &aad, plaintext)?;
+    let aad = if ciphertext.is_some() {
+        aad_with_extra_fallible(&header_bytes, extra_aad)?
+    } else {
+        aad_with_extra(&header_bytes, extra_aad)?
+    };
+    let ciphertext = match ciphertext {
+        Some(output) => aead_seal_into(header.suite, &key, &header.nonce, &aad, plaintext, output)?,
+        None => aead_seal(header.suite, &key, &header.nonce, &aad, plaintext)?,
+    };
     if ciphertext.len() != header.ciphertext_len as usize {
         return Err(Error::Primitive("aead output length"));
     }
@@ -430,6 +497,15 @@ fn aad_with_extra(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
     Ok(aad)
 }
 
+fn copy_fallible(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut copied = Vec::new();
+    copied
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| Error::OutOfMemory)?;
+    copied.extend_from_slice(bytes);
+    Ok(copied)
+}
+
 fn aad_with_extra_fallible(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
     if extra_aad.is_empty() {
         let mut aad = Vec::new();
@@ -483,6 +559,42 @@ fn aead_seal(
         _ => return Err(Error::Primitive("aead suite")),
     };
     out.map_err(|_| Error::Primitive("aead seal"))
+}
+
+fn aead_seal_into(
+    suite: SuiteId,
+    key: &[u8; 32],
+    nonce: &[u8],
+    aad: &[u8],
+    plaintext: &[u8],
+    mut ciphertext: Zeroizing<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let tag_at = ciphertext
+        .len()
+        .checked_sub(TAG_LEN)
+        .ok_or(Error::Primitive("aead output length"))?;
+    let (output, tag_output) = ciphertext.split_at_mut(tag_at);
+    let buffer =
+        InOutBuf::new(plaintext, output).map_err(|_| Error::Primitive("aead output length"))?;
+    let tag = match suite {
+        SuiteId::XCHACHA20POLY1305_V1 => {
+            let nonce = XNonce::try_from(nonce).map_err(|_| Error::Primitive("nonce"))?;
+            XChaCha20Poly1305::new_from_slice(key)
+                .map_err(|_| Error::Primitive("key"))?
+                .encrypt_inout_detached(&nonce, aad, buffer)
+        }
+        SuiteId::AES256GCM_V1 => {
+            let nonce = aes_gcm::aead::Nonce::<Aes256Gcm>::try_from(nonce)
+                .map_err(|_| Error::Primitive("nonce"))?;
+            Aes256Gcm::new_from_slice(key)
+                .map_err(|_| Error::Primitive("key"))?
+                .encrypt_inout_detached(&nonce, aad, buffer)
+        }
+        _ => return Err(Error::Primitive("aead suite")),
+    }
+    .map_err(|_| Error::Primitive("aead seal"))?;
+    tag_output.copy_from_slice(&tag);
+    Ok(std::mem::take(&mut *ciphertext))
 }
 
 fn aead_open(

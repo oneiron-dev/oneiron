@@ -4,7 +4,9 @@
 mod hybrid;
 mod seal;
 
-pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad};
+pub use self::seal::{
+    OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad, seal_with_aad_into,
+};
 
 use std::io::Write;
 
@@ -344,15 +346,56 @@ impl Header {
     /// The canonical header bytes (the AAD). Callers have validated the header.
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(128);
+        self.encode_into(&mut out);
+        out
+    }
+
+    /// The exact wire length of a validated header.
+    fn encoded_len(&self) -> usize {
+        let prefix = MAGIC.len()
+            + VERSION.to_be_bytes().len()
+            + self.suite.0.to_be_bytes().len()
+            + 1
+            + (self.purpose as u16).to_be_bytes().len()
+            + self.epoch.to_be_bytes().len();
+        let ids = 1 + self.key_id.len() + 1 + self.recipient.len() + 1 + self.vault_id.len();
+        let kdf = match &self.kdf {
+            Kdf::HkdfSha256 { salt } => 1 + salt.len(),
+            Kdf::Argon2idHkdfSha256 { cost, salt } => {
+                1 + cost.m_kib.to_be_bytes().len() + cost.t.to_be_bytes().len() + 1 + salt.len()
+            }
+        };
+        let wrap = match &self.wrap_params {
+            WrapParams::None => 0,
+            WrapParams::Shamir { share_set_id, .. } => 1 + 1 + share_set_id.len(),
+            WrapParams::Hybrid {
+                kem_suite,
+                x25519_ephemeral,
+                mlkem_ciphertext,
+            } => kem_suite.0.to_be_bytes().len() + x25519_ephemeral.len() + mlkem_ciphertext.len(),
+        };
+        prefix + ids + kdf + wrap + self.nonce.len() + self.ciphertext_len.to_be_bytes().len()
+    }
+
+    /// The canonical bytes with a fallibly reserved buffer; the header is validated.
+    fn try_encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        out.try_reserve_exact(self.encoded_len())
+            .map_err(|_| Error::OutOfMemory)?;
+        self.encode_into(&mut out);
+        Ok(out)
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&VERSION.to_be_bytes());
         out.extend_from_slice(&self.suite.0.to_be_bytes());
         out.push(self.wrap as u8);
         out.extend_from_slice(&(self.purpose as u16).to_be_bytes());
         out.extend_from_slice(&self.epoch.to_be_bytes());
-        put_lp8(&mut out, &self.key_id);
-        put_lp8(&mut out, &self.recipient);
-        put_lp8(&mut out, &self.vault_id);
+        put_lp8(out, &self.key_id);
+        put_lp8(out, &self.recipient);
+        put_lp8(out, &self.vault_id);
         match &self.kdf {
             Kdf::HkdfSha256 { salt } => {
                 out.push(1);
@@ -389,7 +432,6 @@ impl Header {
         }
         out.extend_from_slice(&self.nonce);
         out.extend_from_slice(&self.ciphertext_len.to_be_bytes());
-        out
     }
 
     /// Reads the header at the start of `prefix`, with no ciphertext: the header,
