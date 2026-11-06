@@ -44,7 +44,10 @@ pub(crate) fn discard_workflow_in_txn(
     }
     for (key, mut bundle) in NOTE_PROPOSAL_BUNDLE.scan(store, txn)? {
         let named = bundle.waiting.iter().any(|fork| notes.contains(&fork.note))
-            || bundle.landed.iter().any(|receipt| notes.contains(&receipt.note));
+            || bundle
+                .landed
+                .iter()
+                .any(|receipt| notes.contains(&receipt.note));
         if !named {
             continue;
         }

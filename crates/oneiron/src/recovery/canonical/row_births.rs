@@ -105,8 +105,31 @@ pub(super) fn capture(
 /// The births sort by id, each once. Nothing else refuses: a birth whose
 /// bytes do not decode, or whose row the window does not hold, rides as it
 /// is, unknown.
-pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
-    crate::recovery::validation::strict(snapshot.row_births.iter().map(|row| row.id))
+#[derive(Default)]
+pub(super) struct RowBirthsValidation {
+    next: usize,
+}
+
+impl RowBirthsValidation {
+    pub(super) fn advance(
+        &mut self,
+        snapshot: &CanonicalSnapshot,
+        max_rows: usize,
+    ) -> Result<bool> {
+        let rows = &snapshot.row_births;
+        let end = self.next.saturating_add(max_rows.max(1)).min(rows.len());
+        crate::recovery::validation::strict(
+            rows[self.next.saturating_sub(1)..end]
+                .iter()
+                .map(|row| row.id),
+        )?;
+        self.next = end;
+        Ok(self.next == rows.len())
+    }
+
+    pub(super) fn position(&self) -> usize {
+        self.next
+    }
 }
 
 /// Files the birth of one row back in the rebuilt window's map.

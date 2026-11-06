@@ -42,6 +42,9 @@ pub(super) struct ReplyCall {
     pub(super) requester: EntityId,
     /// The rows the captured call was read from; `None` is unknown.
     pub(super) sources: Option<Vec<EntityId>>,
+    /// The rows today's fallback call was read from, the call that answers
+    /// once a reused prefix gives way; `None` is unknown.
+    pub(super) today_sources: Option<Vec<EntityId>>,
 }
 
 /// The example `end` leaves from the call `answered` holds, when the reply
@@ -55,10 +58,16 @@ pub(super) fn reply_example(
     let whole = end.result.is_ok()
         && saved.message_id == end.message
         && saved.finality == StreamFinality::Final;
-    if !whole || end.fell_back {
+    if !whole {
         return None;
     }
-    let sources = call.sources?;
+    // A reused prefix that gave way answered with today's call: the
+    // captured request is today's, read from today's rows (FIX 16232).
+    let sources = if end.fell_back {
+        call.today_sources?
+    } else {
+        call.sources?
+    };
     let answered = answered.lock().ok().and_then(|mut slot| slot.take())?;
     // The worker's reported weights identity, never the wire's model name,
     // is what a drafter target names.
