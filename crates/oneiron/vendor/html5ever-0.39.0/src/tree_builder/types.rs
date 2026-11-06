@@ -80,6 +80,7 @@ pub(crate) enum Token {
 }
 
 pub(crate) enum ProcessResult<Handle> {
+    Stopped,
     Done,
     DoneAckSelfClosing,
     SplitWhitespace(StrTendril),

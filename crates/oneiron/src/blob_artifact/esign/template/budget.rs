@@ -24,6 +24,10 @@ impl Budget {
         }
     }
 
+    pub(super) fn admits_memory(&self) -> bool {
+        self.memory.is_some()
+    }
+
     pub(super) fn checkpoint(&self) -> Result<()> {
         if self
             .deadline
@@ -48,7 +52,7 @@ impl Backing {
         &self.budget
     }
 
-    fn resize(&mut self, bytes: usize) -> Result<()> {
+    pub(super) fn resize(&mut self, bytes: usize) -> Result<()> {
         let bytes = u64::try_from(bytes).map_err(|_| ContentTemplateError::Overflow)?;
         if let Some(memory) = &self.budget.memory {
             if bytes > self.bytes {

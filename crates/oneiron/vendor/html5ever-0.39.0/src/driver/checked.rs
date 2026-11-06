@@ -5,9 +5,9 @@ use crate::buffer_queue::BufferQueue;
 use crate::tendril::stream::{TendrilSink, Utf8LossyDecoder};
 use crate::tendril::{fmt::UTF8, StrTendril};
 use crate::tokenizer::{Token, TokenSink, TokenSinkResult, Tokenizer};
-use crate::tree_builder::{TreeBuilder, TreeSink};
+use crate::tree_builder::{TreeBuilder, TreeSink, TreeSinkOperation};
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Parse a document, returning the first caller checkpoint failure instead of
 /// a partial document. The callback is polled between tokenizer steps and
@@ -25,7 +25,7 @@ where
     let sink = CheckpointSink {
         sink: TreeBuilder::new(sink, opts.tree_builder),
         checkpoint,
-        error: RefCell::new(None),
+        error: Arc::new(Mutex::new(None)),
     };
     CheckedParser {
         tokenizer: Tokenizer::new(sink, opts.tokenizer),
@@ -48,6 +48,30 @@ where
     Sink: TreeSink,
     F: Fn() -> Result<(), E>,
 {
+    /// Admit native sink operations before they can allocate or create handles.
+    /// A refusal stores the first error in this parser and stops the current
+    /// tree-builder operation, so finish drops the partial sink before Err.
+    pub fn with_tree_sink_checkpoint<G>(mut self, checkpoint: G) -> Self
+    where
+        E: Send + 'static,
+        G: Fn(&Sink, TreeSinkOperation<'_, Sink::Handle>) -> Result<(), E> + Send + 'static,
+    {
+        let error = Arc::clone(&self.tokenizer.sink.error);
+        self.tokenizer.sink.sink.set_tree_sink_checkpoint(Box::new(move |sink, operation| {
+            if error.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
+                return false;
+            }
+            match checkpoint(sink, operation) {
+                Ok(()) => true,
+                Err(refusal) => {
+                    error.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert(refusal);
+                    false
+                }
+            }
+        }));
+        self
+    }
+
     /// Accept UTF-8 bytes with the ordinary parser's lossy decoder.
     #[allow(clippy::wrong_self_convention)]
     pub fn from_utf8(self) -> Utf8LossyDecoder<Self> {
@@ -86,7 +110,8 @@ where
             self.tokenizer.checkpoint();
         }
         let CheckpointSink { sink, error, .. } = self.tokenizer.into_sink();
-        if let Some(error) = error.into_inner() {
+        let refused = error.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(error) = refused {
             drop(sink);
             drop(self.input_buffer);
             return Err(error);
@@ -98,7 +123,7 @@ where
 struct CheckpointSink<Sink, F, E> {
     sink: Sink,
     checkpoint: F,
-    error: RefCell<Option<E>>,
+    error: Arc<Mutex<Option<E>>>,
 }
 
 impl<Sink, F, E> TokenSink for CheckpointSink<Sink, F, E>
@@ -109,13 +134,13 @@ where
     type Handle = Sink::Handle;
 
     fn checkpoint(&self) -> bool {
-        if self.error.borrow().is_some() {
+        if self.error.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
             return false;
         }
         match (self.checkpoint)() {
             Ok(()) => true,
             Err(error) => {
-                *self.error.borrow_mut() = Some(error);
+                self.error.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert(error);
                 false
             }
         }

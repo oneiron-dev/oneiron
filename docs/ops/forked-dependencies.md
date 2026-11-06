@@ -2,7 +2,7 @@
 
 Two third-party crates carry changes of ours as git forks. Neither is vendored: each is a git
 dependency on a fork under `github.com/oneiron-dev`, pinned by a full commit `rev`, never by a
-branch or a tag. lopdf and html5ever carry changes of ours as vendored snapshots instead; see
+branch or a tag. lopdf, html5ever and dom_query carry changes of ours as vendored snapshots instead; see
 [Vendored, modified snapshots](#vendored-modified-snapshots).
 The fork branch holds upstream's release commit plus our commits, one per change, each message
 saying what it changes and why. Upstream licence files and copyright notices stay untouched on
@@ -126,7 +126,19 @@ and every local source change.
   that returns the first typed caller failure after dropping the partial DOM (FIX 9615).
   `dom_query` 0.28.0 and the engine use that same 0.39.0 snapshot; html5ever 0.38.0 remains
   at its original registry pin. Provenance, omitted non-production files and local changes
-  are in `crates/oneiron/vendor/README.md`. No native DOM arena admission is claimed.
+  are in `crates/oneiron/vendor/README.md`. An optional native sink-operation
+  checkpoint propagates arena refusals before a failed node handle can be used,
+  through reconstruction, adoption, foreign insertion and table-text draining.
+
+- `dom_query` 0.28.0, `crates/oneiron/vendor/dom-query-0.28.0` (MIT):
+  a fallible native node-arena reservation API admits whole replacement storage
+  before allocation and settles actual capacity. The checked HTML parser uses
+  it for root, element/template, comment, doctype and newly created text nodes;
+  existing adjacent text still coalesces without another arena slot. A caller's
+  reservation stays with the Document through rendering and drop. Transitive
+  node heap, parser/input buffers, attributes and errors are not admitted by this
+  API. No node-count or content-size cap is added. The separately locked 0.27.0
+  package stays on the registry. See the snapshot's `PROVENANCE.md`.
 
 ## Licences and attribution
 

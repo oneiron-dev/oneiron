@@ -38,7 +38,19 @@ use markup5ever::{expanded_name, local_name, namespace_prefix, ns};
 #[macro_use]
 mod tag_sets;
 
+mod control;
+pub use control::TreeSinkOperation;
 mod data;
+
+macro_rules! stop_on_none {
+    ($value:expr) => {
+        match $value {
+            Some(value) => value,
+            None => return ProcessResult::Stopped,
+        }
+    };
+}
+
 mod rules;
 mod types;
 
@@ -87,6 +99,8 @@ pub struct TreeBuilder<Handle, Sink> {
 
     /// Consumer of tree modifications.
     pub sink: Sink,
+
+    tree_sink_checkpoint: Option<control::SinkCheckpoint<Handle, Sink>>,
 
     /// Insertion mode.
     mode: Cell<InsertionMode>,
@@ -154,6 +168,7 @@ where
         TreeBuilder {
             opts,
             sink,
+            tree_sink_checkpoint: None,
             mode: Cell::new(InsertionMode::Initial),
             orig_mode: Cell::new(None),
             template_modes: Default::default(),
@@ -194,6 +209,7 @@ where
         let tb = TreeBuilder {
             opts,
             sink,
+            tree_sink_checkpoint: None,
             mode: Cell::new(InsertionMode::Initial),
             orig_mode: Cell::new(None),
             template_modes,
@@ -215,7 +231,7 @@ where
         // 5. Let root be a new html element with no attributes.
         // 6. Append the element root to the Document node created above.
         // 7. Set up the parser's stack of open elements so that it contains just the single element root.
-        tb.create_root(vec![]);
+        let _ = tb.create_root(vec![]);
         // 10. Reset the parser's insertion mode appropriately.
         let old_insertion_mode = tb.reset_insertion_mode();
         tb.mode.set(old_insertion_mode);
@@ -364,6 +380,9 @@ where
                         force_quirks: _,
                     } = dt;
                     if !self.opts.drop_doctype {
+                        if !self.before_tree_sink_operation(TreeSinkOperation::Doctype) {
+                            return tokenizer::TokenSinkResult::Continue;
+                        }
                         self.sink.append_doctype_to_document(
                             name.unwrap_or(StrTendril::new()),
                             public_id.unwrap_or(StrTendril::new()),
@@ -431,6 +450,7 @@ where
                 self.step(mode, token)
             };
             match result {
+                ProcessResult::Stopped => return tokenizer::TokenSinkResult::Continue,
                 ProcessResult::Done => {
                     if should_have_acknowledged_self_closing_flag {
                         self.sink
@@ -532,7 +552,16 @@ where
         InsertionPoint::LastChild(html_elem.clone())
     }
 
-    fn insert_at(&self, insertion_point: InsertionPoint<Handle>, child: NodeOrText<Handle>) {
+    fn insert_at(&self, insertion_point: InsertionPoint<Handle>, child: NodeOrText<Handle>) -> Option<()> {
+        let operation = match &insertion_point {
+            InsertionPoint::LastChild(parent) => TreeSinkOperation::Append(parent, &child),
+            InsertionPoint::BeforeSibling(sibling) => TreeSinkOperation::BeforeSibling(sibling, &child),
+            InsertionPoint::TableFosterParenting { element, prev_element } =>
+                TreeSinkOperation::BasedOnParent(element, prev_element, &child),
+        };
+        if !self.before_tree_sink_operation(operation) {
+            return None;
+        }
         match insertion_point {
             InsertionPoint::LastChild(parent) => self.sink.append(&parent, child),
             InsertionPoint::BeforeSibling(sibling) => {
@@ -545,6 +574,7 @@ where
                 .sink
                 .append_based_on_parent_node(&element, &prev_element, child),
         }
+        Some(())
     }
 }
 
@@ -700,7 +730,7 @@ where
 
     // The generic raw text / RCDATA parsing algorithm.
     fn parse_raw_data(&self, tag: Tag, k: RawKind) -> ProcessResult<Handle> {
-        self.insert_element_for(tag);
+        stop_on_none!(self.insert_element_for(tag));
         self.to_raw_text_mode(k)
     }
     //§ END
@@ -730,12 +760,13 @@ where
     }
 
     // Insert at the "appropriate place for inserting a node".
-    fn insert_appropriately(&self, child: NodeOrText<Handle>, override_target: Option<Handle>) {
+    fn insert_appropriately(&self, child: NodeOrText<Handle>, override_target: Option<Handle>) -> Option<()> {
         let insertion_point = self.appropriate_place_for_insertion(override_target);
-        self.insert_at(insertion_point, child);
+        self.insert_at(insertion_point, child)?;
+        Some(())
     }
 
-    fn adoption_agency(&self, subject: LocalName) {
+    fn adoption_agency(&self, subject: LocalName) -> Option<()> {
         // 1.
         if self.current_node_named(subject.clone())
             && self
@@ -743,7 +774,7 @@ where
                 .is_none()
         {
             self.pop();
-            return;
+            return Some(());
         }
 
         // 2. 3. 4.
@@ -757,13 +788,14 @@ where
                 .map(|(i, h, t)| (i, h.clone(), t.clone()));
 
             let Some((fmt_elem_index, fmt_elem, fmt_elem_tag)) = maybe_fmt_entry else {
-                return self.process_end_tag_in_body(Tag {
+                self.process_end_tag_in_body(Tag {
                     kind: EndTag,
                     name: subject,
                     self_closing: false,
                     attrs: vec![],
                     had_duplicate_attributes: false,
                 });
+                return Some(());
             };
 
             let Some(fmt_elem_stack_index) = self
@@ -775,14 +807,14 @@ where
                 self.sink
                     .parse_error(Borrowed("Formatting element not open"));
                 self.active_formatting.borrow_mut().remove(fmt_elem_index);
-                return;
+                return Some(());
             };
 
             // 7.
             if !self.in_scope(default_scope, |n| self.sink.same_node(&n, &fmt_elem)) {
                 self.sink
                     .parse_error(Borrowed("Formatting element not in scope"));
-                return;
+                return Some(());
             }
 
             // 8.
@@ -805,7 +837,7 @@ where
                 // 10.
                 self.open_elems.borrow_mut().truncate(fmt_elem_stack_index);
                 self.active_formatting.borrow_mut().remove(fmt_elem_index);
-                return;
+                return Some(());
             };
 
             // 11.
@@ -858,12 +890,10 @@ where
                 };
                 // FIXME: Is there a way to avoid cloning the attributes twice here (once on their
                 // own, once as part of t.clone() above)?
-                let new_element = create_element_with_flags(
-                    &self.sink,
-                    QualName::new(None, ns!(html), tag.name.clone()),
+                let new_element = self.create_element_with_flags_checked(QualName::new(None, ns!(html), tag.name.clone()),
                     tag.attrs.clone(),
                     tag.had_duplicate_attributes,
-                );
+                )?;
                 self.open_elems.borrow_mut()[node_index] = new_element.clone();
                 self.active_formatting.borrow_mut()[node_formatting_index] =
                     FormatEntry::Element(new_element.clone(), tag);
@@ -886,17 +916,15 @@ where
 
             // 14.
             self.sink.remove_from_parent(&last_node);
-            self.insert_appropriately(AppendNode(last_node.clone()), Some(common_ancestor));
+            self.insert_appropriately(AppendNode(last_node.clone()), Some(common_ancestor))?;
 
             // 15.
             // FIXME: Is there a way to avoid cloning the attributes twice here (once on their own,
             // once as part of t.clone() above)?
-            let new_element = create_element_with_flags(
-                &self.sink,
-                QualName::new(None, ns!(html), fmt_elem_tag.name.clone()),
+            let new_element = self.create_element_with_flags_checked(QualName::new(None, ns!(html), fmt_elem_tag.name.clone()),
                 fmt_elem_tag.attrs.clone(),
                 fmt_elem_tag.had_duplicate_attributes,
-            );
+            )?;
             let new_entry = FormatEntry::Element(new_element.clone(), fmt_elem_tag);
 
             // 16.
@@ -943,6 +971,7 @@ where
 
             // 20.
         }
+        Some(())
     }
 
     fn push(&self, elem: &Handle) {
@@ -985,21 +1014,21 @@ where
     }
 
     /// <https://html.spec.whatwg.org/#reconstruct-the-active-formatting-elements>
-    fn reconstruct_active_formatting_elements(&self) {
+    fn reconstruct_active_formatting_elements(&self) -> Option<()> {
         {
             let active_formatting = self.active_formatting.borrow();
 
             // Step 1. If there are no entries in the list of active formatting elements,
             // then there is nothing to reconstruct; stop this algorithm.
             let Some(last) = active_formatting.last() else {
-                return;
+                return Some(());
             };
 
             // Step 2. If the last (most recently added) entry in the list of active formatting elements is a marker,
             // or if it is an element that is in the stack of open elements, then there is nothing to reconstruct;
             // stop this algorithm.
             if self.is_marker_or_open(last) {
-                return;
+                return Some(());
             }
         }
 
@@ -1044,7 +1073,7 @@ where
                 tag.name.clone(),
                 tag.attrs.clone(),
                 tag.had_duplicate_attributes,
-            );
+            )?;
 
             // Step 9. Replace the entry for entry in the list with an entry for new element.
             self.active_formatting.borrow_mut()[entry_index] =
@@ -1057,6 +1086,7 @@ where
             }
             entry_index += 1;
         }
+        Some(())
     }
 
     /// Get the first element on the stack, which will be the <html> element.
@@ -1345,17 +1375,23 @@ where
     }
 
     fn append_text(&self, text: StrTendril) -> ProcessResult<Handle> {
-        self.insert_appropriately(AppendText(text), None);
+        stop_on_none!(self.insert_appropriately(AppendText(text), None));
         ProcessResult::Done
     }
 
     fn append_comment(&self, text: StrTendril) -> ProcessResult<Handle> {
+        if !self.before_tree_sink_operation(TreeSinkOperation::CreateComment) {
+            return ProcessResult::Stopped;
+        }
         let comment = self.sink.create_comment(text);
-        self.insert_appropriately(AppendNode(comment), None);
+        stop_on_none!(self.insert_appropriately(AppendNode(comment), None));
         ProcessResult::Done
     }
 
     fn append_comment_to_doc(&self, text: StrTendril) -> ProcessResult<Handle> {
+        if !self.before_tree_sink_operation(TreeSinkOperation::CreateComment) {
+            return ProcessResult::Stopped;
+        }
         let comment = self.sink.create_comment(text);
         self.sink.append(&self.doc_handle, AppendNode(comment));
         ProcessResult::Done
@@ -1364,21 +1400,37 @@ where
     fn append_comment_to_html(&self, text: StrTendril) -> ProcessResult<Handle> {
         let open_elems = self.open_elems.borrow();
         let target = html_elem(&open_elems);
+        if !self.before_tree_sink_operation(TreeSinkOperation::CreateComment) {
+            return ProcessResult::Stopped;
+        }
         let comment = self.sink.create_comment(text);
         self.sink.append(target, AppendNode(comment));
         ProcessResult::Done
     }
 
+    fn create_element_with_flags_checked(
+        &self,
+        name: QualName,
+        attrs: Vec<Attribute>,
+        had_duplicate_attributes: bool,
+    ) -> Option<Handle> {
+        if !self.before_tree_sink_operation(TreeSinkOperation::CreateElement(&name)) {
+            return None;
+        }
+        Some(create_element_with_flags(&self.sink, name, attrs, had_duplicate_attributes))
+    }
+
     //§ creating-and-inserting-nodes
-    fn create_root(&self, attrs: Vec<Attribute>) {
-        let elem = create_element(
-            &self.sink,
+    fn create_root(&self, attrs: Vec<Attribute>) -> Option<()> {
+        let elem = self.create_element_with_flags_checked(
             QualName::new(None, ns!(html), local_name!("html")),
             attrs,
-        );
+            false,
+        )?;
         self.push(&elem);
         self.sink.append(&self.doc_handle, AppendNode(elem));
         // FIXME: application cache selection algorithm
+        Some(())
     }
 
     /// <https://html.spec.whatwg.org/multipage/#create-an-element-for-the-token>
@@ -1389,7 +1441,7 @@ where
         name: LocalName,
         attrs: Vec<Attribute>,
         had_duplicate_attributes: bool,
-    ) -> Handle {
+    ) -> Option<Handle> {
         declare_tag_set!(form_associatable =
             "button" "fieldset" "input" "object"
             "output" "select" "textarea" "img");
@@ -1398,12 +1450,10 @@ where
 
         // Step 7.
         let qname = QualName::new(None, ns, name);
-        let elem = create_element_with_flags(
-            &self.sink,
-            qname.clone(),
+        let elem = self.create_element_with_flags_checked(qname.clone(),
             attrs.clone(),
             had_duplicate_attributes,
-        );
+        )?;
 
         let insertion_point = self.appropriate_place_for_insertion(None);
         let (node1, node2) = match insertion_point {
@@ -1430,17 +1480,16 @@ where
                 .associate_with_form(&elem, &form, (&node1, node2.as_ref()));
         }
 
-        self.insert_at(insertion_point, AppendNode(elem.clone()));
+        self.insert_at(insertion_point, AppendNode(elem.clone()))?;
 
         match push {
             PushFlag::Push => self.push(&elem),
             PushFlag::NoPush => (),
         }
         // FIXME: Remove from the stack if we can't append?
-        elem
+        Some(elem)
     }
-
-    fn insert_element_for(&self, tag: Tag) -> Handle {
+    fn insert_element_for(&self, tag: Tag) -> Option<Handle> {
         self.insert_element(
             PushFlag::Push,
             ns!(html),
@@ -1449,8 +1498,7 @@ where
             tag.had_duplicate_attributes,
         )
     }
-
-    fn insert_and_pop_element_for(&self, tag: Tag) -> Handle {
+    fn insert_and_pop_element_for(&self, tag: Tag) -> Option<Handle> {
         self.insert_element(
             PushFlag::NoPush,
             ns!(html),
@@ -1459,8 +1507,7 @@ where
             tag.had_duplicate_attributes,
         )
     }
-
-    fn insert_phantom(&self, name: LocalName) -> Handle {
+    fn insert_phantom(&self, name: LocalName) -> Option<Handle> {
         self.insert_element(PushFlag::Push, ns!(html), name, vec![], false)
     }
 
@@ -1470,23 +1517,21 @@ where
         tag: Tag,
         ns: Namespace,
         only_add_to_element_stack: bool,
-    ) -> Handle {
+    ) -> Option<Handle> {
         let adjusted_insertion_location = self.appropriate_place_for_insertion(None);
         let qname = QualName::new(None, ns, tag.name.clone());
-        let elem = create_element_with_flags(
-            &self.sink,
-            qname.clone(),
+        let elem = self.create_element_with_flags_checked(qname.clone(),
             tag.attrs.clone(),
             tag.had_duplicate_attributes,
-        );
+        )?;
 
         if !only_add_to_element_stack {
-            self.insert_at(adjusted_insertion_location, AppendNode(elem.clone()));
+            self.insert_at(adjusted_insertion_location, AppendNode(elem.clone()))?;
         }
 
         self.push(&elem);
 
-        elem
+        Some(elem)
     }
     //§ END
 
@@ -1546,7 +1591,7 @@ where
             .attach_declarative_shadow(shadow_host, template, &tag.attrs)
     }
 
-    fn create_formatting_element_for(&self, tag: Tag) -> Handle {
+    fn create_formatting_element_for(&self, tag: Tag) -> Option<Handle> {
         // FIXME: This really wants unit tests.
         let mut first_match = None;
         let mut matches = 0usize;
@@ -1569,11 +1614,11 @@ where
             tag.name.clone(),
             tag.attrs.clone(),
             tag.had_duplicate_attributes,
-        );
+        )?;
         self.active_formatting
             .borrow_mut()
             .push(FormatEntry::Element(elem.clone(), tag));
-        elem
+        Some(elem)
     }
 
     fn clear_active_formatting_to_marker(&self) {
@@ -1617,21 +1662,22 @@ where
         self.open_elems.borrow_mut().truncate(match_idx);
     }
 
-    fn handle_misnested_a_tags(&self, tag: &Tag) {
+    fn handle_misnested_a_tags(&self, tag: &Tag) -> Option<()> {
         let Some(node) = self
             .active_formatting_end_to_marker()
             .iter()
             .find(|&(_, n, _)| self.html_elem_named(n, local_name!("a")))
             .map(|(_, n, _)| n.clone())
         else {
-            return;
+            return Some(());
         };
 
         self.unexpected(tag);
-        self.adoption_agency(local_name!("a"));
+        self.adoption_agency(local_name!("a"))?;
         self.position_in_active_formatting(&node)
             .map(|index| self.active_formatting.borrow_mut().remove(index));
         self.remove_from_stack(&node);
+        Some(())
     }
 
     //§ tree-construction
@@ -1704,22 +1750,22 @@ where
         self.adjust_foreign_attributes(&mut tag);
 
         if tag.self_closing {
-            self.insert_element(
+            stop_on_none!(self.insert_element(
                 PushFlag::NoPush,
                 ns,
                 tag.name,
                 tag.attrs,
                 tag.had_duplicate_attributes,
-            );
+            ));
             ProcessResult::DoneAckSelfClosing
         } else {
-            self.insert_element(
+            stop_on_none!(self.insert_element(
                 PushFlag::Push,
                 ns,
                 tag.name,
                 tag.attrs,
                 tag.had_duplicate_attributes,
-            );
+            ));
             ProcessResult::Done
         }
     }
@@ -1884,22 +1930,22 @@ where
         self.adjust_foreign_attributes(&mut tag);
         if tag.self_closing {
             // FIXME(#118): <script /> in SVG
-            self.insert_element(
+            stop_on_none!(self.insert_element(
                 PushFlag::NoPush,
                 current_ns,
                 tag.name,
                 tag.attrs,
                 tag.had_duplicate_attributes,
-            );
+            ));
             ProcessResult::DoneAckSelfClosing
         } else {
-            self.insert_element(
+            stop_on_none!(self.insert_element(
                 PushFlag::Push,
                 current_ns,
                 tag.name,
                 tag.attrs,
                 tag.had_duplicate_attributes,
-            );
+            ));
             ProcessResult::Done
         }
     }
