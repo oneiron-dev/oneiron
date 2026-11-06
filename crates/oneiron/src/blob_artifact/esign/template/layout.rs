@@ -2,7 +2,7 @@
 //! The flow pages as far as its content runs (Rule 5): no page, operation or
 //! byte count refuses it, and a table row taller than a page splits across
 //! pages.
-use super::budget::{Budget, ScratchVec, WorkDeadlineWriter};
+use super::budget::{Backing, Budget, ScratchVec, WorkDeadlineWriter};
 use super::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, Stream, dictionary};
@@ -29,14 +29,49 @@ impl Default for Style {
     }
 }
 struct Run {
-    text: Vec<u8>,
+    text: ScratchVec<u8>,
     style: Style,
     x: f64,
+}
+/// Frees the operations and their text before returning their admissions.
+pub(super) struct PageOperations {
+    operations: ScratchVec<Operation>,
+    text_backing: Backing,
+}
+impl PageOperations {
+    fn new(budget: &Budget) -> Self {
+        Self {
+            operations: ScratchVec::new(budget),
+            text_backing: Backing::new(budget.clone()),
+        }
+    }
+
+    fn push(&mut self, operation: Operation) -> Result<()> {
+        self.operations.push(operation)
+    }
+
+    fn push_text(&mut self, text: ScratchVec<u8>) -> Result<()> {
+        let bytes = text.into_bytes_charged_to(&mut self.text_backing)?;
+        self.push(Operation::new(
+            "Tj",
+            vec![Object::String(bytes, lopdf::StringFormat::Literal)],
+        ))
+    }
+
+    fn extend(&mut self, mut page: Self) -> Result<()> {
+        self.text_backing.absorb(&mut page.text_backing)?;
+        self.operations.extend(page.operations)
+    }
+}
+impl AsRef<[Operation]> for PageOperations {
+    fn as_ref(&self) -> &[Operation] {
+        self.operations.as_ref()
+    }
 }
 pub(super) struct Flow {
     pub(super) budget: Budget,
     pub(super) page: TemplatePage,
-    pub(super) pages: ScratchVec<ScratchVec<Operation>>,
+    pub(super) pages: ScratchVec<PageOperations>,
     pub(super) y: f64,
     line: ScratchVec<Run>,
     x: f64,
@@ -46,7 +81,7 @@ pub(super) struct Flow {
 impl Flow {
     pub(super) fn with_budget(page: TemplatePage, budget: Budget) -> Result<Self> {
         let mut pages = ScratchVec::new(&budget);
-        pages.push(ScratchVec::new(&budget))?;
+        pages.push(PageOperations::new(&budget))?;
         let line = ScratchVec::new(&budget);
         Ok(Self {
             budget,
@@ -66,7 +101,7 @@ impl Flow {
         self.budget.checkpoint()?;
         self.flush()?;
         if self.y > self.page.margin {
-            self.pages.push(ScratchVec::new(&self.budget))?;
+            self.pages.push(PageOperations::new(&self.budget))?;
             self.y = self.page.margin;
         }
         Ok(())
@@ -138,10 +173,11 @@ impl Flow {
             if width > self.width() + 0.001 {
                 return Err(ContentTemplateError::Overflow);
             }
-            let mut text = chunk.to_vec();
+            let mut text = ScratchVec::new(&self.budget);
             if self.space && self.x > 0. {
-                text.insert(0, b' ');
+                text.push(b' ')?;
             }
+            text.extend(chunk.iter().copied())?;
             let advance = text.len() as f64 * cell;
             self.line.push(Run {
                 text,
@@ -161,7 +197,7 @@ impl Flow {
             return Ok(());
         }
         if self.y + self.line_height > self.page.height - self.page.margin {
-            self.pages.push(ScratchVec::new(&self.budget))?;
+            self.pages.push(PageOperations::new(&self.budget))?;
             self.y = self.page.margin;
         }
         if self.line_height > self.page.height - 2. * self.page.margin {
@@ -207,10 +243,7 @@ impl Flow {
                     self.page.height - self.y - style.size,
                 ],
             )?;
-            ops.push(Operation::new(
-                "Tj",
-                vec![Object::String(run.text, lopdf::StringFormat::Literal)],
-            ))?;
+            ops.push_text(run.text)?;
         }
         op(ops, "ET", &[])?;
         self.y += self.line_height;
@@ -369,7 +402,7 @@ impl Flow {
         Ok(bytes)
     }
 }
-fn op(ops: &mut ScratchVec<Operation>, name: &str, values: &[f64]) -> Result<()> {
+fn op(ops: &mut PageOperations, name: &str, values: &[f64]) -> Result<()> {
     ops.push(Operation::new(
         name,
         values.iter().map(|n| Object::Real(*n as f32)).collect(),

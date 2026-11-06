@@ -38,13 +38,24 @@ keep their container's admission until they free that backing.
 The requested allocation is admitted before `try_reserve_exact`; any capacity
 surplus reported by the standard allocator is settled after allocation. This is
 not a bound on transient allocator surplus or allocator metadata. Container
-backing does not count the heap payload owned by its elements. DOM/parser and
-selector internals, merge/CSS strings, sorting scratch, operation and text
-payloads, fonts, PDF objects and output bytes remain outside this admission slice.
+backing by itself does not count the heap payload owned by its elements.
+DOM/parser and selector internals, merge/CSS and text-normalization strings,
+encoding scratch, sorting scratch, other operation payloads, fonts, PDF objects
+and output bytes remain outside this admission slice.
 A drained line keeps its backing admission. Page-operation containers remain
 owned by the generic native `Content` while it encodes them; `AsRef` borrows the
 operations without detaching their backing guard. Cell-page operations move to
 the parent container while their source iterator keeps its backing admission.
+
+Owned Windows-1252 run-text bytes also use the caller's memory admission. Each
+run retains its actual backing capacity, including an optional leading space.
+Moving text into a PDF string transfers that exact admission to the owning
+page before moving the bytes, without cloning or charging them again. A page
+owns its operations before its aggregate text guard, so it frees those bytes
+before returning their admission. Table-cell pages transfer both their text
+admission and operations into the parent. The generic native `Content` owns
+that page through encoding, including error returns. The encoded PDF buffer
+and the codec's own string-escaping scratch are not counted by this guard.
 
 Cooperative checkpoints run through validation, merge/CSS, render, text/run,
 table and page loops, and around parsing and PDF writing. Expiry returns
