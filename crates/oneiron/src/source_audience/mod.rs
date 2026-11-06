@@ -35,6 +35,7 @@
 //! landed.
 
 pub(crate) mod carried;
+mod obligation;
 mod replica;
 mod wake;
 mod walk;
@@ -44,9 +45,12 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
+pub(crate) use obligation::SourceAudienceBirth;
 pub(crate) use replica::{
     ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
@@ -599,6 +603,9 @@ pub(crate) fn thread_policy_in_txn(
 /// Binds the row `record` to `policy` at its birth, in the writer that
 /// lands it. A row bound already stays where it was born: a second bind to
 /// the same policy changes nothing, and one to another policy is refused.
+/// Only a CONVERSATION, TURN or MESSAGE whose live bytes in `txn` carry the
+/// source-audience obligation is bound (fix list row 16256): the stamp in
+/// its own body is what tells every later read it is a source's row.
 pub(crate) fn bind_record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -607,6 +614,20 @@ pub(crate) fn bind_record_in_txn(
 ) -> Result<()> {
     if POLICIES.get(&vault.store, txn, policy)?.is_none() {
         return Err(Error::EntityNotFound);
+    }
+    let stamped = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, record)?
+        .is_some_and(|raw| {
+            crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                matches!(
+                    header.entity_type,
+                    ENTITY_TYPE_CONVERSATION | ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE
+                )
+            }) && obligation::row_obligation(&raw) == SourceAudienceObligation::Required
+        });
+    if !stamped {
+        return Err(Error::InvalidConfig(
+            "a source audience binds only a row its landing stamped".into(),
+        ));
     }
     match RECORDS.get(&vault.store, txn, record)? {
         Some(bound) if bound == *policy => Ok(()),
