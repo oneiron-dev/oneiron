@@ -4954,8 +4954,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.settings.model_pack.replace",
-                crate::code_run::vault_read::request_schema::<crate::settings::ModelStackPreference>(
-                ),
+                crate::code_run::vault_read::request_schema::<
+                    crate::settings::model_pack::ModelPackPreference,
+                >(),
+            ),
+            (
+                "vault.model_pack.revert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_pack::ModelPackRevertRequest,
+                >(),
             ),
             (
                 "vault.connectors.web.usage",
@@ -7876,6 +7883,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.settings.web_connector.replace",
     "vault.settings.model_pack",
     "vault.settings.model_pack.replace",
+    "vault.model_pack.revert",
     "vault.connectors.web.usage",
     "vault.models.oneironer.bind",
     "vault.models.routes.read",
@@ -10006,6 +10014,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.settings.model_pack.replace" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_pack::ModelPackSetting,
         >(),
+        "vault.model_pack.revert" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::model_pack::ModelPackRevert>()
+        }
         "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
             crate::web_connector::WebConnectorUsagePage,
         >(),
@@ -17119,6 +17130,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.model_pack.revert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.connectors.web.usage" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22697,7 +22715,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
         "vault.settings.model_pack.replace" => {
-            let _input: crate::settings::ModelStackPreference = decode(value.clone())?;
+            let _input: crate::settings::model_pack::ModelPackPreference = decode(value.clone())?;
+        }
+        "vault.model_pack.revert" => {
+            let _input: crate::llm::model_pack::ModelPackRevertRequest = decode(value.clone())?;
         }
         "vault.connectors.web.usage" => {
             let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
@@ -25854,6 +25875,7 @@ pub fn invoke(
         "vault.settings.model_pack.replace" => {
             encode(vault_settings_model_pack_replace(memory, decode(value)?)?)
         }
+        "vault.model_pack.revert" => encode(vault_model_pack_revert(memory, decode(value)?)?),
         "vault.connectors.web.usage" => encode(vault_connectors_web_usage(memory, decode(value)?)?),
         "vault.models.oneironer.bind" => {
             encode(vault_models_oneironer_bind(memory, decode(value)?)?)
@@ -34183,9 +34205,15 @@ pub fn vault_settings_model_pack(
 }
 pub fn vault_settings_model_pack_replace(
     memory: &Memory<'_>,
-    input: crate::settings::ModelStackPreference,
+    input: crate::settings::model_pack::ModelPackPreference,
 ) -> MemoryResult<crate::llm::model_pack::ModelPackSetting> {
     crate::task_verb::sdk::replace_model_pack_preference(memory, input)
+}
+pub fn vault_model_pack_revert(
+    memory: &Memory<'_>,
+    input: crate::llm::model_pack::ModelPackRevertRequest,
+) -> MemoryResult<crate::llm::model_pack::ModelPackRevert> {
+    crate::task_verb::sdk::revert_model_pack(memory, input)
 }
 pub fn vault_connectors_web_usage(
     memory: &Memory<'_>,

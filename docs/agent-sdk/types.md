@@ -1318,6 +1318,8 @@ class Oneiron:
         @property
         def models(self) -> "Oneiron._VaultModelsVerbs": ...
         @property
+        def model_pack(self) -> "Oneiron._VaultModelPackVerbs": ...
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
@@ -2974,9 +2976,9 @@ class Oneiron:
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
     class _VaultSettingsModelPackVerbs:
         def __call__(self, spec: Facade.EmptyRequest) -> Facade.ModelPackSetting:
-            """Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack."""
-        def replace(self, spec: Facade.ModelStackPreference) -> Facade.ModelPackSetting:
-            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries."""
+            """Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack."""
+        def replace(self, spec: Facade.ModelPackPreference) -> Facade.ModelPackSetting:
+            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."""
     class _VaultSecretsVerbs:
         def code_run_lifts(self, spec: Facade.CodeRunSecretLiftRequest) -> Facade.CodeRunSecretLiftStatus:
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
@@ -3776,6 +3778,9 @@ class Oneiron:
             """Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."""
         def deny(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
             """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
+    class _VaultModelPackVerbs:
+        def revert(self, spec: Facade.ModelPackRevertRequest) -> Facade.ModelPackRevert:
+            """Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...

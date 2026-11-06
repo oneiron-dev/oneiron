@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4588 declarations.
-Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1265 facade rows, 4592 declarations.
+Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -471,7 +471,7 @@ IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowD
 class InboxListRequest(TypedDict):
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
-NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed", "thread_walk_in", "thread_history_opened", "thread_join_requested"]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed", "thread_walk_in", "thread_history_opened", "thread_join_requested", "model_pack_changed"]
 class NotificationSource(TypedDict):
     producer: str
     event: str
@@ -16558,12 +16558,16 @@ class WebConnectorSetting(TypedDict):
     provider: WebProvider
     key: WebProviderKey
 ModelStackId = str
-class ModelStackPreferenceAutoUpgrade(TypedDict):
+ModelPackId = str
+class ModelPackPreferenceAutoUpgrade(TypedDict):
     mode: Literal["auto_upgrade"]
-class ModelStackPreferencePinned(TypedDict):
+class ModelPackPreferencePinned(TypedDict):
     mode: Literal["pinned"]
     stack: ModelStackId
-ModelStackPreference = ModelStackPreferenceAutoUpgrade | ModelStackPreferencePinned
+class ModelPackPreferencePinnedPack(TypedDict):
+    mode: Literal["pinned_pack"]
+    pack: ModelPackId
+ModelPackPreference = ModelPackPreferenceAutoUpgrade | ModelPackPreferencePinned | ModelPackPreferencePinnedPack
 class ModelPackReceipt(TypedDict):
     pack: str
     version: str
@@ -16575,6 +16579,7 @@ class ModelPackReceipt(TypedDict):
     pin_type: str
     pin_value: str
     publisher: str
+    changelog_headline: NotRequired[str | None]
 ModelStackDeprecationStage = Literal["scheduled", "countdown", "retired"]
 class ModelStackDeprecationStatus(TypedDict):
     stage: ModelStackDeprecationStage
@@ -16589,10 +16594,17 @@ class ModelPackView(TypedDict):
     successor: NotRequired[str | None]
     retirement: NotRequired[ModelStackDeprecationStatus | None]
 class ModelPackSetting(TypedDict):
-    preference: ModelStackPreference
+    preference: ModelPackPreference
     active: NotRequired[ModelPackView | None]
     previous: NotRequired[ModelPackReceipt | None]
+    change_ref: NotRequired[str | None]
     installed: list[ModelPackView]
+class ModelPackRevertRequest(TypedDict):
+    change_ref: str
+ModelPackRevertBlock = Literal["superseded", "no_previous_pack", "not_installed", "retired"]
+class ModelPackRevert(TypedDict):
+    blocked: NotRequired[ModelPackRevertBlock | None]
+    setting: ModelPackSetting
 class WebConnectorUsageRead(TypedDict):
     since_ms: NotRequired[int | None]
     limit: NotRequired[int | None]

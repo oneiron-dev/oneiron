@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1264 facade rows, 4586 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
+// UniFFI census: 1265 facade rows, 4589 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -1550,6 +1550,8 @@ pub enum NotificationKind {
     ThreadHistoryOpened,
     #[serde(rename = "thread_join_requested")]
     ThreadJoinRequested,
+    #[serde(rename = "model_pack_changed")]
+    ModelPackChanged,
 }
 
 /// `oneiron::inbox::notification::NotificationSource`.
@@ -52045,16 +52047,21 @@ pub struct WebConnectorSetting {
     pub key: WebProviderKey,
 }
 
-/// `oneiron_store::settings::model_versioning::ModelStackPreference`.
+/// `oneiron_store::settings::model_pack::ModelPackPreference`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
-pub enum ModelStackPreference {
+pub enum ModelPackPreference {
     #[serde(rename = "auto_upgrade")]
     AutoUpgrade,
     #[serde(rename = "pinned")]
     Pinned {
         #[serde(rename = "stack")]
         stack: String,
+    },
+    #[serde(rename = "pinned_pack")]
+    PinnedPack {
+        #[serde(rename = "pack")]
+        pack: String,
     },
 }
 
@@ -52082,6 +52089,12 @@ pub struct ModelPackReceipt {
     pub pin_value: String,
     #[serde(rename = "publisher")]
     pub publisher: String,
+    #[serde(
+        rename = "changelog_headline",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub changelog_headline: Option<String>,
 }
 
 /// `oneiron_store::settings::model_versioning::ModelStackDeprecationStage`.
@@ -52143,13 +52156,50 @@ pub struct ModelPackView {
 #[serde(deny_unknown_fields)]
 pub struct ModelPackSetting {
     #[serde(rename = "preference")]
-    pub preference: ModelStackPreference,
+    pub preference: ModelPackPreference,
     #[serde(rename = "active", default, skip_serializing_if = "Option::is_none")]
     pub active: Option<ModelPackView>,
     #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<ModelPackReceipt>,
+    #[serde(
+        rename = "change_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub change_ref: Option<String>,
     #[serde(rename = "installed")]
     pub installed: Vec<ModelPackView>,
+}
+
+/// `oneiron::llm::model_pack::change::ModelPackRevertRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPackRevertRequest {
+    #[serde(rename = "change_ref")]
+    pub change_ref: String,
+}
+
+/// `oneiron::llm::model_pack::change::ModelPackRevertBlock`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelPackRevertBlock {
+    #[serde(rename = "superseded")]
+    Superseded,
+    #[serde(rename = "no_previous_pack")]
+    NoPreviousPack,
+    #[serde(rename = "not_installed")]
+    NotInstalled,
+    #[serde(rename = "retired")]
+    Retired,
+}
+
+/// `oneiron::llm::model_pack::change::ModelPackRevert`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPackRevert {
+    #[serde(rename = "blocked", default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<ModelPackRevertBlock>,
+    #[serde(rename = "setting")]
+    pub setting: ModelPackSetting,
 }
 
 /// `oneiron_store::settings::web_connector::WebConnectorUsageRead`.

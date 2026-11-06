@@ -4461,10 +4461,15 @@ export_facade! {
     let output = client.vault_settings_model_pack(&input)?;
     crate::codec::lift_record("vault.settings.model_pack", &output)
 };
-"vault.settings.model_pack.replace" => fn vault_settings_model_pack_replace(&self, input: ModelStackPreference) -> ModelPackSetting = |client| {
-    let input: oneiron::settings::ModelStackPreference = crate::codec::lower_record("vault.settings.model_pack.replace", input)?;
+"vault.settings.model_pack.replace" => fn vault_settings_model_pack_replace(&self, input: ModelPackPreference) -> ModelPackSetting = |client| {
+    let input: oneiron::settings::model_pack::ModelPackPreference = crate::codec::lower_record("vault.settings.model_pack.replace", input)?;
     let output = client.vault_settings_model_pack_replace(&input)?;
     crate::codec::lift_record("vault.settings.model_pack.replace", &output)
+};
+"vault.model_pack.revert" => fn vault_model_pack_revert(&self, input: ModelPackRevertRequest) -> ModelPackRevert = |client| {
+    let input: oneiron::llm::model_pack::ModelPackRevertRequest = crate::codec::lower_record("vault.model_pack.revert", input)?;
+    let output = client.vault_model_pack_revert(&input)?;
+    crate::codec::lift_record("vault.model_pack.revert", &output)
 };
 "vault.connectors.web.usage" => fn vault_connectors_web_usage(&self, input: WebConnectorUsageRead) -> WebConnectorUsagePage = |client| {
     let input: oneiron::web_connector::WebConnectorUsageRead = crate::codec::lower_record("vault.connectors.web.usage", input)?;

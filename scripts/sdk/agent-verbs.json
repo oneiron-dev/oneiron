@@ -14107,7 +14107,7 @@
     },
     {
       "name": "vault.settings.model_pack",
-      "description": "Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack.",
+      "description": "Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack.",
       "input": "crate::task_verb::sdk::EmptyRequest",
       "output": "crate::llm::model_pack::ModelPackSetting",
       "call": "crate::task_verb::sdk::read_model_pack_setting(memory)?",
@@ -14123,10 +14123,26 @@
     },
     {
       "name": "vault.settings.model_pack.replace",
-      "description": "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries.",
-      "input": "crate::settings::ModelStackPreference",
+      "description": "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice.",
+      "input": "crate::settings::model_pack::ModelPackPreference",
       "output": "crate::llm::model_pack::ModelPackSetting",
       "call": "crate::task_verb::sdk::replace_model_pack_preference(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.model_pack.revert",
+      "description": "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing.",
+      "input": "crate::llm::model_pack::ModelPackRevertRequest",
+      "output": "crate::llm::model_pack::ModelPackRevert",
+      "call": "crate::task_verb::sdk::revert_model_pack(memory, input)?",
       "scope": "Write",
       "host_door": true,
       "host_door_precheck": false,

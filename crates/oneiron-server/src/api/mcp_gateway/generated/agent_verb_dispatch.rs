@@ -1154,6 +1154,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.settings.web_connector.replace" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.model_pack" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.model_pack.replace" => a.spec.clone().ok_or_else(invalid),
+        "vault.model_pack.revert" => a.spec.clone().ok_or_else(invalid),
         "vault.connectors.web.usage" => a.spec.clone().ok_or_else(invalid),
         "vault.models.oneironer.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.read" => a.spec.clone().ok_or_else(invalid),
@@ -4304,6 +4305,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.settings.model_pack.replace" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.model_pack.revert" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.connectors.web.usage" => {
@@ -20897,12 +20901,30 @@ async fn execute_agent_verb_row_on(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.settings.model_pack.replace", &input)
                 .map_err(mcp_facade_error)?;
-            let input: oneiron::settings::ModelStackPreference =
+            let input: oneiron::settings::model_pack::ModelPackPreference =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_settings_model_pack_replace(
                     server, auth, input,
                 ),
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.model_pack.revert" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.model_pack.revert", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_pack::ModelPackRevertRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_model_pack_revert(server, auth, input),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
