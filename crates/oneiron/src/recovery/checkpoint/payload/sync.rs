@@ -149,6 +149,11 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         value: &[u8],
         out: &mut Captured,
     ) -> Result<bool> {
+        if matches!(carrier, Carrier::SyncQueue)
+            && crate::sync::queue::capture_home_claim_actor_copy(key, value, out)?
+        {
+            return Ok(true);
+        }
         let rows = CapturedSyncRows::new(vec![CapturedSyncRow {
             carrier: sync_carrier(carrier),
             key,

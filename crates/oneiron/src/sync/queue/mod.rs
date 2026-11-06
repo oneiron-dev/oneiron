@@ -80,6 +80,7 @@ pub struct SyncQueue {
     vault: Arc<Vault>,
 }
 
+mod actor_copy;
 pub(super) mod checkpoint;
 mod codec;
 mod core;
@@ -88,6 +89,9 @@ mod home_claim_copy;
 mod scrub;
 mod seq;
 
+pub(crate) use self::actor_copy::{
+    capture_home_claim_actor_copy, open_home_claim_actor_copy_for_restore,
+};
 pub(crate) use self::embed_page::EmbedQueueRow;
 pub(crate) use self::home_claim_copy::{
     capture_home_claim_copy, home_claim_copy_skeleton, restore_home_claim_copy,
@@ -103,7 +107,6 @@ pub(crate) use self::seq::{
     clear_embed_job_home_claim_copy_in_txn, delete_embed_job_in_txn, push_delete_bearing_in_txn,
     push_embed_job_in_txn, retain_embed_job_home_claim_copy_in_txn,
 };
-
 #[cfg(test)]
 mod tests;
 

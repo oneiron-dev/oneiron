@@ -5,6 +5,7 @@ pub(crate) mod actor_copy;
 pub(crate) mod copy_scope;
 mod pending;
 pub(crate) mod retained;
+pub(crate) mod retained_copy;
 mod sealed;
 pub(crate) mod source;
 
