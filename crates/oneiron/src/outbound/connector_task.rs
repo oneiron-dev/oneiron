@@ -206,6 +206,13 @@ pub(crate) fn put_connector_send_task_in_txn(
     counterparty_ref: Option<&str>,
     occurred_at: u64,
 ) -> Result<(), Error> {
+    // Fix list row 17645: a TASK body keeps one target, so a message to
+    // several recipients sends at once and is never scheduled to lose them.
+    if !intent.recipients.is_empty() {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "a connector send task names one recipient",
+        )));
+    }
     if let Some(party) = counterparty_ref {
         crate::write_envelope::communication_record::validate_key_string(party)?;
         if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
@@ -411,6 +418,9 @@ impl Vault {
                 verb: body.verb,
                 channel: body.channel,
                 target: body.target,
+                // A connector TASK sends to its one target (fix list row
+                // 17645): a message to several is never scheduled.
+                recipients: Vec::new(),
                 content_ref: body.content_ref,
                 idempotency_key: body.idempotency_key,
                 dedupe_key: body.dedupe_key,
