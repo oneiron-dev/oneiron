@@ -580,9 +580,8 @@ impl CompactionSpawn for ThreadSpawn {
                 );
                 return;
             };
-            if let Err(error) = std::thread::Builder::new()
-                .name("code-mode-compaction".to_owned())
-                .spawn(move || {
+            if let Err(error) =
+                crate::engine_thread("code-mode-compaction".to_owned()).spawn(move || {
                     let _permit = permit;
                     pass();
                 })

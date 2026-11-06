@@ -168,8 +168,8 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub use self::storage::{
-    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
-    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+    CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
+    CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
