@@ -13,7 +13,9 @@
 //! host's root key (FIX 2053). A host holding no signing key answers none.
 //! Beside the notices rides the signed ReRoot chain from where the person's
 //! env stands to that key, so a device that never folded a re-root still
-//! verifies them.
+//! verifies them. The archive doors sign a one-shot transferred slip's spend
+//! into the authority log with that key (FIX 11862); a host holding none
+//! still answers, and its archive rows alone keep the spend.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -132,6 +134,7 @@ async fn removal_exports(
     let (slip, proof, signature) = left_proof(&headers)?;
     let exports = tokio::task::spawn_blocking(move || {
         server.vault().removed_owner_exports(
+            server.host_issuer(),
             &slip,
             proof.timestamp,
             &signature,
@@ -167,6 +170,7 @@ async fn removal_export(
     let (slip, proof, signature) = left_proof(&headers)?;
     let export = tokio::task::spawn_blocking(move || {
         server.vault().removed_owner_archive(
+            server.host_issuer(),
             &slip,
             proof.timestamp,
             &signature,
