@@ -118,6 +118,34 @@ pub(super) fn retain(
     Ok(proposal)
 }
 
+/// Erasing `actor` from the stranded proposals (FIX 6258): a proposal whose
+/// revision it authored keeps its revision content, folds and body, and
+/// names no author. One-way, in the erase's own transaction. An id whose
+/// entity is no actor scans nothing.
+///
+/// # Errors
+/// Storage errors, or a proposal that cannot be read.
+pub(crate) fn erase_proposal_author_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut named = Vec::new();
+    for row in PROPOSALS.iter_from(&vault.store, wtxn, &[])? {
+        let (revision_id, mut proposal) = row?;
+        if super::commit_metadata::clear_author(&mut proposal.revision, actor) {
+            named.push((revision_id, proposal));
+        }
+    }
+    for (revision_id, proposal) in named {
+        PROPOSALS.put(&vault.store, wtxn, &revision_id, &proposal)?;
+    }
+    Ok(())
+}
+
 /// Drops the revision's stranded proposal, body and all, in its artifact's
 /// teardown write (FIX 9694).
 pub(super) fn delete_proposal_in_txn(
@@ -129,7 +157,7 @@ pub(super) fn delete_proposal_in_txn(
     Ok(())
 }
 
-fn encode_proposal(proposal: &CodeRevisionProposal) -> Result<Vec<u8>> {
+pub(super) fn encode_proposal(proposal: &CodeRevisionProposal) -> Result<Vec<u8>> {
     let fields = Value::Map(vec![
         (
             Value::from("revision"),
@@ -155,7 +183,7 @@ fn encode_proposal(proposal: &CodeRevisionProposal) -> Result<Vec<u8>> {
     encode_value(&fields, "stranded revision encode")
 }
 
-fn decode(raw: &[u8]) -> Result<CodeRevisionProposal> {
+pub(super) fn decode(raw: &[u8]) -> Result<CodeRevisionProposal> {
     let mut cursor = raw;
     let Value::Map(fields) = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid())? else {
         return Err(invalid());

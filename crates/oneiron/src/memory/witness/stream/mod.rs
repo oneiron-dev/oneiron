@@ -151,27 +151,72 @@ impl MessageStreamRuntime {
         lock(&self.entries)?.remove(&handle.message);
         Ok(())
     }
+    /// Retires `entry`, whose `state` the caller holds, after an erase
+    /// committed over it (FIX 9973): it ends, its text, raw copy and lifted
+    /// handles go, its turn under the vault's row is released, and, while
+    /// the registry still names this very entry, its presence clears and it
+    /// leaves the registry. A State another stream of the message already
+    /// replaced touches nothing of the replacement's.
+    fn retire_erased(
+        &self,
+        entry: &Arc<Mutex<State>>,
+        state: &mut State,
+    ) -> MessageStreamResult<()> {
+        state.terminal = true;
+        state.base = String::new();
+        state.pending = String::new();
+        state.raw = String::new();
+        state.seed.saved = String::new();
+        state.lifted = Lifted::default();
+        state.withheld = false;
+        state.relift = false;
+        state.dirty = false;
+        state._turn = None;
+        let handle = state.handle();
+        // No replacement is admitted while this entry stays in the registry,
+        // and only a holder of its State removes it.
+        let current = matches!(
+            lock(&self.entries)?.get(&handle.message),
+            Some(Resident::Recorded(resident)) if Arc::ptr_eq(resident, entry)
+        );
+        if current {
+            #[cfg(feature = "sync")]
+            self.presence.clear(&state.seed);
+            self.remove(handle)?;
+        }
+        Ok(())
+    }
 }
 impl Memory<'_> {
+    /// The caller's live stream `handle`. One an erase committed over is
+    /// retired here and reads as not found (FIX 9973).
     fn stream_entry(&self, handle: MessageStreamHandle) -> MessageStreamResult<Arc<Mutex<State>>> {
         let entry = self.vault.message_streams.entry(handle)?;
         {
-            let state = lock(&entry)?;
+            let mut state = lock(&entry)?;
             state.check(handle)?;
+            if self.vault.retire_stream_if_erased(&entry, &mut state)? {
+                return Err(MessageStreamError::StreamNotFound);
+            }
             if state.seed.actor != self.actor || state.seed.actor_class != self.actor_class as u8 {
                 return Err(MessageStreamError::WrongActor);
             }
         }
         Ok(entry)
     }
-    /// Reads the caller's accepted output even after a failed finalize.
+    /// Reads the caller's accepted output even after a failed finalize. An
+    /// erase committed before the read, judged under the guard the text is
+    /// read under, leaves nothing to read (FIX 9973).
     pub fn message_stream_partial(
         &self,
         handle: MessageStreamHandle,
     ) -> MessageStreamResult<MessageStreamPartial> {
         let entry = self.stream_entry(handle)?;
-        let state = lock(&entry)?;
+        let mut state = lock(&entry)?;
         state.check(handle)?;
+        if self.vault.retire_stream_if_erased(&entry, &mut state)? {
+            return Err(MessageStreamError::StreamNotFound);
+        }
         Ok(MessageStreamPartial {
             message_id: handle.message,
             text: state.text(),
@@ -181,6 +226,27 @@ impl Memory<'_> {
     }
 }
 impl Vault {
+    /// Retires `entry`, whose `state` the caller holds, when an erase has
+    /// committed over its stream (FIX 9973), judged in a read of its own:
+    /// `true` once it is retired. The caller holds no writer. A read that
+    /// fails is an error, never taken for an erase.
+    fn retire_stream_if_erased(
+        &self,
+        entry: &Arc<Mutex<State>>,
+        state: &mut State,
+    ) -> MessageStreamResult<bool> {
+        if state.terminal {
+            return Ok(false);
+        }
+        let erased = {
+            let txn = self.store.env.read_txn()?;
+            storage::stream_erased_in_txn(self, &txn, &state.seed)?
+        };
+        if erased {
+            self.message_streams.retire_erased(entry, state)?;
+        }
+        Ok(erased)
+    }
     /// Number of resident handles. Bounded independently of token traffic.
     pub fn active_message_streams(&self) -> MessageStreamResult<usize> {
         Ok(lock(&self.message_streams.entries)?.len())
