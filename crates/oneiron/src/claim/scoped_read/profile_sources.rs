@@ -113,9 +113,12 @@ impl ScopedRead<'_> {
     /// Whether this read's credential reads the exact words `source` names,
     /// in `txn`: its record still stands for this reader, the version the
     /// words were read at is one the record retains and still reads, this
-    /// reader's device rule, facets and world ceiling admit that version,
-    /// and the words it holds at the recorded ranges are the words pinned,
-    /// in this reader's secret sight. `Ok(false)` is a positive exclusion.
+    /// reader's device rule, facets and world ceiling admit that version
+    /// (where that ceiling holds it; one with no provable world is outside a
+    /// ceiling that narrows worlds), and the words it holds at the recorded
+    /// ranges are the words pinned, in this reader's secret sight, under the
+    /// lifted keys of every string the record holds. `Ok(false)` is a
+    /// positive exclusion.
     fn companion_profile_source_words_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -145,13 +148,19 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
-        if let Some(world) = crate::federation::record_scope::record_world_in(
-            &self.vault.store,
-            txn,
-            id,
-            header.entity_type,
-            body,
-        )? && !self.world_readable_in(txn, world)?
+        // The version sits where a read under this reader's world ceiling
+        // holds it, a NOTE in several worlds at its witness there: outside
+        // the ceiling, or with no position it can prove, it is kept out. A
+        // ceiling that leaves worlds whole binds no world.
+        let ceiling = self.actor_key.world_ceiling();
+        let narrows_worlds = !matches!(
+            ceiling.worlds,
+            oneiron_authority::federation::ScopeAxis::All
+        );
+        if narrows_worlds
+            && self
+                .world_record_in(txn, &id, header.entity_type, body, &ceiling)?
+                .is_none_or(|record| !record.is_narrowing_of(&ceiling))
         {
             return Ok(false);
         }
@@ -169,6 +178,7 @@ impl ScopedRead<'_> {
                 Ok(texts.iter().all(|text| keys.masked(text).is_none()))
             }
             PsychProfileSourceWords::Spans { text, ranges, pin } => {
+                let live_body = live.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
                 let (read, current) = match text {
                     PsychProfileSpanText::Document { frontier } => {
                         match crate::entity_doc::source_texts_at_in_txn(
@@ -185,17 +195,14 @@ impl ScopedRead<'_> {
                         let Some(read) = body_field(body, field) else {
                             return Ok(false);
                         };
-                        let current = live
-                            .get(ENTITY_METADATA_HEADER_LEN..)
-                            .and_then(|live| body_field(live, field))
-                            .unwrap_or_default();
+                        let current = body_field(live_body, field).unwrap_or_default();
                         (read, current)
                     }
                 };
                 let keys = LiftedKeys::of_in_txn(
                     &self.vault.store,
                     txn,
-                    [read.as_str(), current.as_str()],
+                    masking_texts(body, live_body, &read, &current),
                 )?;
                 Ok(span_words_readable(&read, ranges, *pin, &keys, sight))
             }
@@ -204,7 +211,8 @@ impl ScopedRead<'_> {
 }
 
 /// Whether a reader in `sight` reads the words `ranges` select of `text` as
-/// `pin` pinned them (FIX 11766); `keys` are the lifted keys `text` may hold.
+/// `pin` pinned them (FIX 11766); `keys` are the lifted keys a masked read of
+/// the record reads as handles ([`masking_texts`]).
 /// A content pin names the stored words: they must hash to it, and a reader
 /// who reads lifted keys as handles must find none among them. A projection
 /// pin names the words as a masked read shows them: that projection must
@@ -257,6 +265,26 @@ fn span_words_readable(
             hash == psych_profile_words_pin(masked.iter().map(String::as_str))
         }),
     }
+}
+
+/// The texts whose lifted keys a masked read of a record's words reads as
+/// handles, as the masked entity read collects them from every string of a
+/// body (FIX 11766): each string of the version's `body` and of the `live`
+/// body, then the selected text `read` and its live text `current`, each
+/// once. A key marked in another field of the record masks the selected
+/// words too.
+fn masking_texts(body: &[u8], live: &[u8], read: &str, current: &str) -> Vec<String> {
+    let mut texts: Vec<String> = Vec::new();
+    let named = body_texts(body)
+        .into_iter()
+        .chain(body_texts(live))
+        .chain([read.to_owned(), current.to_owned()]);
+    for text in named {
+        if !texts.contains(&text) {
+            texts.push(text);
+        }
+    }
+    texts
 }
 
 /// The string `field` holds at the top of `body`, a MessagePack map body.
