@@ -195,15 +195,15 @@ impl RpcReply {
         let mut masked = None;
         let packed = result.and_then(|(value, rows)| {
             masked = oneiron::task_verb::sdk::masked_reveal_reply(&call.method, &value);
-            wire::packed(&value)
-                .map(|bytes| (bytes, rows))
+            wire::prepare_result(value)
+                .map(|prepared| (prepared, rows))
                 .map_err(|_| too_large())
         });
         let (outcome, result_digest, served) = match &packed {
-            Ok((bytes, rows)) => (
+            Ok((prepared, rows)) => (
                 oneiron::receipt::CallOutcome::Ok,
                 Some(masked.as_ref().map_or_else(
-                    || oneiron::receipt::call_bytes_digest(bytes),
+                    || prepared.digest.clone(),
                     oneiron::receipt::call_json_digest,
                 )),
                 rows.iter()
@@ -253,10 +253,12 @@ impl RpcReply {
             },
         );
         let (frames, rows) = match packed {
-            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-            },
+            Ok((prepared, rows)) => {
+                match wire::prepared_result_chunks(request_id, prepared, &stamp) {
+                    Ok(frames) => (frames, Some(rows)),
+                    Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+                }
+            }
             Err(error) => (rpc_error(request_id, error, &stamp)?, None),
         };
         Ok(Self {
@@ -278,15 +280,12 @@ impl RpcReply {
     ) -> Result<Self, ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         let packed = result.and_then(|(value, rows)| {
-            wire::packed(&value)
-                .map(|bytes| (bytes, rows))
+            wire::prepare_result(value)
+                .map(|prepared| (prepared, rows))
                 .map_err(|_| too_large())
         });
         let (outcome, result_digest) = match &packed {
-            Ok((bytes, _)) => (
-                oneiron::receipt::CallOutcome::Ok,
-                oneiron::receipt::call_bytes_digest(bytes),
-            ),
+            Ok((prepared, _)) => (oneiron::receipt::CallOutcome::Ok, prepared.digest.clone()),
             Err(error) => (
                 oneiron::receipt::CallOutcome::Refused {
                     code: error.code().to_owned(),
@@ -302,10 +301,12 @@ impl RpcReply {
             Some(result_digest),
         );
         let (frames, rows) = match packed {
-            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-            },
+            Ok((prepared, rows)) => {
+                match wire::prepared_result_chunks(request_id, prepared, &stamp) {
+                    Ok(frames) => (frames, Some(rows)),
+                    Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+                }
+            }
             Err(error) => (rpc_error(request_id, error, &stamp)?, None),
         };
         Ok(Self {
@@ -314,7 +315,6 @@ impl RpcReply {
             rows,
         })
     }
-
     /// The frames as `conn`'s send door takes them: each chunk of a result
     /// carries the rows the release judges again (DEC-0005).
     pub(crate) fn queued(self, conn: u32) -> Vec<Vec<u8>> {
