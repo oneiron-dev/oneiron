@@ -256,7 +256,7 @@ impl PsychProfileSourceWords {
 /// The pin of `words`, the words a span's ranges select in range order
 /// (FIX 11766): the producer and every reader hash them alike.
 #[must_use]
-pub fn psych_profile_words_pin<'a>(words: impl IntoIterator<Item = &'a str>) -> [u8; 32] {
+pub fn psych_profile_words_pin(words: impl IntoIterator<Item = &str>) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(PSYCH_PROFILE_WORDS_PIN_DOMAIN);
     for word in words {
