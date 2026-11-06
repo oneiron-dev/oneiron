@@ -146,8 +146,8 @@ pub(crate) fn matched_contribution_facts_in_txn(
 }
 
 /// The capsule of the step `candidate`'s target check regenerates
-/// ([`super::ancestor`]), as it stands in `txn`: for a callable's load
-/// (FIX 3608), the step after its call's.
+/// ([`super::ancestor`]), as it stands in `txn`: for a callable's load or a
+/// delivered body (FIX 3608), the step after its call's.
 fn target_capsule(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
