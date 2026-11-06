@@ -52736,7 +52736,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FileHandle",
@@ -52748,7 +52748,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -52766,7 +52766,7 @@
      "path": "src/note/folder_source/mod.rs",
      "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "re-export": 1,
@@ -119640,6 +119640,7 @@
      "notable": [
       "FilesAttachArgs",
       "FilesCommand",
+      "FilesConvertArgs",
       "FilesListArgs",
       "FilesPathArgs",
       "FilesRescanArgs"
@@ -119648,7 +119649,7 @@
      "purpose": "`oneiron files`: the Files world on a stopped vault (FIX 6942), the folders this install keeps searchable on…",
      "surface": {
       "enum": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
