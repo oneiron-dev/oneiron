@@ -105,6 +105,7 @@ mod goal_optimize_doors;
 mod graduation_doors;
 mod grants_doors;
 mod graph_ask_doors;
+mod graph_fs_doors;
 mod guest_document_doors;
 mod guest_doors;
 mod hook_regen_doors;

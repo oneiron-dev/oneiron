@@ -6,9 +6,9 @@ use crate::write_envelope::claim_body::decode_claim_body;
 use oneiron_contracts::claim::ScopedReadReceipt;
 use rmpv::Value;
 
-use super::coreutils_text::LinePosition;
+use super::coreutils_text::{LinePosition, checkpoint, copy_text_parts};
 use super::model::GraphFsResolver;
-use super::paging::CommandOutputBuilder;
+use super::paging::{CommandOutputBuilder, SealedPosition};
 
 pub(super) struct ClaimGrepPage {
     pub(super) bytes: Vec<u8>,
@@ -27,9 +27,24 @@ impl GraphFsResolver<'_, '_> {
         pattern: &str,
         path: &str,
         cursor: Option<&str>,
+        reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<ClaimGrepPage> {
-        let scope = self.cursor_scope(&format!("grep -r {}:{pattern} {path}", pattern.len()));
-        let at: LinePosition = scope.open(cursor)?.unwrap_or_default();
+        let prefix = format!("grep -r {}:", pattern.len());
+        let listing = copy_text_parts(
+            &[&prefix, pattern, " ", path],
+            reader,
+            self.options.page_byte_cap,
+        )?;
+        let scope = self.cursor_scope_with(&listing, || checkpoint(reader))?;
+        let quantum = self.options.page_byte_cap.max(char::MAX.len_utf8());
+        let at: LinePosition = scope
+            .open_with(
+                cursor,
+                quantum,
+                || checkpoint(reader),
+                |bytes| Ok(LinePosition::from_bytes(bytes)),
+            )?
+            .unwrap_or_default();
         let (from, mut printed) = (at.line, at.printed);
         let cap = self.coreutils_result_cap();
         let hits = self.scoped_read.search_text(
@@ -46,7 +61,8 @@ impl GraphFsResolver<'_, '_> {
             .map(|hit| hit.id)
             .collect();
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
-        let projection = self.file_rows(&reads, Some(&hits.receipt.applied.as_filter()))?;
+        let projection =
+            self.file_rows_with_reader(&reads, Some(&hits.receipt.applied.as_filter()), reader)?;
         let mut receipt = hits.receipt;
         receipt.restrict_with(&projection.receipt);
         let mut out = CommandOutputBuilder::new(self.options);
@@ -77,7 +93,9 @@ impl GraphFsResolver<'_, '_> {
                 };
                 return Ok(ClaimGrepPage {
                     bytes: out.into_bytes(),
-                    next_cursor: Some(scope.seal(&at)),
+                    next_cursor: Some(
+                        scope.seal_bytes_with(&at.to_bytes(), quantum, || checkpoint(reader))?,
+                    ),
                     total,
                     receipt,
                 });
@@ -90,7 +108,9 @@ impl GraphFsResolver<'_, '_> {
         };
         Ok(ClaimGrepPage {
             bytes: out.into_bytes(),
-            next_cursor: more.then(|| scope.seal(&next)),
+            next_cursor: more
+                .then(|| scope.seal_bytes_with(&next.to_bytes(), quantum, || checkpoint(reader)))
+                .transpose()?,
             total,
             receipt,
         })

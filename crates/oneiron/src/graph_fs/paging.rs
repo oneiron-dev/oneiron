@@ -3,6 +3,7 @@
 
 pub(crate) use oneiron_store::graph_fs::paging::*;
 
+use super::coreutils_text::copy_text_parts;
 use super::model::{
     GRAPH_FS_MORE_RESERVE_BYTES, GraphFsEntry, GraphFsEntryKind, GraphFsMount, GraphFsOptions,
     GraphFsPage, GraphFsResolver,
@@ -82,6 +83,15 @@ impl GraphFsResolver<'_, '_> {
     /// The scope of one listing's cursors: this vault, this reader, and the
     /// listing named by `listing` (its path and any parameter it walks by).
     pub(super) fn cursor_scope(&self, listing: &str) -> CursorScope {
+        self.cursor_scope_with(listing, || Ok(()))
+            .expect("no-op cursor checkpoints cannot fail")
+    }
+
+    pub(super) fn cursor_scope_with(
+        &self,
+        listing: &str,
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<CursorScope> {
         let mut hasher = blake3::Hasher::new_keyed(position_key());
         hasher.update(b"oneiron.graph-fs.cursor.v1");
         hasher.update(self.scoped_read.vault().vault_id().as_bytes());
@@ -95,9 +105,15 @@ impl GraphFsResolver<'_, '_> {
         hasher.update(&(self.options.page_byte_cap as u64).to_be_bytes());
         for field in [self.scoped_read.actor_key().actor_ref(), listing] {
             hasher.update(&(field.len() as u64).to_be_bytes());
-            hasher.update(field.as_bytes());
+            for chunk in field
+                .as_bytes()
+                .chunks(self.options.page_byte_cap.max(char::MAX.len_utf8()))
+            {
+                checkpoint()?;
+                hasher.update(chunk);
+            }
         }
-        CursorScope(*hasher.finalize().as_bytes())
+        Ok(CursorScope(*hasher.finalize().as_bytes()))
     }
 }
 
@@ -115,9 +131,13 @@ pub(super) struct PageBuilder {
 }
 
 impl PageBuilder {
-    pub(super) fn new(path: &str, options: GraphFsOptions) -> Self {
-        Self {
-            path: path.to_owned(),
+    pub(super) fn new(
+        path: &str,
+        options: GraphFsOptions,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<Self> {
+        Ok(Self {
+            path: copy_text_parts(&[path], reader, options.page_byte_cap)?,
             mount: options.mount,
             byte_cap: options.page_byte_cap,
             max_entries: options.max_entries,
@@ -125,7 +145,7 @@ impl PageBuilder {
             entry_cursors: Vec::new(),
             byte_count: 0,
             last_temporal_cursor: None,
-        }
+        })
     }
 
     /// Pushes `entry` when it fits, with `after`, the cursor of the page that
@@ -151,12 +171,12 @@ impl PageBuilder {
         true
     }
 
-    pub(super) fn last_entry_name(&self) -> Option<String> {
+    pub(super) fn last_entry_name(&self) -> Option<&str> {
         self.entries
             .iter()
             .rev()
             .find(|entry| entry.kind != GraphFsEntryKind::Cursor)
-            .map(|entry| entry.name.clone())
+            .map(|entry| entry.name.as_str())
     }
 
     pub(super) fn set_last_temporal_cursor(&mut self, cursor: TemporalCursor) {
@@ -167,9 +187,13 @@ impl PageBuilder {
         self.last_temporal_cursor
     }
 
-    pub(super) fn finish(mut self, mut next_cursor: Option<String>) -> GraphFsPage {
-        if let Some(cursor) = next_cursor.clone() {
-            let mut more = GraphFsEntry::cursor(cursor);
+    pub(super) fn finish(
+        mut self,
+        mut next_cursor: Option<String>,
+        reader: &crate::batch::secret_scan::ContainerReader,
+    ) -> Result<GraphFsPage> {
+        if let Some(cursor) = next_cursor.as_deref() {
+            let mut more = GraphFsEntry::cursor(copy_text_parts(&[cursor], reader, self.byte_cap)?);
             // The first entry always stays: dropping it would hand out a
             // cursor past an entry no page shows. When it and the cursor
             // together pass the cap, the page goes without its `_more` line
@@ -183,8 +207,8 @@ impl PageBuilder {
                 // The page now ends at the entry before: it resumes after
                 // that one, when its listing says where that is.
                 if let Some(Some(after)) = self.entry_cursors.last() {
-                    next_cursor = Some(after.clone());
-                    more = GraphFsEntry::cursor(after.clone());
+                    next_cursor = Some(copy_text_parts(&[after], reader, self.byte_cap)?);
+                    more = GraphFsEntry::cursor(copy_text_parts(&[after], reader, self.byte_cap)?);
                 }
             }
             if self.byte_count + more.byte_cost() <= self.byte_cap {
@@ -196,7 +220,7 @@ impl PageBuilder {
         if self.entry_cursors.iter().all(Option::is_none) {
             self.entry_cursors.clear();
         }
-        GraphFsPage {
+        Ok(GraphFsPage {
             path: self.path,
             mount: self.mount,
             entries: self.entries,
@@ -204,7 +228,7 @@ impl PageBuilder {
             byte_count: self.byte_count,
             read_receipt: None,
             entry_cursors: self.entry_cursors,
-        }
+        })
     }
 }
 
@@ -245,25 +269,82 @@ impl CommandOutputBuilder {
     /// as much as fits, cut on a character boundary, on an empty one, so a
     /// line longer than any page prints across pages.
     pub(super) fn push_line(&mut self, line: &str, printed: usize) -> Option<usize> {
-        let printed = if line.is_char_boundary(printed) {
-            printed
-        } else {
-            0
-        };
-        let rest = &line[printed..];
-        if self.try_push(rest.as_bytes()) {
-            return None;
+        self.push_line_parts(&[line], printed)
+    }
+
+    /// Pushes a line from borrowed parts with the same rendered-byte cursor.
+    pub(super) fn push_line_parts(&mut self, parts: &[&str], printed: usize) -> Option<usize> {
+        let len = parts.iter().map(|part| part.len()).sum::<usize>();
+        let mut at = printed;
+        let mut boundary = printed == 0;
+        for part in parts {
+            if at <= part.len() {
+                boundary = part.is_char_boundary(at);
+                break;
+            }
+            at -= part.len();
         }
-        if self.entries > 0 {
+        let printed = if boundary { printed } else { 0 };
+        let rest_len = len - printed;
+        let Some((mut remaining, fits)) = self.line_window(rest_len) else {
             return Some(printed);
+        };
+        let mut skipped = printed;
+        let mut copied = 0;
+        for part in parts {
+            if skipped >= part.len() {
+                skipped -= part.len();
+                continue;
+            }
+            let rest = &part[skipped..];
+            skipped = 0;
+            let mut end = remaining.min(rest.len());
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.bytes.extend_from_slice(&rest.as_bytes()[..end]);
+            copied += end;
+            remaining -= end;
+            if end < rest.len() {
+                break;
+            }
         }
-        let mut end = self.byte_cap.min(rest.len());
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.bytes.extend_from_slice(&rest.as_bytes()[..end]);
         self.entries += 1;
-        Some(printed + end)
+        if fits { None } else { Some(printed + copied) }
+    }
+
+    /// Copies a qualified rendered-line window directly into this page.
+    pub(super) fn push_line_streamed(
+        &mut self,
+        len: usize,
+        printed: usize,
+        copy: impl FnOnce(&mut Vec<u8>, usize) -> Result<usize>,
+    ) -> Result<Option<usize>> {
+        let Some((remaining, fits)) = self.line_window(len - printed) else {
+            return Ok(Some(printed));
+        };
+        let copied = copy(&mut self.bytes, remaining)?;
+        self.entries += 1;
+        Ok(if fits { None } else { Some(printed + copied) })
+    }
+
+    fn line_window(&mut self, rest_len: usize) -> Option<(usize, bool)> {
+        let fits = self.entries < self.max_entries
+            && self.bytes.len().saturating_add(rest_len) <= self.byte_cap;
+        if !fits {
+            self.full = true;
+            if self.entries > 0 {
+                return None;
+            }
+        }
+        Some((
+            if fits {
+                rest_len
+            } else {
+                self.byte_cap.min(rest_len)
+            },
+            fits,
+        ))
     }
 
     pub(super) fn entries(&self) -> usize {

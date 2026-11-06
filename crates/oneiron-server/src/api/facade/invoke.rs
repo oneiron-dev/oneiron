@@ -125,61 +125,92 @@ pub(super) fn facade_invoke_in_turn(
     producers: &oneiron::memory::ProducerRows,
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
-        let auth = call.auth();
-        let memory = facade_invocation(
-            credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .listing_producers(producers),
+    crate::server::blocking(move || {
+        facade_invoke_on_thread(
+            server,
             call,
-        )?;
-        let memory = match turn {
-            Some(turn) => memory.with_task_work_turn(turn),
+            actor,
+            class,
+            verb,
+            value,
+            producers,
+            turn,
+            |memory, value| oneiron::task_verb::sdk::invoke(memory, verb, value),
+        )
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one facade setup shared by synchronous and owned cooperative reads"
+)]
+pub(super) fn facade_invoke_on_thread(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
+    turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
+    invoke: impl FnOnce(
+        &oneiron::Memory<'_>,
+        serde_json::Value,
+    ) -> oneiron::memory::MemoryResult<serde_json::Value>,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let auth = call.auth();
+    let memory = facade_invocation(
+        credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .listing_producers(producers),
+        call,
+    )?;
+    let memory = match turn {
+        Some(turn) => memory.with_task_work_turn(turn),
+        None => memory,
+    };
+    let memory = facade_task_decisions(server, verb, memory)?;
+    let memory = facade_rewrites_admitted(server, auth, &value, memory);
+    let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
+        match super::owner_binding::facade_owner(server, auth, verb).ok() {
+            Some(owner) => memory.with_owner_authorship(&owner),
             None => memory,
-        };
-        let memory = facade_task_decisions(server, verb, memory)?;
-        let memory = facade_rewrites_admitted(server, auth, &value, memory);
-        let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
-            match super::owner_binding::facade_owner(server, auth, verb).ok() {
-                Some(owner) => memory.with_owner_authorship(&owner),
+        }
+    } else {
+        memory
+    };
+    // Settlement's run of the call enters its boundary here as the drain's.
+    let _drain = call.drain().map(VerbAskDrainPermit::enter);
+    Ok(match call.room_turn()? {
+        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+        None => {
+            // The owner's own request on the owner's own full credential:
+            // owner-authored writes carry their own confirmation. Any other
+            // caller writes as itself; the owner's credential that no longer
+            // holds is refused. The work-companion setting takes the
+            // person's own proof instead (OF-417). His acts record where
+            // the request reached this install, as its headers proved it
+            // (`FacadeCall::surface`, audit only, FIX 4650).
+            let memory = match direct_authorship(auth, server, verb)? {
+                Some(owner) => memory
+                    .with_owner_authorship(&owner)
+                    .with_owner_surface(call.surface()),
                 None => memory,
+            };
+            if verb == GUEST_REVOKING_DELETE_VERB {
+                // With no host key the delete runs as before (FIX 3875).
+                super::pairing::with_host_issuer(server, |issuer| match issuer {
+                    Some(issuer) => oneiron::task_verb::sdk::invoke(
+                        &memory.with_host_slip_issuer(issuer),
+                        verb,
+                        value,
+                    ),
+                    None => oneiron::task_verb::sdk::invoke(&memory, verb, value),
+                })?
+            } else {
+                invoke(&memory, value)?
             }
-        } else {
-            memory
-        };
-        // Settlement's run of the call enters its boundary here as the drain's.
-        let _drain = call.drain().map(VerbAskDrainPermit::enter);
-        Ok(match call.room_turn()? {
-            Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-            None => {
-                // The owner's own request on the owner's own full credential:
-                // owner-authored writes carry their own confirmation. Any other
-                // caller writes as itself; the owner's credential that no longer
-                // holds is refused. The work-companion setting takes the
-                // person's own proof instead (OF-417). His acts record where
-                // the request reached this install, as its headers proved it
-                // (`FacadeCall::surface`, audit only, FIX 4650).
-                let memory = match direct_authorship(auth, server, verb)? {
-                    Some(owner) => memory
-                        .with_owner_authorship(&owner)
-                        .with_owner_surface(call.surface()),
-                    None => memory,
-                };
-                if verb == GUEST_REVOKING_DELETE_VERB {
-                    // With no host key the delete runs as before (FIX 3875).
-                    super::pairing::with_host_issuer(server, |issuer| match issuer {
-                        Some(issuer) => oneiron::task_verb::sdk::invoke(
-                            &memory.with_host_slip_issuer(issuer),
-                            verb,
-                            value,
-                        ),
-                        None => oneiron::task_verb::sdk::invoke(&memory, verb, value),
-                    })?
-                } else {
-                    oneiron::task_verb::sdk::invoke(&memory, verb, value)?
-                }
-            }
-        })
+        }
     })
 }
 

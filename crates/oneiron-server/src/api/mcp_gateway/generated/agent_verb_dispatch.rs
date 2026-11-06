@@ -17142,16 +17142,32 @@ async fn execute_agent_verb_row_on(
         "graph_fs.readdir" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::graph_fs_readdir(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_readdir_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "graph_fs.read_file" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::graph_fs_read_file(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_read_file_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -17166,48 +17182,96 @@ async fn execute_agent_verb_row_on(
         "graph_fs.ls" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsLsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::graph_fs_ls(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_ls_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "graph_fs.find" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsFindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::graph_fs_find(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_find_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "graph_fs.grep" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsGrepRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::graph_fs_grep(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_grep_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "graph_fs.cat" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::graph_fs_cat(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_cat_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "graph_fs.head" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsHeadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::graph_fs_head(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_head_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "graph_fs.wc" => {
             let input: oneiron::memory::graph_fs_doors::GraphFsLinkRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::graph_fs_wc(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = Box::pin(mcp_graph_fs_bytes(
+                server,
+                actor,
+                surface,
+                input,
+                move |memory, input, pacing| memory.graph_fs_wc_with_pacing(input, pacing),
+            ))
+            .await?;
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

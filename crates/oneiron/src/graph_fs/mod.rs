@@ -8,16 +8,20 @@
 mod claim_grep;
 mod claim_ids;
 mod coreutils;
+mod coreutils_search;
 mod coreutils_text;
 mod device_scan;
 mod model;
 mod paging;
+mod paths;
 mod readdir;
 mod repo_projection;
 mod scoped_files;
 mod snapshot;
 mod walk;
 
+pub(crate) use self::coreutils_search::find_literal;
+pub(crate) use self::coreutils_text::{checkpoint, copy_text_parts, copy_utf8_field};
 pub use self::readdir::GraphFsFileRead;
 pub use self::snapshot::GraphFsReference;
 

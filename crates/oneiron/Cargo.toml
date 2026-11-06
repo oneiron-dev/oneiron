@@ -117,7 +117,7 @@ tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
 loro = { workspace = true }
-tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 base64 = "0.22"
 futures-util = { version = "0.3", optional = true }

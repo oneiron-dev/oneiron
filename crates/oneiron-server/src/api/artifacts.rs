@@ -140,7 +140,7 @@ pub(crate) async fn serve_artifact_root(
         route.on_vault_host(host.app);
     }
     let code_policy = code_artifact_policy(&server, listener);
-    let response = serve_artifact_file(server, &route, &parts, code_policy)?;
+    let response = serve_artifact_file(server, &route, &parts, code_policy).await?;
     if let Some(target) = route.redirect() {
         return artifact_redirect_response(&target);
     }
@@ -161,14 +161,14 @@ pub(crate) async fn serve_artifact_path(
         route.on_vault_host(host.app);
     }
     let code_policy = code_artifact_policy(&server, listener);
-    let response = serve_artifact_file(server, &route, &parts, code_policy)?;
+    let response = serve_artifact_file(server, &route, &parts, code_policy).await?;
     if let Some(target) = route.redirect() {
         return artifact_redirect_response(&target);
     }
     Ok(response)
 }
 
-fn serve_artifact_file(
+async fn serve_artifact_file(
     server: Arc<SyncServer>,
     route: &ArtifactRoute,
     request: &Parts,
@@ -200,13 +200,14 @@ fn serve_artifact_file(
         });
     let Some(file) = server
         .vault
-        .resolve_authorized_artifact_file(
+        .resolve_authorized_artifact_file_cooperative(
             &route.artifact,
             route.selector,
             route.path(),
             route.token.as_deref(),
             principal,
         )
+        .await
         .map_err(|error| core_engine_error("artifact serving failed", error))?
     else {
         return Err(ApiError::not_found("artifact", None).into());

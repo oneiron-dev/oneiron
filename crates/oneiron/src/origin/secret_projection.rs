@@ -57,7 +57,8 @@ use super::secret_marks::{
 };
 use crate::Vault;
 use crate::batch::secret_scan::{
-    RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
+    ContainerReader, RepoKnownCheck, project_marked_retained_repo_blob_with_reader,
+    retained_repo_known_places,
 };
 use crate::code_document::CodeDocumentFrontier;
 use crate::consent::AuthenticatedOwner;
@@ -191,6 +192,25 @@ pub(crate) fn project_repo_bytes_in_txn(
     bytes: Vec<u8>,
     known: Option<&KnownValues>,
 ) -> Result<RepoBodyProjection> {
+    project_repo_bytes_in_txn_with_reader(
+        vault,
+        txn,
+        marks,
+        bytes,
+        &ContainerReader::default(),
+        known,
+    )
+}
+
+/// The same stored-span and current-custody projection using one read's container schedule.
+pub(crate) fn project_repo_bytes_in_txn_with_reader(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoBlobMarks,
+    bytes: Vec<u8>,
+    reader: &ContainerReader,
+    known: Option<&KnownValues>,
+) -> Result<RepoBodyProjection> {
     let hash = *blake3::hash(&bytes).as_bytes();
     if let Some(source_blob) = marks.source_blob()
         && (marks.opaque() || marks.raw_blake3() != Some(hash))
@@ -212,12 +232,12 @@ pub(crate) fn project_repo_bytes_in_txn(
         None => None,
     };
     if let Some(check) = &check {
-        places = retained_repo_known_places(&bytes, check, &places)?;
+        places = retained_repo_known_places(&bytes, check, &places, reader)?;
     }
     // A known value no place covers (a container's own bytes, such as a ZIP
     // entry's name) leaves no copy to make: the blob is opaque.
     let unplaced = match &check {
-        Some(check) if places.is_empty() => check.reads_known(&bytes)?,
+        Some(check) if places.is_empty() => check.reads_known(&bytes, reader)?,
         _ => false,
     };
     if places.is_empty() && !unplaced {
@@ -231,7 +251,8 @@ pub(crate) fn project_repo_bytes_in_txn(
         return Ok(RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }));
     }
     Ok(
-        match project_marked_retained_repo_blob(&bytes, &places, check.as_ref()) {
+        match project_marked_retained_repo_blob_with_reader(&bytes, &places, reader, check.as_ref())
+        {
             Some(bytes) => RepoBodyProjection::Masked { bytes, source_blob },
             None => RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }),
         },

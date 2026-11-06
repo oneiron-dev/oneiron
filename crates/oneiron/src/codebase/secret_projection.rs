@@ -14,13 +14,14 @@ use std::collections::BTreeMap;
 use super::ingest::{read_asset_blob, read_asset_blob_in_txn, validate_manifest_path};
 use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshotMount};
 use crate::Vault;
+use crate::batch::secret_scan::ContainerReader;
 use crate::error::Result;
 use crate::origin::secret_marks::{
     RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, repo_secret_marks_for_hash_in_txn,
 };
 use crate::origin::secret_projection::{
     RepoBodyProjection, RepoFileProjectionView, RepoOpaqueFile, RepoSecretAudience,
-    project_repo_blob, project_repo_bytes_in_txn,
+    project_repo_blob, project_repo_bytes_in_txn_with_reader,
 };
 
 impl CodebaseSnapshotMount<'_> {
@@ -131,6 +132,20 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
     ) -> Result<Option<RepoBodyProjection>> {
+        self.repo_marked_asset_copy_in_txn_with_reader(
+            txn,
+            content_hash,
+            &ContainerReader::default(),
+        )
+    }
+
+    /// The same marked ASSET projection using one read's container schedule.
+    pub(crate) fn repo_marked_asset_copy_in_txn_with_reader(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+        reader: &ContainerReader,
+    ) -> Result<Option<RepoBodyProjection>> {
         let marks = repo_secret_marks_for_hash_in_txn(self, txn, content_hash)?;
         let Some(source_blob) = marks.source_blob().cloned() else {
             return Ok(None);
@@ -144,6 +159,6 @@ impl Vault {
         // In the caller's snapshot, which may be a writer's: the stored
         // spans alone (FIX 8966 wires the known-value pass at the reads
         // that own their snapshot).
-        project_repo_bytes_in_txn(self, txn, &marks, bytes, None).map(Some)
+        project_repo_bytes_in_txn_with_reader(self, txn, &marks, bytes, reader, None).map(Some)
     }
 }
