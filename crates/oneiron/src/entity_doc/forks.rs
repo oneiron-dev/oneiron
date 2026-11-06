@@ -480,6 +480,9 @@ pub(super) fn open_proposal_in_txn(
         // A shared vault's role and record scope, in this writer, for a fork
         // retained for review as for one a grant lands (FIX 9846).
         vault.authorize_shared_content_write_in_txn(txn, req.entity, &req.actor)?;
+        if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &req.entity)? {
+            return Err(refusal);
+        }
         let h = storage::head(&vault.store, txn, &req.entity)?;
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;
@@ -645,6 +648,11 @@ fn settle_one(
         }));
     }
     let entity = EntityId::from_hex(&record.entity)?;
+    if verb != SettleVerb::Reject {
+        if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &entity)? {
+            return Err(refusal);
+        }
+    }
     let mut h = storage::head(&vault.store, txn, &entity)?;
     let live = storage::load(&vault.store, txn, &h)?;
     let before = live.frontier();
@@ -694,7 +702,12 @@ fn settle_one(
                 DocumentRow::ShallowSince,
             )?;
             h.document = record.fork.clone();
-            storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
+            storage::move_pointer(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &entity,
+                &h.document,
+            )?;
             storage::persist(vault, txn, &entity, &mut h, &live, None)?;
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
