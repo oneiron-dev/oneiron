@@ -153,12 +153,10 @@ impl PadObjectNote {
     }
 }
 
-/// Says `note` where it is made, once, value free, so no note is only
-/// carried on a report nothing shows yet.
+/// Adds each value-free note once to the restore or activation report.
 #[cfg(feature = "sync")]
 fn push_note(notes: &mut Vec<PadObjectNote>, note: PadObjectNote) {
     if !notes.contains(&note) {
-        tracing::warn!(%note, "a restore's or an activation's pad objects");
         notes.push(note);
     }
 }

@@ -28,8 +28,8 @@
 //! [`VM_ANCHOR_PROXY_PORT`]. A supervisor may also attach one NIC for the
 //! guest's outbound IPv4 (FIX 6808, [`VmTapAttachment`] and
 //! [`VmGuestNetworkConfig`]); every host surface stays on vsock. Its config
-//! drive may carry the vault's managed profile too, as five typed files
-//! (FIX 6809, [`VM_MANAGED_PROFILE_REVISION`]), and the guests' container
+//! drive may carry the vault's managed profile too, as seven typed files
+//! (FIX 6809 and FIX 13707, [`VM_MANAGED_PROFILE_REVISION`]), and the guests' container
 //! runtime bindings, which the root bootstrap checks against the image's
 //! guest runtime descriptor (FIX 7671, [`VM_GUEST_RUNTIME_REVISION`],
 //! [`VmGuestRuntimeDescriptor`]), and the operator's trusted organ builds
@@ -90,6 +90,11 @@ pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// supervisor maps a guest owner path below it onto the vault's own config
 /// directory (`crate::settings_paths`).
 pub const VM_GUEST_CONFIG_DIR: &str = "/config";
+/// Where the guest mounts the node's optional read-only shared-model drive.
+pub const VM_GUEST_MODELS_DIR: &str = "/models";
+/// An image mounting the optional model drive and passing its guest-local
+/// root to the engine names this as `vm_model_drive_revision` in its manifest.
+pub const VM_MODEL_DRIVE_REVISION: u32 = 1;
 /// The guest's view of its network plan on the config drive (FIX 6808,
 /// [`VmGuestNetworkConfig`]): one JSON object, read whole by the root
 /// bootstrap before the vault's key goes in. Without it the guest sets up no
@@ -106,7 +111,7 @@ pub const MAX_VM_CONFIG_FILE_BYTES: usize = 16384;
 /// (FIX 6809): exactly 64 hex digits, either case. The root bootstrap passes
 /// it to the engine as `--organization-owner`.
 ///
-/// Each of the managed profile's five files holds its one value with at most
+/// Each of the managed profile's seven files holds its one value with at most
 /// one final LF and nothing else, and is read before the vault's key goes in
 /// on a boot that serves. One that is not there gives the engine no flag,
 /// never a `false`; one that is there but not in its form refuses the boot.
@@ -127,10 +132,22 @@ pub const VM_GUEST_FAILURE_SIGNAL_TRAINING_FILE: &str = "/config/failure-signal-
 /// nonzero width a u16 holds, passed as `--fast-dims`. The engine checks it
 /// against the vault's dimensions, as on a node.
 pub const VM_GUEST_FAST_DIMS_FILE: &str = "/config/fast-dims";
-/// The managed profile files' revision (FIX 6809): an image whose root
-/// bootstrap reads the five files and passes the engine their flags names it
-/// as its manifest's `vm_managed_profile_revision`.
-pub const VM_MANAGED_PROFILE_REVISION: u32 = 1;
+/// The supervisor's hosting declaration (QUORUM-HOST-ROOT = C, FIX 13707):
+/// one of the engine's `--privacy-posture` wire values, `managed`, `relay`
+/// or `self-host`, passed as `--privacy-posture` with its value. Our cloud
+/// writes `managed`, so the guest's engine takes the hosted checkpoint policy
+/// and provisions the host signer before it serves (FIX 13708); the guest
+/// never infers it from vsock or custody.
+pub const VM_GUEST_PRIVACY_POSTURE_FILE: &str = "/config/privacy-posture";
+/// The operator's enterprise/advanced checkpoint opt-out capability for the
+/// vault (QUORUM-HOST-ROOT = C, FIX 13706): `true` or `false`. `true` gives
+/// the engine a bare `--managed-checkpoint-host-opt-out`, and `false` no
+/// flag, the engine's own false.
+pub const VM_GUEST_CHECKPOINT_HOST_OPT_OUT_FILE: &str = "/config/checkpoint-host-opt-out";
+/// The managed profile files' revision (FIX 6809; 2 since FIX 13707): an
+/// image whose root bootstrap reads the seven files and passes the engine
+/// their flags names it as its manifest's `vm_managed_profile_revision`.
+pub const VM_MANAGED_PROFILE_REVISION: u32 = 2;
 /// The operator's trusted organ builds on the config drive (FIX 7889): one
 /// organ build's blake3 per line. The image's init passes each line, as
 /// written, to the engine as its own `--trusted-organ-build`, the flag a

@@ -336,7 +336,10 @@ impl Vault {
             return Ok(done);
         }
         let snapshot = match &request.intent {
-            ChannelIdentityLifecycleIntent::Provision(intent) => intent.identity.clone(),
+            ChannelIdentityLifecycleIntent::Provision(intent) => {
+                intent.identity.validate()?;
+                intent.identity.clone()
+            }
             _ => self.read_channel_identity_in_txn(&wtxn, &identity_id)?,
         };
         let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;

@@ -9,8 +9,10 @@
 //! one [`InvocationId`] crosses transport wrappers and internal dispatch.
 
 mod ask;
+mod call_scope;
 mod chain;
 mod credential;
+mod paced;
 mod plain_resume;
 mod record;
 mod redact;
@@ -34,13 +36,18 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
-pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED};
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
+pub use call_scope::VerbCallScope;
 pub(super) use chain::admit_verb_outcome;
 pub(super) use chain::projection::merge_withheld;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
     VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+};
+pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
+pub(crate) use paced::{
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_verb_reply, runs_paced_turn,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
@@ -70,7 +77,7 @@ pub struct VerbCall {
     pub class: HookActorClass,
     /// The world, facet, room or project the call runs in, when the host
     /// knows one; a hook's own scope only narrows.
-    pub scope: Option<String>,
+    pub scope: Option<VerbCallScope>,
     pub board_epoch: Option<u64>,
     /// The host turn a block added by this call targets, when it has one.
     pub turn: Option<HookTurnTarget>,
@@ -174,9 +181,17 @@ pub struct VerbHookPre {
     /// performed the consume carries its token so a storage failure later
     /// in the run can re-open it. `None` for a fresh call.
     resumed_ask: Option<ask::AskToken>,
+    read_capture: Option<crate::memory::read_capture::ReadCapture>,
 }
 
 impl VerbHookPre {
+    pub(crate) fn with_read_capture(
+        &mut self,
+        capture: Option<crate::memory::read_capture::ReadCapture>,
+    ) {
+        self.read_capture = capture;
+    }
+
     #[must_use]
     pub fn call(&self) -> &VerbCall {
         &self.call
@@ -209,6 +224,27 @@ impl Vault {
     /// Reading the saved calls.
     pub(crate) fn verb_hook_invocation_saved(&self, invocation: InvocationId) -> Result<bool> {
         Ok(self.verb_hook_state.drain_holds(invocation) || ask::saved(self, invocation)?)
+    }
+
+    /// Observes a retained call's hook wait without consuming its answer.
+    /// `Ready` is only a wake hint: the retried boundary still proves the
+    /// caller's authority and decides whether the call may run. No saved
+    /// arguments, answer evidence or hook-author handle leave this method.
+    /// Reading the native ask's status can settle its existing deadline.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call. An unavailable call must not be rerun as a
+    /// fresh invocation merely because its retained checkpoint still exists.
+    pub fn verb_hook_wait_status(
+        &self,
+        invocation: InvocationId,
+        verb: &str,
+        actor: EntityId,
+        class: HookActorClass,
+        ask: EntityId,
+    ) -> Result<VerbHookWaitStatus> {
+        ask::wait_status(self, invocation, verb, actor, class, ask)
     }
 
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in

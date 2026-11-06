@@ -22,20 +22,13 @@
 //! home has not folded yet answers that it cannot tell, never that there is
 //! none: the executor holds its upload as uncertain and asks again later.
 
-use super::super::bundle_turn::{hold_turn_in, published_in};
-use super::{
-    Asked, GENERATIONS, SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, denied,
-    drop_stage_in, entries_in, entry_in, order, owner_machine, put_object_in, retire_in,
-    sealed_digest_hex, sealed_generation_hex, stage_key, staged_whole,
-};
+use super::{Asked, SealedBundleEntry, owner_machine, sealed_digest_hex};
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityFold, OwnerWorkBody, PeerMachine};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
-use crate::world_keys::{
-    RecoveryRootId, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle, sealed_bundle_slot,
-};
+use crate::world_keys::{RecoveryRootId, SealedBundleGeneration};
 
 /// Each asked commit the home recorded, by its request and its committer.
 const RECEIPTS: SideTable<String, Vec<u8>, Raw> =
@@ -158,7 +151,7 @@ fn asks_here(
 /// not seen it yet, its claim (FIX 5554), unless a commit of `machine` is
 /// recorded for it already; then forgets every record whose request has its
 /// result here.
-fn record_in(
+pub(super) fn record_in(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     machine: EntityId,
@@ -210,102 +203,16 @@ pub(super) fn commit(
     root: Option<RecoveryRootId>,
     request: Option<AuthorityEntryHash>,
 ) -> Result<SealedBundleEntry> {
-    let machine = owner_machine(vault, peer, true, Asked::Any)?;
-    let kit = match root {
-        None => None,
-        Some(root) => {
-            let (_, record) = vault
-                .owner_root_records()?
-                .remove(&root)
-                .ok_or_else(denied)?;
-            Some(SealedBundleKitRoot {
-                root,
-                anchor_key: record.anchor_key,
-            })
-        }
-    };
-    let (bundle, pads) = {
-        let txn = vault.store.env.read_txn()?;
-        (
-            staged_whole(vault, &txn, machine, SealedBundleObject::Bundle)?,
-            staged_whole(vault, &txn, machine, SealedBundleObject::Pads)?,
-        )
-    };
-    let (Some((bundle_stage, bundle_bytes)), Some((pads_stage, pads_bytes))) = (bundle, pads)
-    else {
-        return Err(denied());
-    };
-    let bundle = SealedVaultBundle::from_bytes(&bundle_bytes).map_err(|_| denied())?;
-    drop(bundle_bytes);
-    let pads = SealedKeyPads::from_bytes(&pads_bytes).map_err(|_| denied())?;
-    drop(pads_bytes);
-    if [
-        bundle_stage.generation,
-        pads_stage.generation,
-        bundle.generation(),
-        pads.generation(),
-    ]
-    .iter()
-    .any(|staged| *staged != generation)
-    {
-        return Err(denied());
-    }
-    let mut entry = SealedBundleEntry {
-        generation,
-        commit_order: 0,
-        bundle_len: bundle_stage.total,
-        bundle_digest: bundle_stage.digest,
-        pads_len: pads_stage.total,
-        pads_digest: pads_stage.digest,
-        kit,
-    };
-    vault.with_write_txn_grouped(|wtxn| {
-        let kept = entries_in(vault, wtxn)?;
-        let latest = kept.last().map(|entry| entry.generation);
-        let now = vault.instant_in_txn(wtxn)?.secs();
-        let now_slot = sealed_bundle_slot(now);
-        // A fresh generation of the newest's own slot is taken (FIX 8885):
-        // the parent, the slot order and the clock are what refuse, never a
-        // count. A generation kept already is never written over.
-        if latest != parent
-            || latest.is_some_and(|latest| generation.slot < latest.slot)
-            || generation.slot > now_slot
-            || entry_in(vault, wtxn, &generation)?.is_some()
-            || !hold_turn_in(vault, wtxn, machine, now)?
-        {
-            return Err(denied());
-        }
-        entry.commit_order = order::next_commit_order(&kept);
-        put_object_in(
-            vault,
-            wtxn,
-            &generation,
-            SealedBundleObject::Bundle,
-            bundle.as_bytes(),
-        )?;
-        put_object_in(
-            vault,
-            wtxn,
-            &generation,
-            SealedBundleObject::Pads,
-            pads.as_bytes(),
-        )?;
-        GENERATIONS.put(
-            &vault.store,
-            wtxn,
-            &sealed_generation_hex(&generation),
-            &entry.encode(),
-        )?;
-        for object in [SealedBundleObject::Bundle, SealedBundleObject::Pads] {
-            drop_stage_in(vault, wtxn, &stage_key(machine, object))?;
-        }
-        if let Some(request) = request {
-            record_in(vault, wtxn, machine, request, &entry)?;
-        }
-        published_in(vault, wtxn, machine, now)?;
-        retire_in(vault, wtxn, now_slot)?;
-        Ok(entry)
-    })
+    super::work::commit(
+        vault,
+        peer,
+        super::work::SealedBundleCommitInput {
+            generation,
+            parent,
+            root,
+            request,
+        },
+    )
 }
 
 /// The commit the home recorded for the owner's bundle publication

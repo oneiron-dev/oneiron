@@ -10,6 +10,7 @@ use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::query_expansion::{
     CompletionCandidate, CompletionRequest, EvidenceVerdict, HydeRequest, ground_query,
     normalized_subqueries,
@@ -41,6 +42,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 embedding_matches: HashMap::new(),
                 vector_completed: false,
+                text_exhausted: false,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 // No channel ran: an authority refusal is not a cache failure.
@@ -53,6 +55,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
                 read_suppressed: 0,
+                read_suppressed_candidates: Default::default(),
                 cosine_ghosts_dampened: 0,
                 disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
@@ -178,24 +181,42 @@ impl PipelineBuilder<'_> {
             }
         };
 
-        let hyde_expansion = match self.hyde.as_ref() {
+        // The HyDE request's validations, before anything paid: its options,
+        // the text query it grounds, and the grounded query itself. A
+        // deadline already reached skips the expansion, as ever.
+        let hyde_query = match self.hyde.as_ref() {
             None => None,
             Some(_) if self.deadline_reached() => None,
-            Some((expander, grounding, options)) => {
+            Some((_, grounding, options)) => {
                 options.validate()?;
                 let Some((template, _)) = self.text_search.as_ref() else {
                     return Err(Error::InvalidConfig(
                         "hyde requires search_text query".to_owned(),
                     ));
                 };
-                let query = ground_query(template, grounding)?;
+                Some(ground_query(template, grounding)?)
+            }
+        };
+        // The one final count this execution serves, measured after every
+        // applicable validation and before any paid expansion or scoring.
+        // Best effort: the run serves its rows either way.
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::RequestedResultRows, self.result_limit as u64);
+        // FIX 4451 (L05 YES 11:05): capture the expander id from the SAME
+        // expander whose expansion actually ran, in the arm that ran it. A
+        // configured-but-unused expander (deadline-skipped, unvalidated, or
+        // errored) leaves None: never inferred from configuration.
+        let (hyde_expansion, query_expander_id) = match (self.hyde.as_ref(), hyde_query) {
+            (Some((expander, _, _)), Some(query)) => {
                 let expansion = expander.expand(&HydeRequest {
                     query,
                     max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
                 })?;
                 crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
-                Some(expansion)
+                (Some(expansion), Some(expander.id().to_owned()))
             }
+            _ => (None, None),
         };
 
         if self.text_search.is_some() {
@@ -237,6 +258,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 embedding_matches: HashMap::new(),
                 vector_completed: dense_completed(&attempt.diagnostics),
+                text_exhausted: attempt.text_exhausted,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
@@ -248,6 +270,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
                 read_suppressed: 0,
+                read_suppressed_candidates: Default::default(),
                 cosine_ghosts_dampened: 0,
                 disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
@@ -259,6 +282,7 @@ impl PipelineBuilder<'_> {
                 critical: Default::default(),
             });
         }
+        let mut text_exhausted = attempt.text_exhausted;
         let mut temporal_report = attempt.temporal_report;
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
@@ -270,6 +294,7 @@ impl PipelineBuilder<'_> {
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
         let mut read_suppressed = attempt.read_suppressed;
+        let mut read_suppressed_candidates = attempt.read_suppressed_candidates;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
         let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
         let mut disclosure_clamped = attempt.disclosure_clamped;
@@ -343,6 +368,7 @@ impl PipelineBuilder<'_> {
                 self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
+                text_exhausted = retry.text_exhausted;
                 temporal_report = retry.temporal_report;
                 scores = retry.scores;
                 cited_messages = retry.cited_messages;
@@ -352,6 +378,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
                 read_suppressed = retry.read_suppressed;
+                read_suppressed_candidates = retry.read_suppressed_candidates;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
                 disclosure_clamped = retry.disclosure_clamped;
                 total_in_scope = retry.total_in_scope;
@@ -506,7 +533,8 @@ impl PipelineBuilder<'_> {
             )
             .with_context(self.retrieval_state.clone(), self.retrieval_turn)
             .with_trace(retrieval_trace)
-            .with_quality(&retrieval_quality);
+            .with_quality(&retrieval_quality)
+            .with_query_expander_id(query_expander_id);
             let mut run_record = run_record;
             run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;
@@ -561,6 +589,7 @@ impl PipelineBuilder<'_> {
         Ok(PipelineOutput {
             embedding_matches,
             vector_completed: dense_completed(&diagnostics),
+            text_exhausted,
             revisions,
             words_bound,
             retrieval_quality,
@@ -572,6 +601,7 @@ impl PipelineBuilder<'_> {
             pending_vectors,
             claims_suppressed,
             read_suppressed,
+            read_suppressed_candidates,
             cosine_ghosts_dampened,
             disclosure_clamped,
             total_in_scope,

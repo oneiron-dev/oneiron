@@ -480,6 +480,39 @@ impl<'p> PinnedReads<'p> {
     ) -> std::result::Result<String, String> {
         // A read that fails fails as it did live, and was pinned by none.
         let live = read::answer(lane, grant, request, &mut self.scratch)?;
+        self.checked_response(request, live)
+    }
+
+    /// A verb run's pins keep its caller-narrowed selection. They restrict
+    /// replay to those exact rows; the current lane still admits each row.
+    fn answer_verb(
+        &mut self,
+        lane: &ScopedRead<'_>,
+        grant: &HookGrant,
+        request: &str,
+    ) -> std::result::Result<String, String> {
+        let Some(pin) = self
+            .pins
+            .get(self.served)
+            .filter(|pin| pin.request == request)
+        else {
+            return self.answer(lane, grant, request);
+        };
+        let Some(response) = read::answer_pinned(lane, grant, pin)? else {
+            self.served += 1;
+            self.missing
+                .get_or_insert_with(|| format!("a read's history is gone: {}", bounded(request)));
+            return Err("this read's history is gone".to_owned());
+        };
+        self.scratch.push(pin.clone());
+        self.checked_response(request, response)
+    }
+
+    fn checked_response(
+        &mut self,
+        request: &str,
+        live: String,
+    ) -> std::result::Result<String, String> {
         let pinned = self.pins.get(self.served);
         self.served += 1;
         let hash = blake3::hash(live.as_bytes()).to_hex();

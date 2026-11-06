@@ -29,6 +29,8 @@ mod graph_reads;
 mod instruction_files;
 mod loop_decision_read;
 mod named_reads;
+mod native_raw;
+pub use native_raw::NativeRawRead;
 mod note_visibility;
 mod pinned_reads;
 mod point_reads;
@@ -38,13 +40,16 @@ mod retrieval_visibility;
 mod served_forms;
 mod versions;
 mod weave_digest;
-pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
     StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER,
     WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveAdminKey, WeaveDigestCadence,
     WeaveDigestFeedback, WeaveDigestReader, WeaveDigestSchedule, WeaveDigestSettingAnswer,
     WeaveDigestSettingChange, WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo,
     WeaveDigestSettings, WeaveDigestSettingsDrafter, WeaveScheduleHold,
+};
+pub(crate) use weave_digest::{
+    invalidate_weave_digest_source_in_txn, saved_weave_loop_reason_decisions_in_txn,
+    scrub_saved_weave_loop_reasons_in_txn,
 };
 mod weave_correction;
 mod weave_lens;
@@ -55,7 +60,8 @@ pub use weave_lens::{
 };
 pub(crate) use weave_lens::{
     weave_lens_answer_plan, weave_lens_attempt_input, weave_lens_attempt_period,
-    weave_lens_model_input, weave_lens_plan_schema, weave_lens_repair_text,
+    weave_lens_attempt_revision, weave_lens_model_input, weave_lens_plan_schema,
+    weave_lens_repair_text,
 };
 mod weave_report;
 mod weave_serve;
@@ -146,11 +152,13 @@ pub struct ScopedRead<'a> {
 }
 
 mod admission;
+mod commitment_reminder_wording;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 mod retrieval_loop;
 mod search;
+pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;
 

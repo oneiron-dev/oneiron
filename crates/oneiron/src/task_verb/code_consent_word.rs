@@ -1,9 +1,9 @@
 //! The person's word a code consent answer stands on (DOOR-079 1a).
 //!
-//! A code consent wait asks the vault's owner one TASK question, as the
-//! caller of the held call, on a short question it witnesses itself,
-//! offering canon's confirm trio. Only that owner's own Human word naming
-//! one of the offered choices is admitted on it: no companion, inform,
+//! A code consent wait asks every live vault owner one shared TASK question,
+//! as the caller of the held call, on a short question it witnesses itself,
+//! offering canon's confirm trio. Only an asked, still-live owner's own Human
+//! word naming one of the offered choices is admitted: no companion, inform,
 //! executor or link word, and no generated word in a person's name. The
 //! word is evidence, never approval: the consent operation reads it, under
 //! the owner's authentication, and only that operation lets anything run.
@@ -11,12 +11,12 @@
 
 use std::collections::BTreeMap;
 
+use super::ConsultPayloadRef;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskAnswer, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskSource, TaskAskSpec,
     TaskAskTarget, TaskAskWord,
 };
-use super::{ConsultPayloadRef, TaskAssignee};
 use crate::code_run::{
     CodeConsentChoice, CodeConsentWaitRow, attach_code_consent_ask_in_txn, offered_choices,
     read_code_consent_wait_in_txn,
@@ -59,7 +59,7 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
         return match choice {
             CodeConsentChoice::ApproveOnce => "Approve once: this call only",
             CodeConsentChoice::ApproveAndStopAsking => {
-                "Approve and stop asking: this call, and this tool no longer asks"
+                "Approve and stop asking: this connection, class and project"
             }
             CodeConsentChoice::Deny => "Deny: nothing is sent",
         }
@@ -84,7 +84,7 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     }
 }
 
-/// The ask a wait's question carries: to its owner, offering the wait's
+/// The ask a wait's question carries: to its frozen owners, offering the wait's
 /// choices, holding with no deadline of its own. A held connector call's
 /// own expiry ends its wait; a held browser act waits for its answer.
 /// Silence never approves.
@@ -101,9 +101,7 @@ fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
         })
         .collect::<MemoryResult<BTreeMap<_, _>>>()?;
     let mut spec = TaskAskSpec::shorthand(
-        Some(TaskAskTarget::Responder(TaskAssignee::Human {
-            actor_ref: question.owner,
-        })),
+        Some(TaskAskTarget::People(question.owners.clone())),
         what,
         None,
         TaskAskDefault::Hold,
@@ -133,8 +131,8 @@ pub(super) fn reserved_ask_in(
         && ask_spec(&row)? == *input)
 }
 
-/// Refuses a word on a code consent ask unless it is the asked owner's own
-/// Human word naming one of the wait's choices, on the node that admitted
+/// Refuses a word on a code consent ask unless it is an asked, still-live
+/// owner's own Human word naming one of the wait's choices, on the node that admitted
 /// the ask; any other ask passes untouched. Runs in shared word admission,
 /// before the word is recorded.
 pub(super) fn guard_word(
@@ -155,7 +153,8 @@ pub(super) fn guard_word(
     let offered = offered_choices(&row.binding);
     if row.ask != Some(id)
         || source != TaskAskSource::Human
-        || actor != row.binding.question.owner
+        || !row.binding.question.owners.contains(&actor)
+        || !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
         || word.companion_for.is_some()
         || word.inform_for.is_some()
         || word.confirmation.is_some()
@@ -219,7 +218,7 @@ impl Memory<'_> {
         if let Some(ask) = row.ask {
             return Ok(ask);
         }
-        let question = row.binding.question;
+        let question = &row.binding.question;
         let landed = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             vault

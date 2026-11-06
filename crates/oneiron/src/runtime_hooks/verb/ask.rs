@@ -14,6 +14,10 @@
 //! ([`author_memory`]).
 
 pub(super) mod session;
+mod wait;
+
+pub use wait::VerbHookWaitStatus;
+pub(super) use wait::status as wait_status;
 
 use std::sync::Arc;
 
@@ -30,7 +34,9 @@ use crate::task_verb::{
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
-use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
+use super::{
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookStop, VerbResume, credential,
+};
 
 /// Leads a verb hook's ask intent key, `hook.verb/<invocation>/<binding>`:
 /// settlement parses the rest, and an ask's Changed deliveries skip it.
@@ -47,14 +53,10 @@ pub(super) const USED: &str =
 /// invocation instead of meeting the misleading "already used".
 pub(super) const UNKNOWN: &str =
     "this invocation's ask was used but its call never finished; call again with a new invocation";
-/// The most bytes of JSON a drained call's saved result keeps for its
-/// caller's retry. Encoding stops past it.
-pub(super) const MAX_SAVED_VERB_RESULT_BYTES: usize = 65_536;
 /// The most bytes of a drained call's saved error message.
 pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
-/// The error a retry gets when the drained call completed but its result was
-/// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
-/// again.
+/// The error a retry gets when a completed call's result was not retained.
+/// The call ran, and must not be sent again.
 pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 /// The error code a retry gets when its ask was used up but no outcome was
 /// ever saved (FIX 1996): something stopped between the resumed chain's
@@ -75,7 +77,7 @@ struct VerbAsk {
     #[serde(with = "crate::serialize::entity_ref")]
     actor: EntityId,
     class: HookActorClass,
-    scope: Option<String>,
+    scope: Option<VerbCallScope>,
     domain: VerbDomain,
     /// The args the asking hook saw, re-validated, as JSON.
     args: String,
@@ -133,31 +135,12 @@ pub(super) enum SavedOutcome {
 }
 
 impl SavedOutcome {
-    /// What a drained call that returned `value` saves: its JSON, encoded
-    /// through a writer that stops past [`MAX_SAVED_VERB_RESULT_BYTES`]. A
-    /// result over it saves [`HOOK_RESULT_NOT_RETAINED`] instead: the call
-    /// completed, and a retry must not send it again.
+    /// What a drained call that returned `value` saves: its full JSON for
+    /// the caller's retry of this same invocation.
     pub(super) fn result(value: &Value) -> Result<Self> {
-        let mut capped = Capped {
-            bytes: Vec::new(),
-            cap: MAX_SAVED_VERB_RESULT_BYTES,
-        };
-        match serde_json::to_writer(&mut capped, value) {
-            Ok(()) => Ok(Self::Ok {
-                result: String::from_utf8(capped.bytes)
-                    .map_err(|_| Error::InvariantViolation("verb hook ask outcome encode"))?,
-            }),
-            Err(error) if error.is_io() => Ok(Self::Err {
-                code: HOOK_RESULT_NOT_RETAINED.to_owned(),
-                message: format!(
-                    "the call completed once its hook's ask was answered, but its result is over \
-                     the {MAX_SAVED_VERB_RESULT_BYTES} bytes kept for a retry; do not send it \
-                     again"
-                ),
-                receipt: None,
-            }),
-            Err(_) => Err(Error::InvariantViolation("verb hook ask outcome encode")),
-        }
+        serde_json::to_string(value)
+            .map(|result| Self::Ok { result })
+            .map_err(|_| Error::InvariantViolation("verb hook ask outcome encode"))
     }
 
     /// What a drained call that failed with `code` saves: its message cut to
@@ -168,27 +151,6 @@ impl SavedOutcome {
             message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
             receipt: None,
         }
-    }
-}
-
-/// A writer that keeps at most `cap` bytes: a write past it fails, so the
-/// encoder stops there.
-struct Capped {
-    bytes: Vec<u8>,
-    cap: usize,
-}
-
-impl std::io::Write for Capped {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.bytes.len().saturating_add(buf.len()) > self.cap {
-            return Err(std::io::Error::other("over the saved result cap"));
-        }
-        self.bytes.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

@@ -1,0 +1,16 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <mask id="circle-cutout">
+    <rect width="120" height="120" fill="white"/>
+    <circle cx="60" cy="60" r="22" fill="black"/>
+  </mask>
+  <rect
+    x="17.5"
+    y="17.5"
+    width="85"
+    height="85"
+    rx="10"
+    fill="currentColor"
+    transform="rotate(45 60 60)"
+    mask="url(#circle-cutout)"
+  />
+</svg>

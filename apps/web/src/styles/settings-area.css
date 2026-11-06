@@ -1,0 +1,376 @@
+/* ── the settings area (ruling 8 · the Linear model) ──
+   its own left nav on the desk (quiet furniture: labels only, no icons,
+   no counts, no hairlines) and one page per section on the one sheet.
+   calm and mostly serif; mono only for hashes, dates, scopes and acts.
+   the genesis seal on vault is THE one resting red of the area; every
+   destructive verb arms red under the hand only. everything settles in
+   place — no toasts, no modals. tokens only, both rooms. ── */
+
+/* ── the nav ── */
+nav.snav {
+  width: var(--rail-w); flex: none;
+  padding: 18px 0 64px 18px;          /* the foot clears the agent line */
+  display: flex; flex-direction: column; gap: 20px;
+  overflow-y: auto;
+}
+.snav .group { display: flex; flex-direction: column; gap: 2px; }
+.snav .group > .label { margin-bottom: 6px; padding-left: 8px; }
+.snav a {
+  font-family: var(--mono); font-size: 12.5px;
+  color: var(--silver-3);
+  padding: 5px 10px 5px 8px;
+  display: flex; align-items: center; gap: 8px;
+  border-radius: 5px;
+  transition: color 160ms ease, background 160ms ease;
+  white-space: nowrap;
+}
+.snav a:hover, .snav a:focus-visible { color: var(--silver-1); }
+/* the active row wears the sheet's elevation on the soft 5px highlight */
+.snav a.active { color: var(--silver-1); background: var(--bg-elevated); }
+.snav a.back { color: var(--silver-3); }
+.snav a.back svg { display: block; flex: none; color: var(--silver-4); transition: color 160ms ease; }
+.snav a.back:hover svg, .snav a.back:focus-visible svg { color: var(--silver-1); }
+
+/* the settings nav never folds, so the sheet keeps its full left margin
+   even when the app rail was left folded (the class lives on <html>) */
+html.rail-folded .settings-frame main.pane { margin-left: var(--sheet-left); }
+
+/* the sheet's slot: the frame's flex child; the pane fills it */
+.sheet-slot { flex: 1; min-width: 0; display: flex; }
+.sheet-slot > main.pane { flex: 1; min-width: 0; }
+
+/* ── the sheet ── */
+main.pane.settings { overflow: hidden; flex-direction: row; padding: 0; gap: 0; }
+.settings .pane-body {
+  flex: 1; min-width: 0;
+  padding: var(--pane-pad-y) var(--pane-pad-x) 40px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+/* content sits left, at reading width; the sheet stays full */
+.settings .pane-body > * { width: 100%; max-width: 800px; }
+.settings .dial-why { padding: 0 0 2px; }
+.settings .pane-head { align-items: baseline; }
+.settings .pane-head .head-meta { margin-left: 0; font-size: 11.5px; }
+.settings .pane-tools { align-items: center; }
+/* the quick search: a quiet field in the head, filters as you type */
+.settings .qsearch {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 5px 10px; width: 160px;
+  -webkit-appearance: none; appearance: none;
+}
+.settings .qsearch::placeholder { color: var(--silver-4); }
+.settings .qsearch:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.settings .qsearch::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* ── sections: flat on the one sheet; the serif head is a quiet fold;
+   space divides, never a rule; the count only when closed (rule 10) ── */
+.settings .bundle { display: flex; flex-direction: column; }
+.settings .bundle + .bundle { margin-top: 20px; }
+.settings .bundle.closed + .bundle { margin-top: 0; }
+.settings .bundle .head { display: flex; align-items: baseline; gap: 12px; padding: 2px 0 4px; cursor: pointer; border-radius: 5px; }
+.settings .bundle .head:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; }
+.settings .bundle .head .title { font-family: var(--serif); font-size: 15.5px; font-weight: 550; color: var(--silver-1); }
+.settings .bundle .head .fold-hint { flex: none; color: var(--silver-4); opacity: 0; transform: translateY(-1px); transition: opacity 160ms ease, transform 180ms ease-out; }
+.settings .bundle .head:hover .fold-hint, .settings .bundle .head:focus-visible .fold-hint { opacity: 1; }
+.settings .bundle.closed .head .fold-hint { opacity: 1; transform: translateY(-1px) rotate(-90deg); }
+.settings .bundle .head .meta-line { margin-left: auto; display: none; }
+.settings .bundle.closed .head .meta-line { display: inline; }
+.settings .bundle .body { display: flex; flex-direction: column; gap: 2px; padding-top: 3px; }
+.settings .bundle.closed .body { display: none; }
+.settings .sec-voice {
+  display: flex; gap: 9px; align-items: baseline;
+  font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3);
+  max-width: 76ch; padding: 1px 0 3px;
+}
+
+/* a plain serif line under a ledger: the UI explaining itself */
+.settings .note, .settings .foot { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); max-width: 64ch; padding: 0 6px 4px; }
+.settings .foot { padding-top: 4px; }
+
+/* ── one-line rows: serif key · value · acts ── */
+.settings .srow { display: flex; align-items: baseline; gap: 14px; padding: 6px 8px 6px 6px; border-radius: 5px; }
+.settings .srow .key { font-family: var(--serif); font-size: 14px; color: var(--silver-3); width: 104px; flex: none; }
+.settings .srow .val { font-family: var(--serif); font-size: 14px; color: var(--silver-1); }
+.settings .srow .sub { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.settings .srow .acts { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+.settings .srow .acts.tail { margin-left: auto; }
+.settings .srow .meta-line { font-size: 12px; }
+/* the address is DATA, not a door — red is touch only, so it never warms */
+.settings .srow .addr { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+/* a three-state control = three mono acts; the current one wears silver-1 */
+.settings .act.on { color: var(--silver-1); }
+.settings .act .glyph { display: inline-block; width: 1.1em; }
+/* a settled act: quiet mono, no brackets, no hand */
+.settings .settled { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; color: var(--silver-3); white-space: nowrap; }
+/* a disarmed act: it only arms once there is a reason */
+.settings .act.disarmed { color: var(--silver-4); cursor: default; }
+.settings .act.disarmed:hover, .settings .act.disarmed:focus-visible { color: var(--silver-4); }
+.settings .act.disarmed:hover::before, .settings .act.disarmed:hover::after,
+.settings .act.disarmed:focus-visible::before, .settings .act.disarmed:focus-visible::after { opacity: 0; }
+/* the one no-act on packs: a pack this vault cannot take */
+.settings .quiet { font-family: var(--serif); font-size: 13px; color: var(--silver-4); white-space: nowrap; cursor: default; }
+
+/* ── the fingerprint: the seal (THE resting red) · the hash · copy ── */
+.settings .fp { display: flex; align-items: center; gap: 16px; padding: 6px 8px 4px 6px; }
+.settings .fp .seal-genesis { width: 28px; height: 28px; display: block; flex: none; color: var(--safelight); }
+.settings .fp .gh { font-family: var(--mono); font-size: 13px; letter-spacing: 0.02em; color: var(--silver-1); cursor: default; }
+.settings .fp .acts { display: flex; gap: 16px; align-items: baseline; }
+.settings .fp-path { padding: 0 8px 2px 50px; }
+.settings .fp-path .meta-line { font-size: 11.5px; }
+/* the creature row: the moth is the address */
+.settings .crea { display: flex; align-items: center; gap: 14px; padding: 8px 8px 4px 6px; }
+.settings .crea img { display: block; width: 60px; height: 32px; image-rendering: pixelated; flex: none; user-select: none; }
+.settings .crea .c-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.settings .crea .nm { font-family: var(--serif); font-size: 14px; color: var(--silver-1); }
+.settings .crea .sub { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.settings .srow.worlds { padding-top: 8px; }
+/* the policy, unfolded: three kv lines */
+.settings .kvs { display: flex; flex-direction: column; gap: 6px; }
+.settings .kv { display: flex; align-items: baseline; gap: 10px; }
+.settings .kv .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); width: 104px; flex: none; }
+.settings .kv .v { font-family: var(--serif); font-size: 13.5px; color: var(--silver-2); }
+.settings [data-page="vault"] .fold-body.kvs { padding-left: 14px; }
+
+/* ── ledgers: no rules between rows (rule 6); soft row ends (rule 32);
+   sticky heads; the sort arrow is a small mono mark ── */
+.settings .ledger-wrap { outline: none; overflow: visible; }   /* no inner scroller: the heads stick to the sheet's scroll */
+.settings table.ledger td { border-top: 0; }
+.settings table.ledger thead th { padding-bottom: 10px; position: sticky; top: 0; z-index: 2; background: var(--bg-elevated); }
+.settings table.ledger th .th-sort {
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+  padding: 0; display: inline-flex; align-items: baseline; gap: 5px;
+  transition: color 160ms ease; cursor: pointer;
+}
+.settings table.ledger th .th-sort:hover, .settings table.ledger th.sorted .th-sort { color: var(--silver-1); }
+.settings table.ledger th .th-arrow { display: inline-block; width: 1ch; font-size: 10px; letter-spacing: 0; color: var(--silver-3); }
+.settings table.ledger th.num .th-sort { flex-direction: row-reverse; }
+.settings table.ledger tbody tr.row td { transition: background 160ms ease; cursor: pointer; }
+@media (hover: hover) {
+  .settings table.ledger tbody tr.row:hover td { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+  .settings table.ledger tbody tr.row:hover td:first-child { border-radius: 5px 0 0 5px; }
+  .settings table.ledger tbody tr.row:hover td:last-child { border-radius: 0 5px 5px 0; }
+}
+.settings table.ledger tr.row.selected td { background: var(--bg-well); }
+.settings table.ledger tr.row.selected td:first-child { border-radius: 5px 0 0 5px; }
+.settings table.ledger tr.row.selected td:last-child { border-radius: 0 5px 5px 0; }
+/* the empty result: one serif line, no picture */
+.settings table.ledger tr.empty td { height: auto; padding: 10px 10px 4px; }
+.settings .empty-line { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.settings .who { display: flex; align-items: center; gap: 9px; }
+.settings .who .nm { font-family: var(--serif); font-size: 14px; color: var(--silver-1); white-space: nowrap; }
+.settings .who .nm.guest { color: var(--silver-2); }
+.settings td > .aname, .settings .who .aname { font-family: var(--serif); font-size: 14px; white-space: nowrap; }
+/* the agent name is a door (to the agents page): the ink is the mark */
+.settings a.aname:hover, .settings a.aname:focus-visible { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--p-ink); }
+.settings .role { font-family: var(--mono); font-size: 12px; color: var(--silver-2); }
+.settings .scope { font-family: var(--mono); font-size: 12px; color: var(--silver-2); white-space: nowrap; }
+.settings .aud { font-family: var(--serif); font-size: 13.5px; color: var(--silver-2); }
+.settings table.ledger .meta-line { font-size: 11.5px; white-space: nowrap; }
+.settings td .racts { display: flex; gap: 14px; justify-content: flex-end; align-items: baseline; }
+.settings td .racts .settled { font-size: 11.5px; }
+.settings td .racts .settled .throbber { font-size: 11px; }
+/* channel glyphs stay on the neutral silver: never a brand colour */
+.settings .chan-glyph { display: flex; align-items: center; color: var(--silver-3); }
+.settings .chan-glyph svg { display: block; width: 14px; height: 14px; }
+/* a row that cooled: revoked or removed. what it did keeps its receipts */
+.settings tr.gone .nm, .settings tr.gone .role, .settings tr.gone .scope, .settings tr.gone .aud,
+.settings tr.gone .meta-line, .settings tr.gone .settled, .settings tr.gone .p-name, .settings tr.gone .p-what,
+.settings tr.gone .p-ver, .settings tr.gone .p-by { color: var(--silver-4); }
+.settings tr.gone .aname { opacity: 0.5; }
+.settings tr.gone .seal, .settings tr.gone .chan-glyph { opacity: 0.55; }
+.settings tr.gone .scope { text-decoration: line-through; text-decoration-color: var(--silver-4); }
+/* the fold under its row: 0fr track, glance + receipts */
+.settings td.foldcell { padding: 0 10px; height: auto; cursor: default; }
+.settings tr.foldrow td { background: transparent !important; }
+.settings .fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23, 1, 0.32, 1); }
+.settings .fold.on { grid-template-rows: 1fr; }
+.settings .fold > .fold-in { min-height: 0; overflow: hidden; }
+.settings .fold-body { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 10px 24px; }
+.settings .fold-body .glance { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-2); max-width: 64ch; padding-bottom: 2px; }
+.settings .fold-body .meta-line { font-size: 11px; }
+.settings .fold-body .act.more { align-self: flex-start; padding: 0; }
+.settings .rc-line { display: flex; gap: 12px; align-items: baseline; }
+.settings .rc-time { font-family: var(--mono); font-size: 11px; color: var(--silver-4); font-feature-settings: "tnum" 1; flex: none; width: 88px; }
+.settings .rc-what { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); max-width: 64ch; }
+/* the role chooser: bare mono acts in the acts cell */
+.settings .chooser { display: flex; gap: 12px; align-items: baseline; }
+.settings .chooser .label { margin-right: 2px; }
+/* the head fold (invite) and the under-row field (connect): one field + acts */
+.settings .fold.invite .fold-body { padding: 2px 0 8px 6px; }
+.settings .invite-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.settings .field {
+  font-family: var(--mono); font-size: 12px; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 7px 11px; width: 26ch;
+}
+.settings .field::placeholder { color: var(--silver-4); }
+.settings .field:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.settings .chips { display: flex; gap: 4px; }
+/* chips: the state filters (grants) and the role pick (invite) */
+.settings .filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 0 0 0 2px; }
+.settings .filters .set { display: flex; align-items: center; gap: 4px; }
+.settings .chip {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--silver-3); padding: 3px 9px;
+  border: 1px solid transparent; border-radius: 4px;
+  transition: color 160ms ease, background 160ms ease;
+}
+.settings .chip:hover { color: var(--silver-1); }
+.settings .chip.on { color: var(--silver-1); background: var(--bg-well); }
+/* a row that just landed */
+@keyframes settings-land { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.settings tr.landed td > * { animation: settings-land 220ms ease-out; }
+
+/* column measures */
+.settings .m-ledger .c-who { width: 176px; }
+.settings .f-ledger .c-stamp { width: 236px; }
+.settings .f-ledger .c-seal { width: 40px; text-align: center; }
+.settings .f-ledger .c-sweep { width: 148px; }
+.settings .x-ledger .c-when { width: 128px; }
+.settings .x-ledger .file { font-family: var(--mono); font-size: 12px; color: var(--silver-2); transition: color 160ms ease; }
+.settings .x-ledger .file:hover, .settings .x-ledger .file:focus-visible { color: var(--safelight); }
+.settings .clk { font-family: var(--mono); font-size: 12px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+
+/* ── billing: meters · plan · payment · invoices ── */
+.settings .meters { display: flex; flex-direction: column; gap: 12px; }
+.settings .meter-row { display: flex; flex-direction: column; gap: 7px; padding: 6px 8px 6px 6px; border-radius: 5px; transition: background 160ms ease; }
+.settings .meter-row:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.settings .m-line { display: flex; align-items: baseline; gap: 10px; }
+.settings .m-name { font-family: var(--serif); font-size: 14px; color: var(--silver-1); width: 84px; flex: none; }
+.settings .m-read { font-family: var(--mono); font-size: 12.5px; color: var(--silver-1); font-feature-settings: "tnum" 1; transition: color 160ms ease; }
+.settings .m-read:hover, .settings .m-read:focus-visible { color: var(--safelight); }
+.settings .m-of { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.settings .m-meta { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--silver-4); font-feature-settings: "tnum" 1; opacity: 0; transition: opacity 160ms ease; }
+.settings .meter-row:hover .m-meta, .settings .meter-row:focus-within .m-meta { opacity: 1; }
+.settings .m-bar { position: relative; height: 2px; background: var(--rule); overflow: hidden; }
+.settings .m-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--silver-3); }
+.settings .plan, .settings .pay { display: flex; flex-direction: column; }
+.settings .plan-line, .settings .pay-line { display: flex; align-items: baseline; gap: 14px; padding: 6px 8px 6px 6px; border-radius: 5px; }
+.settings .plan-words { font-family: var(--serif); font-size: 15px; color: var(--silver-1); line-height: 1.45; font-feature-settings: "tnum" 1; transition: color 200ms ease; }
+.settings .plan-words.cool { color: var(--silver-3); }
+.settings .plan-acts { margin-left: auto; flex: none; display: flex; gap: 12px; }
+.settings .receipt { display: block; padding: 0 8px 4px 6px; font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.settings .receipt .landed { opacity: 0; transition: opacity 240ms ease-out; }
+.settings .receipt .landed.on { opacity: 1; }
+.settings .plan-pick, .settings .pay-edit { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms cubic-bezier(0.23,1,0.32,1); }
+.settings .plan.open .plan-pick, .settings .pay.open .pay-edit { grid-template-rows: 1fr; }
+.settings .plan-pick > .pp-inner, .settings .pay-edit > .pe-inner { min-height: 0; overflow: hidden; }
+.settings .pp-inner { display: flex; flex-direction: column; padding: 0 8px 0 6px; }
+.settings .plan.open .pp-inner { padding-top: 4px; padding-bottom: 8px; }
+.settings .pp-row { display: flex; align-items: baseline; gap: 12px; padding: 6px 8px 6px 14px; border-radius: 5px; transition: background 160ms ease; }
+.settings .pp-row:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
+.settings .pp-name { font-family: var(--serif); font-size: 14px; color: var(--silver-2); width: 64px; flex: none; }
+.settings .pp-terms { font-family: var(--mono); font-size: 12px; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.settings .pp-row .act, .settings .pp-row .meta-line { margin-left: auto; flex: none; }
+.settings .pay-card { font-family: var(--mono); font-size: 12.5px; color: var(--silver-1); font-feature-settings: "tnum" 1; transition: color 160ms ease; }
+.settings .pay-card:hover, .settings .pay-card:focus-visible { color: var(--safelight); }
+.settings .pe-inner { display: flex; align-items: center; gap: 10px; padding: 0 8px 0 6px; }
+.settings .pay.open .pe-inner { padding-top: 6px; padding-bottom: 8px; }
+.settings .pay-input { font-family: var(--mono); font-size: 12px; color: var(--silver-1); background: var(--bg-well); border: 0; border-radius: 6px; padding: 7px 11px; width: 22ch; font-feature-settings: "tnum" 1; }
+.settings .pay-input.pay-exp { width: 8ch; }
+.settings .pay-input::placeholder { color: var(--silver-4); }
+.settings .pay-input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.settings .i-ledger .c-door { text-align: right; }
+.settings .amt { font-family: var(--mono); font-size: 12.5px; color: var(--silver-1); font-feature-settings: "tnum" 1; }
+.settings .state { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); }
+/* the invoice glance: three kv pairs on one line */
+.settings .glance-kvs { display: flex; gap: 22px; flex-wrap: wrap; padding-bottom: 2px; }
+.settings .gk { display: inline-flex; align-items: baseline; gap: 8px; }
+.settings .gk .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); }
+.settings .gk .v { font-family: var(--mono); font-size: 12px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+
+/* ── packs: the two ledgers, the glance, the ladder ── */
+.settings .p-name { font-family: var(--serif); font-size: 14px; font-weight: 550; color: var(--silver-1); white-space: nowrap; }
+.settings .p-what { font-family: var(--serif); font-size: 13.5px; line-height: 1.45; color: var(--silver-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.settings .p-ver, .settings .p-by { font-family: var(--mono); font-size: 11.5px; color: var(--silver-3); font-feature-settings: "tnum" 1; white-space: nowrap; }
+.settings tr.added .settled { color: var(--silver-3); }
+.settings .pk-glance { display: flex; flex-direction: column; gap: 5px; padding-bottom: 2px; }
+.settings .pk-glance .gk .k { width: 118px; flex: none; }
+.settings .pk-glance .gk .v.serif { font-family: var(--serif); font-size: 13px; color: var(--silver-3); }
+.settings .pk-glance .gk .v.serif .rc-time { width: auto; margin-right: 6px; }
+.settings .pk-glance .doors { display: inline-flex; gap: 12px; flex-wrap: wrap; }
+.settings .pk-glance .door { font-family: var(--mono); font-size: 12px; color: var(--silver-2); transition: color 160ms ease; }
+.settings .pk-glance a.door:hover, .settings .pk-glance a.door:focus-visible { color: var(--safelight); }
+.settings .pk-glance .door.still { color: var(--silver-3); }
+.settings .ladder { display: flex; flex-direction: column; padding: 0 8px 0 0; }
+.settings .ladder .label { padding: 2px 0 2px; }
+.settings .step { border-top: 0; padding: 4px 0; gap: 10px; }
+.settings .step .s-mark { font-family: var(--mono); font-size: 11px; }
+.settings .step .s-text { font-family: var(--serif); font-size: 13px; color: var(--silver-2); }
+.settings .step-done .s-text { color: var(--silver-3); }
+.settings .step-wait .s-text { color: var(--silver-4); }
+.settings .step .meta-line { font-size: 10.5px; }
+.settings .ladder-foot { display: flex; align-items: baseline; gap: 12px; padding: 6px 0 0 26px; }
+.settings .ladder-foot .said { font-family: var(--serif); font-size: 13px; line-height: 1.45; color: var(--silver-3); }
+
+/* ── export: one row that settles through its states ── */
+.settings .exp { display: flex; align-items: baseline; gap: 16px; padding: 6px 8px 6px 6px; flex-wrap: wrap; }
+.settings .exp .throbber { font-size: 12px; }
+
+/* ── forget: the ceremony · reason field · two-phase copy · the act ── */
+.settings .ceremony { display: flex; flex-direction: column; gap: 10px; max-width: 62ch; padding: 2px 8px 6px 6px; }
+.settings .ceremony .two-phase { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-2); }
+/* what you type here IS the record, and a record is prose — so the field
+   is serif, like the draft card, never mono (rule 9: no mono prose) */
+.settings .reason {
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--silver-1);
+  background: var(--bg-well); border: 0; border-radius: 6px;
+  padding: 8px 11px; width: 100%; max-width: 62ch;
+}
+.settings .reason::placeholder { color: var(--silver-4); }
+.settings .reason:focus { outline: none; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.settings .c-go { display: flex; align-items: baseline; gap: 16px; }
+.settings .stamp { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em; color: var(--silver-3); white-space: nowrap; font-feature-settings: "tnum" 1; }
+.settings .f-ledger .claim { font-size: 13.5px; color: var(--silver-2); }
+.settings .f-ledger .claim .why { color: var(--silver-3); }
+.settings .f-ledger tr.row td, .settings .x-ledger tr.row td { cursor: default; }
+
+/* ── account ── */
+.settings .acct .seal { align-self: center; transform: translateY(2px); }
+
+/* ── the context column (packs · billing): a record you READ; the tinted
+   zone divides, never a line ── */
+.settings aside.context {
+  width: var(--ctx-w); flex: none;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: var(--ctx-bg);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.settings aside.context[hidden] { display: none; }
+.settings .ctx-head { display: flex; align-items: center; gap: 10px; }
+.settings .ctx-crumb { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--silver-4); flex: 1; min-width: 0; }
+.settings .ctx-close {
+  flex: none; margin-left: auto; width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 13px; color: var(--silver-4);
+  transition: color 160ms ease;
+}
+.settings .ctx-close:hover, .settings .ctx-close:focus-visible { color: var(--silver-1); }
+.settings .ctx-title { font-family: var(--serif); font-size: 16px; font-weight: 550; color: var(--silver-1); line-height: 1.35; }
+.settings .ctx-body { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); }
+.settings .context .kvs { gap: 6px; padding-top: 2px; }
+.settings .context .kv .k { width: 74px; }
+.settings .context .kv .v { font-family: var(--mono); font-size: 12px; color: var(--silver-2); font-feature-settings: "tnum" 1; }
+.settings .context .kv .v a:hover, .settings .context .kv .v a:focus-visible { color: var(--safelight); }
+.settings .ctx-note { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-3); font-feature-settings: "tnum" 1; }
+.settings .ctx-sec { display: flex; flex-direction: column; gap: 5px; padding-top: 4px; }
+.settings .ctx-sec .label { padding-bottom: 1px; }
+.settings .ctx-row { display: flex; align-items: baseline; gap: 10px; }
+.settings .ctx-row .door { font-family: var(--mono); font-size: 12px; color: var(--silver-2); flex: none; min-width: 96px; transition: color 160ms ease; }
+.settings .ctx-row a.door:hover, .settings .ctx-row a.door:focus-visible { color: var(--safelight); }
+.settings .ctx-row .ctx-what { font-family: var(--serif); font-size: 12.5px; line-height: 1.45; color: var(--silver-3); flex: 1; min-width: 0; }
+.settings .ctx-row .r-date { font-family: var(--mono); font-size: 11px; color: var(--silver-4); flex: none; width: 40px; font-feature-settings: "tnum" 1; }
+.settings .ctx-row .r-what { font-family: var(--serif); font-size: 13px; line-height: 1.45; color: var(--silver-2); flex: 1; min-width: 0; }
+.settings .ctx-acts { display: flex; gap: 12px; padding-top: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .fold, .settings .plan-pick, .settings .pay-edit, .settings .receipt .landed, .settings .m-meta { transition: none; }
+  .settings tr.landed td > * { animation: none; }
+}
+
+/* connectors: the audience reads on one line */
+table.ledger.c-ledger td { white-space: nowrap; }
+table.ledger.c-ledger { table-layout: auto; }

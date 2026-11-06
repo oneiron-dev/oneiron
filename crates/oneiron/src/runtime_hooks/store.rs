@@ -622,6 +622,36 @@ fn hook_run_read_rows_in(
     ))
 }
 
+/// The source rows of a room Hook receipt's run (FIX 5429): the rows its
+/// verb run read and the rows its input showed, sorted. `None` when that
+/// receipt's provenance is unknown, so a room tail withholds it: the run is
+/// not a saved verb run, its input also showed content no host names rows
+/// for, or it ran on a write, whose args and answer are its caller's own
+/// content and name no row another reader could be checked against.
+pub(super) fn hook_verb_run_source_rows_in(
+    dbs: &impl SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(run) = super::verb::VERB_RUNS.get(dbs, rtxn, key)? else {
+        return Ok(None);
+    };
+    if run.unattributed
+        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+    {
+        return Ok(None);
+    }
+    let mut rows: Vec<EntityId> = run
+        .reads
+        .into_iter()
+        .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+        .chain(run.dependencies)
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some(rows))
+}
+
 /// The Hook receipt projector: runs, newest first within the query's bound,
 /// from the whole ledger (FIX 3582); past its threshold row the read raises
 /// one check (rule 5).

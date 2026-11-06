@@ -251,6 +251,7 @@ impl<'v> Memory<'v> {
                 hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
+                signing_request_transport: self.signing_request_transport.clone(),
                 task_grant: self.task_grant,
                 kept_requester: self.kept_requester.clone(),
                 origin_conversation: self.origin_conversation,

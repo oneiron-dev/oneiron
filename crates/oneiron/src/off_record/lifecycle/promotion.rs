@@ -1,7 +1,7 @@
 //! Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base
 //! write, and the doors that save a turn, or a room's talk, through it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
@@ -21,6 +21,12 @@ impl OffRecordSession<'_> {
     /// batch pipeline against current base state, so base indexes, canonical
     /// short ids, counters, validators, gates, and decision receipts are all
     /// re-derived exactly as for any other write.
+    ///
+    /// The saved closure reflects room deletes at selection: deleted subjects,
+    /// their edges and affected summaries are omitted. Surviving promoted words
+    /// queue a fresh summary in the same commit. A wholly deleted closure returns
+    /// an empty outcome, with no promotion receipt or promoted-turn marker;
+    /// a durable receipt from an earlier save still answers a retry first.
     ///
     /// A promotion publishes what was said off record, so it is the owner's
     /// act, alone or in a room: `owner`'s proof is rechecked in the
@@ -115,21 +121,40 @@ impl OffRecordSession<'_> {
             // the turn before the commit; retirement removes only the entries
             // this plan was cut from, so what it said stays in the room.
             let snapshot = self.entry.overlay.snapshot()?;
-            // A save in a room keeps what the room showed of the turn.
-            let plan = match room {
-                Some(_) => super::saving::copy_plan(&snapshot, *turn)?.ok_or_else(|| {
-                    Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
-                        turn_ref: turn.to_hex(),
-                    })
-                })?,
-                None => snapshot.plan_promotion(*turn)?,
+            let (excluded, remake_turns) = super::saving::current_save_cut(self.vault, &snapshot)?;
+            // A deleted turn saves nothing. The durable retry above still wins.
+            let deleted = excluded.contains(turn)
+                || snapshot.journal_entries().iter().any(|entry| {
+                    entry.scope.turn() == *turn && excluded.contains(&entry.scope.conversation())
+                });
+            let plan = if deleted {
+                None
+            } else {
+                // A save in a room keeps what the room showed of the turn.
+                Some(match room {
+                    Some(_) => {
+                        super::saving::copy_plan(&snapshot, *turn, &excluded)?.ok_or_else(|| {
+                            Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
+                                turn_ref: turn.to_hex(),
+                            })
+                        })?
+                    }
+                    None => snapshot.plan_promotion_where(*turn, |entry| {
+                        super::saving::keep_current_entry(entry, &excluded)
+                    })?,
+                })
             };
             let times = super::saving::turn_times(&snapshot, *turn);
             drop(snapshot);
             // Who hears the save is read in the transaction that keeps it.
             let initiator = PromoteInitiator::owner(self.vault, owner)?;
-            let (mut outcomes, (actor, hearing)) =
-                self.promote_plans(&mut state, vec![plan], &initiator, |wtxn| {
+            let (mut outcomes, (actor, hearing)) = self.promote_plans(
+                &mut state,
+                plan.into_iter().collect(),
+                &initiator,
+                crate::EdgeActorClass::Human,
+                &remake_turns,
+                |wtxn| {
                     // Alone or in a room, the turn lands in this vault, so
                     // the proof must show its owner.
                     let actor = owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
@@ -144,7 +169,8 @@ impl OffRecordSession<'_> {
                         )?;
                     }
                     Ok((actor, Hearing::in_txn(self.vault, wtxn, room)))
-                })?;
+                },
+            )?;
             post_notice(
                 &mut state,
                 super::types::OffRecordNoticeAct::SavedTurn,
@@ -155,9 +181,19 @@ impl OffRecordSession<'_> {
             outcomes
                 .pop()
                 .map(|(_, outcome)| outcome)
-                .ok_or(Error::InvariantViolation(
-                    "a promote of one turn returned none",
-                ))?
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    if deleted {
+                        Ok(PromoteOutcome {
+                            replayed: Vec::new(),
+                            short_id_mapping: Vec::new(),
+                        })
+                    } else {
+                        Err(Error::InvariantViolation(
+                            "a promote of one turn returned none",
+                        ))
+                    }
+                })?
         };
 
         // The promotion is durable here. The live-window refresh is best-effort
@@ -214,6 +250,8 @@ impl OffRecordSession<'_> {
         state: &mut super::registry::OffRecordSessionEntryState,
         plans: Vec<crate::session_overlay::PromotePlan>,
         initiator: &PromoteInitiator,
+        saver_class: crate::EdgeActorClass,
+        remake_turns: &BTreeSet<EntityId>,
         check: impl FnOnce(&heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
         let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
@@ -222,73 +260,113 @@ impl OffRecordSession<'_> {
         let saved = self.vault.with_write_txn_grouped(|wtxn| {
             let checked = check(wtxn)?;
             let promoted_at = self.vault.store.clock.now_recorded_at();
-            plans
+            let landed = plans
                 .iter()
                 .map(|plan| {
-                    if plan.appends() {
-                        floor
-                            .copy_append(
-                                self.vault,
-                                wtxn,
-                                &self.session_ref,
-                                plan,
-                                initiator,
-                                promoted_at,
-                            )
-                            .map(|appended| (appended.outcome, appended.held))
+                    let (outcome, held) = if plan.appends() {
+                        let appended = floor.copy_append(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            plan,
+                            initiator,
+                            promoted_at,
+                        )?;
+                        (appended.outcome, appended.held)
                     } else {
-                        floor
-                            .promote(
-                                self.vault,
-                                wtxn,
-                                &self.session_ref,
-                                plan,
-                                initiator,
-                                promoted_at,
-                            )
-                            .map(|outcome| {
-                                let held: BTreeSet<EntityId> =
-                                    outcome.replayed.iter().copied().collect();
-                                (outcome, held)
-                            })
+                        let outcome = floor.promote(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            plan,
+                            initiator,
+                            promoted_at,
+                        )?;
+                        let held: BTreeSet<EntityId> = outcome.replayed.iter().copied().collect();
+                        (outcome, held)
+                    };
+                    let mut messages = Vec::new();
+                    if state.record.room.is_some() {
+                        for op in &plan.ops {
+                            if let crate::batch::BatchOp::Put {
+                                id,
+                                entity_type: crate::registry::ENTITY_TYPE_MESSAGE,
+                                occurred,
+                                ..
+                            } = op
+                                && held.contains(id)
+                                && let crate::vault::LiveEntityRow::Live {
+                                    entity_type: crate::registry::ENTITY_TYPE_MESSAGE,
+                                    body,
+                                } = crate::vault::live_entity_row_in_txn(
+                                    &self.vault.store,
+                                    wtxn,
+                                    id,
+                                )?
+                            {
+                                let body = zeroize::Zeroizing::new(body);
+                                messages.push((
+                                    *id,
+                                    occurred.start,
+                                    *blake3::hash(&body).as_bytes(),
+                                ));
+                            }
+                        }
                     }
+                    Ok((outcome, held, messages))
                 })
-                .collect::<Result<Vec<_>>>()
-                .map(|landed| (landed, checked))
+                .collect::<Result<Vec<_>>>()?;
+            let mut remakes: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
+            for (plan, (outcome, held, _)) in plans.iter().zip(&landed) {
+                if remake_turns.contains(&plan.turn())
+                    && !outcome.replayed.is_empty()
+                    && plan.ops.iter().any(|op| matches!(op,
+                        crate::batch::BatchOp::Put { id, entity_type, .. }
+                            if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE && held.contains(id)
+                    ))
+                {
+                    remakes.entry(plan.conversation()).or_default().insert(plan.turn());
+                }
+            }
+            let queued = !remakes.is_empty();
+            for (conversation, sources) in remakes {
+                self.vault.request_scope_summary_remake_in_txn(
+                    wtxn,
+                    &crate::scope_summary::ScopeSummaryRequest {
+                        target: crate::scope_summary::ScopeSummaryTarget::Sources {
+                            scope: Some(crate::conversation_dag::ScopeSelector {
+                                conversation,
+                                session: None,
+                                path: crate::conversation_dag::ScopePath::Canonical,
+                                include_forks: true,
+                            }),
+                            sources: sources.into_iter().collect(),
+                        },
+                        requester: crate::WriteActor::new(initiator.actor(), saver_class),
+                    },
+                    promoted_at,
+                )?;
+            }
+            Ok((landed, checked, queued))
         });
         // A copy no row of the save names, refused or skipped, leaves now.
         #[cfg(unix)]
         self.vault.discard_unnamed_promoted_bodies(bodies);
-        let (landed, checked) = saved?;
+        let (landed, checked, queued) = saved?;
+        if queued {
+            self.vault.store.notify_attempt_observers();
+        }
         // Committed. Publish the RAM state, then drop the kept rows and
         // journal entries from the room — in that order, and never before.
-        for (plan, (_, held)) in plans.iter().zip(&landed) {
+        for (plan, (_, _, messages)) in plans.iter().zip(&landed) {
             let turn = *plan.turn().as_bytes();
             if !state.record.promoted_turns.contains(&turn) {
                 state.record.promoted_turns.push(turn);
             }
-            let messages: Vec<(EntityId, u64, &[u8])> = plan
-                .ops
-                .iter()
-                .filter_map(|op| match op {
-                    crate::batch::BatchOp::Put {
-                        id,
-                        entity_type,
-                        occurred,
-                        data,
-                        ..
-                    } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
-                        && held.contains(id) =>
-                    {
-                        Some((*id, occurred.start, data.as_slice()))
-                    }
-                    _ => None,
-                })
-                .collect();
-            state.keep_messages(plan.turn(), &messages);
+            state.keep_message_digests(plan.turn(), messages.iter().copied());
         }
         self.entry.publish_state(state);
-        for (plan, (_, held)) in plans.iter().zip(&landed) {
+        for (plan, (_, held, _)) in plans.iter().zip(&landed) {
             // Best-effort for the same reason the window refresh is: the
             // subgraph and its receipt are already durable, so a failure to
             // tidy the ROOM must not tell the caller their consented promotion
@@ -307,8 +385,8 @@ impl OffRecordSession<'_> {
         let outcomes = plans
             .iter()
             .zip(landed)
-            .filter(|(plan, (outcome, _))| !plan.appends() || !outcome.replayed.is_empty())
-            .map(|(plan, (outcome, _))| (plan.turn(), outcome))
+            .filter(|(plan, (outcome, _, _))| !plan.appends() || !outcome.replayed.is_empty())
+            .map(|(plan, (outcome, _, _))| (plan.turn(), outcome))
             .collect();
         Ok((outcomes, checked))
     }

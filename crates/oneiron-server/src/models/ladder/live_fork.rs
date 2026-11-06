@@ -95,6 +95,7 @@ impl OfferLadder {
             rests: Arc::clone(&self.rests),
             scope: self.scope,
             prefix: ReceiptPrefix::default(),
+            listed: self.listed.clone(),
         })
     }
 }

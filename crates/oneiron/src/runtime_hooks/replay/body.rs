@@ -211,7 +211,7 @@ impl Replay<'_> {
                 context.body_starts();
                 self.runtime
                     .run_hook(body, input, &mut context, &mut |request: &str| {
-                        reads.answer(lane, self.grant, request)
+                        reads.answer_verb(lane, self.grant, request)
                     })
             }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),

@@ -86,6 +86,15 @@ impl Vault {
         deleted_claim_id: &EntityId,
         subject: &EdgeRef,
     ) -> Result<Vec<EntityId>> {
+        // Blind-review P1 (FIX 7755): a structural subject keeps its 12-byte
+        // value — no hot flags to restamp or downgrade — so claim erasure
+        // leaves the edge bytes, PPR and graph version untouched; the
+        // claim's own purge still applies in the caller's transaction.
+        if crate::edge::edge_value_layout_for_kind(subject.kind, false)
+            == crate::edge::EdgeValueLayout::Structural
+        {
+            return Ok(Vec::new());
+        }
         if crate::ports::EdgeStoreStaging::port_edge_encoded(
             &self.store,
             wtxn,

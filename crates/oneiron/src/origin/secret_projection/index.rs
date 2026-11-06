@@ -35,7 +35,7 @@ use super::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
+use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup, RepoSecretSource};
 use crate::store::code_snapshot::snapshot_asset_entity_id;
 
 mod derived;
@@ -276,6 +276,36 @@ impl RepoIndexMarks {
         self.sources.get(entity).copied()
     }
 
+    pub(crate) fn carried_source(
+        &self,
+        entity: &EntityId,
+        source: [u8; 32],
+        bytes: &[u8],
+    ) -> Result<[u8; 32]> {
+        self.readable(&source)?;
+        let prior = self.facts.for_hash(&source);
+        if prior.opaque() {
+            return Ok(source);
+        }
+        let own = *blake3::hash(bytes).as_bytes();
+        if own != source
+            && self.facts.for_hash(&own).marks().iter().any(|mark| {
+                matches!(mark.source, RepoSecretSource::SyncLanding { source } if source == *entity)
+                    && prior.marks().iter().any(|old| {
+                        old.operation_id == mark.operation_id
+                            && old.store_id == mark.store_id
+                            && old.store_identity == mark.store_identity
+                            && old.path == mark.path
+                            && old.content_kind == mark.content_kind
+                    })
+            })
+        {
+            Ok(own)
+        } else {
+            Ok(source)
+        }
+    }
+
     /// Every marked blob's snapshot ASSET id with its whole BLAKE3 (FIX
     /// 7608 slice 4: the sync copy is made once per marked blob per pass).
     pub(crate) fn marked_sources(&self) -> Vec<(EntityId, [u8; 32])> {
@@ -400,7 +430,7 @@ impl RepoIndexMarks {
             return Ok(RepoIndexInput::stored(bytes));
         }
         let mark_ids = marks.ids()?;
-        let (kind, bytes) = match project_repo_bytes_in_txn(vault, txn, &marks, bytes)? {
+        let (kind, bytes) = match project_repo_bytes_in_txn(vault, txn, &marks, bytes, None)? {
             RepoBodyProjection::Exact(bytes) => return Ok(RepoIndexInput::stored(bytes)),
             RepoBodyProjection::Masked { bytes, .. } => (RepoIndexCopyKind::Masked, bytes),
             RepoBodyProjection::Opaque(_) => {
@@ -455,7 +485,10 @@ impl RepoIndexMarks {
             return Ok(body);
         }
         Ok(match self.source_of(entity) {
-            Some(source) => self.source_input_in_txn(vault, txn, &source, body)?,
+            Some(source) => {
+                let source = self.carried_source(entity, source, &body)?;
+                self.source_input_in_txn(vault, txn, &source, body)?
+            }
             None => {
                 if let Some(text) = crate::embed::repo_derived_index_text_in(
                     vault,
@@ -475,7 +508,8 @@ impl RepoIndexMarks {
     /// The text fields record `entity` indexes, each as its copy. A marked
     /// blob's snapshot ASSET (or the document it owns) reads its first field,
     /// its body text, as the blob's copy: masked when it is the blob's exact
-    /// bytes, else the placeholder. Its other fields keep their text unless
+    /// bytes or a landed edit's marked bytes, else the placeholder. Its
+    /// other fields keep their text unless
     /// they are a marked blob's bytes, and an opaque blob's record reads the
     /// placeholder in every field, never its old title or tags. Any other
     /// record's field is a copy only when it is a marked blob's whole bytes,
@@ -505,6 +539,10 @@ impl RepoIndexMarks {
                 .into_iter()
                 .map(|(name, value)| Ok((name, self.text_in_txn(vault, txn, value)?)))
                 .collect();
+        };
+        let source = match fields.first() {
+            Some((_, value)) => self.carried_source(entity, source, value.as_bytes())?,
+            None => source,
         };
         let opaque = self.facts.for_hash(&source).opaque();
         let mut out = Vec::with_capacity(fields.len());

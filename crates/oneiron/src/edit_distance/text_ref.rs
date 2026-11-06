@@ -601,6 +601,7 @@ pub(crate) fn put_imported_endpoints(
         final_ref: LoroOpRef::from_bytes(Vec::new()),
         ops_by_actor: Vec::new(),
         source_turn_ref,
+        birth_attempt: None,
         made_by_inputs: Vec::new(),
     };
     let key = record.artifact_ref.entity_id();

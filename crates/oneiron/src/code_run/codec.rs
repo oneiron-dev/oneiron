@@ -15,7 +15,7 @@ use super::payload::self_effect_from_str;
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord,
-    CodeRunResultBinding, CodeRunStepCheckpoint,
+    CodeRunResultBinding,
 };
 use super::spawn_replay::{decode_spawn_targets, spawn_targets_value};
 use super::support::{
@@ -24,6 +24,11 @@ use super::support::{
     invalid_code_run_replay, pinned_map, required, str_value, u64_value, validate_label,
     validate_text,
 };
+
+mod checkpoint;
+
+pub use self::checkpoint::CODE_RUN_STEP_CHECKPOINT_KEYS;
+use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_step_checkpoints};
 
 pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 10] = [
     "schema_version",
@@ -50,8 +55,6 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "hook_view_served",
     "rewritten_request",
 ];
-pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
-    ["seq", "label", "state_hash", "created_at_ms"];
 pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 9] = [
     "handle",
     "path",
@@ -103,10 +106,6 @@ const KEY_SPAWN_TARGETS: &str = CODE_RUN_BRIDGE_CALL_KEYS[7];
 const KEY_HOOK_VIEW_SERVED: &str = CODE_RUN_BRIDGE_CALL_KEYS[8];
 const KEY_REWRITTEN_REQUEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[9];
 
-const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
-const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
-const KEY_CREATED_AT_MS: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[3];
-
 const KEY_HANDLE: &str = CODE_RUN_RAW_OUTPUT_KEYS[0];
 const KEY_PATH: &str = CODE_RUN_RAW_OUTPUT_KEYS[1];
 const KEY_RAW_BLAKE3: &str = CODE_RUN_RAW_OUTPUT_KEYS[2];
@@ -125,6 +124,40 @@ const KEY_NAME: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[0];
 const KEY_FIELDS: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[2];
 const KEY_LAYOUT_HASH: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[3];
 
+/// Identity of the exact source prefix a continuation proved at seed time.
+/// A child may later mask its inherited reply bytes; that does not rewrite
+/// the original source prefix this child-owned witness recorded.
+pub(crate) fn continuation_prefix_digest(
+    record: &CodeRunReplayRecord,
+    steps: u64,
+    bridge_start: u64,
+) -> Result<Option<[u8; 32]>> {
+    let (Ok(steps), Ok(bridge_start)) = (usize::try_from(steps), usize::try_from(bridge_start))
+    else {
+        return Ok(None);
+    };
+    let (Some(checkpoints), Some(calls)) = (
+        record.step_checkpoints.get(..steps),
+        record.bridge_calls.get(..bridge_start),
+    ) else {
+        return Ok(None);
+    };
+    let value = Value::Array(vec![
+        Value::Binary(record.run_id.as_bytes().to_vec()),
+        record
+            .determinism
+            .as_ref()
+            .map_or(Value::Nil, encode_determinism),
+        Value::Array(checkpoints.iter().map(encode_step_checkpoint).collect()),
+        Value::Array(calls.iter().map(encode_bridge_call).collect()),
+    ]);
+    let bytes = encode_value(&value, "continuation prefix MessagePack encode failed")?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:executor-continuation-prefix:v1");
+    hasher.update(&bytes);
+    Ok(Some(*hasher.finalize().as_bytes()))
+}
+
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
     validate_code_run_replay_record(record)?;
@@ -139,7 +172,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
         ),
         (
             Value::from(KEY_DETERMINISM),
-            encode_determinism(&record.determinism),
+            record
+                .determinism
+                .as_ref()
+                .map_or(Value::Nil, encode_determinism),
         ),
         (
             Value::from(KEY_BRIDGE_CALLS),
@@ -214,7 +250,10 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
 
     let record = CodeRunReplayRecord {
         run_id: entity_value(required(fields[1], "missing replay run_id")?)?,
-        determinism: decode_determinism(required(fields[2], "missing replay determinism")?)?,
+        determinism: match required(fields[2], "missing replay determinism")? {
+            Value::Nil => None,
+            value => Some(decode_determinism(value)?),
+        },
         bridge_calls: decode_array(
             required(fields[3], "missing replay bridge_calls")?,
             decode_bridge_call,
@@ -339,43 +378,6 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
             Some(request) => Some(request.clone()),
         },
     })
-}
-
-fn encode_step_checkpoint(checkpoint: &CodeRunStepCheckpoint) -> Value {
-    Value::Map(vec![
-        (Value::from(KEY_SEQ), Value::from(checkpoint.seq)),
-        (
-            Value::from(KEY_LABEL),
-            Value::from(checkpoint.label.as_str()),
-        ),
-        (
-            Value::from(KEY_STATE_HASH),
-            Value::Binary(checkpoint.state_hash.to_vec()),
-        ),
-        (
-            Value::from(KEY_CREATED_AT_MS),
-            Value::from(checkpoint.created_at_ms),
-        ),
-    ])
-}
-
-fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
-    let fields = pinned_map(
-        value,
-        &CODE_RUN_STEP_CHECKPOINT_KEYS,
-        "code-run step checkpoint",
-    )?;
-    let checkpoint = CodeRunStepCheckpoint {
-        seq: u64_value(required(fields[0], "missing checkpoint seq")?)?,
-        label: str_value(required(fields[1], "missing checkpoint label")?)?.to_owned(),
-        state_hash: fixed_binary(
-            required(fields[2], "missing checkpoint state_hash")?,
-            "checkpoint state_hash",
-        )?,
-        created_at_ms: u64_value(required(fields[3], "missing checkpoint created_at_ms")?)?,
-    };
-    validate_label(&checkpoint.label, "checkpoint label")?;
-    Ok(checkpoint)
 }
 
 fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
@@ -602,13 +604,7 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         expected_seq = expected_seq.saturating_add(1);
     }
 
-    let mut checkpoint_seqs = HashSet::new();
-    for checkpoint in &record.step_checkpoints {
-        if !checkpoint_seqs.insert(checkpoint.seq) {
-            return Err(invalid_code_run_replay("duplicate checkpoint seq"));
-        }
-        validate_label(&checkpoint.label, "checkpoint label")?;
-    }
+    validate_step_checkpoints(&record.step_checkpoints, expected_seq)?;
 
     let mut output_paths = HashSet::new();
     for output in &record.outputs {

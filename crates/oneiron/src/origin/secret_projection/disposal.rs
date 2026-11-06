@@ -34,8 +34,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
 use crate::{
-    checkout::lease::CheckoutLeaseAct, checkout::lease::load_act_in_txn,
-    store::checkout_lease::CheckoutId, store::checkout_lease::CheckoutLeaseState,
+    checkout::lease::load_act_in_txn, store::checkout_lease::CheckoutId,
+    store::checkout_lease::CheckoutLeaseAct, store::checkout_lease::CheckoutLeaseState,
 };
 
 mod orphan_dirs;

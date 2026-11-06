@@ -50,6 +50,13 @@ pub struct OrganService {
     cancel: MeshCancel,
 }
 
+/// Keeps the decoded body and report charged until their last encoding use.
+struct CallReply {
+    result: PeerResult,
+    // Fields drop in declaration order: the result's values before their lease.
+    _frame: Option<crate::budget::Lease>,
+}
+
 impl std::fmt::Debug for OrganService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OrganService")
@@ -182,14 +189,17 @@ impl OrganService {
             Request::Call { call } => {
                 let result = match self.call(conn, &staging, &call).await {
                     Ok(result) => result,
-                    Err(detail) => PeerResult::Failed(PeerFailure {
-                        kind: FailureKind::Failed,
-                        detail,
-                        organ: None,
-                        asks: Vec::new(),
-                    }),
+                    Err(detail) => CallReply {
+                        result: PeerResult::Failed(PeerFailure {
+                            kind: FailureKind::Failed,
+                            detail,
+                            organ: None,
+                            asks: Vec::new(),
+                        }),
+                        _frame: None,
+                    },
                 };
-                match encode(&result) {
+                match encode(&result.result) {
                     Ok(bytes) => match staging.offer(&bytes) {
                         Ok(carried) => {
                             self.measure_staged(&staging);
@@ -209,7 +219,7 @@ impl OrganService {
         conn: Arc<dyn MeshConnection>,
         staging: &Arc<Staging>,
         carried: &Carried,
-    ) -> Result<PeerResult, String> {
+    ) -> Result<CallReply, String> {
         // The call envelope itself is staged input: it leases this
         // machine's floor before it is read back, under a provisional
         // deadline — its own deadline rides inside it, still encoded —
@@ -223,30 +233,52 @@ impl OrganService {
         let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
         let deadline =
             Instant::now() + Duration::from_millis(peer.deadline_ms.min(u64::from(u32::MAX)));
-        let mut inputs = Vec::with_capacity(peer.inputs.len());
-        // Each staged input read back into memory leases this machine's
-        // floor first, and holds it until the call ends (FIX 6193).
-        for input in &peer.inputs {
-            let read = match &input.read {
-                Some((artifact, version)) => Some(OrganInput {
-                    artifact: EntityId::from_hex(artifact)
-                        .map_err(|_| "an input names no artifact".to_owned())?,
-                    version: *version,
-                }),
-                None => None,
-            };
-            if let Some(lease) = self.hold_taken_async(&input.bytes, deadline).await? {
-                held.push(lease);
+        let service = self.clone();
+        let input_staging = Arc::clone(staging);
+        let peer_inputs = peer.inputs;
+        let (inputs, input_lease) = tokio::task::spawn_blocking(move || {
+            // Inputs drop before their lease if a later read or growth fails.
+            let mut input_lease: Option<Box<dyn FloorLease>> = None;
+            let mut inputs = Vec::with_capacity(peer_inputs.len());
+            for input in &peer_inputs {
+                let read = match &input.read {
+                    Some((artifact, version)) => Some(OrganInput {
+                        artifact: EntityId::from_hex(artifact)
+                            .map_err(|_| "an input names no artifact".to_owned())?,
+                        version: *version,
+                    }),
+                    None => None,
+                };
+                if let (Carried::Staged { len, .. }, Some(floor)) =
+                    (&input.bytes, service.host.floor())
+                {
+                    let stopped = || service.cancel.is_cancelled();
+                    match input_lease.as_mut() {
+                        Some(lease) => lease.grow(*len, deadline, &stopped),
+                        None => floor.0.lease(*len, deadline, &stopped).map(|lease| {
+                            input_lease = Some(lease);
+                        }),
+                    }
+                    .map_err(|refused| format!("this node's memory floor: {refused:?}"))?;
+                }
+                let bytes = input_staging.take(&input.bytes)?;
+                if let (Carried::Staged { len, .. }, Some(lease)) =
+                    (&input.bytes, input_lease.as_mut())
+                {
+                    lease.materialized(*len, bytes.capacity() as u64);
+                }
+                inputs.push((
+                    read,
+                    LentInput {
+                        media_type: input.media_type.clone(),
+                        bytes,
+                    },
+                ));
             }
-            let bytes = staging.take(&input.bytes)?;
-            inputs.push((
-                read,
-                LentInput {
-                    media_type: input.media_type.clone(),
-                    bytes,
-                },
-            ));
-        }
+            Ok::<_, String>((inputs, input_lease))
+        })
+        .await
+        .map_err(|err| format!("this node's input thread: {err}"))??;
         let call = OrganCall {
             organ: peer.organ,
             verb: peer.verb,
@@ -271,6 +303,7 @@ impl OrganService {
         let cancel = self.cancel.clone();
         let answers = peer.answers;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
+            let _input_lease = input_lease;
             let fetch = GuardedFetch;
             let memory = MemoryGrow;
             let mut handlers = AskHandlers::none();
@@ -295,8 +328,11 @@ impl OrganService {
         .map_err(|err| format!("the call's thread: {err}"))?;
         drop(held);
         Ok(match outcome {
-            Ok(outcome) => PeerResult::Done(offered(outcome, staging)?),
-            Err(err) => PeerResult::Failed(failure(err, asked)),
+            Ok(outcome) => offered(outcome, staging)?,
+            Err(err) => CallReply {
+                result: PeerResult::Failed(failure(err, asked)),
+                _frame: None,
+            },
         })
     }
 
@@ -346,7 +382,7 @@ impl MeshService for OrganService {
 }
 
 /// The outcome as it crosses back: each output's bytes offered by hash.
-fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<PeerOutcome, String> {
+fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<CallReply, String> {
     let outputs = outcome
         .outputs
         .iter()
@@ -359,11 +395,14 @@ fn offered(outcome: OrganOutcome, staging: &Staging) -> Result<PeerOutcome, Stri
             })
         })
         .collect::<Result<_, String>>()?;
-    Ok(PeerOutcome {
-        body: outcome.body,
-        report: outcome.report,
-        receipt: outcome.receipt,
-        outputs,
+    Ok(CallReply {
+        result: PeerResult::Done(PeerOutcome {
+            body: outcome.body,
+            report: outcome.report,
+            receipt: outcome.receipt,
+            outputs,
+        }),
+        _frame: outcome._frame,
     })
 }
 
