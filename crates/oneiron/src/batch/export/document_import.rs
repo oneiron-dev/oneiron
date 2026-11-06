@@ -176,6 +176,8 @@ impl Vault {
         // results' are; the values custody holds are read in the writer.
         let _bodies = self.pin_all_result_bodies();
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
+        // Drop the writer before these pins and instance leases on every abort.
+        let mut receipt_holds = Vec::new();
         let mut wtxn = self.store.env.write_txn()?;
         let assets = super::asset_reserve::ArchiveAssets {
             mint,
@@ -432,6 +434,9 @@ impl Vault {
                     &mut wtxn,
                     &holder,
                     &envelope.receipts,
+                    assets.mint.as_ref(),
+                    assets.known.clone(),
+                    &mut receipt_holds,
                 )?;
             }
         }

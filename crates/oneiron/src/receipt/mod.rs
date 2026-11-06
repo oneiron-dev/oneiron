@@ -227,6 +227,7 @@ pub(crate) use archive_source::{
     retire_receipt_archives_for_erased_id, stage_receipt_archive_put, validate_receipt_archive_put,
 };
 
+pub(crate) use archive_source::receipt_archive_mirror_row_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use archive_source::{receipt_archive_holder, receipt_archive_matches_id};
 

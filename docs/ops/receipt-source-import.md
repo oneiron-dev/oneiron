@@ -36,17 +36,26 @@ again before its put. Puts keep their original order and use the ordinary ASSET
 batch admission path. An error still requires the caller's write transaction
 to abort; this function does not commit it.
 
-Receipt archives remain inline owning-adapter rows. The native ASSET stager
-reads one prepared archive back for its put. This does not publish a file
-manifest or mint a persistent body instance. Custody, raw archive readback,
-holder binding, retirement and the canonical format are unchanged.
+The importer reserves native body instances before its writer opens, alongside
+the ordinary File ASSET reserve. It counts preserved receipt sources as an
+upper bound because their canonical bytes depend on the mapped holder inside
+the writer. Duplicates, already-stored rows, small archives and sources the
+stager keeps inline leave unused instances as ordinary debris. Unavailable
+sources have a canonical attempt id and a unit omission reason, so stay small.
+No instance is minted inside the writer.
 
-This is only the encoded preparation slice of FIX 11180. Source values and
-receipt decoding can still be held whole. A single archive is still
-materialized for its inline put, and ordinary batch staging has its own copies.
-Persistent-file production, caller pin lifetimes and pre-writer instance
-preparation remain separate work. This change does not claim bounded total import memory or a
-fully streaming receipt import.
+The shared ASSET stager recognizes the native receipt archive magic as the
+`ReceiptArchive` file kind (code 3). It retains the existing inline threshold,
+secret-scan verdicts, known-value marking and sealed-key binding. A long source
+that can live on the file plane streams from its frozen range into that native
+file. Small sources and sources the existing scan keeps inline retain their
+ordinary row path. Each staged body's pin and instance lease remain in the
+importer's holds until its writer commits or aborts, including when a put
+returns an error. The outer all-body pin spans the same writer.
+
+Source values and receipt decoding can still be held whole. Inline fallback
+and ordinary batch staging have their own copies. This does not claim bounded
+total import memory or a fully tree-free receipt import.
 
 ## Canonical reader seam
 
@@ -64,13 +73,8 @@ validation. It no longer serializes and decodes that same admitted body a
 second time. Credential nulling, attempt identity and body validation still run.
 
 The restore path uses these readers on its frozen temporary file for identity
-and existing-row comparison. These reader seams do not enable archive
-manifests. Current persisted archives remain inline. The native file-custody source seam
-below carries original batch file-admission facts and joins file-aware custody
-and retirement readers. Persistent-file production still needs every caller's
-checked file lifetime, the real importer's pre-writer reservation and the
-owning export/sync joins. Neither a manifest's bytes nor an unminted temporary
-body supplies those facts.
+and existing-row comparison. A manifest's bytes and an unminted temporary body
+do not supply file-admission facts or receipt authority.
 
 ## Native file custody source seam
 
@@ -86,8 +90,28 @@ The existing holder, canonical id, dedupe slot, source retirement and claim-body
 checks still apply to the logical archive. Native file checks do not mint an
 instance or confer receipt authority. Callers must keep the staging pin, or
 pin the stored files before opening the snapshot, until their read or write
-ends. The ordinary archive producer and file classifier are unchanged and
-continue to stage inline archives. Connecting every caller's pin lifetime,
-real pre-writer instance reservation, owning export adapter and sync readers
-is still required before persistent receipt files are produced. This source
-seam does not claim that activation, bounded total memory or runtime proof.
+ends. Whole-vault export already pins all bodies before opening its snapshot.
+Its owning adapter reads the logical source through the same descriptor and
+canonical reader, then folds the semantic receipt source into its holder's
+archive section. The serializer still excludes native receipt archives from
+raw `ExportBody::File` attachments. A file kind or manifest never grants
+receipt authority.
+
+## Sync representation
+
+The native unsealed mirror readers pin bodies before their original snapshot.
+A local `ReceiptArchive` file is resolved under that same snapshot, checked
+against its descriptor, canonical bytes and source id, then returned with its
+original metadata header. The outbound mirror keeps those canonical bytes in
+Loro as an inline source and removes a prior file reference. Ordinary ASSET
+file carriers keep their by-reference path. Thus these outgoing readers need
+no historical-file reopen after a receipt's native key is retired. They still
+materialize the one logical source, as the original inline sync path did.
+
+The inbound by-reference landing path is not converted by these source
+changes. Completing persistent receipt production needs its original bound
+carrier and staged bytes to join durable window publication without changing
+origin-position consumption or publishing before the native writer commits.
+A current row, a manifest, a missing payload or a file pin is not an immutable
+historical source. This remains part of FIX 11180; the source changes do not
+claim complete activation, bounded total memory or runtime proof.

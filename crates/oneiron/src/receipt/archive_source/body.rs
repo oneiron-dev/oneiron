@@ -61,3 +61,26 @@ pub(super) fn decode_stored(
         crate::store::asset_file_in_txn(store, txn, id, body)?.map(|manifest| manifest.facts);
     decode_put(store, txn, body, file)
 }
+
+/// Preserve canonical receipt bytes in sync carriers while the local ASSET
+/// uses a body file. The caller pins files before opening this same snapshot.
+pub(crate) fn receipt_archive_mirror_row_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: Vec<u8>,
+) -> Result<Vec<u8>> {
+    let Some(manifest) = crate::store::asset_file_of_raw_in_txn(&vault.store, txn, id, &raw)?
+    else {
+        return Ok(raw);
+    };
+    if manifest.kind != crate::store::AssetFileKind::ReceiptArchive {
+        return Ok(raw);
+    }
+    let raw = vault.materialized_row_in_txn(txn, id, raw)?;
+    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    if decode_reader(std::io::Cursor::new(body))?.is_none() || id_of_bytes(body)? != *id {
+        return Err(invalid());
+    }
+    Ok(raw)
+}
