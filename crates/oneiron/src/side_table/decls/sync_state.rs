@@ -185,6 +185,10 @@ side_tables! {
     /// Digest of which install keys counted as mine-machine signers when an authority write last
     /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
     IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// One proposing actor's opaque ramp-scope handle on this vault (FIX 9870): 32 random bytes.
+    /// Local and erasable; never replicates, never restored from an image. Key: hex32 (actor
+    /// entity id).
+    IDENTITY_TOPOLOGY_PROPOSER_SCOPE: SyncState b"it:proposer-scope:" Raw;
     /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
     /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
     IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
@@ -410,6 +414,10 @@ side_tables! {
     SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
+    /// Where a thin-residence item's row sits, as the home witnessed it with the item's blob
+    /// (FIX 14534): `ContentWorld`'s tag, then a world id for one in a single world. Key: hex32
+    /// (entity id).
+    SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
@@ -452,6 +460,11 @@ side_tables! {
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
     /// An entity document's state vector (document family). Key: hex32.
     DOCUMENT_STATE_VECTOR: SyncState b"sv:e:" Raw;
+    /// The home's version vector of a world window, as this device last
+    /// exchanged it (FIX 14534): what a world eviction waits to see cover the
+    /// window. Local only, never imaged; the next exchange writes it again.
+    /// Key: window key.
+    SYNC_HOME_WINDOW_VV: SyncState b"sv:hw:" Raw;
     /// ARCH-0023b document family: the root document's state vector, paired with d:root. Key: ().
     SYNC_SV_ROOT: SyncState b"sv:root" Raw;
     /// A sync window's state vector (document family). Key: yyyy-mm.

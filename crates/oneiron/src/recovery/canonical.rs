@@ -30,7 +30,9 @@ pub use budget::RecoveryBudgetOverrun;
 #[cfg(test)]
 pub(super) use budget::held_bytes;
 pub use capture::capture_canonical_window;
-pub(crate) use capture::{capture_canonical_window_within, prepare_artifact_pads};
+pub(crate) use capture::{
+    CanonicalCapture, capture_canonical_window_within, prepare_artifact_pads,
+};
 pub use peer_origins::CanonicalPeerOrigin;
 pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
