@@ -151,7 +151,9 @@ async fn read_context_pack(
     req: CoreContextPackRequest,
 ) -> Result<NativeReadAnswer, NativeReadError> {
     let (response, _, _) = run_context_pack(server, auth, req, None).await?;
-    let rows = response.producer_rows();
+    let rows = response
+        .producer_rows()
+        .map_err(|error| core_engine_error("producer ids failed", error))?;
     let value = encoded(&response)?;
     Ok(match rows {
         Some(rows) => NativeReadAnswer::listed(value, rows),
