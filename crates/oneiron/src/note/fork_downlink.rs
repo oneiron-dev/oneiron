@@ -117,6 +117,25 @@ pub(crate) fn authority_fork_frames_in_txn(
     Ok(frames)
 }
 
+/// Whether the fork state frame `payload` of `note` carries a fork that cites
+/// a claim or a source in one of the `withheld` worlds, read at the final
+/// release door. A payload that does not read is an error, and the door
+/// withholds it.
+///
+/// # Errors
+///
+/// A payload that does not read, and storage errors.
+pub(crate) fn fork_state_cites_withheld(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    payload: &[u8],
+    withheld: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let (_, document) = decode_fork_state(payload)?;
+    cites_withheld(vault, txn, note, document, withheld)
+}
+
 /// Whether the fork document `document` of `note` cites a claim or a source
 /// in one of the `withheld` worlds, as the NOTE's own text is judged.
 fn cites_withheld(
