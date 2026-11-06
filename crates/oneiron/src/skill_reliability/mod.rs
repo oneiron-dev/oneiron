@@ -31,7 +31,7 @@ mod outcome_row;
 mod outcome_write;
 mod outcome_read;
 
-pub(crate) use outcome_position::OutcomeReadPosition;
+pub use outcome_position::OutcomeReadPosition;
 pub(crate) use outcome_read::{
     CanonicalOutcomeDependency, canonical_attributed_outcomes_in_txn,
     canonical_outcome_dependency_in_txn,
@@ -73,6 +73,7 @@ pub use self::projector::{
     FIELD_SKILL_GOAL_REVISION, FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF,
     PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,
     project_skill_reliability_for, project_skill_reliability_for_executor,
+    project_skill_reliability_with_positions,
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub(crate) use self::provenance::{

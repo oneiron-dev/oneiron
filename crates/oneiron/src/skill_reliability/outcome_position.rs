@@ -12,16 +12,20 @@ use crate::{EntityId, Vault};
 
 use super::codec::{invalid, map_entry};
 
+/// Original caller-requested placement for a derived physical outcome.
+///
+/// This is output placement data, not a read grant or a supporting row's identity.
+/// It is consumed only at physical birth; a later request cannot restamp a row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct OutcomeReadPosition {
-    pub(crate) scope: Scope,
-    pub(crate) kind_band: u8,
-    pub(crate) relationship: Option<BTreeSet<EntityId>>,
-    pub(crate) private: bool,
-    pub(crate) body_worlds: Vec<EntityId>,
-    pub(crate) body_facets: Vec<EntityId>,
-    pub(crate) anchors: GateReadAnchors,
+pub struct OutcomeReadPosition {
+    pub scope: Scope,
+    pub kind_band: u8,
+    pub relationship: Option<BTreeSet<EntityId>>,
+    pub private: bool,
+    pub body_worlds: Vec<EntityId>,
+    pub body_facets: Vec<EntityId>,
+    pub anchors: GateReadAnchors,
 }
 
 /// Metadata is part of its physical row, not a second keyed registry.
