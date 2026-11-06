@@ -44,8 +44,9 @@ typed fields or `no_record: false` is a protocol error.
 
 The decoder's build advertises frame kind `0x81` in its hello and
 `WireCodecs::OURS`; a peer that lists nothing still has no such support. The two
-server-side housekeeping observers ignore non-status, non-error events as before;
-they are not a user interface. Rendered delivery, non-owner holder routing and
+server-side housekeeping observers ignore this private event; their existing
+status, error and authority-catch-up handling is unchanged. They are not a user
+interface. Rendered delivery, non-owner holder routing and
 runtime privacy must not be inferred from the native event or queue's existence.
 Ordinary anonymous, Checker, RPC and subscription paths keep their existing
 behavior. No stronger model path is enabled by this carrier.
