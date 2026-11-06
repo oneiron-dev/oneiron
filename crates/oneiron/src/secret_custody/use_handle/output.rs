@@ -116,11 +116,17 @@ impl SentValue<'_> {
     pub(crate) fn clear_json_changed(&self, json: &mut Value) -> bool {
         let needs_comparison = std::str::from_utf8(self.value).is_ok_and(|value| {
             let trimmed = value.trim();
-            !trimmed.is_empty() && trimmed.len() < self.text.len() && self.text.len() < value.len()
+            !trimmed.is_empty()
+                && trimmed.len() < self.text.len()
+                && self.text.len() < value.len()
+                && trimmed
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .eq(self.text.chars().filter(|c| !c.is_whitespace()))
         });
         if !needs_comparison {
-            // Lengths move in one direction. At equal lengths, only one pass
-            // can change a key, so the final key set cannot be permuted.
+            // Monotone lengths (with one equal-length pass), or monotone
+            // non-whitespace shortlex, prevent a nontrivial key permutation.
             return clear_value(json, self.value, self.text);
         }
         let before = json.clone();
