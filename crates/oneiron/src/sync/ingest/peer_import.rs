@@ -4,9 +4,10 @@
 //! after a local change that committed in between, asks here. The import
 //! records each row before landing it. ASSET records retain the exact wire
 //! digest for carrier cleanup and a header/body-facts digest for judgments:
-//! inline, file and reference echoes are the same logical row. Other kinds
-//! keep their exact-byte identity. Forward rematerialization after a crash
-//! still finds the record.
+//! inline, file and reference echoes are the same logical row. A pending
+//! carrier retains the still-stored peer ASSET's identity separately until
+//! its canonical replacement lands. Other kinds keep their exact-byte
+//! identity. Forward rematerialization after a crash still finds the record.
 //!
 //! The record is this machine's. So window admission also carries each such
 //! row's digest in the admitted part's `peer_origins` map (FIX 2902), and a
@@ -49,8 +50,9 @@ const PEER_JUDGED_KINDS: [u8; 5] = [
     ENTITY_TYPE_ASSET_TEXT,
 ];
 
-/// A peer's exact wire digest, followed for ASSET by its logical digest.
-/// Native inline/file/reference echoes retain the same logical origin.
+/// The latest peer carrier's wire digest and, for ASSET, logical digest.
+/// A distinct still-canonical ASSET entry (wire + logical) precedes it.
+/// A sole entry is 32 or 64 bytes; a retained ASSET plus latest is 96 or 128.
 /// Key: hex32 (entity id) ":" window key.
 const PEER_ORIGIN: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_PEER_ORIGIN);
 
@@ -141,9 +143,49 @@ pub(in crate::sync) fn carry_peer_rows(admitted: &LoroDoc) -> Result<Vec<(Entity
     Ok(rows)
 }
 
+fn latest_origin(record: &[u8]) -> &[u8] {
+    if record.len() > 64 {
+        &record[64..]
+    } else {
+        record
+    }
+}
+
+fn matching_asset_origin<'a>(record: &'a [u8], logical: &[u8; 32]) -> Option<&'a [u8]> {
+    let retained = (record.len() > 64).then(|| &record[..64]);
+    retained
+        .into_iter()
+        .chain(std::iter::once(latest_origin(record)))
+        .find(|entry| entry.get(32..) == Some(logical.as_slice()))
+}
+
+/// Preserve only an already-recorded origin of the actual stored ASSET.
+/// The new carrier is pending evidence, not proof that it replaced that row.
+fn record_origin_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: &EntityId,
+    sent: &[u8],
+) -> Result<()> {
+    let key = origin_key(window_key, id);
+    let mut record = Vec::new();
+    if let Some(current) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, id)?
+        && is_asset(&current)
+        && let Some(held) = PEER_ORIGIN.get(&vault.store, wtxn, &key)?
+        && let Some(canonical) =
+            matching_asset_origin(&held, &stored_asset_digest(vault, wtxn, id, &current)?)
+        && canonical != sent
+    {
+        record.extend_from_slice(canonical);
+    }
+    record.extend_from_slice(sent);
+    PEER_ORIGIN.put(&vault.store, wtxn, &key, &record)
+}
+
 /// Records the rows a peer's import brings into `window_key`, committed
-/// before the import lands any of them. A later import of the same row
-/// supersedes its record.
+/// before the import lands any of them. A later carrier supersedes pending
+/// evidence, never the recorded origin of an ASSET that is still canonical.
 pub(in crate::sync) fn record_peer_rows(
     vault: &Vault,
     window_key: &str,
@@ -154,7 +196,7 @@ pub(in crate::sync) fn record_peer_rows(
     }
     vault.with_write_txn_grouped(|wtxn| {
         for (id, sent) in rows {
-            PEER_ORIGIN.put(&vault.store, wtxn, &origin_key(window_key, id), sent)?;
+            record_origin_in_txn(vault, wtxn, window_key, id, sent)?;
         }
         Ok(())
     })
@@ -162,7 +204,8 @@ pub(in crate::sync) fn record_peer_rows(
 
 /// Whether `blob` at `id` in `window_key` is the peer's row. ASSET uses
 /// native logical body identity across inline/file/reference echoes; other
-/// kinds use exact bytes. An actually replaced row drops its stale record.
+/// kinds use exact bytes. Comparing the canonical row never erases a
+/// different pending carrier's origin.
 pub(in crate::sync) fn peer_row_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -174,15 +217,20 @@ pub(in crate::sync) fn peer_row_in_txn(
     let Some(held) = PEER_ORIGIN.get(&vault.store, wtxn, &key)? else {
         return Ok(false);
     };
-    let matches = if is_asset(blob) {
-        held.get(32..) == Some(stored_asset_digest(vault, wtxn, id, blob)?.as_slice())
-    } else {
-        held.as_slice() == digest(blob)
-    };
-    if matches {
+    if is_asset(blob) {
+        return Ok(
+            matching_asset_origin(&held, &stored_asset_digest(vault, wtxn, id, blob)?).is_some(),
+        );
+    }
+    if latest_origin(&held) == digest(blob) {
         return Ok(true);
     }
-    PEER_ORIGIN.delete(&vault.store, wtxn, &key)?;
+    // An ASSET entry may still name a pending carrier or the canonical row
+    // a different incoming kind has not replaced. Only local re-authoring,
+    // exact carrier removal or the next writer's canonical check retires it.
+    if held.len() == 32 {
+        PEER_ORIGIN.delete(&vault.store, wtxn, &key)?;
+    }
     Ok(false)
 }
 
@@ -200,8 +248,20 @@ pub(in crate::sync) fn forget_peer_rows(
             let removed = digest(carrier);
             let prefix = format!("{}:", id.to_hex());
             for (key, held) in PEER_ORIGIN.scan_from(&vault.store, wtxn, prefix.as_bytes())? {
-                if held.get(..32) == Some(removed.as_slice()) {
+                let retained = (held.len() > 64).then(|| &held[..64]);
+                let mut kept = Vec::new();
+                for entry in retained
+                    .into_iter()
+                    .chain(std::iter::once(latest_origin(&held)))
+                {
+                    if entry.get(..32) != Some(removed.as_slice()) {
+                        kept.extend_from_slice(entry);
+                    }
+                }
+                if kept.is_empty() {
                     PEER_ORIGIN.delete(&vault.store, wtxn, &key)?;
+                } else if kept != held {
+                    PEER_ORIGIN.put(&vault.store, wtxn, &key, &kept)?;
                 }
             }
         }
@@ -231,12 +291,7 @@ pub(in crate::sync) fn carried_origin_in_txn(
     }
     let sent = digest(blob);
     if map_get_bytes(&doc.get_map(PEER_ORIGIN_MAP), &id.to_hex()).as_deref() == Some(&sent[..]) {
-        PEER_ORIGIN.put(
-            &vault.store,
-            wtxn,
-            &origin_key(window_key, id),
-            &carried_origin(doc, id, blob),
-        )?;
+        record_origin_in_txn(vault, wtxn, window_key, id, &carried_origin(doc, id, blob))?;
     }
     Ok(())
 }
