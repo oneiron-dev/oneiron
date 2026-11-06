@@ -15,7 +15,7 @@ mod requester;
 mod settlement;
 mod spend;
 mod validation;
-pub(crate) use self::budget_line::{AdmittedBudgetLine, AdmittedCallId};
+pub(crate) use self::budget_line::{AdmittedBudgetLine, AdmittedCallId, NativeMeterSnapshot};
 use self::validation::validate_admission_input;
 
 use std::ops::Bound;

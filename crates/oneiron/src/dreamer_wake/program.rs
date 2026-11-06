@@ -331,7 +331,7 @@ async fn run_program(
             return Err(error);
         }
     };
-    let used = meter.read().used_units;
+    let used = ctx.program_result_units(&meter);
     repay(shared, &loan.lease, used);
     settle(vault, &binding, attempt, ctx, ran, used)
 }

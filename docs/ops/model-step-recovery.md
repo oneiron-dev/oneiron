@@ -172,7 +172,10 @@ request hash, run instance or model-call index. The initial packed read and its
 full-vocabulary retries keep their existing single permit and settlement.
 
 The permit keeps the actual issuing guard and opaque lease, not a reconstructed
-public lease id. Its settlement capture attaches that handle only to the captured
+public lease id. That same newly allocated coordinate and actual lease are also
+registered once with the original admitted line's shared native-token inventory;
+registration neither allocates another invocation nor creates a financial row.
+Its settlement capture attaches that handle only to the captured
 runtime receipt clones, after settlement. The host's ordinary receipt sink still
 gets the original receipt without the handle. Serialization omits the runtime
 attachment because guard and lease tokens do not survive serialization. Missing
@@ -185,3 +188,46 @@ proof. This carrier does not register native House input hashes or NET invoices.
 Those actual producer hooks and the executor/driver coverage join remain separate
 work. Automatic payment and the existing generated-only opening policy are
 unchanged.
+
+### Registered GROSS inclusion at park/error settlement
+
+The original admitted line now keeps its actual opaque lease tokens through the
+attempt lifetime. Registration reuses the already allocated original coordinate;
+it does not allocate another call, reserve funds or reconstruct a token from its
+public id. Clones share this finite-attempt registry, deduplicated by native lease
+equality, including the issuing guard's allocation identity.
+
+At a registered meter's park/error settlement, the registry lock is released
+before one snapshot reads that registered guard's total and the selected tokens.
+The same total determines the existing charge delta and receipt prefix. Only
+settled intervals entirely within that original baseline/current interval qualify.
+Foreign, open, aborted, unknown and pre-baseline intervals do not qualify; a known
+settled empty interval stays known and empty. A fresh checkpoint guard cannot
+qualify the old guard's tokens.
+
+After the existing aggregate charge succeeds, the same money writer records this
+GROSS inclusion in the existing private native-call row. Its mandatory coverage
+state is either unknown or the original aggregate interval, input charge, actual
+settled units and settlement time. It changes neither the invoice nor its paid
+fact. A missing reservation records no coverage. An evidence failure rolls back
+only its nested savepoint; a parent failure rolls back the charge and evidence.
+The original charge, owed-unit SUM, receipts, status and error fallback stand.
+
+The private turn program also captures its actual result meter's absolute total
+and selected tokens together at the original result producer. That same total
+still repays the shared loan once and supplies its original result. The driver
+retains this owned snapshot for the program's Completed, Failed and ParkWithSpend
+settlements; it does not resample a current guard to infer what an earlier result
+included. The checkpoint writer records coverage only after its original charge,
+receipts and lease-fenced park succeed together. Ordinary callers without this
+producer capture keep their existing settlement path.
+
+The program's result uses its existing absolute total, while error settlement
+uses the registered baseline delta. A result-total equality check only pairs the
+capture with its reported result; native membership comes from the producer's
+actual selected tokens. The program has no Deferred or Landed result producer,
+so those paths gain no invented coverage. Native NET tallies, House admission and
+invoice hooks, paid-fact checks and late-call reconciliation remain separate
+work. No durable guard pointer is serialized. Automatic native invoice payment
+and aggregate charge subtraction remain off; a known empty GROSS interval is not
+a zero NET invoice.
