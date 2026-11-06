@@ -12,7 +12,10 @@ import type { BuildManifest, Profile, SuitePlan, PlannedFile } from "./fixtures.
 export const LIMITS = Object.freeze({ slots: 4, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
   readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
 export type Outcome = "PASS" | "FAIL" | "BLOCKED";
-export interface IdResult { readonly id: string; readonly outcome: Outcome; readonly durationMs: number; readonly reason?: string }
+export interface IdResult {
+  readonly id: string; readonly outcome: Outcome; readonly durationMs: number; readonly reason?: string;
+  readonly cleanupError?: string; readonly harnessError?: string;
+}
 export class BlockedDoor extends Error { override name = "BlockedDoor" }
 export class DeadlineError extends Error { override name = "DeadlineError" }
 export function assertLinux(): void {
@@ -29,6 +32,10 @@ export class Redactor {
       .replace(/v2\.(?:cred|slip)\.[a-f0-9.]+/gi, "[REDACTED CREDENTIAL]")
       .replace(/(\/pair)#[^\s"'<>]+/g, "$1#[REDACTED]")
       .replace(/((?:authorization|x-oneiron-binding|x-oneiron-mcp-credential|cookie|set-cookie|x-api-key|api-key|binding_key|auth_secret|password|secret|token|credential|seed)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\n,;]+)/gi, "$1[REDACTED]");
+  }
+  privateStderr(value: string): unknown {
+    try { return JSON.stringify(this.value(JSON.parse(value))).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") }
+    catch { return "[WITHHELD non-JSON private stderr]" }
   }
   value(value: unknown): unknown {
     if (typeof value === "string") return this.text(value);
@@ -62,7 +69,7 @@ export interface ProcessOptions {
   readonly cwd: string; readonly env: Readonly<Record<string, string>>;
   readonly input?: string | Uint8Array;
   readonly artifacts?: Artifacts; readonly label: string;
-  /** Pairing/init output stays in memory only; it is never emitted as logs. */
+  /** Credential-bearing stdout stays in memory; stderr is redacted before diagnostics. */
   readonly privateOutput?: boolean;
 }
 /** Fresh, minimal environment: no inherited ONEIRON_*, model keys or default HOME. */
@@ -94,12 +101,15 @@ export class ManagedProcess {
   readonly settled: Promise<void>;
   private stdout = "";
   private stderr = "";
+  private readonly truncated = { stdout: false, stderr: false };
   private readonly lines: { stdout: string; stderr: string } = { stdout: "", stderr: "" };
   private readonly ring: string[] = [];
   private constructor(readonly child: ChildProcessWithoutNullStreams, readonly options: ProcessOptions, readonly ownerFile?: string) {
     owned.add(this);
     const collect = (kind: "stdout" | "stderr", chunk: Buffer): void => {
-      this[kind] = (this[kind]+chunk.toString("utf8")).slice(-4*1024*1024);
+      const output = this[kind]+chunk.toString("utf8");
+      if (output.length > 4*1024*1024) this.truncated[kind] = true;
+      this[kind] = output.slice(-4*1024*1024);
       if (options.privateOutput) return;
       this.lines[kind] += chunk.toString("utf8");
       const lines = this.lines[kind].split("\n");
@@ -122,7 +132,10 @@ export class ManagedProcess {
         if (!options.privateOutput) for (const kind of ["stdout","stderr"] as const)
           if (this.lines[kind]) this.ring.push(redactor.text(`${kind}: ${this.lines[kind]}`));
         await options.artifacts?.json(`${options.label}.json`, { pid: child.pid, exitCode: result.exitCode,
-          signal: result.signal, logs: options.privateOutput ? [] : this.ring });
+          signal: result.signal, logs: options.privateOutput ? [] : this.ring,
+          stdoutTruncated: this.truncated.stdout, stderrTruncated: this.truncated.stderr,
+          stdout: options.privateOutput ? "[WITHHELD credential-bearing stdout]" : this.truncated.stdout ? "[WITHHELD truncated stdout]" : redactor.text(this.stdout).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]"),
+          stderr: this.truncated.stderr ? "[WITHHELD truncated stderr]" : options.privateOutput ? redactor.privateStderr(this.stderr) : redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
       } finally {
         if (ownerFile) await rm(ownerFile,{force:true});
         owned.delete(this);
@@ -186,6 +199,12 @@ export async function tempRoot(label: string): Promise<string> {
 }
 
 export interface FileDeclaration { readonly profile: Profile; readonly slots: 1 | 2 }
+interface FileDiagnostics {
+  readonly file: string; readonly exitCode: number; readonly signal: string | null;
+  readonly expectedCases: number; readonly junitPresent: boolean; readonly junitCases: number;
+  readonly matchedCases: number; readonly unknownCases: number; readonly duplicateCases: number;
+  readonly registrationError: string | null;
+}
 interface Reporter { test: typeof BunTest }
 /** Call once at module scope; pass Bun's test function to avoid importing bun:test in the runner. */
 export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
@@ -215,10 +234,16 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
         } catch (error) {
           results.set(id, {id,outcome:error instanceof BlockedDoor ? "BLOCKED" : "FAIL",durationMs:performance.now()-started,
             reason:redactor.text(error instanceof Error ? error.message : String(error))});
-          throw error;
+          // Bun must not inspect raw credential-bearing properties such as CliError.result.
+          throw new Error(results.get(id)!.reason);
         } finally {
           try { await closeOwnedResources() }
-          catch (error) { results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:redactor.text(String(error))}); throw error }
+          catch (error) {
+            const prior = results.get(id);
+            const cleanupError = redactor.text(String(error));
+            results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError});
+            throw new Error(cleanupError);
+          }
           finally { await flush() }
         }
       }, deadlineMs + LIMITS.stopMs + 1000);
@@ -316,17 +341,20 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   const pending = [...ready.files].sort((a,b) => b.estimatedSeconds-a.estimatedSeconds || a.file.localeCompare(b.file));
   const running = new Map<string,{file:PlannedFile; process:ManagedProcess; ownerDir:string; resultFile:string; fileRoot:string; done:Promise<string>}>();
   const results = new Map<string,IdResult>();
+  const fileDiagnostics: FileDiagnostics[] = [];
   const selectedIds = (file:PlannedFile) => file.tests.filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id)).map(t => t.id);
   const collect = async (name: string): Promise<void> => {
     const job = running.get(name)!;
     running.delete(name);
-    const exit = await job.process.done.catch(() => ({exitCode:1,stdout:"",stderr:""}));
+    const exit = await job.process.done.catch(() => ({exitCode:1,signal:null,stdout:"",stderr:""}));
     let processFailure="";
     try { await job.process.settled } catch(error) { processFailure=redactor.text(String(error)) }
     await reapDirectory(job.ownerDir);
     let rows: IdResult[] = [];
     let registrationError = processFailure;
     const junitOutcomes = new Map<string,string>();
+    const diagnostics = {file:name,exitCode:exit.exitCode,signal:exit.signal,
+      expectedCases:selectedIds(job.file).length,junitPresent:false,junitCases:0,matchedCases:0,unknownCases:0,duplicateCases:0};
     try {
       const payload = JSON.parse(await readFile(job.resultFile,"utf8")) as {declaration:FileDeclaration;registrations:string[];results:IdResult[]};
       rows = payload.results;
@@ -336,25 +364,31 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
       if (new Set(rows.map(r => r.id)).size !== rows.length || rows.some(r => !expected.includes(r.id))) registrationError = "Duplicate or unknown result rows";
       // /dev/stdout is a pipe, not a raw on-disk JUnit artifact (Bun 1.3.4 requires an outfile).
       const junit = exit.stdout+exit.stderr;
-      if (!/<testsuites?\b/.test(junit)) registrationError = "Bun reports missing JUnit";
+      diagnostics.junitPresent = /<testsuites?\b/.test(junit);
+      if (!diagnostics.junitPresent) registrationError = "Bun reports missing JUnit";
       const cases = [...junit.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)];
+      diagnostics.junitCases = cases.length;
       for (const match of cases) {
         const name = /\bname="([^"]*)"/.exec(match[1]!)?.[1] ?? "";
         const id = expected.find(id => name.startsWith(id+" "));
-        if (!id || junitOutcomes.has(id)) { registrationError = "Bun testcase registry differs from the plan"; continue }
+        if (!id) { diagnostics.unknownCases++; registrationError = "Bun testcase registry differs from the plan"; continue }
+        if (junitOutcomes.has(id)) { diagnostics.duplicateCases++; registrationError = "Bun testcase registry differs from the plan"; continue }
         const body = match[2] ?? "";
         junitOutcomes.set(id,/<failure\b|<error\b/.test(body) ? "FAIL" : /<skipped\b/.test(body) ? "BLOCKED" : "PASS");
       }
+      diagnostics.matchedCases = junitOutcomes.size;
       if (cases.length !== expected.length || junitOutcomes.size !== expected.length) registrationError = "Bun testcase registry differs from the plan";
       if (exit.exitCode !== 0 && rows.every(row => row.outcome === "PASS")) registrationError ||= "Bun file process failed outside a reported test";
     } catch { registrationError = "File has no complete result artifact" }
+    fileDiagnostics.push({...diagnostics,registrationError:registrationError || null});
     for (const id of selectedIds(job.file)) {
       const row = rows.find(r => r.id === id);
       if (!row || !["PASS","FAIL","BLOCKED"].includes(row.outcome) || !Number.isFinite(row.durationMs)) {
         results.set(id,{id,outcome:"FAIL",durationMs:0,reason:registrationError || "ID did not finish"});
       } else if (row.outcome === "BLOCKED") results.set(id,row);
       else if (registrationError || (row.outcome === "PASS" && junitOutcomes.get(id) !== "PASS"))
-        results.set(id,{...row,outcome:"FAIL",reason:registrationError || "Bun testcase outcome differs from recorded PASS"});
+        results.set(id,{...row,outcome:"FAIL",reason:row.reason ?? (registrationError || "Bun testcase outcome differs from recorded PASS"),
+          harnessError:registrationError || "Bun testcase outcome differs from recorded PASS"});
       else results.set(id,row);
     }
     let retain=false;
@@ -407,7 +441,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     outcome:row.tests.every(id => results.get(id)?.outcome === "PASS") ? "PASS" : "BLOCKED"}));
   const success = !schedulerFailure && !interrupted && durationMs <= LIMITS.suiteMs && [...results.values()].every(r => r.outcome === "PASS");
   await artifacts.json("report.json",{profile,scope,success,durationMs,schedulerFailure,source:plan.source,buildManifestSha256:process.env.E2E_BUILD_MANIFEST_SHA256,
-    buildHead:build.head,fixturePins:ready.fixturePins,realModel:build.realModel,results:[...results.values()].sort((a,b) => a.id.localeCompare(b.id)),coverage:rows,excludedRows:plan.excludedRows});
+    buildHead:build.head,fixturePins:ready.fixturePins,realModel:build.realModel,fileDiagnostics,results:[...results.values()].sort((a,b) => a.id.localeCompare(b.id)),coverage:rows,excludedRows:plan.excludedRows});
   return success ? 0 : 1;
 }
 if (import.meta.main) {

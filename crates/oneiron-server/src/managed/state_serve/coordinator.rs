@@ -440,6 +440,19 @@ async fn serve_with_handles(
         restore.verified(&vault)?;
     }
 
+    // Dedicated environments open before ready and the opening wake push, so
+    // the first supervisor schedule already includes their earliest deadlines.
+    // The shared teardown stops them on every exit, a failed start included.
+    let shared = crate::shared_envs::SharedEnvRegistry::open_all(
+        config.shared_env.clone(),
+        &config,
+        config.lease_vault_id,
+        state.background_admission(WriteKind::DeviceSync),
+        Some(state.device_sync_freeze()),
+    )
+    .await;
+    sync_server.install_shared_envs(shared);
+
     if let Some(listener) = host_legal {
         handles.host_legal = Some(listener.start(Arc::clone(&vault), shutdown.clone())?);
     }
