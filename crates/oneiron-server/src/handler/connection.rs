@@ -259,6 +259,7 @@ enum ConnEvent {
     Inbound(Option<Result<WsMessage, axum::Error>>),
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
     Direct(Option<Vec<u8>>),
+    PrivateHuman(Option<crate::api::private_human::PendingAsk>),
     AppDelivery,
     /// The socket's by-reference body transfers are due a poll (FIX 5489).
     AssetBodies,
