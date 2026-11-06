@@ -134,6 +134,15 @@ slice on any error. It avoids a separate plaintext Vec; parsing, AAD constructio
 and key derivation may still allocate. This caller-buffer path reserves its AAD
 scratch fallibly and reports `Error::OutOfMemory` if it cannot allocate it.
 
+`seal_with_aad_into` consumes an output buffer of plaintext length plus `TAG_LEN`,
+seals directly into it, and moves that buffer into the envelope. This lets the
+caller reserve ciphertext storage fallibly without a separate plaintext copy.
+The supplied buffer is wiped on error. This path reserves its combined AAD
+fallibly and returns `Error::OutOfMemory` if that allocation fails. It also
+reserves its nonce, identifier copies and canonical header buffer fallibly.
+Key derivation and wrapping primitives may still allocate; `seal` and
+`seal_with_aad` keep their existing allocation path.
+
 ### Passphrase stretch outside envelopes
 
 `stretch_passphrase(passphrase, cost, salt)` returns the same Argon2id v0x13 output a
