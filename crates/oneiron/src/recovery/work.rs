@@ -12,7 +12,8 @@
 //! checks over one immutable source, using the existing row page size. Single
 //! metadata values, text splices, head and quote equality/hash, container sort,
 //! retained-parent and workflow checks, encoding and hashing still run whole.
-//! Aborted-transaction preflight and the NOTE workflow plan also run whole.
+//! Aborted-transaction preflight and the NOTE workflow plan also run whole;
+//! manifest construction yields between its original whole pack/hash chunks.
 //! Recapture yields between structural stages while retaining one store read
 //! view. After that view drops, native pad normalization runs whole in the
 //! completion turn; pure snapshot equality then resumes one row at a time.
@@ -30,8 +31,8 @@ use super::canonical::{
     RebuildAt, invalid, rebuild_page, rebuild_start,
 };
 use super::ladder::{
-    CanonicalComparison, PreparedRecovery, RecoveryBudget, RecoveryTier, limit, prepare_rebuilt,
-    verify_page,
+    CanonicalComparison, ManifestChunks, PreparedRecovery, RecoveryBudget, RecoveryTier, limit,
+    prepare_rebuilt_with_manifest, verify_page,
 };
 use crate::error::Result;
 use crate::sync::bridge::Materializer;
@@ -87,6 +88,7 @@ pub(crate) struct RecoveryWork {
     digest: [u8; 32],
     phase: RecoveryPhase,
     validation: Option<CanonicalValidation>,
+    preflight_manifest: Option<ManifestChunks>,
     doc: Option<LoroDoc>,
     rebuilt: RebuildAt,
     prepared: Option<PreparedRecovery>,
@@ -112,6 +114,7 @@ impl RecoveryWork {
             digest: [0; 32],
             phase: RecoveryPhase::Validate,
             validation: None,
+            preflight_manifest: None,
             doc: None,
             rebuilt: RebuildAt::default(),
             prepared: None,
@@ -141,6 +144,10 @@ impl RecoveryWork {
             let result = self.page(vault, materializer);
             if result.is_err() && self.phase == RecoveryPhase::Validate {
                 self.validation = None;
+            }
+            if result.is_err() && self.phase == RecoveryPhase::Preflight {
+                self.preflight_manifest = None;
+                self.doc = None;
             }
             result?;
             drop(turn);
@@ -303,17 +310,38 @@ impl RecoveryWork {
     /// The whole-bundle preflight over the rebuilt window, then the
     /// manifest's tier and quarantine, before any durable write.
     fn preflight(&mut self, vault: &Vault, materializer: &Materializer) -> Result<()> {
+        if self.preflight_manifest.is_none() {
+            let doc = self
+                .doc
+                .take()
+                .ok_or_else(|| invalid("recovery preflight"))?;
+            crate::sync::bridge::preflight_validated_canonical_recovery(
+                vault,
+                materializer,
+                &self.source,
+                &doc,
+            )?;
+            self.doc = Some(doc);
+            self.preflight_manifest = Some(ManifestChunks::default());
+        }
+        if !self
+            .preflight_manifest
+            .as_mut()
+            .expect("preflight started manifest construction")
+            .advance(&self.source, self.budget.max_obligations)?
+        {
+            return Ok(());
+        }
+        let expected = self
+            .preflight_manifest
+            .take()
+            .expect("completed manifest construction")
+            .into_manifest(self.digest);
         let doc = self
             .doc
             .take()
             .ok_or_else(|| invalid("recovery preflight"))?;
-        crate::sync::bridge::preflight_validated_canonical_recovery(
-            vault,
-            materializer,
-            &self.source,
-            &doc,
-        )?;
-        let prepared = prepare_rebuilt(&self.path, &self.source, self.budget, doc)?;
+        let prepared = prepare_rebuilt_with_manifest(&self.path, expected, self.budget, doc)?;
         // A task whose fact the source refused reads as a refusal here before
         // the replay can read its authority.
         if !self.source.suppressed_tasks.is_empty() {

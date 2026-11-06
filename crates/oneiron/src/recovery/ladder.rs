@@ -1,6 +1,9 @@
 //! Three-tier repair driver: whole validation and publication, the work
 //! between them paged on the vault's fair task-work line (FIX 8821).
 
+mod manifest_chunks;
+pub(super) use manifest_chunks::ManifestChunks;
+
 #[cfg(feature = "sync")]
 mod equivalence;
 #[cfg(feature = "sync")]
@@ -40,30 +43,9 @@ pub struct RecoveryManifest {
 impl RecoveryManifest {
     pub fn from_snapshot(snapshot: &CanonicalSnapshot) -> Result<Self> {
         snapshot.validate()?;
-        let mut chunks = BTreeMap::new();
-        let mut add = |key: &str, bytes: Vec<u8>| {
-            chunks.insert(key.to_owned(), *blake3::hash(&bytes).as_bytes());
-        };
-        add("entities", pack(&snapshot.entity_blobs)?);
-        add("edges", pack(&snapshot.base_edges)?);
-        add("tombstones", pack(&snapshot.tombstones)?);
-        add("entity_documents", pack(&snapshot.entity_documents)?);
-        add("document_heads", pack(&snapshot.document_heads)?);
-        add("head_move_receipts", pack(&snapshot.head_move_receipts)?);
-        add("note_forks", pack(&snapshot.note_forks)?);
-        add("note_proposals", pack(&snapshot.note_proposals)?);
-        add("row_births", pack(&snapshot.row_births)?);
-        add("withdrawn_cutoffs", pack(&snapshot.withdrawn_cutoffs)?);
-        add("asset_body_refs", pack(&snapshot.asset_body_refs)?);
-        add("schema", pack(&snapshot.schema_manifest)?);
-        add("containers", pack(&snapshot.container_manifests)?);
-        for document in &snapshot.doc_snapshots {
-            add(&document.key(), pack(document)?);
-        }
-        Ok(Self {
-            snapshot_blake3: snapshot.blake3()?,
-            chunks,
-        })
+        let mut chunks = ManifestChunks::default();
+        while !chunks.advance(snapshot, usize::MAX)? {}
+        Ok(chunks.into_manifest(snapshot.blake3()?))
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_recovery_artifact(RECOVERY_MANIFEST_ARTIFACT_TYPE, &pack(self)?)
@@ -168,6 +150,16 @@ pub(super) fn prepare_rebuilt(
     let encoded = snapshot.encode()?;
     limit(encoded.len(), budget.max_bytes)?;
     let expected = RecoveryManifest::from_snapshot(snapshot)?;
+    prepare_rebuilt_with_manifest(path, expected, budget, window)
+}
+
+/// Finishes preparation after source size and manifest construction completed.
+pub(super) fn prepare_rebuilt_with_manifest(
+    path: &Path,
+    expected: RecoveryManifest,
+    budget: RecoveryBudget,
+    window: LoroDoc,
+) -> Result<PreparedRecovery> {
     let bytes = match fs::File::open(path) {
         Ok(file) => {
             limit(
