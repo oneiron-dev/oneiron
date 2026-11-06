@@ -4,8 +4,9 @@
 //! opened filled back by its family ([`root_fill`]). A value none of whose
 //! copies opened is erased: the vendored join writes it as a delete at its
 //! own operation, so the history keeps every id, dependency and timestamp.
-//! A row birth whose actor did not open goes the same way; another family's
-//! actor that did not open leaves its no-one form. The join proves its bytes
+//! A row birth or an identity-topology author carrier whose actor did not
+//! open goes the same way (FIX 17143); another family's actor that did not
+//! open leaves its no-one form. The join proves its bytes
 //! against the skeleton before anything is returned, and each row is cut
 //! from them again as its slice. Every restored window is marked for a full
 //! resync, and one whose history lost a value or an actor is pinned
