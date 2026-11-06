@@ -4,9 +4,11 @@
 //! program before QuickJS runs it, in process: a program Oxc parses as
 //! JavaScript, in the same async-function-body grammar the guest evaluates,
 //! runs exactly as written, byte for byte, with no reprint. Only a program
-//! that fails that parse is parsed as TypeScript and transformed by Oxc; the
-//! guest runs the JavaScript Oxc prints, and the original stays the program
-//! of record. A program neither parse accepts runs as written, so QuickJS
+//! that fails that parse is parsed as TypeScript and transformed by Oxc.
+//! Script-level declarations can also be lowered before the guest envelope;
+//! both preparation forms keep the authored source positions. The guest runs
+//! the JavaScript Oxc prints, and the original stays the program of record.
+//! A program no preparation accepts runs as written, so QuickJS
 //! reports its own error, with a typed note. Preparation never refuses a
 //! program and adds no bound of its own: what the guest runs keeps every
 //! budget it had.
@@ -431,17 +433,30 @@ fn prepare(source: &str) -> (Option<TranspiledSource>, Option<PreparationNote>) 
     if !parsed.fatal_error && parsed.diagnostics.is_empty() {
         return (None, None);
     }
-    match transpile(&wrapped) {
+    let prepared = match transpile(&wrapped, true) {
+        Err(
+            note @ (PreparationNote::ParsedAsNeither | PreparationNote::UnexpectedTransformShape),
+        ) => {
+            // Lower script-level declarations before the guest envelope. The
+            // leading newline preserves the stored source-map coordinates.
+            transpile(&format!("\n{source}"), false).map_err(|_| note)
+        }
+        result => result,
+    };
+    match prepared {
         Ok(transpiled) => (Some(transpiled), None),
         Err(note) => (None, Some(note)),
     }
 }
 
-/// Parses `wrapped` as TypeScript in the guest's grammar, transforms it and
-/// prints the arrow's body: the program the guest runs in its envelope.
-fn transpile(wrapped: &str) -> std::result::Result<TranspiledSource, PreparationNote> {
+/// Transforms TypeScript and removes the guest envelope when it was parsed
+/// with one. The input's first line precedes the authored program in either form.
+fn transpile(
+    source: &str,
+    enveloped: bool,
+) -> std::result::Result<TranspiledSource, PreparationNote> {
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, wrapped, SourceType::ts().with_script(true)).parse();
+    let parsed = Parser::new(&allocator, source, SourceType::ts().with_script(true)).parse();
     // A recovered tree after an error is never run.
     if parsed.fatal_error || !parsed.diagnostics.is_empty() {
         return Err(PreparationNote::ParsedAsNeither);
@@ -469,8 +484,10 @@ fn transpile(wrapped: &str) -> std::result::Result<TranspiledSource, Preparation
     if Codegen::new().build(&program).code == untouched {
         return Err(PreparationNote::NoTypeScriptSyntax);
     }
-    lift_body(&allocator, &mut program).ok_or(PreparationNote::UnexpectedTransformShape)?;
-    Ok(print(&allocator, &mut program, wrapped, helpers))
+    if enveloped {
+        lift_body(&allocator, &mut program).ok_or(PreparationNote::UnexpectedTransformShape)?;
+    }
+    Ok(print(&allocator, &mut program, source, helpers))
 }
 
 /// The transform options [`TS_TRANSFORM_OPTIONS`] names.

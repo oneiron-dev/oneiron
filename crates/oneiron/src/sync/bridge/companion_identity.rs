@@ -109,6 +109,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
                 end: header.occurred_end,
             },
             header.learned_at,
+            Some(header.row_version),
             data,
         )
         .apply(wtxn);
@@ -142,6 +143,10 @@ fn validate_replicated_identity_topology_record_before_mutation(
     id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
 ) -> Result<()> {
+    // FIX 10188: a part lives only under the id its manifest and index
+    // derive. Its decision is judged whole, once every part is here, by the
+    // effective fold that reconciliation below runs.
+    crate::identity_topology::validate_operation_part_id(id, record)?;
     vault.validate_identity_disposition_binding_in_txn(rtxn, id, record)?;
     vault
         .validate_replicated_identity_topology_event_in_txn(rtxn, record)

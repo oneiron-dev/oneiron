@@ -59,6 +59,15 @@ impl Vault {
         )
     }
 
+    /// The selected write's target key in its own committing snapshot.
+    pub(crate) fn credential_target_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: &VerifiedSlip,
+    ) -> Result<Option<ScopedReadActorKey>> {
+        self.credential_key_in_with(txn, proof, ScopedReadActorKey::from_verified_slip_as_target)
+    }
+
     /// Whether `proof`'s facet bounds leave its holder unbound (owner ruling
     /// FACET-READ = A), judged in one snapshot by the key
     /// [`Self::credential_read_key`] builds: the owner's own live credential,

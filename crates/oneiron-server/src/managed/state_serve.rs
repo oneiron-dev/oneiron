@@ -71,7 +71,7 @@ mod refusal;
 mod relay_delete;
 
 #[cfg(target_os = "linux")]
-pub(super) use self::carrier_watch::carrier_recipient;
+pub(super) use self::carrier_watch::carrier_recipients_snapshot;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;

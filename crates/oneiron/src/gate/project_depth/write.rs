@@ -38,6 +38,7 @@ fn put_contribution(
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: encode_contribution(value)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
