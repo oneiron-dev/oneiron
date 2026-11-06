@@ -11,6 +11,8 @@ mod editor_budget;
 pub(crate) mod hold_worker;
 mod ingress;
 pub(crate) mod notice_worker;
+#[cfg(unix)]
+pub(crate) mod page_inspector;
 mod parse_lease;
 mod presentation;
 #[cfg(unix)]
@@ -97,15 +99,15 @@ async fn action(
             Ok(request) => request,
             Err(response) => return response,
         };
-    match server.vault.execute_signing_action_as(
-        &token,
-        &request.action,
-        caller,
-        verified_actor,
-        ip,
-        ua,
-    ) {
-        Ok(outcome) => (
+    // The act blocks, its writer and the inspection of the PDFs it lays
+    // fields on (FIX 9609) alike, so it runs off the async runtime.
+    let vault = Arc::clone(&server.vault);
+    let acted = tokio::task::spawn_blocking(move || {
+        vault.execute_signing_action_as(&token, &request.action, caller, verified_actor, ip, ua)
+    })
+    .await;
+    match acted {
+        Ok(Ok(outcome)) => (
             [
                 (header::CACHE_CONTROL, "no-store"),
                 (header::REFERRER_POLICY, "no-referrer"),
@@ -114,7 +116,7 @@ async fn action(
             Json(outcome),
         )
             .into_response(),
-        Err(_) => refused(),
+        Ok(Err(_)) | Err(_) => refused(),
     }
 }
 /// Who the signing call shows itself to be. A browser signer sends no
