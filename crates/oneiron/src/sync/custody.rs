@@ -619,9 +619,7 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
         if due.is_empty() {
             return Ok(0);
         }
-        vault.with_write_txn_grouped(|wtxn| {
-            stage_custody_inputs_in_txn(vault, wtxn, machine, &due)
-        })
+        vault.with_write_txn_grouped(|wtxn| stage_custody_inputs_in_txn(vault, wtxn, machine, &due))
     })();
     match outcome {
         Ok(kept) if kept > 0 => {
@@ -686,7 +684,9 @@ impl Vault {
     /// Judges again every custody transition and input the live base
     /// windows carry, as a window open does: one whose request this vault
     /// had not folded when it arrived stands once the request is in, and
-    /// the holder a request names keeps its input. A rebind this vault keeps
+    /// the holder a request names keeps its input. An export copy whose
+    /// holder's standing this vault had not folded, waiting in its window,
+    /// is kept once it proves itself (FIX 12352). A rebind this vault keeps
     /// pending because its live floor refused the bindings is judged again
     /// from its kept carrier, and applies once the floor admits it (CALLS
     /// CUSTODY_REBIND_PENDING_FLOOR). The owner work drain runs it after an
