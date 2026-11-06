@@ -33,6 +33,9 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// descendant) strictly inside a retained head/tail interval carry their original
 /// span bytes as-is under the same rebuilt paragraph tag and body ancestors;
 /// edited, boundary, leading, trailing or field-holding empties keep the existing drop.
+/// Field-free paragraph edge gaps carry only beside actually emitted original
+/// neighbors: positive retained text at the first/last nonempty direct child,
+/// and an original first pPr or last endParaRPr. Skipped children block bridges.
 pub(super) fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -121,8 +124,10 @@ pub(super) fn rebuilt(
                   line: &str|
      -> Option<String> {
         let (para, para_node) = paragraph;
-        let p_pr = piece(tree.child(para, DML, "pPr").ok()?);
-        let end = piece(tree.child(para, DML, "endParaRPr").ok()?);
+        let p_pr_node = tree.child(para, DML, "pPr").ok()?;
+        let end_node = tree.child(para, DML, "endParaRPr").ok()?;
+        let p_pr = piece(p_pr_node);
+        let end = piece(end_node);
         let p = para_node.qualified.as_str();
         let p_attributes: String = para_node
             .attr_spans
@@ -243,6 +248,52 @@ pub(super) fn rebuilt(
             }
             Some(runs)
         };
+        // Boundary gaps require the first/last original segment to be emitted.
+        // An un-emitted zero-text child must not be bridged over.
+        let raw_gap = |from: usize, to: usize| std::str::from_utf8(&bytes[from..to]).ok();
+        let opening = match p_pr_node {
+            Some((at, node)) if field_free && para_node.children.first() == Some(&at) => {
+                raw_gap(para_node.content.start, node.span.start)?
+            }
+            _ => "",
+        };
+        let closing = match end_node {
+            Some((at, node)) if field_free && para_node.children.last() == Some(&at) => {
+                raw_gap(node.span.end, para_node.content.end)?
+            }
+            _ => "",
+        };
+        let leading = match segments.first() {
+            Some((ordinal, _, node, text)) if field_free && prefix > 0 && !text.is_empty() => {
+                let start = match p_pr_node {
+                    Some((at, property))
+                        if para_node.children.first() == Some(&at) && *ordinal == 1 =>
+                    {
+                        Some(property.span.end)
+                    }
+                    None if *ordinal == 0 => Some(para_node.content.start),
+                    _ => None,
+                };
+                start.map_or(Some(""), |start| raw_gap(start, node.span.start))?
+            }
+            _ => "",
+        };
+        let trailing = match segments.last() {
+            Some((ordinal, _, node, text)) if field_free && suffix > 0 && !text.is_empty() => {
+                let end = match end_node {
+                    Some((at, property))
+                        if para_node.children.last() == Some(&at)
+                            && *ordinal + 2 == para_node.children.len() =>
+                    {
+                        Some(property.span.start)
+                    }
+                    None if *ordinal + 1 == para_node.children.len() => Some(para_node.content.end),
+                    _ => None,
+                };
+                end.map_or(Some(""), |end| raw_gap(node.span.end, end))?
+            }
+            _ => "",
+        };
         let head = retained_runs(0, prefix)?;
         let middle = if prefix + suffix == new.len() {
             String::new()
@@ -252,7 +303,7 @@ pub(super) fn rebuilt(
         };
         let tail = retained_runs(old.len() - suffix, old.len())?;
         Some(format!(
-            "<{p}{p_attributes}>{p_pr}{head}{middle}{tail}{end}</{p}>"
+            "<{p}{p_attributes}>{opening}{p_pr}{leading}{head}{middle}{tail}{trailing}{end}{closing}</{p}>"
         ))
     };
     let paragraph_run = |para: usize| {
