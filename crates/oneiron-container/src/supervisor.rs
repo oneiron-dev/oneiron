@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 // The supervisor's copy of a stream socket's guest end (FIX 6788).
 mod control;
+mod ingress;
+pub use ingress::LoopbackConnection;
 // A socket's host entry ends with the guest's last hold on it (FIX 5978).
 mod lifetime;
 // Guest-loopback listeners, inside the session only (FIX 6680).
@@ -67,6 +69,7 @@ struct State {
 
 pub(crate) struct Guard {
     alive: Arc<AtomicBool>,
+    state: std::sync::Weak<State>,
     directory: Option<tempfile::TempDir>,
 }
 impl Guard {
@@ -173,6 +176,7 @@ impl Supervisor {
         let directory = self.directory;
         let guard = Guard {
             alive,
+            state: Arc::downgrade(&state),
             directory: Some(directory),
         };
         let config = self.config;
@@ -718,13 +722,18 @@ pub fn serve_native(
         inventory: Mutex::default(),
         loopback: Mutex::default(),
     });
+    let guard = NativeFenceGuard {
+        alive,
+        state: Arc::downgrade(&state),
+    };
     std::thread::spawn(move || {
         let _ = serve(stream, Arc::new(notify), state);
     });
-    Ok(NativeFenceGuard { alive })
+    Ok(guard)
 }
 pub struct NativeFenceGuard {
     alive: Arc<AtomicBool>,
+    state: std::sync::Weak<State>,
 }
 impl Drop for NativeFenceGuard {
     fn drop(&mut self) {
