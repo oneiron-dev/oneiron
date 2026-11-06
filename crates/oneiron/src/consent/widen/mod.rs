@@ -1,11 +1,12 @@
 //! Propose-only authority widening. Only the existing authenticated-owner door
 //! can turn a frozen canonical delta into a standing grant.
-use super::codec::{decode_bound_value, encode_bound_value};
+use super::codec::{GRANTS, decode_bound_value, encode_bound_value};
 use super::contact_clearance::{CONTACT_DISCLOSURE_WIDEN_KIND, ContactDisclosureProposal};
 use super::effect::EffectDigest;
 use super::support::{invalid_row, normalized_ref};
 use super::{
-    AuthenticatedOwner, ConsentDomain, ConsentReceipt, GrantBound, bound_catastrophe_class,
+    AuthenticatedOwner, ConsentDomain, ConsentGrantRow, ConsentReceipt, GrantBound,
+    bound_catastrophe_class,
 };
 use crate::authority::VerifiedSlip;
 use crate::error::GateError;
@@ -81,6 +82,11 @@ struct StoredProposal {
     /// lineage nor any fork of it may settle it (FIX 5064).
     #[serde(default)]
     opener_lineage: Vec<[u8; 32]>,
+    /// The owner's active grants the proposed bound strictly contained when
+    /// it was filed: the accept that mints the wider grant revokes those
+    /// still standing so, in the same writer (FIX 9740).
+    #[serde(default)]
+    predecessors: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -201,6 +207,17 @@ fn widen_rejection_digest(proposal: &WidenProposal) -> EffectDigest {
     }
     EffectDigest::from_bytes(*hasher.finalize().as_bytes())
 }
+/// Whether `row` is one of `owner`'s ordinary active grants that `bound`
+/// strictly widens: an accepted widen replaces it (FIX 9740, Engine 11:40).
+/// A bypass grant, an equal bound and another owner's grant never are.
+fn is_widen_predecessor(row: &ConsentGrantRow, bound: &GrantBound, owner: &str) -> bool {
+    row.is_active()
+        && row.bypass.is_none()
+        && row.owner_stamp.principal_ref == owner
+        && bound.contains(row.grant.bound())
+        && !row.grant.bound().contains(bound)
+}
+
 fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> {
     let p = &row.proposal;
     decode_delta(&p.canonical_delta)?;
@@ -404,6 +421,16 @@ impl Vault {
             if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
                 return Ok(validate_row(row, &reference)?.proposal);
             }
+            // The grants this widening replaces, as they stand at filing.
+            let predecessors = match decode_delta(&canonical_delta)? {
+                WidenDelta::Bound(bound) => GRANTS
+                    .scan(&self.store, &*txn)?
+                    .into_iter()
+                    .filter(|(_, row)| is_widen_predecessor(row, &bound, &owner_ref))
+                    .map(|(_, row)| row.grant_ref())
+                    .collect(),
+                WidenDelta::ContactDisclosure(_) => Vec::new(),
+            };
             let proposal = WidenProposal {
                 proposal_ref: reference,
                 canonical_delta,
@@ -439,6 +466,7 @@ impl Vault {
                 resolved: false,
                 settlement: None,
                 opener_lineage,
+                predecessors,
             };
             WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
             Ok(proposal)
@@ -618,6 +646,16 @@ impl Vault {
                     "a contact-disclosure offer settles through confirm_contact_disclosure",
                 )));
             };
+            // The wider grant replaces the narrower ones it was filed over
+            // that still stand so: each is revoked, with its own receipt, in
+            // this writer, so revoking the new grant leaves none behind.
+            for predecessor in &row.predecessors {
+                if let Some(prior) = self.consent_grant_in_txn(&*txn, predecessor)?
+                    && is_widen_predecessor(&prior, &bound, &row.proposal.owner_ref)
+                {
+                    self.revoke_consent_grant_in_txn(txn, owner, predecessor)?;
+                }
+            }
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             row.resolved = true;
             row.settlement = Some(StoredSettlement {
