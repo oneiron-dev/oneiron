@@ -108,7 +108,7 @@ impl Vault {
     /// bodies use `store`; contact and identity labels still use the vault base.
     pub(crate) fn commitment_ledger_for_counterparty_in_txn(
         &self,
-        store: &impl EntityStoreRead,
+        store: &crate::store::StoreRead<'_>,
         txn: &heed::RoTxn<'_>,
         contact_ref: &EntityId,
         mut admit: impl FnMut(&EntityId) -> Result<bool>,
@@ -188,7 +188,7 @@ impl Vault {
     /// commitments into `(owed_by_them, owed_to_them)`, unsorted.
     fn project_commitment_rows(
         &self,
-        store: &impl EntityStoreRead,
+        store: &crate::store::StoreRead<'_>,
         rtxn: &heed::RoTxn<'_>,
         contact_ref: &EntityId,
         admit: &mut impl FnMut(&EntityId) -> Result<bool>,

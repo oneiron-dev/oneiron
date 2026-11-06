@@ -28,7 +28,7 @@ pub(super) fn unscoped_ledger_prep_items(
 /// in the PPR result. Every deciding label and rendered promise uses this cut.
 pub(super) fn ledger_prep_items(
     vault: &Vault,
-    store: &impl EntityStoreRead,
+    store: &crate::store::StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     event: &PrepEvent,
     fired_at: u64,
