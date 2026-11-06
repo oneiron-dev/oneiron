@@ -42,10 +42,6 @@ pub(crate) struct CarriedReceipt {
 impl CarriedReceipt {
     /// Whether the receipt names an actor: a live one names its actor and
     /// its MadeBy's process's actor, an erased one names no one.
-    #[allow(
-        dead_code,
-        reason = "the window checkpoint classifier reads it, and KS7-5 drives that classifier"
-    )]
     pub(crate) fn names_actor(&self) -> bool {
         matches!(self.receipt, StoredReceipt::Live { .. })
     }

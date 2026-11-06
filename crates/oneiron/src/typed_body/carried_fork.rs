@@ -109,6 +109,17 @@ impl CarriedFork {
             || !self.companion.is_empty()
     }
 
+    /// Whether the fork's opener, or the actor that merged or discarded it,
+    /// reads as erased: a copy that named them may stand before this one in
+    /// a window's history.
+    pub(crate) fn names_erased_actor(&self) -> bool {
+        let settler = match &self.record.state {
+            TypedForkState::Open => None,
+            TypedForkState::Merged { by, .. } | TypedForkState::Discarded { by, .. } => Some(*by),
+        };
+        self.record.opener == BodyActor::Erased || settler == Some(BodyActor::Erased)
+    }
+
     /// This copy as this vault holds a carried one, as the erase leaves a
     /// fork here (`erase_fork_actor_in_txn`): `None` for an open fork whose
     /// opener this vault erased, which goes with its document and its
