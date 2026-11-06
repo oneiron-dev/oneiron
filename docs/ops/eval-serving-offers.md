@@ -46,6 +46,9 @@ all four measured token counts, amount, run instance, lease and source rows.
 
 The leg keeps a snapshot only for one native prepared event matching its
 actual constructed binding's offer, model, route, catalog revision and payer.
+It also requires the successful response's host-stamped permit instance and
+lease to match that same native event; a concurrent call on the same run and
+binding is not interchangeable. Provider payloads cannot supply this stamp.
 An unbound meter, absent quote, unpriced usage, decode failure, multiple calls
 or a mismatched route leaves `call_price` unknown. The original answer, scoring
 and error paths do not change. Incumbent, candidate and incumbent retest use
