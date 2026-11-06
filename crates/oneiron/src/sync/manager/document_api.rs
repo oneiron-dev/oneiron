@@ -22,6 +22,10 @@ impl WindowManager {
     pub(crate) fn notify_note(&self, id: crate::EntityId) {
         self.documents.notify_note(id);
     }
+
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        self.documents.notify_note_forks(id);
+    }
     /// The owner lane's text-plane export for an own device: NOTE documents
     /// only, with no selector, under the state-copy and resync rule of the
     /// selector export.
@@ -46,6 +50,22 @@ impl WindowManager {
         self.documents
             .open(id)?
             .export_owner(remote_vv, crate::sync::window::Withhold::Peer(peer))
+    }
+
+    /// The pending forks of the NOTE `id` for an own device, judged for the
+    /// machine `peer` the lane proved (FIX 12789): each fork's state, then
+    /// their set. None from a replica, which is no authority.
+    ///
+    /// # Errors
+    ///
+    /// An owner admission denial for that machine, or a storage error.
+    pub fn export_owner_note_forks_for(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        peer: crate::authority::PeerMachine,
+    ) -> Result<Vec<Vec<u8>>> {
+        self.documents
+            .export_owner_note_forks(id, crate::sync::window::Withhold::Peer(peer))
     }
 
     /// Grant-backed text-plane export for a caller-selected window. The
