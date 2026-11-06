@@ -239,10 +239,10 @@ impl Vault {
         }
         let mut records: BTreeMap<EntityId, Vec<u32>> = BTreeMap::new();
         for presented in sent {
-            records
-                .entry(presented.custody)
-                .or_default()
-                .push(presented.generation);
+            let generations = records.entry(presented.custody).or_default();
+            if !generations.contains(&presented.generation) {
+                generations.push(presented.generation);
+            }
         }
         // Each record's text, read before the writer opens.
         let texts: Vec<(EntityId, Vec<u32>, String)> = records
@@ -252,7 +252,7 @@ impl Vault {
                 (custody, generations, text)
             })
             .collect();
-        let mut matchers = Vec::with_capacity(texts.len());
+        let mut matchers = Vec::with_capacity(sent.len());
         {
             let txn = self.store.env.write_txn()?;
             for (custody, generations, text) in texts {
@@ -260,18 +260,25 @@ impl Vault {
                 else {
                     return Err(uncovered());
                 };
-                if generations
-                    .iter()
-                    .any(|generation| !entries.iter().any(|(at, _)| at == generation))
-                {
-                    return Err(uncovered());
+                // One matcher per generation: a matcher keeps the longest
+                // of the values it knows at each place and skips the rest,
+                // so two generations that overlap in a reply are each found
+                // on the untouched text, and replaced together.
+                for generation in generations {
+                    if !entries.iter().any(|(at, _)| *at == generation) {
+                        return Err(uncovered());
+                    }
+                    let Some(matcher) = KnownValues::load_for_in_writer(
+                        &self.store,
+                        &txn,
+                        &custody,
+                        &[generation],
+                    )?
+                    else {
+                        return Err(uncovered());
+                    };
+                    matchers.push((matcher, text.clone()));
                 }
-                let Some(matcher) =
-                    KnownValues::load_for_in_writer(&self.store, &txn, &custody, &generations)?
-                else {
-                    return Err(uncovered());
-                };
-                matchers.push((matcher, text));
             }
         }
         Ok(clear(&ConnectorSentClearer { matchers }))
