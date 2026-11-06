@@ -15,6 +15,7 @@ mod nightly_link_grant;
 mod parts;
 mod pins;
 mod prior;
+mod restated;
 pub(super) use nightly_link_grant::require_nightly_link_write;
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
