@@ -23,6 +23,8 @@ pub(crate) mod asset_text;
 mod delete;
 mod export;
 pub(crate) mod note_world;
+#[cfg(feature = "sync")]
+pub(crate) mod origin_positions;
 mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;
@@ -33,7 +35,8 @@ mod tests;
 pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
-    stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact, unstage_session_position,
+    stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
+    stamp_task_fact, unstage_session_position,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,8 +283,9 @@ fn derived_position(
 
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
-/// A BLOB_ARTIFACT's likewise: only `stamp_blob_project` settles one, in
-/// the transaction that binds the blob to its project.
+/// A BLOB_ARTIFACT's likewise: `stamp_blob_project` settles a project
+/// audience, while `stamp_queue_check_exhaust_birth` settles the placement
+/// captured from a completed check's input. Later puts keep that position.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
 /// settles them. An ASSET body never proposes a sensitivity either: a raise
 /// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
@@ -296,11 +300,18 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                     ..prior.clone()
                 } == *proposed
         }
-        crate::registry::ENTITY_TYPE_TURN
-        | crate::registry::ENTITY_TYPE_MESSAGE
-        | crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
             Scope {
                 audience: proposed.audience.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+            Scope {
+                worlds: proposed.worlds.clone(),
+                facets: proposed.facets.clone(),
+                audience: proposed.audience.clone(),
+                sensitivity: proposed.sensitivity,
                 ..prior.clone()
             } == *proposed
         }
@@ -395,8 +406,9 @@ fn stored_scope(
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; a NOTE where its live `InWorld` edges place
-/// it (`note_world`). An ASSET or ASSET_TEXT uses its kind- and birth-facet-bound
-/// singleton stamp, retaining base reality when no such single world is proved.
+/// it (`note_world`). An ASSET, ASSET_TEXT or BLOB_ARTIFACT uses its kind-
+/// and birth-facet-bound singleton stamp, retaining base reality when no such
+/// single world is proved.
 /// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
 /// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
 /// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
@@ -432,7 +444,8 @@ pub(crate) fn record_world_in(
         kind,
         crate::registry::ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
     );
-    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset {
+    let blob = kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset && !blob {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
@@ -442,7 +455,7 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
-    if asset {
+    if asset || blob {
         return Ok(Some(stamped.flatten()));
     }
     // An epoch summary is one whatever form its body takes, and a pointer no

@@ -30,7 +30,7 @@ pub(crate) struct AdmittedUpdate {
     pub(super) rows: u64,
     pub(super) early: EarlyStamps,
     pub(super) births: Vec<(EntityId, Vec<u8>)>,
-    pub(super) peer_rows: Vec<(EntityId, [u8; 32])>,
+    pub(super) peer_rows: Vec<(EntityId, Vec<u8>)>,
     pub(super) delivered: BTreeMap<EntityId, [u8; 32]>,
     pub(super) born_with: Vec<super::super::born_with::CarriedText>,
     pub(super) lane: Option<String>,
@@ -102,6 +102,39 @@ impl AdmittedUpdate {
         hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
     }
 
+    /// Takes from every part what the rows the owner's discard marks own,
+    /// before any of it persists (FIX 14534 part E, E4 = A): its bytes
+    /// projected history-free, and those rows' born-with text, stamps and
+    /// births dropped. A staged artifact so projected has its own digest and
+    /// needs its own confirmation.
+    ///
+    /// # Errors
+    ///
+    /// A part that does not open, or that the projection cannot place: the
+    /// staging is refused retryably and writes no receipt.
+    pub(crate) fn project_for_discard(&mut self, discarded: &BTreeSet<EntityId>) -> Result<()> {
+        if discarded.is_empty() {
+            return Ok(());
+        }
+        if let Some(bytes) =
+            crate::sync::window::project_unsent_update(&self.key, &self.bytes, discarded)?
+        {
+            self.bytes = bytes;
+        }
+        self.born_with.retain(|(id, _, _)| !discarded.contains(id));
+        self.early.held.retain(|stamp| !stamp.names_any(discarded));
+        self.early
+            .with_birth
+            .retain(|stamp| !stamp.names_any(discarded));
+        self.births.retain(|(id, _)| !discarded.contains(id));
+        self.peer_rows.retain(|(id, _)| !discarded.contains(id));
+        self.delivered.retain(|id, _| !discarded.contains(id));
+        for part in &mut self.routed {
+            part.project_for_discard(discarded)?;
+        }
+        Ok(())
+    }
+
     /// The record of every stamp [`Self::hold_staged`] holds, which the
     /// receipt keeps while it is Pending.
     pub(crate) fn staged_stamps(&self) -> Vec<u8> {
@@ -115,8 +148,8 @@ impl AdmittedUpdate {
     }
 
     /// The rows whose door judges a peer's row apart from this vault's own,
-    /// each with the digest of the bytes the update brings.
-    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+    /// each with its wire digest and any ASSET logical-body identity.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, Vec<u8>)] {
         &self.peer_rows
     }
 
@@ -203,13 +236,13 @@ pub(in crate::sync) fn release_landed_stamps(
 pub(crate) struct StagedBirths {
     lane: String,
     births: Vec<(EntityId, Vec<u8>)>,
-    peer_rows: Vec<(EntityId, [u8; 32])>,
+    peer_rows: Vec<(EntityId, Vec<u8>)>,
 }
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
-    /// The peer-origin rows recomputed from the receipt-bound admitted bytes.
-    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+    /// The peer-origin records recomputed from receipt-bound admitted bytes.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, Vec<u8>)] {
         &self.peer_rows
     }
 
