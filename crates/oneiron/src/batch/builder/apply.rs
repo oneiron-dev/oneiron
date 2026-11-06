@@ -10,6 +10,26 @@ use heed::RwTxn;
 use crate::Vault;
 use crate::error::{Error, Result};
 
+enum ApplyOutcome {
+    Applied,
+    #[cfg(feature = "sync")]
+    DocumentStands(crate::entity_doc::RecordDocumentStand),
+    #[cfg(feature = "sync")]
+    NativeRecordApplied(super::record_document::AppliedRecordDocument),
+}
+
+impl ApplyOutcome {
+    fn is_applied(&self) -> bool {
+        match self {
+            Self::Applied => true,
+            #[cfg(feature = "sync")]
+            Self::NativeRecordApplied(_) => true,
+            #[cfg(feature = "sync")]
+            Self::DocumentStands(_) => false,
+        }
+    }
+}
+
 impl BatchBuilder<'_> {
     /// Applies all queued operations to the given write transaction without committing.
     ///
@@ -25,7 +45,35 @@ impl BatchBuilder<'_> {
     /// it. Actor-bound batches stage in a savepoint, so a refused routed
     /// projection leaves neither its source event nor any head change behind.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true),
+            None,
+            None,
+            None,
+            #[cfg(feature = "sync")]
+            None,
+        )
+        .map(|_| ())
+    }
+
+    /// The typed SKILL door's caller-transaction terminal. The request remains
+    /// target-bound; every ordinary batch and actor check still runs in apply.
+    #[cfg(feature = "sync")]
+    pub(crate) fn apply_skill_state(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        request: crate::skill::SkillStateWrite,
+    ) -> Result<()> {
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true).with_skill_state_write(request),
+            None,
+            None,
+            None,
+            None,
+        )
+        .map(|_| ())
     }
 
     /// [`Self::apply`] for the replicated put a sync window's ingest door
@@ -36,26 +84,48 @@ impl BatchBuilder<'_> {
     /// replicated MESSAGE put meets the witness check with `own_device`, the
     /// lane the door gave its row when one of the owner's own machines sent
     /// it, which counts only for that row and its exact bytes (FIX 9600).
+    /// A selected document that stands returns its preparation outcome without
+    /// staging the pointer or running the batch's landed-write tails.
     #[cfg(feature = "sync")]
     pub(crate) fn apply_ingested(
         self,
         wtxn: &mut RwTxn<'_>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
-    ) -> Result<()> {
+        record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    ) -> Result<super::record_document::IngestedPutOutcome> {
         self.apply_with_gate_mode(
             wtxn,
             ApplyOpsGateMode::new(false, true),
             None,
             authority_beside,
             own_device,
+            record_document,
         )
+        .map(|outcome| match outcome {
+            ApplyOutcome::Applied => super::record_document::IngestedPutOutcome::Applied,
+            ApplyOutcome::DocumentStands(stand) => {
+                super::record_document::IngestedPutOutcome::DocumentStands(stand)
+            }
+            ApplyOutcome::NativeRecordApplied(applied) => {
+                super::record_document::IngestedPutOutcome::NativeRecordApplied(applied)
+            }
+        })
     }
 
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(true, true),
+            None,
+            None,
+            None,
+            #[cfg(feature = "sync")]
+            None,
+        )
+        .map(|_| ())
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
@@ -67,7 +137,10 @@ impl BatchBuilder<'_> {
             Some(actor),
             None,
             None,
+            #[cfg(feature = "sync")]
+            None,
         )
+        .map(|_| ())
     }
 
     fn apply_with_gate_mode(
@@ -77,7 +150,8 @@ impl BatchBuilder<'_> {
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
-    ) -> Result<()> {
+        #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    ) -> Result<ApplyOutcome> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
         if let Some(error) = self.validation_error.take() {
@@ -104,20 +178,32 @@ impl BatchBuilder<'_> {
             let mut staged = vault.store.env.nested_write_txn(wtxn)?;
             let scope =
                 has_owner.then(|| super::vad_postcommit::VadPostcommitScope::new(vault, &staged));
-            self.apply_staged(
+            let outcome = self.apply_staged(
                 &mut staged,
                 gate_mode,
                 Some(&actor),
                 authority_beside,
                 own_device,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
-            staged.commit()?;
-            if let Some(scope) = scope {
-                super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
+            if outcome.is_applied() {
+                staged.commit()?;
+                if let Some(scope) = scope {
+                    super::vad_postcommit::merge_postcommit_work(vault, wtxn, scope.finish());
+                }
             }
-            Ok(())
+            Ok(outcome)
         } else {
-            self.apply_staged(wtxn, gate_mode, None, authority_beside, own_device)
+            self.apply_staged(
+                wtxn,
+                gate_mode,
+                None,
+                authority_beside,
+                own_device,
+                #[cfg(feature = "sync")]
+                record_document,
+            )
         }
     }
 
@@ -128,16 +214,46 @@ impl BatchBuilder<'_> {
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
-    ) -> Result<()> {
+        #[cfg(feature = "sync")] record_document: Option<&crate::sync::SelectedRecordDocument<'_>>,
+    ) -> Result<ApplyOutcome> {
         let vault = self.vault;
+        #[cfg(feature = "sync")]
+        let prepared_record = if record_document.is_some() && self.ops.len() == 1 {
+            let operation = self.ops.remove(0);
+            match super::record_document::RecordDocumentOp::prepare_in_txn(
+                record_document,
+                wtxn,
+                operation,
+            )? {
+                super::record_document::RecordDocumentOp::Ordinary(operation) => {
+                    self.ops.push(operation);
+                    None
+                }
+                super::record_document::RecordDocumentOp::Prepared(prepared) => {
+                    self.ops.push(prepared.semantic_operation());
+                    Some(prepared)
+                }
+                super::record_document::RecordDocumentOp::Stands { operation, outcome } => {
+                    self.ops.push(operation);
+                    return Ok(ApplyOutcome::DocumentStands(outcome));
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(feature = "sync")]
+        let record_document = prepared_record
+            .as_ref()
+            .map(|prepared| prepared.candidate());
         // Preserve original-position admission before routing removes a Put.
         // Actual head changes and the remaining ops get their own final checks.
         let original = actor
             .map(|actor| {
-                super::super::actor_content::ContentWriteSet::before(vault, wtxn, actor, &self.ops)
+                super::super::actor_content::ContentWriteSet::before(
+                    vault, wtxn, actor, &self.ops, None,
+                )
             })
-            .transpose()?
-            .flatten();
+            .transpose()?;
         let mut gate_mode = gate_mode
             .with_birth_mask(self.birth_mask)
             .with_text_births(std::mem::take(&mut self.text_births))
@@ -208,8 +324,8 @@ impl BatchBuilder<'_> {
             })
             .collect();
         let mut derived = crate::embed::repo_derived_batch(&ops);
-        if let Some(actor) = actor {
-            apply_actor_ops(
+        let (native_outputs, content_writes) = if let Some(actor) = actor {
+            let (outputs, effects) = crate::batch::actor_content::apply_actor_ops_collecting(
                 vault,
                 wtxn,
                 actor,
@@ -217,9 +333,12 @@ impl BatchBuilder<'_> {
                 text_index_trusted,
                 gate_mode,
                 self.origin,
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
+            (outputs, Some(effects))
         } else {
-            apply_ops_with_authority_beside(
+            let outputs = crate::batch::base_apply::apply_ops_with_authority_beside_collecting(
                 &vault.store,
                 &vault.config,
                 &vault.analyzer,
@@ -230,8 +349,16 @@ impl BatchBuilder<'_> {
                 self.origin,
                 authority_beside,
                 own_device,
+                Some(NativePublicationContext {
+                    vault,
+                    actor: None,
+                    content_writes: None,
+                }),
+                #[cfg(feature = "sync")]
+                record_document,
             )?;
-        }
+            (outputs, None)
+        };
         if let (Some(actor), Some(original)) = (actor, original) {
             original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
@@ -253,7 +380,38 @@ impl BatchBuilder<'_> {
         // marker; the write door marks the rows.
         #[cfg(feature = "sync")]
         vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
-        Ok(())
+        #[cfg(feature = "sync")]
+        let mut native_outputs = native_outputs;
+        #[cfg(feature = "sync")]
+        let mut content_writes = content_writes;
+        #[cfg(feature = "sync")]
+        let record_input = super::record_document::AppliedRecordDocument::finish(
+            vault,
+            wtxn,
+            native_outputs.take_record_documents(),
+            record_document,
+            &mut content_writes,
+        )?;
+        // Construct the local final input only after every original check.
+        // Its typed door suppliers stay off until native source admission is complete.
+        #[cfg(feature = "sync")]
+        let native_input = super::native_skill::NativeSkillFinalInput::finish(
+            vault,
+            wtxn,
+            native_outputs,
+            content_writes,
+        )?;
+        #[cfg(feature = "sync")]
+        if let Some(native_input) = native_input {
+            crate::entity_doc::publish_skill_state_in_txn(native_input, wtxn)?;
+        }
+        #[cfg(not(feature = "sync"))]
+        drop((native_outputs, content_writes));
+        #[cfg(feature = "sync")]
+        if let Some(record_input) = record_input {
+            return Ok(ApplyOutcome::NativeRecordApplied(record_input));
+        }
+        Ok(ApplyOutcome::Applied)
     }
 }
 

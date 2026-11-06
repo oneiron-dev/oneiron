@@ -108,7 +108,7 @@ pub(crate) fn sync_text_in(
     Ok(match plane_in(vault, txn, entity)? {
         Plane::Document(head) => Some(SyncText {
             doc: storage::load(&vault.store, txn, &head)?.doc,
-            slot: DocumentSlot::from_hex(&head.document)?,
+            slot: storage::document_slot(&head)?,
         }),
         Plane::SequenceRows => Some(SyncText {
             doc: sequence_rows::load(vault, txn, *entity)?,
@@ -272,7 +272,7 @@ pub(crate) fn replace_sync_text_in_txn(
     if doc.doc.is_shallow() {
         vault.store.port_document_shallow_since_put(
             txn,
-            DocumentSlot::from_hex(&h.document)?,
+            storage::document_slot(&h)?,
             &doc.doc.shallow_since_vv().encode(),
         )?;
     }
@@ -304,7 +304,11 @@ enum Plane {
 /// document, and the sequence rows for every other.
 fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
     if let Some(head) = head_in(vault, txn, entity)? {
-        return Ok(Plane::Document(head));
+        return Ok(if storage::has_sequence_text(&head)? {
+            Plane::SequenceRows
+        } else {
+            Plane::Document(head)
+        });
     }
     let unborn = match vault.get_entity_type_in_txn(txn, entity)? {
         Some(ENTITY_TYPE_MESSAGE) => true,
@@ -609,6 +613,8 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
         entity: entity.to_hex(),
         incarnation: lazy_incarnation(entity)?,
         document: entity.to_hex(),
+        storage_document: None,
+        sequence_document: None,
         field: born.field,
         generation: 0,
         pending: 0,
@@ -659,7 +665,9 @@ fn carried_head_in_txn(
     Ok(Head {
         entity: entity.to_hex(),
         incarnation,
+        storage_document: storage::free_document_storage(&vault.store, txn, &document)?,
         document,
+        sequence_document: None,
         field,
         generation: 0,
         pending: 0,
@@ -729,21 +737,34 @@ fn synced(
     masked: Option<&str>,
 ) -> impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool> + '_ {
     move |vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId, h: &Head, text: &str| {
-        let store = &vault.store;
-        let read = masked.unwrap_or(text);
-        if scan_content_in_txn(store, txn, read.as_bytes()).is_ok() {
-            return Ok(false);
-        }
-        if masked.is_none()
-            && super::lift::screened_in_txn(store, txn, h, text)?.is_some_and(|screened| {
-                scan_content_in_txn(store, txn, screened.as_bytes()).is_ok()
-            })
-        {
-            return Ok(true);
-        }
-        mark_hits_in_txn(vault, txn, entity, read)?;
-        Ok(false)
+        scan_synced_text_in_txn(vault, txn, entity, Some(h), text, masked)
     }
+}
+
+/// Read a sync candidate against its actual current local head, if one exists.
+/// A future Switch destination has no stored lift evidence for this read.
+pub(super) fn scan_synced_text_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    prior: Option<&Head>,
+    text: &str,
+    masked: Option<&str>,
+) -> Result<bool> {
+    let store = &vault.store;
+    let read = masked.unwrap_or(text);
+    if scan_content_in_txn(store, txn, read.as_bytes()).is_ok() {
+        return Ok(false);
+    }
+    if masked.is_none()
+        && let Some(h) = prior
+        && super::lift::screened_in_txn(store, txn, h, text)?
+            .is_some_and(|screened| scan_content_in_txn(store, txn, screened.as_bytes()).is_ok())
+    {
+        return Ok(true);
+    }
+    mark_hits_in_txn(vault, txn, entity, read)?;
+    Ok(false)
 }
 
 /// The sync scan of a text bound for a record's sequence rows: [`synced`]'s,

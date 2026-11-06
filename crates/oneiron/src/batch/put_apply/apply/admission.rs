@@ -3,6 +3,9 @@ use super::*;
 /// Inputs to `apply_put` that no phase mutates: the row identity, the admit
 /// flags, and the borrowed context the put is judged against.
 pub(super) struct FixedPut<'a> {
+    #[cfg(feature = "sync")]
+    pub(super) skill_state_write: Option<&'a crate::skill::SkillStateWrite>,
+    pub(super) native_publication: Option<crate::batch::NativePublicationContext<'a>>,
     pub(super) id: EntityId,
     pub(super) entity_type: u8,
     pub(super) occurred: crate::temporal::TimeRange,
@@ -18,6 +21,8 @@ pub(super) struct FixedPut<'a> {
     pub(super) posture: crate::HostingPrivacyPosture,
     pub(super) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
     pub(super) pending_prompt: Option<&'a [EntityId]>,
+    #[cfg(feature = "sync")]
+    pub(super) record_document: Option<&'a crate::entity_doc::RecordDocumentCandidate<'a, 'a>>,
     /// The authority rows the put's batch carries beside it, which a
     /// replicated AUTHORITY_LOG row is judged with (FIX 11764).
     pub(super) authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
@@ -30,6 +35,36 @@ pub(super) struct FixedPut<'a> {
     pub(super) hub_sync_imported: bool,
     pub(super) claim_gate_prechecked: bool,
     pub(super) mutation_recorded_at: u64,
+}
+
+impl FixedPut<'_> {
+    /// Native state and selected replay keep their original physical row.
+    /// All semantic gates and effects continue to receive the logical body.
+    pub(super) fn storage_body_and_metadata<'row>(
+        &'row self,
+        data: &'row [u8],
+    ) -> Result<(crate::temporal::TimeRange, u64, &'row [u8], Option<u64>)> {
+        #[cfg(feature = "sync")]
+        if let Some(candidate) = self.record_document {
+            return Ok((
+                self.occurred,
+                self.learned_at,
+                &candidate.physical_raw()[ENTITY_METADATA_HEADER_LEN..],
+                self.row_version,
+            ));
+        }
+        #[cfg(feature = "sync")]
+        if let Some(request) = self.skill_state_write {
+            let (occurred, learned_at, row_version) = request.snapshot().physical_metadata()?;
+            return Ok((
+                occurred,
+                learned_at,
+                request.snapshot().physical_body(),
+                Some(row_version),
+            ));
+        }
+        Ok((self.occurred, self.learned_at, data, self.row_version))
+    }
 }
 
 /// Body buffers the staged `data` slice borrows, in shadow order. The parent
@@ -72,6 +107,8 @@ pub(super) struct Admission<'a> {
     pub(super) incoming_claim_body: Option<ClaimBody>,
     pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
+    #[cfg(feature = "sync")]
+    pub(super) record_refinement: Option<crate::skill_hub::RecordRefinementAdmission<'a, 'a, 'a>>,
 }
 
 /// P1: admit the put — unpack the request, run the carrier guards and claim
@@ -96,6 +133,9 @@ pub(super) fn admit_put<'a>(
         options,
         context:
             PutContext {
+                #[cfg(feature = "sync")]
+                skill_state_write,
+                native_publication,
                 origin,
                 write_policy,
                 write_envelope,
@@ -105,6 +145,8 @@ pub(super) fn admit_put<'a>(
                 posture,
                 owner_authored,
                 pending_prompt,
+                #[cfg(feature = "sync")]
+                record_document,
             },
     } = request;
     let Replication {
@@ -137,7 +179,26 @@ pub(super) fn admit_put<'a>(
         replicated,
         origin,
         posture,
+        #[cfg(feature = "sync")]
+        skill_state_write,
     );
+    #[cfg(feature = "sync")]
+    if let Some(candidate) = record_document {
+        if candidate.entity()? != id
+            || candidate.logical_body() != data
+            || !candidate.recheck_in_txn(wtxn)?
+        {
+            return Err(Error::InvariantViolation(
+                "record document candidate changed before admission",
+            ));
+        }
+        super::super::put_staging::validate_record_document_put_carriers(
+            store, wtxn, id, data, carriers, candidate,
+        )?;
+    } else {
+        validate_put_carriers(store, wtxn, id, data, carriers)?;
+    }
+    #[cfg(not(feature = "sync"))]
     validate_put_carriers(store, wtxn, id, data, carriers)?;
     let project_revisions =
         store
@@ -184,6 +245,24 @@ pub(super) fn admit_put<'a>(
     if !replicated {
         crate::tagging::refuse_held_id_in_txn(store, wtxn, &id)?;
     }
+    #[cfg(feature = "sync")]
+    let record_refinement = if let Some(candidate) = record_document {
+        Some(crate::skill_hub::admit_record_document_refinement(
+            store,
+            wtxn,
+            &id,
+            data,
+            candidate,
+            refinement_admission,
+            transition,
+        )?)
+    } else {
+        validate_refinement_admission(
+            store, wtxn, &id, entity_type, data, refinement_admission, transition,
+        )?;
+        None
+    };
+    #[cfg(not(feature = "sync"))]
     validate_refinement_admission(
         store,
         wtxn,
@@ -223,6 +302,9 @@ pub(super) fn admit_put<'a>(
     crate::agent_def::refuse_agent_id_retype_in_txn(store, wtxn, &id, entity_type)?;
     Ok(Admission {
         fixed: FixedPut {
+            #[cfg(feature = "sync")]
+            skill_state_write,
+            native_publication,
             id,
             entity_type,
             occurred,
@@ -238,6 +320,8 @@ pub(super) fn admit_put<'a>(
             posture,
             owner_authored,
             pending_prompt,
+            #[cfg(feature = "sync")]
+            record_document,
             authority_beside,
             own_device,
             replicated,
@@ -268,5 +352,7 @@ pub(super) fn admit_put<'a>(
         incoming_claim_body,
         project_revisions,
         portable_agent_source,
+        #[cfg(feature = "sync")]
+        record_refinement,
     })
 }
