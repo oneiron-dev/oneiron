@@ -132,6 +132,9 @@ fn persist_structural_with_origin(
         for pin in doc.pins()? {
             scan_write_payload(pin.quote_text.as_bytes())?;
         }
+        for text in doc.field_texts()? {
+            scan_write_payload(text.as_bytes())?;
+        }
     }
     let masked = admit_body(vault, txn, doc, masks)?;
     // Keep the live NOTE projection valid, including after concurrent
