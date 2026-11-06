@@ -141,7 +141,8 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`, and the speech-only `cartesia`,
 `elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+`max_output_tokens`, `output_limit_field`, `chat_path`, `prefill_wire` (both
+optional wire flags, below), `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `embed_shape`
 (`vllm_chat`, the default, `infinity`, `jina` or `cohere`: the shape the
 provider's embedding endpoint speaks; section 10), `capabilities` (`streaming`,
@@ -175,6 +176,38 @@ family neither judge has),
 `responses_socket` and `request_compression` (both below). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
+
+`chat_path` and `prefill_wire` are optional provider fields. The server copies
+only these explicit settings into each configured model's catalog metadata,
+on the ordinary, brokered and managed-settings paths. For example, for an
+endpoint whose named model supports prefix continuation:
+
+```toml
+[models.providers.prefix]
+kind = "openai-compat"
+base_url = "https://api.example.com/beta"
+key_env = "PREFIX_API_KEY"
+chat_path = "unversioned"
+prefill_wire = "prefix"
+model_capabilities = { "prefix-model" = ["streaming", "json_response", "assistant_prefill"] }
+```
+
+When the selected catalog row has `chat_path = "unversioned"` and the adapter
+still uses its default `/v1/chat/completions` path, that row sends
+`POST /chat/completions` instead. With
+`base_url = "https://api.deepseek.com/beta"`, the call goes to
+`/beta/chat/completions`, not `/beta/v1/chat/completions`. An explicit
+non-default endpoint path wins; absent or unknown values leave the configured
+path unchanged.
+
+`prefill_wire = "prefix"` sends `prefix: true` on an open trailing assistant
+message only when that same selected row declares `assistant_prefill` in
+`model_capabilities` or the provider's fallback `capabilities`. An absent or
+unknown flag sends no prefix field. Continue still requires every rung to
+declare `assistant_prefill`. Neither option adds a catalog row, changes a
+model's capabilities, or binds a model by default. For a `key_secret` provider
+using the unversioned path, update the server and credential broker together
+so both recognize the new closed row. Direct calls need no broker.
 
 Model work on the owner's own server with no API key is free work. It takes no lifetime units. Each step still keeps its own line: `models.chat.turn_budget_units`, `models.workflows.step_budget_units`, `models.dreamer.pass_budget_units` and `models.recall.rerank_budget_units` still bound each turn, step, pass and rerank.
 
@@ -673,8 +706,11 @@ standard cached-read count only; the records ride the receipt.
 On the house EXL3 server a chat conversation keeps a native session: the
 canonical history stays computed between turns. Once a reply's successor is
 published, the session also prepares the part of the next turn already known,
-the state-only board rendered for that turn's reader, as background work beside
-it (I1 = C). When the next turn arrives, the worker compares its own tokens with
+as background work beside it (I1 = C): the answering agent's craft, when
+`prompt_layout` is `stable_history_then_turn_context`, then the state-only
+board, both rendered for that turn's reader. A queued Continue or Retry that
+publishes a successor prepares its requester's next turn the same way. When
+the next turn arrives, the worker compares its own tokens with
 the prepared ones and reuses only their identical beginning; everything after
 the first token that differs, the fresh recall included, is computed as
 before, and a preparation still running stops. `[models.sessions]` holds the
@@ -901,6 +937,18 @@ reuses its reply's kept prefix sends today's opener in place of the captured
 one; a Continue keeps the opener its saved reply followed. `POST
 /v1/core/context-board` and `ai.reply` still render the one frame.
 
+### What the status route says about the vault's sessions
+
+`GET /v1/ai/status` lists, under `models.session_allocations` (FIX10370),
+one row per device worker that holds this vault's sessions: the device, the
+worker, how many sessions stand, how many the worker has reported, and the
+summed reported bytes. A row's bytes stay null until every session on it is
+both reported and measured; an unreported session is counted, never zeroed
+in. The rows name no handle, binding, epoch or conversation, cover only the
+vault the server has mounted, and are non-additive facts: they neither
+alter the worker's own row nor any quota or admission, and a row's bytes
+mix device pages with host snapshots.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -923,12 +971,18 @@ off.
 
 ## 6. Code mode (MCP `execute_code`)
 
-`execute_code` runs a task as generated JavaScript: each step's program comes
-from the `generative_reasoner` seat and runs in the checked-in QuickJS
-component, calling the vault through each verb at its SDK path
-(`vault.recall(...)`, `self.focus.refresh(...)`) under the
-connector's own grants. It is listed on `tools/list` only when the seat has a
-rung and a prompt package for the executor is named:
+`execute_code` runs a task as generated TypeScript or JavaScript: each step's
+program comes from the `generative_reasoner` seat and runs in the checked-in
+QuickJS component, calling the vault through each verb at its SDK path
+(`vault.recall(...)`, `self.focus.refresh(...)`) under the connector's own grants.
+JavaScript that parses in the guest's async body runs byte for byte. TypeScript
+is lowered by Oxc; declarations that need script-level grammar can be prepared
+before the guest envelope, with their original source positions retained.
+This adds no module loader. An unsuccessful preparation still leaves the
+original program for QuickJS to report, with its preparation note.
+
+It is listed on `tools/list` only when the seat has a rung and a prompt package
+for the executor is named:
 
 ```toml
 [models.code_mode]
@@ -1804,8 +1858,12 @@ and the broker checks it against the exchange's own shape before the key is
 read at the custody door. That covers an image (JSON, or a form with
 references), an edit, speech, a transcription, an embedding, a video's start,
 poll, clip and removal, and the Gemini API's generate, job start, operation
-poll and file. An embedding among them goes in the provider's `embed_shape`,
+poll and file. A `key_secret` `cartesia` or `elevenlabs` provider's speech
+rung sends the same exchange its direct rung sends: the same headers, voice,
+24 kHz PCM16 ask and characters charge, through the broker's speech shape for
+that wire. An embedding among them goes in the provider's `embed_shape`,
 whichever of the four shapes it names. The broker adds the key: Bearer on the OpenAI-compatible paths,
+`x-api-key` on Cartesia's speech path, `xi-api-key` on ElevenLabs', and
 `x-goog-api-key` on the Gemini API's. A JSON or form request is at most
 16 MiB. Speech, a video clip and a Gemini file stream back in 1 MiB frames,
 up to 512 MiB, and are checked for the key, never rewritten: a reply that
@@ -1949,7 +2007,11 @@ OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
 with its key in `x-api-key` and a `Cartesia-Version` header (`2026-08-14`
 unless `headers` names one). An `elevenlabs` provider speaks ElevenLabs'
 `POST /v1/text-to-speech/{voice}` with its key in `xi-api-key`. Either one
-serves the speech seat only, never a role or another media seat. Each call
+serves the speech seat only, never a role or another media seat. Either one
+may name its key with `key_secret` instead of `key_env`: its speech rung
+then sends the same exchange through the credential broker (§2), the key
+read at the custody door. Clone, verification and delete calls stay on the
+direct wire and need `key_env`. Each call
 names a voice, typed or as the `voice` param (these wires have no default
 voice), is asked for raw 24 kHz PCM16, comes back as a WAV, and is charged
 its characters. Name the providers `cartesia` and `elevenlabs_flash` to
@@ -2838,9 +2900,15 @@ and nothing waits on the answer. Without the row, no topic is asked and every
 import stays private.
 
 The System One seat takes noul and choice questions. Each is one call,
-admitted and settled on its meter. It never runs on a relay vault. The
-escalation read is metered on `models.raw_budget_units`. A model rung blocks
-on the server's runtime, so a caller runs a ladder call on a blocking thread.
+admitted and settled through its paid connector. A call with a caller's run
+uses that run. Otherwise the seat opens a run with the server's model account
+and receipt sink, on its own meter outside a verdict or the caller's line
+and bound room payer inside one. The connector still uses the configured
+customer key and its existing token units; the run's receipts retain the
+payer and evidence. Failed or cancelled calls keep their reservation as
+spend. It never runs on a relay vault. The escalation read is metered on
+`models.raw_budget_units`. A model rung blocks on the server's runtime, so a
+caller runs a ladder call on a blocking thread.
 
 An omitted `models.decisions.system_one.budget_units` takes `models.raw_budget_units`. An omitted `models.decisions.big.budget_units` takes `models.raw_budget_units` too. Each is uncapped when the raw meter is. The Local-vision seat spends on `models.raw_budget_units` too, so it is uncapped when the raw meter is.
 
