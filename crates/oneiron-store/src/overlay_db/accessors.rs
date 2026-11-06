@@ -15,8 +15,8 @@ use super::iters::{
     OverlayStrPrefix,
 };
 use super::merge::{
-    Direction, MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows, borrow_pair,
-    key_in_range,
+    Direction, MergedPrefixRows, MergedRows, PrefetchedMergedRows, ReadBytes, RetainedMergedRows,
+    StrBytes, StrMergedRows, borrow_pair, key_in_range, str_key,
 };
 
 pub(super) type KvPair<'txn> = (Cow<'txn, [u8]>, Cow<'txn, [u8]>);
@@ -311,6 +311,29 @@ impl OverlayDb {
         ))))
     }
 
+    /// Prefix values may retain their immutable overlay owner instead of
+    /// copying a Single-row body. Base values still borrow this transaction.
+    pub fn prefix_iter_retained<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = Result<(Cow<'txn, [u8]>, ReadBytes<'txn>)>> + 'txn>> {
+        let Some(overlay) = &self.overlay else {
+            return Ok(Box::new(self.base.prefix_iter(txn, prefix)?.map(|row| {
+                let (key, value) = row?;
+                Ok((Cow::Borrowed(key), ReadBytes::Borrowed(value)))
+            })));
+        };
+        let view = overlay.view()?;
+        let plan = view.retained_merge_plan(overlay.keyspace, |key| key.starts_with(prefix));
+        Ok(Box::new(RetainedMergedRows::new(
+            Some(self.base.prefix_iter(txn, prefix)?),
+            plan,
+            Direction::Forward,
+            view,
+        )))
+    }
+
     pub fn range<'txn, R>(&self, txn: &'txn RoTxn<'_>, range: &R) -> Result<OverlayRange<'txn>>
     where
         R: RangeBounds<[u8]>,
@@ -484,6 +507,36 @@ impl OverlayStrDb {
             Direction::Forward,
             view,
         ))))
+    }
+
+    /// The retained-payload prefix path, with the same UTF-8 key validation
+    /// as the owned string iterator and no fresh snapshot read during replay.
+    pub fn prefix_iter_retained<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        prefix: &str,
+    ) -> Result<Box<dyn Iterator<Item = Result<(Cow<'txn, str>, ReadBytes<'txn>)>> + 'txn>> {
+        let Some(overlay) = &self.overlay else {
+            return Ok(Box::new(self.base.prefix_iter(txn, prefix)?.map(|row| {
+                let (key, value) = row?;
+                Ok((Cow::Borrowed(key), ReadBytes::Borrowed(value)))
+            })));
+        };
+        let view = overlay.view()?;
+        let plan =
+            view.retained_merge_plan(overlay.keyspace, |key| key.starts_with(prefix.as_bytes()));
+        Ok(Box::new(
+            RetainedMergedRows::new(
+                Some(StrBytes::new(self.base.prefix_iter(txn, prefix)?)),
+                plan,
+                Direction::Forward,
+                view,
+            )
+            .map(|row| {
+                let (key, value) = row?;
+                Ok((str_key(key)?, value))
+            }),
+        ))
     }
 
     /// The rows whose keys, compared as bytes, fall in `range`, in key
