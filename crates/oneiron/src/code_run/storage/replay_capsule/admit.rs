@@ -14,7 +14,7 @@
 //! is published as its pieces: each one its run does not hold yet for the
 //! actor, then the manifest as the capsule's own body (FIX 4192). The
 //! step's start is published as its pieces the same way. FIX 19821: its
-//! manifest, frame and call nodes are held inline whatever the bound.
+//! manifest and nodes are held inline whatever the bound.
 
 mod refresh;
 mod start_publication;
@@ -134,9 +134,9 @@ impl Spill {
     }
 
     /// FIX 19821: [`Self::publish_in_txn`], with the body held inline
-    /// whatever the inline bound. A step start's manifest, frame and call
-    /// nodes go here. A restore reads them among its rows to find the
-    /// pieces that hold the start's asks. Such a body takes no instance.
+    /// whatever the inline bound. A step start's manifest and nodes go
+    /// here. A restore reads them among its rows to find every piece that
+    /// holds the start's content. Such a body takes no instance.
     pub(super) fn publish_inline_in_txn(
         &self,
         vault: &Vault,
