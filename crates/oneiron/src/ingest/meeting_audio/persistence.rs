@@ -47,6 +47,21 @@ pub struct StoredMeetingTranscript {
 }
 
 impl Vault {
+    /// Read the exact selected artifact under a current owner proof. The
+    /// source-audio version, ledger relationship and actual bytes are checked
+    /// in this same native read transaction. The result still needs fresh
+    /// exact-byte bulk import consent before it can become observations.
+    pub fn read_meeting_transcript_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        stored: &StoredMeetingTranscript,
+    ) -> Result<ProducedMeetingTranscript> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let (_, _, transcript) = stored_transcript(self, &txn, stored)?;
+        Ok(transcript)
+    }
+
     /// Save an owner's exact artifact, without importing its observations.
     /// The source audio must already be retained as the selected native blob
     /// version. Its actual bytes, not a recording label, bind this recording.
@@ -113,20 +128,7 @@ impl Vault {
         self.try_with_actor_content_write_txn(actor, |content| {
             content.update_artifact(stored.transcript.artifact, |txn| {
                 owner.revalidate_in_txn(self, txn)?;
-                let (base, bytes) = pinned_version(self, txn, &stored.transcript)?;
-                let (source, audio) = pinned_version(self, txn, &stored.source_audio)?;
-                if !base.made_by.inputs.iter().any(|input| {
-                    input.row == source.claim_id && input.role == MadeByInputRole::Input
-                }) {
-                    return Err(Error::InvalidClaimBody(
-                        "transcript version does not name this source-audio version",
-                    ));
-                }
-                let json = String::from_utf8(bytes)
-                    .map_err(|_| Error::InvalidClaimBody("meeting artifact is not UTF-8"))?;
-                let transcript = ProducedMeetingTranscript::from_json(json)
-                    .map_err(|_| Error::InvalidClaimBody("invalid stored meeting artifact"))?;
-                check_source_audio(&transcript, &audio)?;
+                let (base, source, transcript) = stored_transcript(self, txn, stored)?;
                 let labeled = transcript
                     .with_speaker_labels(labels)
                     .map_err(|_| Error::InvalidClaimBody("invalid meeting speaker labels"))?;
@@ -160,6 +162,35 @@ impl Vault {
             })
         })
     }
+}
+
+fn stored_transcript(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    stored: &StoredMeetingTranscript,
+) -> Result<(
+    BlobArtifactVersion,
+    BlobArtifactVersion,
+    ProducedMeetingTranscript,
+)> {
+    let (base, bytes) = pinned_version(vault, txn, &stored.transcript)?;
+    let (source, audio) = pinned_version(vault, txn, &stored.source_audio)?;
+    if !base
+        .made_by
+        .inputs
+        .iter()
+        .any(|input| input.row == source.claim_id && input.role == MadeByInputRole::Input)
+    {
+        return Err(Error::InvalidClaimBody(
+            "transcript version does not name this source-audio version",
+        ));
+    }
+    let json = String::from_utf8(bytes)
+        .map_err(|_| Error::InvalidClaimBody("meeting artifact is not UTF-8"))?;
+    let transcript = ProducedMeetingTranscript::from_json(json)
+        .map_err(|_| Error::InvalidClaimBody("invalid stored meeting artifact"))?;
+    check_source_audio(&transcript, &audio)?;
+    Ok((base, source, transcript))
 }
 
 fn pinned_version(
