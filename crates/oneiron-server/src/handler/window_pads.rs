@@ -15,7 +15,8 @@
 
 use oneiron::sync::WindowKey;
 use oneiron::sync::transport::{
-    WindowPadArrival, WindowPadEnvelope, WindowPadReadiness, WindowPadReceipt,
+    ReceivedWindowPadEnvelope, WindowPadArrival, WindowPadEnvelope, WindowPadReadiness,
+    WindowPadReceipt,
 };
 use oneiron::sync::window::{carrier_window_pads, prepare_window_pads};
 
@@ -31,7 +32,7 @@ pub(super) enum Inbound {
     /// Done with here: a part still to come, a broken delivery or a receipt.
     Done,
     /// A whole envelope, with the sub-tag its first frame came under.
-    Envelope(u8, WindowPadEnvelope),
+    Envelope(u8, ReceivedWindowPadEnvelope),
 }
 
 fn invalid(error: oneiron::sync::TransportError) -> ProtocolError {
@@ -176,8 +177,17 @@ pub(super) fn send_released<'t>(
     transport: &'t mut StoppingTransport,
     frame: Vec<u8>,
 ) -> impl Future<Output = bool> + use<'t> {
-    let frames = release(server, conn_state, frame);
+    let frames = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
+        && frame.len() > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    {
+        oneiron::sync::transport::DocumentPartFrames::new(&frame).map(Iterator::collect)
+    } else {
+        Ok(release(server, conn_state, frame))
+    };
     async move {
+        let Ok(frames) = frames else {
+            return false;
+        };
         for frame in frames {
             if !transport.send_binary(frame).await {
                 return false;
