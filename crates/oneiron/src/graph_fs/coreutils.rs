@@ -21,7 +21,9 @@ use super::model::{
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
 };
 
-use super::readdir::{normalize_path, parse_entity_id, path_components, sealed_is_absent};
+use super::readdir::{
+    normalize_path_with_reader, parse_entity_id, path_components, sealed_is_absent,
+};
 
 use super::paging::{CommandOutputBuilder, SealedPosition, TemporalCursor};
 
@@ -52,7 +54,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let normalized = normalize_path(path)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
         if let Some(literal) = literal_grep_pattern(pattern)
             && recursive
             && self.snapshot.is_none()
@@ -111,7 +113,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let normalized = normalize_path(path)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
         if sort_by_time
             && self.snapshot.is_none()
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
@@ -187,7 +189,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
-        let normalized = normalize_path(path)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
         if let Some(newer_than) = newer_than {
             if self.snapshot.is_some() {
                 let walk = if self.snapshot_newer_than(newer_than)? {

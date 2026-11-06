@@ -22,6 +22,10 @@ use super::model::{
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
 use super::coreutils_text::{checkpoint, copy_text_parts};
 
+pub(super) use super::paths::{
+    normalize_path, normalize_path_with_reader, path_components, path_components_with_reader,
+};
+
 use super::paging::{
     DayPosition, EdgeCursor, PageBuilder, SealedPosition, TemporalCursor, WorldPosition,
     format_day_shard, parse_day_shard,
@@ -74,8 +78,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         cursor: Option<&str>,
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsPage> {
-        let normalized = normalize_path(path)?;
-        let components = path_components(&normalized)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
+        let components =
+            path_components_with_reader(&normalized, reader, self.options.page_byte_cap)?;
         if self.snapshot.is_some() {
             return self.snapshot_readdir(&normalized, cursor, reader);
         }
@@ -185,8 +190,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<GraphFsFileRead> {
-        let normalized = normalize_path(path)?;
-        let components = path_components(&normalized)?;
+        let normalized = normalize_path_with_reader(path, reader, self.options.page_byte_cap)?;
+        let components =
+            path_components_with_reader(&normalized, reader, self.options.page_byte_cap)?;
         if self.snapshot.is_some() {
             return self.snapshot_file_with_reader(&normalized, reader);
         }
@@ -831,37 +837,6 @@ pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
         byte_count: 0,
         read_receipt: None,
     }
-}
-
-pub(super) fn normalize_path(path: &str) -> Result<String> {
-    if !path.starts_with('/') {
-        return Err(Error::InvalidConfig(
-            "graph-fs path must be absolute".to_owned(),
-        ));
-    }
-    let normalized = path.trim_end_matches('/');
-    if normalized.is_empty() {
-        Ok("/".to_owned())
-    } else {
-        path_components(normalized)?;
-        Ok(normalized.to_owned())
-    }
-}
-
-pub(super) fn path_components(path: &str) -> Result<Vec<&str>> {
-    if path == "/" {
-        return Ok(Vec::new());
-    }
-    let mut components = Vec::new();
-    for component in path.trim_start_matches('/').split('/') {
-        if component.is_empty() || component == "." || component == ".." {
-            return Err(Error::InvalidConfig(
-                "graph-fs path component is invalid".to_owned(),
-            ));
-        }
-        components.push(component);
-    }
-    Ok(components)
 }
 
 pub(super) fn parse_entity_id(value: &str) -> Result<EntityId> {
