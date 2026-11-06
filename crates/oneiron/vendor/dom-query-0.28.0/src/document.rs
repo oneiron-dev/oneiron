@@ -294,17 +294,24 @@ impl Document {
         Ok(new_elem_id)
     }
 
-    /// Keep input admission through filtering and the final input-vector free.
-    pub fn add_tag_attributes_if_missing(
+    /// Admit accepted shared value copies while retaining the whole input carrier.
+    pub fn add_tag_attributes_if_missing<R, E>(
         &self,
         target: &NodeId,
         attrs: html5ever::tokenizer::TagAttributes,
-    ) {
-        self.tree.update_node(target, |node| {
-            if let Some(element) = node.as_element_mut() {
-                element.add_tag_attributes_if_missing(attrs);
-            }
-        });
+        reserve: impl Fn(usize) -> Result<R, E>,
+        settle: impl Fn(&mut R, usize) -> Result<(), E>,
+    ) -> Result<(), crate::ArenaReserveError<E>>
+    where
+        R: Send + Sync + 'static,
+    {
+        self.tree
+            .try_reserve_parser_added_attributes(target, &attrs, &reserve, &settle)?;
+        let mut nodes = self.tree.nodes.borrow_mut();
+        let Some(element) = nodes.get_mut(target.value).and_then(|node| node.as_element_mut()) else {
+            return Ok(());
+        };
+        element.add_tag_attributes_if_missing(attrs, reserve, settle)
     }
 }
 

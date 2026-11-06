@@ -430,7 +430,7 @@ where
                         if !self.before_tree_sink_operation(TreeSinkOperation::AddAttributes(top, &tag.attrs)) {
                             return ProcessResult::Stopped;
                         }
-                        self.add_tag_attributes(top, tag.attrs);
+                        stop_on_none!(self.add_tag_attributes(top, tag.attrs));
                     }
                     ProcessResult::Done
                 },
@@ -452,7 +452,7 @@ where
                             if !self.before_tree_sink_operation(TreeSinkOperation::AddAttributes(node, &tag.attrs)) {
                                 return ProcessResult::Stopped;
                             }
-                            self.add_tag_attributes(node, tag.attrs)
+                            stop_on_none!(self.add_tag_attributes(node, tag.attrs));
                         },
                         _ => {},
                     }

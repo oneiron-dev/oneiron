@@ -327,10 +327,11 @@ where
             ) -> Result<Sink::Handle, E>
             + Send
             + 'static,
-        A: Fn(&Sink, &Sink::Handle, crate::tokenizer::TagAttributes) + Send + 'static,
+        A: Fn(&Sink, &Sink::Handle, crate::tokenizer::TagAttributes) -> Result<(), E> + Send + 'static,
     {
         let error = Arc::clone(&self.tokenizer.sink.error);
         let create_error = Arc::clone(&error);
+        let add_error = Arc::clone(&error);
         let reservation: crate::tokenizer::TagAttributesReservation =
             Arc::new(move |attrs, additional| {
                 if error
@@ -375,7 +376,25 @@ where
                         }
                     }
                 }),
-                add: Box::new(add_attributes),
+                add: Box::new(move |sink, target, attrs| {
+                    if add_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .is_some()
+                    {
+                        return false;
+                    }
+                    match add_attributes(sink, target, attrs) {
+                        Ok(()) => true,
+                        Err(refusal) => {
+                            add_error
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .get_or_insert(refusal);
+                            false
+                        }
+                    }
+                }),
             },
         );
         self
