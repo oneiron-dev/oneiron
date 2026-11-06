@@ -17,6 +17,21 @@ use crate::{EntityId, Vault, WriteActor};
 use oneiron_authority::federation::RepoAccessRefusal;
 
 impl RepoRunBinding {
+    /// Prepares the native host's gated provenance for this held run using
+    /// the request actually served on its attachment. The proposal writer
+    /// lands it with the selected sitting and proposal.
+    pub fn sources_from_host(
+        &self,
+        vault: &Vault,
+        stamp: &super::RepoRunStamp,
+        path: String,
+        content_hash: [u8; 32],
+        witness: &crate::code_run::RepoRequestWitness,
+    ) -> MemoryResult<super::RepoRunSources> {
+        crate::code_run::HostSelfDispatcher::for_live_run(vault, self.actor, &self.lease)?
+            .repo_sources_from_host(stamp, path, content_hash, witness)
+    }
+
     /// The binding of the live run `lease` seals, as `actor`, reading on
     /// `reader`: the host's held proof, read live. A lease that no longer
     /// holds, a try that realizes no TASK and a proof sealed with no

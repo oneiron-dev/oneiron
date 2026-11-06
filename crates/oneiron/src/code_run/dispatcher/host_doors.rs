@@ -22,6 +22,33 @@ impl<'a> HostSelfDispatcher<'a> {
         Self::for_leased_agent_attempt(vault, actor, &leased)
     }
 
+    /// Mints a proposal's ordinary gated provenance from a request this
+    /// host actually served under the same live-run attachment. `stamp` and
+    /// the change come from the admitted native proposal door, not a wire
+    /// provenance assertion.
+    pub fn repo_sources_from_host(
+        &self,
+        stamp: &crate::memory::repo_doors::RepoRunStamp,
+        path: String,
+        content_hash: [u8; 32],
+        witness: &super::RepoRequestWitness,
+    ) -> MemoryResult<crate::memory::repo_doors::RepoRunSources> {
+        self.live_parent()?;
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a repo proposal requires canonical live-run storage",
+            ));
+        };
+        self.repo_run_sources_with_witness(
+            vault,
+            stamp,
+            &super::repo_sources::RepoChange { path, content_hash },
+            witness,
+            crate::code_run::types::SelfEffect::RepoProposalSubmit,
+        )
+        .map_err(crate::memory::MemoryError::from)?
+    }
+
     /// The write origin of a browser call admitted on this live run. Its
     /// envelope and parent binding come from the run, never the HTTP input.
     pub fn browser_origin_from_host(

@@ -63,6 +63,7 @@ use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 pub(crate) use self::reader_spawn::ReaderChildBinding;
+pub use self::repo_sources::RepoRequestWitness;
 
 /// Host-bound dispatcher for one first-party code run.
 ///

@@ -1412,9 +1412,18 @@ impl OfferLadder {
     ) -> LlmResult<LlmResponse> {
         let sources = Some(sources);
         let deadline = self.host_wait();
-        self.generate_from(run, request, selector, &|| true, deadline, true, sources)
-            .await
-            .map(|(response, _)| response)
+        self.generate_from(
+            run,
+            request,
+            selector,
+            &|| true,
+            deadline,
+            true,
+            sources,
+            None,
+        )
+        .await
+        .map(|(response, _)| response)
     }
 
     /// [`Self::generate_within`]; once every rung has parked, a call whose
@@ -1436,6 +1445,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&'a dyn SourceAdmission>,
+        observer: Option<&'a (dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
     ) -> ServedFuture<'a> {
         Box::pin(async move {
             self.walk_generate(
@@ -1446,6 +1456,7 @@ impl OfferLadder {
                 deadline,
                 may_fall_back,
                 sources,
+                observer,
             )
             .await
         })
@@ -1464,6 +1475,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
+        observer: Option<&(dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
@@ -1500,6 +1512,7 @@ impl OfferLadder {
                             deadline,
                             false,
                             sources,
+                            observer,
                         )
                         .await;
                     if fell.is_err() {
@@ -1521,7 +1534,10 @@ impl OfferLadder {
                     break;
                 };
                 sent[index] = true;
-                match self.send(call, index, may_send, sources, &mut walk).await? {
+                match self
+                    .send(call, index, may_send, sources, observer, &mut walk)
+                    .await?
+                {
                     Sent::Answer(response) => {
                         return Ok((response, ModelCallBinding::for_rung(&self.rungs[index])));
                     }
@@ -1542,6 +1558,7 @@ impl OfferLadder {
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
         sources: Option<&dyn SourceAdmission>,
+        observer: Option<&(dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
         let mut rung = self.rungs[index].clone();
@@ -1603,6 +1620,10 @@ impl OfferLadder {
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&rung, &bound);
+            if observer.is_some_and(|observe| !observe(&bound)) {
+                settle_failed(permit);
+                return Ok(Sent::Stopped);
+            }
             let sent = gate.generate(bound, permit.lease());
             let Some(answered) = call
                 .deadline

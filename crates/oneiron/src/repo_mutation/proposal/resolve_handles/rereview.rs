@@ -70,22 +70,23 @@ impl Vault {
         Ok(proposed.unwrap_or_else(|never| match never {}))
     }
 
-    pub(crate) fn propose_repo_rereview_for_run<R>(
+    pub(crate) fn propose_repo_rereview_for_run<R, T>(
         &self,
         original: EntityId,
         mut request: RepoMutationRequest,
         review: RepoProposalReview,
         base: crate::repo_mutation::snapshot::RepoPinnedBase,
         stamp: crate::memory::repo_doors::RepoRunStamp,
-        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
-    ) -> Result<std::result::Result<RepoProposal, R>> {
+        check: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<std::result::Result<T, R>>,
+    ) -> Result<std::result::Result<(RepoProposal, T), R>> {
         let prepared = RereviewPrepared::new(self, original, &mut request)?;
         self.propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
-            if let Err(refused) = check(txn)? {
-                return Ok(Err(refused));
-            }
+            let source = match check(txn)? {
+                Ok(source) => source,
+                Err(refused) => return Ok(Err(refused)),
+            };
             prepared.revalidate(self, txn)?;
-            Ok(Ok(()))
+            Ok(Ok(source))
         })
     }
 }

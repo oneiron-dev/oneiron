@@ -924,6 +924,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.repo.symbols.declare" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.symbols.renew" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.symbols.release" => a.spec.clone().ok_or_else(invalid),
+        "vault.repo.model.generate" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.proposal_submit" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.merge_queue.enqueue" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.checkout.bind" => a.spec.clone().ok_or_else(invalid),
@@ -3904,6 +3905,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.repo.symbols.release" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.repo.model.generate" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.repo.proposal_submit" => {
@@ -19332,6 +19336,39 @@ async fn execute_agent_verb_row_on(
                     oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                         &memory,
                         "vault.repo.symbols.release",
+                    ),
+                    input,
+                ))
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.repo.model.generate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.repo.model.generate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::code_run::RepoModelGenerateInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_model_generate(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.model.generate",
                     ),
                     input,
                 ))

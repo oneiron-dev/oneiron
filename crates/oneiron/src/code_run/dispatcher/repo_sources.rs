@@ -17,9 +17,7 @@ use crate::error::Result;
 use crate::memory::repo_doors::{REPO_PROVENANCE_REQUIRED, RepoRunSources, RepoRunStamp};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::repo_mutation::REPO_PROVENANCE_PREDICATE;
-use crate::session_lifecycle::SessionMintOutcome;
-use crate::temporal::TimeRange;
-use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{ClaimSubject, EntityId, Vault};
 
 /// The one file change a run's proposal makes, as its provenance names it.
@@ -29,8 +27,12 @@ pub(super) struct RepoChange {
     pub(super) content_hash: [u8; 32],
 }
 
-/// The model request the run is serving, as its executor bound it.
-struct RequestWitness {
+/// The model request actually served by a host, without retaining its prompt.
+///
+/// Host-only: capture this from the finalized request at its native send, not
+/// from a caller's asserted hashes. It is neither a wire input nor authority.
+#[derive(Clone)]
+pub struct RepoRequestWitness {
     /// The request's canonical hash as sent.
     digest: [u8; 32],
     model: String,
@@ -39,12 +41,30 @@ struct RequestWitness {
     params_hash: String,
 }
 
+impl RepoRequestWitness {
+    /// Captures the actual request at the host's model invocation boundary.
+    /// A request with no canonical representation lends no provenance.
+    #[must_use]
+    pub fn capture(request: &crate::LlmRequest) -> Option<Self> {
+        Self::with_digest(request, request.canonical_hash().ok()?)
+    }
+
+    fn with_digest(request: &crate::LlmRequest, digest: [u8; 32]) -> Option<Self> {
+        let params = serde_json::to_vec(&(&request.params, &request.provider_options)).ok()?;
+        Some(Self {
+            digest,
+            model: request.model.as_str().to_owned(),
+            params_hash: blake3::hash(&params).to_hex().to_string(),
+        })
+    }
+}
+
 impl HostSelfDispatcher<'_> {
-    /// The run's attribution for its change `change` in the work `stamp`
-    /// binds: its session, and the provenance claim, gated as any claim the
-    /// run writes. The inner answer is `repo_provenance_required` when the
-    /// host holds no witness of the request; the outer error is a store or
-    /// gate failure, which ends the call as any memory write's does.
+    /// Prepares the run's attribution for its change in the work `stamp`
+    /// binds: its sitting and the provenance claim, gated as any claim the
+    /// run writes. No attribution rows land until the proposal's writer.
+    /// The inner answer is `repo_provenance_required` without a host witness;
+    /// the outer error is a store or gate failure, as any memory write's.
     ///
     /// # Errors
     /// A store failure, or the gate's rejection of the provenance claim.
@@ -62,18 +82,29 @@ impl HostSelfDispatcher<'_> {
                 &["A run's proposal needs the request its executor bound; the work is kept."],
             )));
         };
+        self.repo_run_sources_with_witness(vault, stamp, change, &witness, effect)
+    }
+
+    pub(super) fn repo_run_sources_with_witness(
+        &self,
+        vault: &Vault,
+        stamp: &RepoRunStamp,
+        change: &RepoChange,
+        witness: &RepoRequestWitness,
+        effect: SelfEffect,
+    ) -> Result<MemoryResult<RepoRunSources>> {
         let actor = self.actor.entity_ref();
         let key = vault.local_session_key(actor)?;
-        let session = match vault.mint_session(key, vault.now_recorded_at())? {
-            SessionMintOutcome::Minted(session) | SessionMintOutcome::AlreadyOpen(session) => {
-                session
-            }
-        };
-        let provenance_claim =
-            self.repo_provenance_claim(vault, stamp, change, session, &witness, effect)?;
+        let open = vault.prepare_session_open(key, vault.now_recorded_at())?;
+        let (provenance_claim, candidate, envelope, at) = self
+            .prepare_repo_provenance_claim(vault, stamp, change, open.session(), witness, effect)
+            .inspect_err(|error| open.reopen_on_storage_error(vault, error))?;
         Ok(Ok(RepoRunSources {
-            session,
+            open,
             provenance_claim,
+            candidate,
+            envelope,
+            at,
             op_provenance: CodeOpProvenance {
                 activity: Some(stamp.task),
                 ..CodeOpProvenance::default()
@@ -83,29 +114,24 @@ impl HostSelfDispatcher<'_> {
 
     /// The request the run's executor bound before its latest call, with
     /// the model it names; `None` when none reached this engine.
-    fn request_witness(&self) -> Option<RequestWitness> {
+    fn request_witness(&self) -> Option<RepoRequestWitness> {
         let bound = self.run_request.borrow();
         let sent = bound.as_ref()?.sent.as_ref()?;
         let request = &sent.kept.as_ref()?.request;
-        let params = serde_json::to_vec(&(&request.params, &request.provider_options)).ok()?;
-        Some(RequestWitness {
-            digest: sent.digest,
-            model: request.model.as_str().to_owned(),
-            params_hash: blake3::hash(&params).to_hex().to_string(),
-        })
+        RepoRequestWitness::with_digest(request, sent.digest)
     }
 
-    /// Mints the gated `repo.provenance` claim of one run change, about the
-    /// actor's session, under the run's own envelope.
-    fn repo_provenance_claim(
+    /// Prepares the gated `repo.provenance` claim of one run change, about
+    /// the exact selected sitting, under the run's own envelope.
+    fn prepare_repo_provenance_claim(
         &self,
         vault: &Vault,
         stamp: &RepoRunStamp,
         change: &RepoChange,
         session: EntityId,
-        witness: &RequestWitness,
+        witness: &RepoRequestWitness,
         effect: SelfEffect,
-    ) -> Result<EntityId> {
+    ) -> Result<(EntityId, ClaimCandidate, WriteEnvelope, u64)> {
         let text = |value: String| Value::from(value);
         let value = Value::Map(vec![
             (Value::from("actor"), text(self.actor.entity_ref().to_hex())),
@@ -171,15 +197,8 @@ impl HostSelfDispatcher<'_> {
             crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
         )?;
         self.check_write_gate(id, &gate_body, &envelope, false)?;
+        crate::batch::reject_family_owned_candidate(&candidate)?;
         let at = vault.now_recorded_at();
-        vault.put_claim_candidate_with_landing(
-            &id,
-            candidate,
-            &envelope,
-            TimeRange { start: at, end: at },
-            at,
-            |_| Ok(()),
-        )?;
-        Ok(id)
+        Ok((id, candidate, envelope, at))
     }
 }
