@@ -565,12 +565,16 @@ impl<'a> EngineNativeExecutor<'a> {
             None,
             &record.bridge_calls[bridge_start..],
         )?;
-        record.step_checkpoints.push(CodeRunStepCheckpoint::new(
-            seq,
-            checkpoint_label(seq),
-            state_hash,
-            config.determinism.frozen_unix_ms.saturating_add(seq),
-        )?);
+        let bridge_end = record.bridge_calls.len();
+        record.step_checkpoints.push(
+            CodeRunStepCheckpoint::new(
+                seq,
+                checkpoint_label(seq),
+                state_hash,
+                config.determinism.frozen_unix_ms.saturating_add(seq),
+            )?
+            .with_bridge_calls(bridge_start, bridge_end),
+        );
         let parked = parked_wait(&record, Some(&status), bridge_start);
         let resume = ProgramResumeCommit {
             attempt: entry.attempt,
