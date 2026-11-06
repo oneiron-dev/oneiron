@@ -167,6 +167,36 @@ pub(super) fn run_hook_pins(
     Ok(pins)
 }
 
+/// The working set's pins (FIX 17594, WORKING SET A) for a `describe(self)`
+/// on a pumped run's door: the pins the run's board MEMORIES carries now,
+/// read as its board reads them, under the agent's own lane: the policy
+/// manifest's pins and the rows of the hook blocks [`run_hook_pins`] keeps
+/// ([`crate::api::context_board::lane_pins_projection`]), each with the
+/// revision it served. Nothing is recorded: the receipt and the hook
+/// deliveries stay with a board that goes out. A read that fails logs and
+/// leaves the family `None` (unavailable).
+pub(crate) fn run_brief_pins(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+) -> Option<Vec<oneiron::context_board::BriefWorkingHandle>> {
+    let projected = run_lane(server, actor).and_then(|read| {
+        let pins = run_hook_pins(server, &read)?;
+        crate::api::context_board::lane_pins_projection(&read, &pins).map_err(super::mcp_api_error)
+    });
+    match projected {
+        Ok(pins) => {
+            crate::api::context_board::brief_pins_family(pins.as_ref().map(|pins| &pins.section))
+        }
+        Err(error) => {
+            tracing::warn!(
+                kind = error.kind,
+                "a run's self brief pins did not read; the brief names them unavailable"
+            );
+            None
+        }
+    }
+}
+
 /// The agent's own read lane, on this device.
 pub(super) fn run_lane(
     server: &SyncServer,

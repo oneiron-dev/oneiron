@@ -23,7 +23,9 @@ impl RunHostDoor {
     /// pumped run holds no slip, so neither credential value; a read key
     /// that does not resolve leaves the credential ceiling unavailable,
     /// logged. The door binds no scratchpad session, so it holds no
-    /// scratchpad.
+    /// scratchpad. Its pins are the ones the run's own board admits now, on
+    /// the agent's own lane, as that board reads them
+    /// ([`crate::api::run_brief_pins`]); nothing is recorded.
     pub(super) fn brief_host_facts(&self) -> BriefHostFacts {
         let run_ceiling = self
             .run_ceiling
@@ -49,6 +51,7 @@ impl RunHostDoor {
             // The door binds no scratchpad session (FIX 2340), so its board
             // renders no SCRATCHPAD and its brief has no session to look in.
             scratchpad: None,
+            pins: crate::api::run_brief_pins(&self.server, self.actor),
         }
     }
 }
