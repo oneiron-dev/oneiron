@@ -177,8 +177,17 @@ pub(super) fn send_released<'t>(
     transport: &'t mut StoppingTransport,
     frame: Vec<u8>,
 ) -> impl Future<Output = bool> + use<'t> {
-    let frames = release(server, conn_state, frame);
+    let frames = if frame.first() == Some(&oneiron::sync::transport::TAG_DOCUMENT)
+        && frame.len() > oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    {
+        oneiron::sync::transport::DocumentPartFrames::new(&frame).map(Iterator::collect)
+    } else {
+        Ok(release(server, conn_state, frame))
+    };
     async move {
+        let Ok(frames) = frames else {
+            return false;
+        };
         for frame in frames {
             if !transport.send_binary(frame).await {
                 return false;
