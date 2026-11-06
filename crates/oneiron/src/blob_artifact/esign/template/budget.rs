@@ -1,5 +1,6 @@
 //! Traversal backing on the caller's memory, with a separate work deadline.
 use super::{ContentTemplateError, Result, render};
+use std::io::{self, Write};
 use std::mem::size_of;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -174,5 +175,43 @@ impl<T> Iterator for ScratchIter<T> {
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.values.size_hint()
+    }
+}
+
+/// The PDF writer uses the caller's work deadline, not a memory-wait deadline.
+pub(super) struct WorkDeadlineWriter<'a> {
+    output: &'a mut Vec<u8>,
+    budget: &'a Budget,
+    refused: Option<ContentTemplateError>,
+}
+impl<'a> WorkDeadlineWriter<'a> {
+    pub(super) fn new(output: &'a mut Vec<u8>, budget: &'a Budget) -> Self {
+        Self {
+            output,
+            budget,
+            refused: None,
+        }
+    }
+
+    fn checkpoint(&mut self) -> io::Result<()> {
+        self.budget.checkpoint().map_err(|error| {
+            self.refused.get_or_insert(error.clone());
+            io::Error::new(io::ErrorKind::TimedOut, error)
+        })
+    }
+
+    pub(super) fn into_refusal(self) -> Option<ContentTemplateError> {
+        self.refused
+    }
+}
+impl Write for WorkDeadlineWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.checkpoint()?;
+        self.output.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.checkpoint()?;
+        self.output.flush()
     }
 }
