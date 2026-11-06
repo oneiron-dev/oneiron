@@ -62,6 +62,8 @@ const FIELDS: &[&str] = &[
     "signatures",
     "auto_checker",
     "slide_review_policy",
+    "teacher_probe",
+    "sheet_answer_limits",
 ];
 
 fn invalid(message: &str) -> Error {

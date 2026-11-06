@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4575 generated types.
+// UniFFI census: 1262 facade rows, 4578 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -34495,6 +34495,44 @@ pub struct PolicyScopedGrantRow {
     pub receipt_required: bool,
 }
 
+/// `oneiron::gate::policy_manifest_doors::types::TeacherProbeHolderFloor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherProbeHolderFloor {
+    #[serde(rename = "holder_ref")]
+    pub holder_ref: String,
+    #[serde(rename = "min_f1_millionths")]
+    pub min_f1_millionths: u32,
+}
+
+/// `oneiron::gate::policy_manifest_doors::types::TeacherProbePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherProbePolicy {
+    #[serde(rename = "probe_id")]
+    pub probe_id: String,
+    #[serde(rename = "min_f1_millionths")]
+    pub min_f1_millionths: u32,
+    #[serde(rename = "holders", default, skip_serializing_if = "Option::is_none")]
+    pub holders: Option<Vec<TeacherProbeHolderFloor>>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::types::SheetAnswerLimit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SheetAnswerLimit {
+    #[serde(
+        rename = "artifact_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_ref: Option<String>,
+    #[serde(rename = "sheet", default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
+    #[serde(rename = "max_count")]
+    pub max_count: u64,
+}
+
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34545,6 +34583,18 @@ pub struct PolicyManifest {
         skip_serializing_if = "Option::is_none"
     )]
     pub scoped_grants: Option<Vec<PolicyScopedGrantRow>>,
+    #[serde(
+        rename = "teacher_probe",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub teacher_probe: Option<TeacherProbePolicy>,
+    #[serde(
+        rename = "sheet_answer_limits",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sheet_answer_limits: Option<Vec<SheetAnswerLimit>>,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestView`.
