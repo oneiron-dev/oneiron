@@ -1,7 +1,12 @@
 //! The canonical settlement of a code-run wait, in the caller's writer: the
 //! settled row installed once, and the settled reply delivered to every run
 //! parked on the wait.
+//!
+//! A connector call's wait also holds its settled reply for the call's
+//! caller (FIX 6656). Every canonical settle writes that membership in its
+//! own writer, whichever wrapper settles the wait.
 
+use super::super::wait_holders::hold_settled_for_caller_in_txn;
 use super::{
     SETTLED, SETTLED_TAG, WAITERS, WaitDelivery, WaitKey, deliver_in_txn, reply_text,
     settled_in_txn, waiter_prefix,
@@ -23,7 +28,10 @@ pub(crate) fn deliver_wait_in_txn(
 }
 
 /// [`deliver_wait_in_txn`], `reply` kept beside `rows`, the rows its settler
-/// listed it derived from (FIX 5455), when it lists them.
+/// listed it derived from (FIX 5455), when it lists them. When `wait_id` is
+/// a connector call's wait, the call's caller joins the wait's holders in
+/// this writer, after every parked run joined (FIX 6656). So the membership
+/// commits with the settled row, before any post-commit observer runs.
 pub(crate) fn deliver_wait_listing_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -59,5 +67,29 @@ pub(crate) fn deliver_wait_listing_in_txn(
             delivered += 1;
         }
     }
+    if let Some(caller) = connector_call_caller_in_txn(vault, txn, wait_id)? {
+        hold_settled_for_caller_in_txn(vault, txn, wait_id, caller)?;
+    }
     Ok(delivered)
+}
+
+/// The actor whose connector call `wait_id` is (FIX 6656), read in the
+/// settling writer `txn` from the call's held or acknowledged row. It is the
+/// actor whose hex id is exactly the row's `principal_ref`: the caller that
+/// `connector.call_status` admits, and the actor whose erase drops the row.
+/// It is never the settler's actor. A principal that is no actor's hex id is
+/// not an actor: it has no actor to erase, so it holds no membership, and
+/// only the owner reads its status. `None` for a wait that is no connector
+/// call's.
+fn connector_call_caller_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wait_id: EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(state) = vault.connector_call_state_in_txn(txn, &wait_id)? else {
+        return Ok(None);
+    };
+    Ok(EntityId::from_hex(&state.principal_ref)
+        .ok()
+        .filter(|actor| actor.to_hex() == state.principal_ref))
 }
