@@ -1936,6 +1936,8 @@ def outputs():
             body = f'encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?)'
         else:
             encoder = {
+                'vault.artifacts.proposals': 'pending_proposal_output::list',
+                'vault.artifacts.propose_output': 'pending_proposal_output::view',
                 'vault.skills.get': 'skill_library_output::view',
                 'vault.skills.list': 'skill_library_output::page',
                 'vault.skills.archive': 'skill_library_output::view',

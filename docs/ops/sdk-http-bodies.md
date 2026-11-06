@@ -158,3 +158,16 @@ The outer scoped-read receipt, report, diagnostic and working set retain their
 original codec. Native read filtering, claim and repair selection, authority,
 inputs, hooks and public types are unchanged. This does not change diagnostic
 projection or prove a general depth or memory bound.
+
+
+### Core pending artifact proposal summaries
+
+The core `vault.artifacts.proposals` and `vault.artifacts.propose_output` result
+adapters move each returned proposal's summary around the original whole-result
+codec, then restore it at the same field. This includes the native report JSON
+already selected by the producer. Required null values and list order remain
+unchanged. The other proposal fields retain their original encoding.
+Native report parsing and its null fallback, validation, read filtering,
+retention, authority, inputs, hooks and the separate UniFFI conversion are
+unchanged. This selected output conversion is not an end-to-end depth or memory
+bound.
