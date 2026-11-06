@@ -366,7 +366,10 @@ pub(crate) fn payload_recipient_in_txn(
 ) -> Option<EntityId> {
     let frozen: serde_json::Value = serde_json::from_slice(payload).ok()?;
     let party = frozen.get(FROZEN_COUNTERPARTY_FIELD)?.as_str()?;
-    crate::comm::resolve_party_ref_in_txn(vault, txn, party)
+    vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, txn, party)
         .ok()
         .flatten()
 }
@@ -398,4 +401,18 @@ fn erase_error(error: IntentLedgerError) -> crate::Error {
         IntentLedgerError::Engine(error) => error,
         _ => crate::Error::CorruptedIndex("outbound intent ledger record"),
     }
+}
+
+/// The actor the actual stored admission envelope names, before a read door
+/// opens its request. A bare row honestly names none; the charged key is not
+/// the actor. Callers read the same live ledger row in this transaction.
+pub(crate) fn admitting_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &super::types::IntentId,
+) -> IntentLedgerResult<Option<EntityId>> {
+    let stored = get_ledger_record(vault, txn, id)?.ok_or(IntentLedgerError::InvalidRecord(
+        "outbound approval target is missing",
+    ))?;
+    Ok(StoredPayload::parse(stored.payload())?.named().actor)
 }

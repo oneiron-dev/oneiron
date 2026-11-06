@@ -248,16 +248,17 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// address are the supervisor's; the engine defaults none. No `Ping` field is
 /// added and this version stays 3.
 ///
-/// VM managed profile (FIX 6809): the config drive's five typed files,
-/// `/config/organization-owner`, `/config/member-vault`,
-/// `/config/failure-signal-export`, `/config/failure-signal-training` and
-/// `/config/fast-dims`
+/// VM managed profile (FIX 6809; FIX 13707): the config drive's seven typed
+/// files, `/config/organization-owner`, `/config/member-vault`,
+/// `/config/failure-signal-export`, `/config/failure-signal-training`,
+/// `/config/fast-dims`, `/config/privacy-posture` and
+/// `/config/checkpoint-host-opt-out`
 /// ([`VM_GUEST_ORGANIZATION_OWNER_FILE`](crate::vm::VM_GUEST_ORGANIZATION_OWNER_FILE)
-/// and its four siblings), which `oneiron-vm-init` reads before the vault's
+/// and its six siblings), which `oneiron-vm-init` reads before the vault's
 /// key goes in and passes to an open's or a cold restore's engine as its
 /// managed-profile flags, carry a build floor, at the engine revision they
 /// merged in, proven by the image manifest's required
-/// `vm_managed_profile_revision` 1
+/// `vm_managed_profile_revision` 2
 /// ([`VM_MANAGED_PROFILE_REVISION`](crate::vm::VM_MANAGED_PROFILE_REVISION)).
 /// An image before the floor ignores the files, so its vault would start
 /// without its tenancy or its owner's choices: a supervisor checks the

@@ -494,6 +494,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data: {
                     let body = rmpv::Value::Map(vec![
                         ("label".into(), spec.label.clone().into()),
@@ -565,6 +566,7 @@ impl Vault {
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: encode_identity_topology_event_body(&record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,
@@ -579,6 +581,19 @@ impl Vault {
         // Its one signature covers the carrier and who decided: the owner act
         // of a decision, or the engine's cause (mesh PR2-topology).
         let disposition_id = self.store.clock.entity_id()?;
+        // FIX 9870: a merge or split proposal's seal signs its proposer's
+        // opaque handle, the ramp scope its resolution stamps.
+        let proposer_scope = match (&write.approval, &record.action) {
+            (
+                crate::claim::ClaimApprovalStatus::Proposed,
+                StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. },
+            ) => Some(super::proposer_scope::proposal_seal_scope_actor_in_txn(
+                &self.store,
+                wtxn,
+                write.actor.map(|actor| actor.entity_ref()),
+            )?),
+            _ => None,
+        };
         let disposition = super::AdmissionDisposition::signed(
             seal,
             event_id,
@@ -586,6 +601,7 @@ impl Vault {
             super::AdmissionVerdict::Validated,
             None,
             seal.authority_for_fresh(event_id),
+            proposer_scope.as_deref(),
         )?;
         disposition.record_sealed_here(self, wtxn, disposition_id)?;
         let disposition_record = StoredIdentityOpEvent {
@@ -608,6 +624,7 @@ impl Vault {
                 end: now,
             },
             learned_at: now,
+            row_version: None,
             data: encode_identity_topology_event_body(&disposition_record)?,
             allow_maintenance: true,
             allow_reserved_predicate: false,

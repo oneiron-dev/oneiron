@@ -385,16 +385,16 @@ pub(crate) fn replay_room_message_tombstone(
     txn: &mut heed::RwTxn<'_>,
     turn: EntityId,
     raw_value: &[u8],
-) -> Result<()> {
+) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &turn)?
     else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if raw.first() != Some(&ENTITY_TYPE_TURN) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let Some(room) = crate::conversation_dag::room_turn_owner(&vault.store, txn, &turn)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let reason = crate::deletion::decode_tombstone_value(raw_value).reason;
     let author = if reason == Some(crate::deletion::TombstoneReason::PolicyDelete) {
@@ -431,6 +431,7 @@ pub(crate) fn replay_room_message_tombstone(
             Some(_) | None => None,
         }
     };
+    let mut cancelled = Vec::new();
     let mut cursor = None;
     loop {
         let ids = messages_in_turn(vault, txn, turn, cursor)?;
@@ -465,14 +466,16 @@ pub(crate) fn replay_room_message_tombstone(
                     },
                 )?;
             }
-            vault.apply_replayed_tombstone_in_txn(txn, &message, raw_value)?;
+            let (_, _, child_cancelled) =
+                vault.apply_replayed_tombstone_in_txn(txn, &message, raw_value)?;
+            cancelled.extend(child_cancelled);
         }
         if ids.len() < ERASE_PAGE {
             break;
         }
         cursor = ids.last().copied();
     }
-    Ok(())
+    Ok(cancelled)
 }
 
 impl Vault {
@@ -586,13 +589,48 @@ impl Vault {
             cursor = ids.last().copied();
         }
         // Reactions this PERSON made on the room's remaining records.
-        let reactions = {
-            let txn = self.store.env.read_txn()?;
-            authorize_room_erasure(self, &txn, room, person, actor)?;
-            crate::reaction::person_reaction_claims_in(self, &txn, room, person)?
-        };
-        let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
-        crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
+        for kind in crate::reaction::ROOM_RECORD_KINDS {
+            let scope = [
+                &[EdgeDirection::In as u8][..],
+                room.as_bytes(),
+                &[kind as u8][..],
+            ]
+            .concat();
+            let mut count = {
+                let txn = self.store.env.read_txn()?;
+                authorize_room_erasure(self, &txn, room, person, actor)?;
+                crate::scan_check::ScanCount::start(
+                    &self.store,
+                    &txn,
+                    crate::scan_check::EngineScan::EdgePeerRows,
+                    &scope,
+                )?
+            };
+            let mut after = None;
+            loop {
+                let (records, reactions) = {
+                    let txn = self.store.env.read_txn()?;
+                    authorize_room_erasure(self, &txn, room, person, actor)?;
+                    crate::reaction::person_reaction_page_in(
+                        self,
+                        &txn,
+                        room,
+                        person,
+                        kind,
+                        after,
+                        crate::reaction::ROOM_RECORD_PAGE,
+                    )?
+                };
+                count.rows(records.len());
+                let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
+                crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
+                if records.len() < crate::reaction::ROOM_RECORD_PAGE {
+                    break;
+                }
+                after = records.last().copied();
+            }
+            count.finish(self);
+        }
         crate::workspace_roster::scrub_room_audience(self, room, person, &reauthorize, |ids| {
             progress.unheld(self, ids, actor, &reauthorize)
         })?;

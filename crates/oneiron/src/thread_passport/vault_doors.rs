@@ -255,11 +255,12 @@ impl Vault {
         occurred_at: u64,
     ) -> Result<()> {
         validate_thread_ref(thread_ref)?;
-        record_comm_thread_event(self, thread_ref, party, joined, occurred_at).map_err(|err| {
-            match err {
+        self.store
+            .record_hooks
+            .record_comm_thread_event(self, thread_ref, party, joined, occurred_at)
+            .map_err(|err| match err {
                 CommError::Engine(inner) => inner,
                 _ => Error::InvalidClaimBody("comm rejected the thread membership event"),
-            }
-        })
+            })
     }
 }

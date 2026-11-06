@@ -878,7 +878,8 @@ def mcp_input_dispatch(row):
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
-        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input)).await'
+        fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         # A source door's failure keeps its program's feedback beside its
@@ -905,6 +906,12 @@ def mcp_input_dispatch(row):
                  'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
+        if name in ('vault.artifacts.view', 'vault.artifacts.export'):
+            body += ('let owner = actor.auth.as_ref().and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());\n'
+                     'let memory = match owner {\n'
+                     '    Some(owner) => memory.with_owner_authorship(&owner),\n'
+                     '    None => memory,\n'
+                     '};\n')
         if name == 'describe':
             # describe(card key) expands a board card, under the board's own
             # scope and frame-epoch checks.
@@ -1106,7 +1113,8 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
-    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await;
+    let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
+    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold).await;
     // A row that fails after its pre chain ran keeps a session-only call's
     // pre hook records and runs no post chain (FIX 5527).
     let (output, source, carrier, epoch) = match ran {
@@ -1136,9 +1144,10 @@ async fn execute_agent_verb_row(
         surface: McpRowSurface,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::run_write_token_of_origin(&run.origin));
-        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
+        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold)).await
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
@@ -1152,6 +1161,7 @@ async fn execute_agent_verb_row_on(
         surface: McpRowSurface,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
@@ -1533,7 +1543,9 @@ def facade_dispatch(facade_rows):
             # A caller door keeps the invocation its call hands it in its own
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
+            # Only the public fold's Mark action repeats this same hook name.
+            fold_hooks_arg = ', oneiron::code_run::actions::PreHookedFold::from_pre(&hooks)' if name == 'self.fold' else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
