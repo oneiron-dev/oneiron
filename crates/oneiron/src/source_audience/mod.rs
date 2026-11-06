@@ -36,6 +36,7 @@
 
 pub(crate) mod carried;
 mod replica;
+mod wake;
 mod walk;
 
 use std::collections::BTreeSet;
@@ -51,6 +52,11 @@ pub(crate) use replica::{
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
     merge_policy_in_txn, names_erased_actor_in, policy_closure_in, policy_conflicts_in, policy_in,
     publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
+};
+#[cfg(feature = "sync")]
+pub(crate) use wake::{
+    PolicyWake, advance_policy_wake, forget_policy_window, note_policy_windows, policy_wakes,
+    policy_windows_after,
 };
 pub(crate) use walk::{
     ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
@@ -409,6 +415,7 @@ fn set_source_readers_row_in_txn(
     let open = *open;
     let added: Vec<EntityId> = readers.difference(current).copied().collect();
     let removed: Vec<EntityId> = current.difference(&readers).copied().collect();
+    let changed = !added.is_empty() || !removed.is_empty();
     for (op, person) in added
         .into_iter()
         .map(|person| (SourceAudienceOp::ReaderAdded, person))
@@ -433,6 +440,10 @@ fn set_source_readers_row_in_txn(
     }
     policy.kind = SourceAudienceKind::Source { readers, open };
     POLICIES.put(&vault.store, txn, id, &policy)?;
+    // Every window the policy rides takes the change (fix list row 17203).
+    if changed {
+        wake::wake_policy_in_txn(vault, txn, id)?;
+    }
     Ok(policy)
 }
 
@@ -476,6 +487,7 @@ fn set_source_open_row_in_txn(
     )?;
     policy.kind = SourceAudienceKind::Source { readers, open };
     POLICIES.put(&vault.store, txn, id, &policy)?;
+    wake::wake_policy_in_txn(vault, txn, id)?;
     Ok(policy)
 }
 
@@ -593,6 +605,7 @@ pub(crate) fn share_thread_in_txn(
         },
     )?;
     POLICIES.put(&vault.store, txn, thread, &policy)?;
+    wake::wake_policy_in_txn(vault, txn, thread)?;
     Ok(true)
 }
 
@@ -721,6 +734,7 @@ pub(crate) fn erase_actor_in_txn(
         if changed {
             policy.revision = replica::next_revision(policy.revision)?;
             POLICIES.put(&vault.store, wtxn, &id, &policy)?;
+            wake::wake_policy_in_txn(vault, wtxn, &id)?;
         }
     }
     let events = EVENTS.scan(&vault.store, wtxn)?;
@@ -736,6 +750,7 @@ pub(crate) fn erase_actor_in_txn(
         }
         if changed {
             EVENTS.put(&vault.store, wtxn, &key, &event)?;
+            wake::wake_policy_in_txn(vault, wtxn, &key.0)?;
         }
     }
     // Every stored window's revisions naming the actor go with them; each

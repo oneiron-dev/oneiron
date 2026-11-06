@@ -31,6 +31,7 @@
 
 pub(in crate::sync) mod checkpoint;
 mod erased;
+mod wake;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -700,7 +701,18 @@ pub(crate) fn refresh_and_scrub(
     if changed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
+    // The window is filed under each policy it rides, so a change of one
+    // wakes it (fix list row 17203).
+    if let Some(key) = pin {
+        source_audience::note_policy_windows(vault, key.as_str(), &carried)?;
+    }
     Ok(changed)
+}
+
+/// Whether `doc`'s map carries a revision of `policy`: what the policy wake
+/// reads of a window it persisted again (fix list row 17203).
+fn carries_policy(doc: &LoroDoc, policy: &EntityId) -> bool {
+    holds_map(doc) && carried_heads(&doc.get_map(SOURCE_AUDIENCES_MAP)).contains_key(policy)
 }
 
 /// Pins the window `pin` names history-free, before a carrier goes.
