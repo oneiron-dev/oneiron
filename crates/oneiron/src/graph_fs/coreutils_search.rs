@@ -38,11 +38,22 @@ pub(super) fn contains_long_literal(
     haystack: &[u8],
     pattern: &str,
     quantum: usize,
-    mut checkpoint: impl FnMut() -> Result<()>,
+    checkpoint: impl FnMut() -> Result<()>,
 ) -> Result<bool> {
+    find_literal(haystack, pattern, quantum, checkpoint).map(|found| found.is_some())
+}
+
+/// The caller supplies a nonempty needle and a positive existing scan quantum.
+/// A rendered-byte window may begin inside a UTF-8 scalar.
+pub(crate) fn find_literal(
+    haystack: &[u8],
+    pattern: &str,
+    quantum: usize,
+    mut checkpoint: impl FnMut() -> Result<()>,
+) -> Result<Option<usize>> {
     let needle = pattern.as_bytes();
     if needle.len() > haystack.len() {
-        return Ok(false);
+        return Ok(None);
     }
     let mut remaining = quantum;
     let mut step = || -> Result<()> {
@@ -96,9 +107,9 @@ pub(super) fn contains_long_literal(
                 continue 'search;
             }
         }
-        return Ok(true);
+        return Ok(Some(position));
     }
-    Ok(false)
+    Ok(None)
 }
 
 fn maximal_suffix(
