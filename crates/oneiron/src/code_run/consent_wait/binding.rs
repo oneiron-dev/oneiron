@@ -30,14 +30,16 @@ const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v2";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
-/// `connector.call`; a browser click, click at a point or batch binds the
-/// act its grant's press held (FIX 10423), as do a library run's steps and
+/// `connector.call`, including one through `self.use`; a browser click,
+/// click at a point or batch binds the act its grant's press held (FIX 10423),
+/// as do a library run's steps and
 /// every desktop verb that can press (FIX 11499). Every other verb keeps
 /// its own wait.
 pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
     matches!(
         verb,
         AgentVerb::ConnectorCall
+            | AgentVerb::SelfUse
             | AgentVerb::SelfBrowserClick
             | AgentVerb::SelfBrowserClickAt
             | AgentVerb::SelfBrowserBatch
@@ -298,6 +300,26 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
             field(call.server.as_bytes());
             field(call.tool.as_bytes());
             field(call.endpoint.as_bytes());
+            field(call.payload_data_class.as_str().as_bytes());
+            field(&[u8::from(call.remember_context.is_some())]);
+            if let Some(context) = &call.remember_context {
+                field(&[u8::from(context.connection.is_some())]);
+                field(
+                    context
+                        .connection
+                        .as_ref()
+                        .map_or(&[][..], |connection| &connection.as_bytes()[..]),
+                );
+                field(&[u8::from(context.project.is_some())]);
+                field(
+                    context
+                        .project
+                        .as_ref()
+                        .map_or(&[][..], |project| &project.as_bytes()[..]),
+                );
+                field(&[u8::from(context.lineage.is_some())]);
+                field(context.lineage.as_ref().map_or(&[][..], |root| &root[..]));
+            }
             field(&call.manifest_hash);
             field(call.protocol_revision.as_bytes());
             field(
@@ -347,6 +369,10 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
                     .unwrap_or_default(),
             );
         }
+    }
+    field(&[u8::from(binding.remember_offer.is_some())]);
+    if let Some(offer) = &binding.remember_offer {
+        field(offer.settings_act.as_bytes());
     }
     *hasher.finalize().as_bytes()
 }

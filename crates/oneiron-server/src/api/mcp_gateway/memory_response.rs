@@ -153,6 +153,7 @@ fn execute_read(
     let reader = mcp_scoped_read(&server.vault, actor)?;
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
+        .with_media_query_memory(&server.memory)
         .listing_producers(&producers);
     let adapter = match media {
         Some(seeds) => adapter.with_media_seeds(seeds),

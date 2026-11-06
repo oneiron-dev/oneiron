@@ -54,6 +54,7 @@ impl Memory<'_> {
             step_hash: target_digest("target.step_hash", &target.step_hash)?,
             effect_digest: target_digest("target.effect_digest", &target.effect_digest)?,
             choice: consent_choice(input.answer),
+            remember_asking_lineage: remember_asking_lineage(input.remember_scope),
             word_ref: input.word_ref,
         };
         // The ask and the word must read through this credential before
@@ -126,6 +127,15 @@ pub(super) fn target_digest(field: &str, hex: &str) -> MemoryResult<[u8; 32]> {
         .ok_or_else(|| MemoryError::bad_request(format!("{field} is not 64 lowercase hex")))
 }
 
+/// The optional scope narrows only a stop-asking answer; the default is
+/// the connection/class/project bound, never the requesting lineage.
+const fn remember_asking_lineage(scope: Option<CodeWaitRememberScope>) -> bool {
+    match scope {
+        None | Some(CodeWaitRememberScope::Connection) => false,
+        Some(CodeWaitRememberScope::AskingLineage) => true,
+    }
+}
+
 /// The engine's choice a wire answer names: the same three words.
 const fn consent_choice(choice: CodeWaitChoice) -> CodeConsentChoice {
     match choice {
@@ -175,6 +185,14 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
             Some(CodeWaitAnswerView {
                 answer: wire_choice(answer),
                 word_ref,
+                remember_scope: view.remember_asking_lineage.map(|lineage| {
+                    if lineage {
+                        CodeWaitRememberScope::AskingLineage
+                    } else {
+                        CodeWaitRememberScope::Connection
+                    }
+                }),
+                remembered_grant_ref: view.remembered,
                 decision_ref,
                 answered_at_ms,
             })
