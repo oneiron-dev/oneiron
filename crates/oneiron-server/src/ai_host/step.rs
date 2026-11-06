@@ -1047,8 +1047,21 @@ impl StepRunner {
             tool_rounds,
             no_record,
         );
+        let bytes = response_text(&response);
+        // FIX 3611: a saved-workflow step that answered in its one call binds
+        // that answer to its capsule. A tool round, a resumed step or an
+        // off-record stretch binds none.
+        if workflow.is_some() && continuation.is_none() && !tool_rounds && !no_record {
+            oneiron::code_run::bind_workflow_step_answer(
+                vault,
+                attempt.id,
+                attempt.attempt_count,
+                &final_request,
+                &bytes,
+            );
+        }
         Ok(GeneratedStep {
-            bytes: response_text(&response),
+            bytes,
             tool_rounds,
             planner_craft_rows,
         })

@@ -29,7 +29,7 @@ use super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::replay_capsule::{CapsuleRequest, StepReplayCapsule};
+use super::super::replay_capsule::{CapsuleHost, CapsuleRequest, StepReplayCapsule};
 use super::records::body_drifted;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
@@ -280,6 +280,41 @@ pub(crate) fn capsule_request(
         return Ok(None);
     }
     Ok(serde_json::from_slice(&bytes).ok())
+}
+
+/// Binds a single-call workflow step's answer to its capsule (FIX 3611):
+/// `answer`, the digest and length of the text the call returned, on the
+/// capsule at `key` whose request was sent as `request_hash`. Only a
+/// finalized workflow capsule that still holds its content, for an actor
+/// that is not erased, takes it, and only once: a bound answer stays as it
+/// is. Whether the capsule binds `answer` now.
+pub(crate) fn bind_capsule_answer(
+    vault: &Vault,
+    key: &(EntityId, u64, u64),
+    request_hash: [u8; 32],
+    answer: OutputRef,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let Some(mut capsule) = CAPSULES.get(&vault.store, wtxn, key)? else {
+            return Ok(false);
+        };
+        let Some(actor) = capsule.content.actor() else {
+            return Ok(false);
+        };
+        if capsule.host != CapsuleHost::WorkflowStep
+            || capsule.binding.is_none()
+            || capsule.request_hash != request_hash
+            || actor_gone_in_txn(vault, wtxn, &actor)
+        {
+            return Ok(false);
+        }
+        if let Some(bound) = capsule.answer {
+            return Ok(bound == answer);
+        }
+        capsule.answer = Some(answer);
+        CAPSULES.put(vault, wtxn, key, &capsule)?;
+        Ok(true)
+    })
 }
 
 /// A matched pair's rows.

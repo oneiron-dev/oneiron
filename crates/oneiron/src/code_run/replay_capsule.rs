@@ -46,14 +46,20 @@
 //! the same write. A strict replay checks it goes out on that route again
 //! (`shadow_runner`); a capture that pins no route leaves it `None`, and no
 //! live step is refused for it.
+//!
+//! A saved-workflow step that answered in one call, with no tool round,
+//! binds that answer to its capsule by the digest and length of its text
+//! ([`bind_workflow_step_answer`], FIX 3611). An audit of the step's result
+//! anchors a contribution check only through that binding.
 
 use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
 use super::replay::CodeRunReplayRecord;
-use super::storage::{finalize_capsule, put_staged_capsule};
+use super::storage::{bind_capsule_answer, finalize_capsule, put_staged_capsule};
 use crate::attempt_queue::AttemptId;
+use crate::compaction::output::OutputRef;
 use crate::llm::ReasoningEffort;
 use crate::model_binding::ModelRole;
 use crate::vault::VaultId;
@@ -357,6 +363,37 @@ pub fn capture_workflow_step(
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "a workflow replay capsule was not captured");
             None
+        }
+    }
+}
+
+/// Binds a saved-workflow step's answer to the capsule its one call staged
+/// (FIX 3611): the digest and length of `answer`, the text that call
+/// returned and the step's durable result holds, on the capsule of
+/// `attempt`'s try `lease_generation` whose request was sent as `request`.
+/// The step's host calls it only for a step that answered in one call, with
+/// no tool round. No copy of the text is kept. A failure is logged and
+/// never fails the step.
+pub fn bind_workflow_step_answer(
+    vault: &Vault,
+    attempt: AttemptId,
+    lease_generation: u32,
+    request: &LlmRequest,
+    answer: &[u8],
+) {
+    let bound = EntityId::from_bytes(*attempt.as_bytes()).and_then(|run| {
+        let request_hash = request.canonical_hash().map_err(|error| {
+            crate::Error::InvalidConfig(format!("capsule answer request: {error}"))
+        })?;
+        // A workflow step is its attempt's first call (`capture_workflow_step`).
+        let key = (run, u64::from(lease_generation), 0);
+        bind_capsule_answer(vault, &key, request_hash, OutputRef::from_bytes(answer))
+    });
+    match bound {
+        Ok(true) => {}
+        Ok(false) => tracing::debug!("a workflow step's answer bound no replay capsule"),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "a workflow step's answer was not bound");
         }
     }
 }

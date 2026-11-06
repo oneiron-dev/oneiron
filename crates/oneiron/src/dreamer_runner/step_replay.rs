@@ -276,6 +276,12 @@ pub struct StepReplayCapsule {
     /// 6351): the guest responses the step's bridge handed out. `None`
     /// until that checkpoint commits one, and for good when it did not.
     pub context: Option<StepContextRef>,
+    /// The answer of a single-call workflow step (FIX 3611): the digest and
+    /// length of the text its one call returned, which is the step's durable
+    /// result. No copy of the text is kept here. `None` until the step binds
+    /// it, and for good for a step that ran tool rounds and for an engine
+    /// step.
+    pub answer: Option<OutputRef>,
 }
 
 impl StepReplayCapsule {
@@ -332,9 +338,9 @@ pub struct StepContextRef {
 /// both request hashes and its messages digest, its exposures' skills,
 /// revisions and spans, its seed, its time, its start's ref, digest and
 /// bridge count, its replay context's ref and digest, its route prompt's
-/// ref and digest (FIX 6255), and the route its rung went out on, which
-/// holds the route prompt's digest only), its content Erased, naming no
-/// actor. Its bodies are released beside it, its route prompt's among them;
+/// ref and digest (FIX 6255), the route its rung went out on, which holds
+/// the route prompt's digest only, and its answer's digest and length (FIX
+/// 3611)), its content Erased, naming no actor. Its bodies are released beside it, its route prompt's among them;
 /// its fork receipts and scores stay in their own rows.
 pub(crate) fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
     capsule.content = CapsuleContent::Erased;
