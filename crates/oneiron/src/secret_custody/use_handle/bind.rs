@@ -341,11 +341,6 @@ impl Vault {
         effector: &str,
         at: u64,
     ) -> Result<SecretBound> {
-        self.apply_bind_change_as_owner(
-            owner,
-            surface,
-            BindChange::Unbind { target, effector },
-            at,
-        )
+        self.apply_bind_change_as_owner(owner, surface, BindChange::Unbind { target, effector }, at)
     }
 }

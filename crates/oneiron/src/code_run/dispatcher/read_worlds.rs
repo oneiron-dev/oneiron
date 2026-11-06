@@ -14,8 +14,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::storage::{ReadWorldSeal, ReadWorldUnknown};
-use crate::code_run::types::SelfDispatchOutcome;
+use crate::code_run::types::{AgentVerbAnswer, SelfDispatchOutcome};
 use crate::federation::Scope;
+use crate::memory::read_capture::CapturedRead;
 use crate::{EntityId, ScoredEntity, Vault};
 
 /// The capture epoch a dispatcher holds for one run.
@@ -137,7 +138,11 @@ impl HostSelfDispatcher<'_> {
         let mut live = self.read_worlds.get();
         let covered = std::mem::take(&mut live.covered);
         self.read_worlds.set(live);
-        let noted = covered && matches!(outcome, SelfDispatchOutcome::MemorySearch(_));
+        let noted = covered
+            && matches!(
+                outcome,
+                SelfDispatchOutcome::MemorySearch(_) | SelfDispatchOutcome::AgentVerb(_)
+            );
         if hook_view {
             self.read_worlds_unknown(run, ReadWorldUnknown::HookView);
         } else if !noted && !serves_no_rows(outcome) {
@@ -205,6 +210,66 @@ impl HostSelfDispatcher<'_> {
                     rows.remove(&hit.id);
                     unproved_rows.insert(hit.id);
                 }
+            }
+        }
+        let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);
+        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows);
+        if worlds_noted && rows_noted {
+            let mut live = self.read_worlds.get();
+            live.covered = true;
+            self.read_worlds.set(live);
+        }
+    }
+
+    /// Notes a live native point-read only from its own successful projections.
+    /// Every additional row the answer releases must have the same-call proof.
+    pub(super) fn note_verb_read_worlds(
+        &self,
+        site: ExecutorCallSite<'_>,
+        answer: &AgentVerbAnswer,
+        captured: Option<CapturedRead>,
+    ) {
+        let Some(captured) = captured else {
+            return;
+        };
+        if captured.changed {
+            self.read_worlds_unknown(site.run_id, ReadWorldUnknown::HookView);
+            return;
+        }
+        if captured.views.is_empty() {
+            return;
+        }
+        let Some(released) = answer.released_rows() else {
+            return;
+        };
+        let proved: BTreeSet<_> = captured.views.iter().map(|(id, _)| *id).collect();
+        if released.iter().any(|id| !proved.contains(id)) {
+            self.read_worlds_unknown(site.run_id, ReadWorldUnknown::Unproved);
+            return;
+        }
+        let mut worlds = BTreeSet::new();
+        let mut rows = BTreeMap::new();
+        let mut unproved_rows = BTreeSet::new();
+        for (id, view) in captured.views {
+            let Some(served_worlds) = view.worlds else {
+                self.read_worlds_unknown(site.run_id, ReadWorldUnknown::Unproved);
+                return;
+            };
+            worlds.extend(served_worlds);
+            if unproved_rows.contains(&id) {
+                continue;
+            }
+            if let Some(scope) = view.scope {
+                if rows
+                    .insert(id, scope.clone())
+                    .is_some_and(|prior| prior != scope)
+                {
+                    rows.remove(&id);
+                    unproved_rows.insert(id);
+                }
+            } else {
+                rows.remove(&id);
+                unproved_rows.insert(id);
             }
         }
         let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);

@@ -186,11 +186,7 @@ pub(crate) fn certificate(
     let page = append_page(out, parent, font, ops, limits)?;
     push(limits.ledger, kids, page.into())?;
     let mut details = Vec::new();
-    push_detail(
-        &mut details,
-        format!("title: {}", request.title),
-        limits,
-    )?;
+    push_detail(&mut details, format!("title: {}", request.title), limits)?;
     push_detail(&mut details, format!("canonical_url: {url}"), limits)?;
     if let Some(reason) = &request.rejection {
         push_detail(&mut details, format!("rejection: {reason}"), limits)?;
@@ -239,10 +235,7 @@ pub(crate) fn certificate(
 }
 
 fn hex(value: &[u8; 32], limits: &WorkLimits<'_>) -> Result<String> {
-    admitted(
-        value.iter().map(|v| format!("{v:02x}")).collect(),
-        limits,
-    )
+    admitted(value.iter().map(|v| format!("{v:02x}")).collect(), limits)
 }
 
 fn escaped(value: &str, limits: &WorkLimits<'_>) -> Result<String> {
@@ -373,11 +366,7 @@ fn admitted(value: String, limits: &WorkLimits<'_>) -> Result<String> {
 }
 
 /// Admit a details line's bytes and push it.
-fn push_detail(
-    details: &mut Vec<String>,
-    line: String,
-    limits: &WorkLimits<'_>,
-) -> Result<()> {
+fn push_detail(details: &mut Vec<String>, line: String, limits: &WorkLimits<'_>) -> Result<()> {
     limits
         .ledger
         .admit_len::<u8>(line.len())
@@ -413,11 +402,7 @@ fn layout_bytes<T>(len: usize) -> Option<usize> {
 
 /// Fallibly grow one vector under the call's operation ledger, with the
 /// same double-capacity growth and old-buffer release as `admitted`.
-fn reserve<T>(
-    ledger: &MemoryLedger,
-    output: &mut Vec<T>,
-    additional: usize,
-) -> Result<()> {
+fn reserve<T>(ledger: &MemoryLedger, output: &mut Vec<T>, additional: usize) -> Result<()> {
     let needed = output
         .len()
         .checked_add(additional)
@@ -427,8 +412,7 @@ fn reserve<T>(
     }
     let old_capacity = output.capacity();
     let target = old_capacity.saturating_mul(2).max(needed);
-    let bytes =
-        layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
+    let bytes = layout_bytes::<T>(target).ok_or_else(|| WorkError::Memory(floor(usize::MAX)))?;
     ledger.admit_len::<T>(target).map_err(WorkError::Memory)?;
     output
         .try_reserve_exact(target - output.len())

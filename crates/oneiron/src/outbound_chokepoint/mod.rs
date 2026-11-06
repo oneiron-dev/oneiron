@@ -7,6 +7,7 @@ mod admission;
 mod budget;
 mod connector_slate;
 pub(crate) mod dedupe;
+mod ordinary_slate;
 mod replay;
 mod types;
 

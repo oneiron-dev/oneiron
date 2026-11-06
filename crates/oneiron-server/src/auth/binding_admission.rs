@@ -229,6 +229,12 @@ fn admit_binding(
         });
         match accepted {
             Ok((auth, proof)) => {
+                if let Some(slip) = auth.verified_slip() {
+                    crate::http_listener::attach_body_slip(
+                        Arc::clone(server.vault()),
+                        Arc::new(slip.clone()),
+                    );
+                }
                 machine =
                     super::machine_proof::peer_machine(headers, token, &proof, server.vault());
                 // A managed vault keeps the caller admitted here, with the

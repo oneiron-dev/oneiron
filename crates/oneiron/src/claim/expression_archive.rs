@@ -127,9 +127,7 @@ impl ExpressionPreferenceArchive {
                 .iter()
                 .filter(|&(_, closed, link_at)| *closed == row.id && *link_at == at)
                 .map(|&(closer, _, _)| closer)
-                .filter(|closer| {
-                    by_id[closer].body.lifecycle != ClaimLifecycleStatus::Retracted
-                })
+                .filter(|closer| by_id[closer].body.lifecycle != ClaimLifecycleStatus::Retracted)
                 .collect();
             matching.sort();
             matching.dedup();
@@ -162,9 +160,10 @@ impl ExpressionPreferenceArchive {
             .map(|&(closer, closed, _)| (closer, closed))
             .collect();
         while !pending_all.is_empty() {
-            let Some(at) = pending_all.iter().position(|&(_, closed)| {
-                !pending_all.iter().any(|&(closer, _)| closer == closed)
-            }) else {
+            let Some(at) = pending_all
+                .iter()
+                .position(|&(_, closed)| !pending_all.iter().any(|&(closer, _)| closer == closed))
+            else {
                 return Err(invalid("cyclic supersession history"));
             };
             pending_all.remove(at);

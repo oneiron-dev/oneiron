@@ -75,10 +75,23 @@ pub(crate) fn erase_in_txn(
     txn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
+    discard_payload_in_txn(store, txn, entity)?;
+    super::deck::erase_in_txn(store, txn, entity)
+}
+
+/// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34 call
+/// 4 = A): a note's kept outline and design spec and an artifact's creation
+/// record go; its managed native-id history stays as identifier-only
+/// immutable history.
+pub(crate) fn discard_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
     OUTLINE_KEEPS.delete(store, txn, entity)?;
     DESIGN_SPECS.delete(store, txn, entity)?;
     CREATIONS.delete(store, txn, entity)?;
-    super::deck::erase_in_txn(store, txn, entity)
+    Ok(())
 }
 
 pub use crate::blob_artifact::deck_creation::record::{
@@ -459,6 +472,7 @@ impl crate::Vault {
                     entity_type: ENTITY_TYPE_BLOB_ARTIFACT,
                     occurred,
                     learned_at: now,
+                    row_version: 0,
                     body,
                 },
             )?;

@@ -424,6 +424,7 @@ pub(in crate::sync) fn apply_replayed_tombstone_for_sync_in_txn(
 ) -> Result<(
     crate::deletion::ReplayedTombstoneOutcome,
     Vec<crate::entity_id::EntityId>,
+    Vec<(crate::attempt_queue::AttemptId, u32)>,
 )> {
     #[cfg(test)]
     maybe_inject_purge_failure()?;

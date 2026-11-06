@@ -35,22 +35,29 @@ impl SyncServer {
         // (FIX 8091, L14 s45 09:35); a crossing still only measures.
         oneiron::authority::set_authority_work_wait_ms(config.limits.queue_wait_timeout_ms);
         vault.recover_admission_intents()?;
-        // Genuine host authority must exist before any scoped-read fail-closed
-        // policy applies. Dev/no-secret and blind-relay modes mint nothing.
-        // An empty configured secret mints nothing either, and every upgrade
-        // bearing it (or nothing) still 401s at the auth door, so booting
-        // rootless here is fail-closed, not open. The configured secret
-        // admits rooting; the root signs with this install's own issuer seed
-        // for the vault (FIX-LIST 3018), drawn only for a vault no root has
-        // reached. An install holding no seed serves rootless, said once.
-        let issuer = match host_root_secret(&vault, &config) {
-            Some(_) => match vault.bootstrap_host_slip_issuer() {
+        // Hosted authority is automatic from the operator's explicit posture,
+        // not a customer auth-secret step. Other postures retain their existing
+        // secret-based rooting and rootless warning behavior.
+        let hosted = vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted;
+        let issuer = if hosted || host_root_secret(&vault, &config).is_some() {
+            match vault.bootstrap_host_slip_issuer() {
                 Ok(issuer) => {
                     vault.ensure_host_root_slip(&issuer)?;
                     // The engine's MACHINE writers sign with host-held keys (ONE-1634).
                     vault.provision_engine_machine_identities(&issuer)?;
+                    if hosted
+                        && !vault.checkpoint_policy_selection_available()
+                        && !vault.checkpoint_root_eligible(&issuer.public_key())?
+                    {
+                        return Err(oneiron::Error::Record(
+                            oneiron::error::RecordError::CheckpointPolicyRefused(
+                                "the hosted issuer is not an eligible checkpoint host root",
+                            ),
+                        ));
+                    }
                     Some(Arc::new(issuer))
                 }
+                Err(error) if hosted => return Err(error),
                 Err(error) => {
                     tracing::warn!(
                         kind = ?error.kind(),
@@ -60,8 +67,9 @@ impl SyncServer {
                     );
                     None
                 }
-            },
-            None => None,
+            }
+        } else {
+            None
         };
         // This install's own machine profile, before any request is admitted,
         // so it carries the owner's acts from its first start (FIX 4648):
@@ -170,6 +178,9 @@ impl SyncServer {
         // V2-R3: a lock of this vault waits for this process's snapshot
         // release before its key drops; an erase drops its sessions.
         crate::models::install_snapshot_runtime(&vault);
+        // FIX 14976: this vault's drafter bindings are served on this
+        // process's own managed worker, where it launches one for this vault.
+        crate::models::install_drafter_serving(&vault);
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(
@@ -260,10 +271,12 @@ impl SyncServer {
             asr_sessions: Default::default(),
             model_streams: Default::default(),
             export_transfers: Default::default(),
+            pairing_backoff: Default::default(),
             lens_frames,
             retained,
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
+            shared_envs: std::sync::OnceLock::new(),
             leaf_keys: crate::handler::LeafKeyRelay::default(),
             usage_ledger: UsageLedger::new(vault.clone()),
             retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
@@ -312,6 +325,7 @@ impl SyncServer {
             reader_runner,
             live_runs,
             secret_destinations: Default::default(),
+            seat_helpers: Default::default(),
             model_budgets,
             cloud_registration,
             connector_elicitations: Arc::default(),
@@ -357,6 +371,7 @@ impl SyncServer {
             feedback_triage: crate::config::FeedbackTriageConfig::default(),
             feedback_flood,
             artifact_port: None,
+            api_addr: None,
             artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,
