@@ -208,7 +208,7 @@ impl AiHandle {
                 Some(meter),
                 &admission,
             )
-            .map_err(|_| Why::Off(CompactionOff::BackendFailed))?;
+            .map_err(Why::Off)?;
         let driver = match CompactionDriver::for_profile(&call.mode.profile, &registry) {
             Ok(Some(driver)) => driver,
             Ok(None) => return Err(Why::Off(CompactionOff::HarnessCompacts)),
