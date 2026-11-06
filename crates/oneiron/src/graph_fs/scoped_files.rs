@@ -84,6 +84,7 @@ impl GraphFsResolver<'_, '_> {
                                         txn,
                                         texts,
                                         reader,
+                                        self.options.page_byte_cap,
                                     )?;
                                 if mask(&mut value, &keys, reader)? {
                                     let mut output = PacedBodyIo::new(
@@ -107,6 +108,7 @@ impl GraphFsResolver<'_, '_> {
                                         txn,
                                         [text],
                                         reader,
+                                        self.options.page_byte_cap,
                                     )?;
                                 if let Some(masked) = keys.masked_with_reader(text, reader)? {
                                     *body = masked.into_bytes();
