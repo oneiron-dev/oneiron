@@ -270,8 +270,13 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
-        // A position-narrowed slip places no row in core (FIX 10666).
-        self.refuse_narrowed_program_write()?;
+        // A position-narrowed slip's claim lands only where the slip admits
+        // it, tested in its write (FIX 20094); a session-bound run's is
+        // refused (FIX 10666).
+        let narrowed = self.narrowed_program_slip();
+        if narrowed.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
+            self.refuse_narrowed_program_write()?;
+        }
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -282,6 +287,8 @@ impl HostSelfDispatcher<'_> {
         };
         let envelope = self.write_envelope(SelfEffect::MemoryWriteFixture, admission.as_ref())?;
         let predicate = candidate.predicate().to_owned();
+        let holder = self.actor.entity_ref();
+        let positioned = narrowed.map(|slip| (slip, candidate.clone()));
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .batch()
@@ -293,6 +300,11 @@ impl HostSelfDispatcher<'_> {
                     call.learned_at,
                 )
                 .commit_with_target_guard(|txn| {
+                    if let Some((slip, candidate)) = &positioned {
+                        super::program_step::admit_candidate_position_in_txn(
+                            vault, txn, slip, holder, &call.id, candidate, &envelope,
+                        )?;
+                    }
                     vault.validate_code_run_claim_target_in_txn(txn, &call.id, Some(&predicate))
                 })?,
             ExecutorStorage::Session(binding) => {
@@ -316,8 +328,13 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryPutClaimCall,
     ) -> Result<SelfDispatchOutcome> {
-        // A position-narrowed slip places no row in core (FIX 10666).
-        self.refuse_narrowed_program_write()?;
+        // A position-narrowed slip's claim lands only where the slip admits
+        // it, tested in its write (FIX 20094); a session-bound run's is
+        // refused (FIX 10666).
+        let narrowed = self.narrowed_program_slip();
+        if narrowed.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
+            self.refuse_narrowed_program_write()?;
+        }
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -346,6 +363,8 @@ impl HostSelfDispatcher<'_> {
             ));
         }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
+        let holder = self.actor.entity_ref();
+        let positioned = narrowed.map(|slip| (slip, candidate.clone()));
         let actual_id = match &self.storage {
             ExecutorStorage::Canonical(vault) => vault
                 .put_claim_candidate_with_landing_returning_actual(
@@ -354,7 +373,14 @@ impl HostSelfDispatcher<'_> {
                     &envelope,
                     call.occurred,
                     call.learned_at,
-                    |_| Ok(()),
+                    |txn| match &positioned {
+                        Some((slip, candidate)) => {
+                            super::program_step::admit_candidate_position_in_txn(
+                                vault, txn, slip, holder, &call.id, candidate, &envelope,
+                            )
+                        }
+                        None => Ok(()),
+                    },
                 )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
@@ -409,8 +435,13 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemorySupersedeClaimCall,
     ) -> Result<SelfDispatchOutcome> {
-        // A position-narrowed slip places no row in core (FIX 10666).
-        self.refuse_narrowed_program_write()?;
+        // A position-narrowed slip's claim lands only where the slip admits
+        // it, tested in its write (FIX 20094); a session-bound run's is
+        // refused (FIX 10666).
+        let narrowed = self.narrowed_program_slip();
+        if narrowed.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
+            self.refuse_narrowed_program_write()?;
+        }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
             admission.as_ref().map(|admission| admission.lane),
@@ -458,7 +489,26 @@ impl HostSelfDispatcher<'_> {
                 &claim_gate_body,
                 edge_gate_id,
                 &edge_gate_body,
-                |_| Ok(()),
+                |txn| match narrowed {
+                    Some(slip) => {
+                        let holder = self.actor.entity_ref();
+                        super::program_step::admit_stored_claim_position_in_txn(
+                            vault,
+                            txn,
+                            slip,
+                            holder,
+                            &call.old_id,
+                        )?;
+                        super::program_step::admit_stored_claim_position_in_txn(
+                            vault,
+                            txn,
+                            slip,
+                            holder,
+                            &call.new_id,
+                        )
+                    }
+                    None => Ok(()),
+                },
             )?,
             ExecutorStorage::Session(binding) => binding.session.executor_supersede_claim(
                 &binding.route,
