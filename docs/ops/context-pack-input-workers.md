@@ -364,9 +364,13 @@ same filter, map and collection. That scope ends before the resulting target
 vector gets its holder. This does not assume that collection allocates a new
 buffer: an allocation reused for the targets is not counted by both holders at
 once. Temporary overlap during collection remains outside this post-allocation
-accounting. Decoded records, deletion metadata's possible heap storage, edge-query
-scratch, retained maps and later replay vectors remain separate allocations.
-Allocation and reallocation peaks are not covered by these holders.
+accounting. Both observation reads construct only id targets. Their scoped-read
+constructor sets `ReadRow.deletion` to `None`; missing or withheld rows yield an
+empty slot rather than a deletion shell. Deletion metadata's optional request-id
+string belongs to the separate short-reference read path, not these batches.
+Decoded records, edge-query scratch, retained maps and later replay vectors remain
+separate allocations. Allocation and reallocation peaks are not covered by these
+holders.
 
 
 ## Chat capture buffer custody
