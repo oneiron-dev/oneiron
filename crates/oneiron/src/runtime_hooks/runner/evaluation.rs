@@ -7,7 +7,9 @@ use crate::runtime_hooks::body::{HookBodyRuntime, HookRunContext, HookVerdict};
 use crate::runtime_hooks::store::{HookReadPin, HookRunRecord};
 use crate::{Error, Result, Vault};
 
-use super::body::{Verdict, VerdictPins, ask_verdict, judge, record, verdict_context};
+use super::body::{
+    Verdict, VerdictPins, ask_verdict, judge, record, record_in_txn, verdict_context,
+};
 use super::{Run, read};
 
 pub(super) struct PreparedRun {
@@ -24,6 +26,26 @@ impl PreparedRun {
     pub(super) fn memo(&self, vault: &Vault, run: &Run<'_>) -> Result<HookRunRecord> {
         record(
             vault,
+            run,
+            &self.input,
+            self.reads.clone(),
+            self.verdicts.clone(),
+            &self.verdict,
+            self.duration_ms,
+            self.now,
+            self.runtime_identity.clone(),
+        )
+    }
+
+    pub(super) fn memo_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        run: &Run<'_>,
+    ) -> Result<HookRunRecord> {
+        record_in_txn(
+            vault,
+            txn,
             run,
             &self.input,
             self.reads.clone(),
