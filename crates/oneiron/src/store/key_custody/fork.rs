@@ -252,7 +252,8 @@ impl LocalCustody<'_> {
     /// source's retirement facts here, and the KS-4 custody head reads every
     /// live entry and retirement fact the same way. A credential's directory
     /// that does not list is left out, warned (KS-6): its keys stay where
-    /// they are for that pass.
+    /// they are for that pass. An erasable key's tombstone counts as its
+    /// marker (FIX 16230).
     pub(crate) fn census(&self) -> Result<Vec<(CustodyId, EntryState)>> {
         let subjects = match fs::read_dir(self.compartment()?) {
             Ok(subjects) => subjects,
@@ -284,6 +285,11 @@ impl LocalCustody<'_> {
                     *slot = state;
                 }
             }
+        }
+        // FIX 16230: a tombstoned erasable key has no directory; its
+        // tombstone retires its one generation.
+        for subject in self.erasable_tombstones()? {
+            census.insert(subject.at(0), EntryState::Retired);
         }
         Ok(census.into_iter().collect())
     }

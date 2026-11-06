@@ -705,6 +705,9 @@ impl OneironClient {
                 "vault.inbox.concerns.review" => remote_agent_verb_output::<
                     oneiron::memory::DreamerAttemptRef,
                 >(client, verb, &input),
+                "vault.proactivity.digest" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+                >(client, verb, &input),
                 "vault.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
@@ -1499,6 +1502,24 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.coach.training_offers.sources" => remote_agent_verb_output::<
                     oneiron::edit_distance::reservoir::ReservoirSourcePreview,
+                >(client, verb, &input),
+                "vault.drafters.list" => remote_agent_verb_output::<
+                    Vec<oneiron::drafter::DrafterVersionView>,
+                >(client, verb, &input),
+                "vault.drafters.list_as" => remote_agent_verb_output::<
+                    Vec<oneiron::drafter::DrafterVersionView>,
+                >(client, verb, &input),
+                "vault.drafters.status" => remote_agent_verb_output::<
+                    oneiron::drafter::DrafterStatus,
+                >(client, verb, &input),
+                "vault.drafters.policy.set" => remote_agent_verb_output::<
+                    oneiron::drafter::DrafterPolicy,
+                >(client, verb, &input),
+                "vault.drafters.revert" => remote_agent_verb_output::<
+                    oneiron::drafter::DrafterRevertReceipt,
+                >(client, verb, &input),
+                "vault.drafters.revert_as" => remote_agent_verb_output::<
+                    oneiron::drafter::DrafterRevertReceipt,
                 >(client, verb, &input),
                 "vault.research.bind" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ResearchBinding,
@@ -6686,6 +6707,21 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.inbox.concerns.review", value)
     }
+    pub fn vault_proactivity_digest(
+        &self,
+        input: &oneiron::memory::ProactivityDigestRequest,
+    ) -> Result<
+        Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.proactivity.digest", value)
+    }
     pub fn vault_inbox_lens(
         &self,
         input: &oneiron::agent_inbox_lens::InboxLensRequest,
@@ -9802,6 +9838,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.coach.training_offers.sources", value)
+    }
+    pub fn vault_drafters_list(
+        &self,
+        input: &oneiron::drafter::DrafterListRequest,
+    ) -> Result<Vec<oneiron::drafter::DrafterVersionView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.drafters.list", value)
+    }
+    pub fn vault_drafters_list_as(
+        &self,
+        input: &oneiron::drafter::DrafterListRequest,
+    ) -> Result<Vec<oneiron::drafter::DrafterVersionView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.drafters.list_as", value)
+    }
+    pub fn vault_drafters_status(
+        &self,
+        input: &oneiron::drafter::DrafterStatusRequest,
+    ) -> Result<oneiron::drafter::DrafterStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.drafters.status", value)
+    }
+    pub fn vault_drafters_policy_set(
+        &self,
+        input: &oneiron::drafter::DrafterPolicySetRequest,
+    ) -> Result<oneiron::drafter::DrafterPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.drafters.policy.set", value)
+    }
+    pub fn vault_drafters_revert(
+        &self,
+        input: &oneiron::drafter::DrafterRevertRequest,
+    ) -> Result<oneiron::drafter::DrafterRevertReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.drafters.revert", value)
+    }
+    pub fn vault_drafters_revert_as(
+        &self,
+        input: &oneiron::drafter::DrafterRevertRequest,
+    ) -> Result<oneiron::drafter::DrafterRevertReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.drafters.revert_as", value)
     }
     pub fn vault_research_bind(
         &self,

@@ -24,6 +24,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) git_scan_blob_bytes: Option<u64>,
     pub(in crate::config) git_scan_disk_floor_bytes: Option<u64>,
     pub(in crate::config) queue_wait_timeout_ms: Option<u64>,
+    pub(in crate::config) paced_verb_wait_secs: Option<u64>,
     pub(in crate::config) disk_reserve_bytes: Option<u64>,
     pub(in crate::config) live_sessions: Option<usize>,
     pub(in crate::config) live_subscriptions: Option<usize>,
@@ -177,4 +178,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) shared_merge_evidence_rows: Option<u64>,
     pub(in crate::config) memory_reason_evidence_rows: Option<u64>,
     pub(in crate::config) memory_reason_tokens: Option<u64>,
+    pub(in crate::config) context_edge_hops: Option<u64>,
+    pub(in crate::config) context_neighbors: Option<u64>,
+    pub(in crate::config) context_selected_edges: Option<u64>,
 }
