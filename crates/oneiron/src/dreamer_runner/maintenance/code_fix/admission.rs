@@ -21,10 +21,12 @@
 //! step was served; instruction replay passes no capsule and keeps this gate
 //! alone.
 
+use std::sync::Arc;
+
 use super::publisher::{EngineAdmission, EngineCandidateRun, EngineNotRun, EnginePairState};
 use super::{CodeFixSettled, SealedRun};
 use crate::claim::ScopedReadActorKey;
-use crate::code_run::shadow_runner::ShadowSourceAdmission;
+use crate::code_run::shadow_runner::{ShadowSourceAdmission, ShadowSourceWitness};
 use crate::code_run::{captured_step_read_scopes_in_txn, step_replay_capsules_in_txn};
 use crate::dreamer_runner::shadow_values::ShadowRequestDigest;
 use crate::dreamer_runner::shadow_values::ShadowStepIdentity;
@@ -228,16 +230,22 @@ impl ShadowSourceAdmission for CoachReplayAdmission {
 /// One engine pair's recheck gate (FIX 7027): the pair's [`StepReplayCapsule`]
 /// held with the admission that runs under it, so every engine source, body
 /// or arm read rechecks the same captured-step proof the pair was selected
-/// with, never another.
-pub(crate) struct EngineStepGate<'a> {
-    admission: &'a CoachReplayAdmission,
-    capsule: &'a StepReplayCapsule,
+/// with, never another. The gate owns both (FIX 9446), so the host's worker
+/// that prepares each arm's source again holds this same proof.
+pub(crate) struct EngineStepGate {
+    admission: CoachReplayAdmission,
+    capsule: StepReplayCapsule,
 }
 
-impl<'a> EngineStepGate<'a> {
+impl EngineStepGate {
     /// The gate for a pair running under `admission` from `capsule`.
-    pub(crate) fn of(admission: &'a CoachReplayAdmission, capsule: &'a StepReplayCapsule) -> Self {
+    pub(crate) fn of(admission: CoachReplayAdmission, capsule: StepReplayCapsule) -> Self {
         Self { admission, capsule }
+    }
+
+    /// The captured step the pair runs from.
+    pub(crate) const fn capsule(&self) -> &StepReplayCapsule {
+        &self.capsule
     }
 
     /// Whether the pair may keep reading: [`CoachReplayAdmission::still_admits_capsule`].
@@ -246,11 +254,19 @@ impl<'a> EngineStepGate<'a> {
     ///
     /// Storage errors.
     pub(crate) fn check(&self, vault: &Vault) -> Result<std::result::Result<(), EngineAdmission>> {
-        self.admission.still_admits_capsule(vault, self.capsule)
+        self.admission.still_admits_capsule(vault, &self.capsule)
+    }
+
+    /// `gate` as the host's worker holds it (FIX 9446): the witness of the
+    /// pair's step, under which the host prepares each arm's source again,
+    /// asking this same proof before each raw read.
+    pub(crate) fn witness(gate: &Arc<Self>) -> ShadowSourceWitness {
+        let admission: Arc<Self> = Arc::clone(gate);
+        ShadowSourceWitness::new(ShadowStepIdentity::of(&gate.capsule), admission)
     }
 }
 
-impl ShadowSourceAdmission for EngineStepGate<'_> {
+impl ShadowSourceAdmission for EngineStepGate {
     fn admits_now(&self, vault: &Vault) -> Result<bool> {
         Ok(self.check(vault)?.is_ok())
     }
