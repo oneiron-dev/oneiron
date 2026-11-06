@@ -73,6 +73,8 @@ impl Vault {
     /// # Errors
     /// Storage errors.
     pub fn release_send_executor_leases(&self) -> Result<usize, Error> {
+        self.send_executor_leases_released
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let now = self.now_recorded_at();
         let (node_id, held) = {
             let rtxn = self.store.env.read_txn()?;
@@ -121,6 +123,12 @@ impl Vault {
         &self,
         holds_channel: &dyn Fn(&ConnectorSendTask) -> bool,
     ) -> Result<ConnectorSendLeaseReap, Error> {
+        if self
+            .send_executor_leases_released
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(ConnectorSendLeaseReap::default());
+        }
         let now = self.now_recorded_at();
         let node_id = crate::identity::load_or_mint_client_id(self)?;
         let (leases, local, always_on) = {
