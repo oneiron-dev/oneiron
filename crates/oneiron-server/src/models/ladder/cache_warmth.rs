@@ -21,6 +21,7 @@ use oneiron::llm::SingleRouteBackend;
 use oneiron_llm_anthropic::{AnthropicCacheTier, AnthropicProviderOptions};
 
 use super::*;
+use crate::models::output_cap::LIMIT_KEYS;
 
 /// The Anthropic API's own Messages route: the one route whose prompt-cache
 /// lifetimes the table knows (CALLS "FIX 6029 prompt-cache lifetimes"). A
@@ -89,13 +90,25 @@ struct Prefix {
 
 /// Every reusable prefix of `request`, shortest first (CALLS "FIX 6029
 /// prefix digest"). Each digest covers, in the order the wire caches a
-/// prefix, all that would change it: the model, the tools, the params, the
-/// options but the host's own descriptor, the effort and the reply format,
-/// every system block, then each message's role and parts through the block
-/// it ends at. `None` when the request does not encode.
+/// prefix, all that would change it: the model, the tools, the params but
+/// the output-length control (FIX 6492), the options but the host's own
+/// descriptor, the effort and the reply format, every system block, then
+/// each message's role and parts through the block it ends at. `None` when
+/// the request does not encode.
+///
+/// The output-length control is a generation-only field of the one route
+/// the table knows: its output cap folds each spelling of it into the
+/// wire's `max_tokens`, which the provider reads beside the prompt it
+/// caches, never in it. A thinking setting and every param the route does
+/// not document as generation-only stay in the identity.
 fn prefixes(request: &LlmRequest) -> Option<Vec<Prefix>> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.cache_warmth.prefix.v1");
+    let params: BTreeMap<&String, &JsonValue> = request
+        .params
+        .iter()
+        .filter(|(key, _)| !LIMIT_KEYS.contains(&key.as_str()))
+        .collect();
     let options: BTreeMap<&String, &JsonValue> = request
         .provider_options
         .iter()
@@ -106,7 +119,7 @@ fn prefixes(request: &LlmRequest) -> Option<Vec<Prefix>> {
         &(
             &request.model,
             &request.tools,
-            &request.params,
+            &params,
             &options,
             &request.envelope.seat_effort,
             &request.envelope.response_format,
