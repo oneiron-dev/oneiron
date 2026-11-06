@@ -46,11 +46,11 @@ use super::{DML, NativeRefusal, Node, XmlTree, escape_text, within};
 /// Original identities, style and relationship refs stay.
 /// A wholly retained nonempty ordinary run or direct break in a field-free
 /// paragraph keeps its original XML once. A partial ordinary run keeps its own
-/// attributes only when it contributes to exactly one retained head/tail piece;
-/// with native text elements, that piece instead keeps the original run XML
+/// attributes on its only retained piece, or on its source-start head piece
+/// when it spans both intervals; the tail keeps the static style wrapper.
+/// With native text elements, the owning piece keeps the original run XML
 /// with each text element trimmed to its own retained character interval.
-/// Unsupported splices keep the static path; a run split across both keeps
-/// the existing static wrappers.
+/// Unsupported native splices keep the same static attribute path on that piece.
 pub(super) fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -308,10 +308,11 @@ fn rebuilt_pass(
                         let copied_before = pending_sources.len();
                         let mut run =
                             run_xml(Some((*at, *node)), para_node, &part, pending_sources).ok()?;
-                        // A split run keeps the old wrappers; one retained piece keeps its attrs once.
+                        // The source-start piece owns a split run's wrapper; the tail stays static.
                         if field_free
                             && node.is(DML, "r")
-                            && !(position < prefix && position + text.len() > old.len() - suffix)
+                            && (!(position < prefix && position + text.len() > old.len() - suffix)
+                                || from == 0)
                         {
                             if let Some(original) =
                                 partial_run(bytes, tree, *at, start - position..end - position)
