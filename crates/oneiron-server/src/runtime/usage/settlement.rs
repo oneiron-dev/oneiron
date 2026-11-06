@@ -9,52 +9,57 @@ use super::{
 };
 
 impl VaultUsage {
+    /// The one admission-time owner/rate snapshot, shared by the ordinary
+    /// receipt path and the native producer integration. No current owner
+    /// or catalog lookup belongs in terminal recovery.
+    pub(super) fn admitted_call(&self, facts: &super::PermitFacts) -> AdmittedCall {
+        // The host's override for this exact offer, else the
+        // catalog's list price for the admitted model as it reads
+        // now; either is frozen on the call. A call on the owner's
+        // own key to a custom endpoint freezes neither and reads no
+        // row: it logs token counts only (FIX 7765).
+        let custom_endpoint = pricing::custom_endpoint(facts);
+        let overridden = self
+            .provider_rates
+            .read()
+            .expect("usage rates lock poisoned")
+            .get(&facts.offer)
+            .cloned();
+        // The host's override reads no row; the catalog's price, the
+        // rows its row was read from (FIX 5760).
+        let (rates, price_sources) = match overridden {
+            _ if custom_endpoint => (None, Some(Vec::new())),
+            Some(rates) => (Some(rates), Some(Vec::new())),
+            None => self.catalog.snapshot(facts),
+        };
+        // A room-paid call bills its payer PERSON's own account, which
+        // for a live Owner is the vault's; the vault's too when the
+        // owners approved that on its payer-needed ask; a call no
+        // room pays for, the vault's.
+        let owner = match facts.payer_person.as_ref().map(|payer| &payer.account) {
+            Some(PayerAccount::Person { account }) => account.clone(),
+            Some(PayerAccount::VaultOwner | PayerAccount::VaultApproved { .. }) | None => {
+                self.owner.clone()
+            }
+        };
+        AdmittedCall {
+            facts: facts.clone(),
+            rates,
+            custom_endpoint,
+            price_sources,
+            owner,
+            service_cost: None,
+        }
+    }
+
     pub(crate) fn record(&self, receipt: &RunReceipt) {
         match &receipt.event {
             RunEvent::Admitted(facts) => {
-                // The host's override for this exact offer, else the
-                // catalog's list price for the admitted model as it reads
-                // now; either is frozen on the call. A call on the owner's
-                // own key to a custom endpoint freezes neither and reads no
-                // row: it logs token counts only (FIX 7765).
-                let custom_endpoint = pricing::custom_endpoint(facts);
-                let overridden = self
-                    .provider_rates
-                    .read()
-                    .expect("usage rates lock poisoned")
-                    .get(&facts.offer)
-                    .cloned();
-                // The host's override reads no row; the catalog's price, the
-                // rows its row was read from (FIX 5760).
-                let (rates, price_sources) = match overridden {
-                    _ if custom_endpoint => (None, Some(Vec::new())),
-                    Some(rates) => (Some(rates), Some(Vec::new())),
-                    None => self.catalog.snapshot(facts),
-                };
-                // A room-paid call bills its payer PERSON's own account, which
-                // for a live Owner is the vault's; the vault's too when the
-                // owners approved that on its payer-needed ask; a call no
-                // room pays for, the vault's.
-                let owner = match facts.payer_person.as_ref().map(|payer| &payer.account) {
-                    Some(PayerAccount::Person { account }) => account.clone(),
-                    Some(PayerAccount::VaultOwner | PayerAccount::VaultApproved { .. }) | None => {
-                        self.owner.clone()
-                    }
-                };
+                let call = self.admitted_call(facts);
                 self.calls
                     .lock()
                     .expect("usage calls lock poisoned")
-                    .insert(
-                        (receipt.instance, facts.lease.clone()),
-                        AdmittedCall {
-                            facts: *facts.clone(),
-                            rates,
-                            custom_endpoint,
-                            price_sources,
-                            owner,
-                            service_cost: None,
-                        },
-                    );
+                    .insert((receipt.instance, facts.lease.clone()), call);
             }
             RunEvent::Settled { lease, .. } => {
                 let call = self

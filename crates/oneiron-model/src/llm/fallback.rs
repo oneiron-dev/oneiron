@@ -66,6 +66,12 @@ impl FallbackRegistry {
                 reason: "response erased".into(),
             });
         }
+        if matches!(failure, FatalLlmError::HostStore { .. }) {
+            return Err(FallbackError::Failed {
+                name: declared.name.clone(),
+                reason: "host storage failed".into(),
+            });
+        }
         let runner = self
             .runners
             .get(&declared.name)
@@ -188,6 +194,7 @@ impl DeterministicRunner for JsonRules {
             FatalLlmError::LabelRead(_) => "label_read",
             // Terminal, never a rule's trigger, the "fatal" row's included.
             FatalLlmError::ResponseErased => return Err("response erased".into()),
+            FatalLlmError::HostStore { .. } => return Err("host storage failed".into()),
         };
         let row = rules
             .rows

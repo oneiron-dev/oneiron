@@ -46,6 +46,7 @@ pub struct VaultUsage {
     settlement_cursor: Mutex<Option<String>>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct AdmittedCall {
     facts: PermitFacts,
     /// `None` too for a call on the owner's own key to a custom endpoint,
