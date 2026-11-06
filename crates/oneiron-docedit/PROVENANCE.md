@@ -206,3 +206,12 @@ the source `br`. Unknown text coverage still falls back to the existing
 one-template render, and field-removal receipts are unchanged. This is a
 source-only common-span correction, not full 17480, whole OF-509 or PowerPoint
 fidelity proof, and no Office runtime comparison is claimed.
+
+The count-changing requested-break alignment (2026-11-06, FIX 17480) counts
+an original direct DrawingML `br` as U+000B when matching a requested outer
+paragraph that explicitly contains a break. BREAK-free requested lines keep
+the prior t-only matches and paragraph-property carry; omitted breaks still
+drop. Exact matched outer paragraphs reuse the existing static run and break
+property serializer. Paragraph pairing, replacement defaults, unsupported
+coverage fallback and field-removal receipts are unchanged. This is a source
+correction, not a PowerPoint or full table-fidelity proof.

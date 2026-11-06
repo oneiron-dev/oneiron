@@ -615,15 +615,24 @@ fn rebuilt(
     let (head, tail) = if same_count {
         (0, 0)
     } else {
-        let paragraph_text = |para: usize| {
+        let paragraph_text = |para: usize, include_breaks: bool| {
             within(tree, para)
-                .filter(|(_, node)| node.is(DML, "t"))
-                .map(|(_, node)| node.text.as_str())
+                .filter(|(_, node)| {
+                    node.is(DML, "t")
+                        || include_breaks && node.is(DML, "br") && node.parent == Some(para)
+                })
+                .map(|(_, node)| {
+                    if node.is(DML, "br") {
+                        "\u{b}"
+                    } else {
+                        node.text.as_str()
+                    }
+                })
                 .collect::<String>()
         };
         let mut head = 0;
         for ((para, _), line) in paragraphs.iter().zip(value.split('\n')) {
-            if paragraph_text(*para) != line {
+            if paragraph_text(*para, line.contains('\u{b}')) != line {
                 break;
             }
             head += 1;
@@ -636,7 +645,7 @@ fn rebuilt(
             .zip(value.split('\n').rev())
             .take(remaining)
         {
-            if paragraph_text(*para) != line {
+            if paragraph_text(*para, line.contains('\u{b}')) != line {
                 break;
             }
             tail += 1;
