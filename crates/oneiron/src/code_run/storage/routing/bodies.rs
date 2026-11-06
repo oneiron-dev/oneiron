@@ -3,12 +3,13 @@
 //! the routing module whole).
 
 use super::super::records::{
-    ReplyBody, code_run_body_held_in_txn, owned_body, raw_put_publishes_descriptor,
+    FinishedOutput, ReplyBody, code_run_body_held_in_txn, owned_body, raw_put_publishes_descriptor,
 };
 use super::*;
 use crate::code_run::result_read::unplaced_answer;
 use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
 use crate::side_table::RoutedDbs;
+use crate::store::BodyDir;
 
 impl ExecutorStorage<'_> {
     /// Live PERSON and custody prints for this execution's typed output text.
@@ -205,61 +206,123 @@ impl SessionBinding<'_> {
         owner: EntityId,
     ) -> Result<()> {
         self.answered(|| {
-            let dir = finished
-                .key
-                .as_ref()
-                .map(|_| self.session.body_dir(self.route.target()))
-                .transpose()?;
+            let row = self.prepare_output_row(finished, output, owner)?;
             self.session
                 .routed_side_txn(&self.route, |txn, read, write| {
-                    if let (Some(key), Some(dir)) = (finished.key.as_ref(), dir.as_ref()) {
-                        let held = BODY_KEYS.get(&read, txn, key.digest())?;
-                        let kept = match &held {
-                            Some(held) => key.keeps(held, dir)?,
-                            None => false,
-                        };
-                        if !kept {
-                            if let crate::side_table::RoutedDbs::Base(vault) = &write {
-                                crate::store::pin_body_custody_in_txn(&vault.store, txn)?;
-                                // The instance it replaces stays the digest's (FIX 6023).
-                                if let Some(held) =
-                                    held.filter(|held| held.is_vault() && key.row().is_vault())
-                                {
-                                    crate::store::remember_body_instances_in_txn(
-                                        &vault.store,
-                                        txn,
-                                        key.digest(),
-                                        &[held.instance, key.row().instance],
-                                    )?;
-                                }
-                            }
-                            BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
-                        }
-                    }
-                    // On an on-record stretch the run's descriptor is published
-                    // in base beside the row, with no second body key, custody
-                    // pin or secret mark (FIX 7363). An overlay row carries
-                    // none: a room save takes no overlay descriptor to base.
-                    let published = match write {
-                        RoutedDbs::Base(vault) => {
-                            let body = owned_body(owner, output, &finished.body)?;
-                            let prior =
-                                owned_body_in_txn(&vault.store, txn, &owner, &body.occurrence);
-                            raw_put_publishes_descriptor(&prior, &body).then_some((vault, body))
-                        }
-                        RoutedDbs::Session(_) => None,
-                    };
-                    let held = published.is_none()
-                        || code_run_body_held_in_txn(&write, txn, &output.raw_blake3)?;
-                    RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(held))?;
-                    match published {
-                        Some((vault, body)) => publish_body_in_txn(&vault.store, txn, &body),
-                        None => Ok(()),
-                    }
+                    row.put_in_txn(txn, read, write)
                 })
         })
     }
 
+    /// The row of the body `finished` holds, as run `owner`'s `output`,
+    /// prepared for a writer on the run's route that its caller opens (FIX
+    /// 6592). The directory a sealed file's key is checked against is read
+    /// here, before that writer opens.
+    pub(in crate::code_run::storage) fn prepare_output_row<'f>(
+        &self,
+        finished: &'f FinishedOutput,
+        output: &'f CodeRunRawOutput,
+        owner: EntityId,
+    ) -> Result<PreparedOutputRow<'f>> {
+        let dir = finished
+            .key
+            .as_ref()
+            .map(|_| self.session.body_dir(self.route.target()))
+            .transpose()?;
+        Ok(PreparedOutputRow {
+            finished,
+            output,
+            owner,
+            dir,
+        })
+    }
+}
+
+/// One output row of a session-bound run, with the directory of its sealed
+/// file, prepared before the routed writer that publishes it opens (FIX
+/// 6592).
+pub(in crate::code_run::storage) struct PreparedOutputRow<'f> {
+    finished: &'f FinishedOutput,
+    output: &'f CodeRunRawOutput,
+    owner: EntityId,
+    dir: Option<BodyDir>,
+}
+
+impl PreparedOutputRow<'_> {
+    /// [`SessionBinding::put_output_row`]'s rows in the caller's routed
+    /// writer: `read` is the composed view, `write` the route's.
+    fn put_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: RoutedDbs<'_>,
+        write: RoutedDbs<'_>,
+    ) -> Result<()> {
+        let (finished, output, owner, dir) = (self.finished, self.output, self.owner, &self.dir);
+        if let (Some(key), Some(dir)) = (finished.key.as_ref(), dir.as_ref()) {
+            let held = BODY_KEYS.get(&read, txn, key.digest())?;
+            let kept = match &held {
+                Some(held) => key.keeps(held, dir)?,
+                None => false,
+            };
+            if !kept {
+                if let crate::side_table::RoutedDbs::Base(vault) = &write {
+                    crate::store::pin_body_custody_in_txn(&vault.store, txn)?;
+                    // The instance it replaces stays the digest's (FIX 6023).
+                    if let Some(held) = held.filter(|held| held.is_vault() && key.row().is_vault())
+                    {
+                        crate::store::remember_body_instances_in_txn(
+                            &vault.store,
+                            txn,
+                            key.digest(),
+                            &[held.instance, key.row().instance],
+                        )?;
+                    }
+                }
+                BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
+            }
+        }
+        // On an on-record stretch the run's descriptor is published
+        // in base beside the row, with no second body key, custody
+        // pin or secret mark (FIX 7363). An overlay row carries
+        // none: a room save takes no overlay descriptor to base.
+        let published = match write {
+            RoutedDbs::Base(vault) => {
+                let body = owned_body(owner, output, &finished.body)?;
+                let prior = owned_body_in_txn(&vault.store, txn, &owner, &body.occurrence);
+                raw_put_publishes_descriptor(&prior, &body).then_some((vault, body))
+            }
+            RoutedDbs::Session(_) => None,
+        };
+        let held =
+            published.is_none() || code_run_body_held_in_txn(&write, txn, &output.raw_blake3)?;
+        RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(held))?;
+        match published {
+            Some((vault, body)) => publish_body_in_txn(&vault.store, txn, &body),
+            None => Ok(()),
+        }
+    }
+
+    /// The secret scan's mark of the occurrence, then the row, in the
+    /// caller's routed writer (FIX 6592): what
+    /// [`SessionBinding::publish_output`] writes in two writers, in one. A
+    /// resumed reply's body is published so, in its resume commit, and a
+    /// refusal there leaves neither.
+    pub(in crate::code_run::storage) fn publish_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: RoutedDbs<'_>,
+        write: RoutedDbs<'_>,
+    ) -> Result<()> {
+        if let Some(reason) = self.finished.secret {
+            let key =
+                ResultOccurrence::of(Some(self.owner), self.output)?.mark_key(&self.output.handle);
+            RAW_OUTPUT_SECRETS.put(&write, txn, &key, &reason.to_owned())?;
+        }
+        self.put_in_txn(txn, read, write)
+    }
+}
+
+impl SessionBinding<'_> {
     pub(super) fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);

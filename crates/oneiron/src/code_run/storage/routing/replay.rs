@@ -31,6 +31,28 @@ impl SessionBinding<'_> {
         healed_model: Option<&ModelId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>) -> Result<()>,
     ) -> Result<()> {
+        self.put_replay_routed_prepared(record, expected, healed_model, |_, _, _| Ok(()), also)
+    }
+
+    /// [`Self::put_replay_routed`] with `prepare`'s rows written in the same
+    /// writer after the generation check. It is given the composed view and
+    /// the route's write. On base it runs before the replay fence, as the
+    /// owned path's prepared seam does (FIX 6592): a body published there is
+    /// one the fence releases in that writer. An overlay row takes no fence,
+    /// so with a heal tally `prepare` runs after the record's put.
+    ///
+    /// # Errors
+    ///
+    /// The route's and the compare's refusals, `prepare`'s and `also`'s,
+    /// and storage errors.
+    pub(in crate::code_run::storage) fn put_replay_routed_prepared(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<()>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>) -> Result<()>,
+    ) -> Result<()> {
         if self.route.target() == RouteTarget::Base {
             return self
                 .session
@@ -42,6 +64,7 @@ impl SessionBinding<'_> {
                             "a base route wrote outside base",
                         ));
                     };
+                    prepare(txn, read, write)?;
                     let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
                     REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
                     if let Some(model) = healed_model {
@@ -65,7 +88,10 @@ impl SessionBinding<'_> {
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
-                    also,
+                    |txn, write| {
+                        prepare(txn, write, write)?;
+                        also(txn, write)
+                    },
                 )
                 .map(drop),
             None => self
@@ -73,6 +99,7 @@ impl SessionBinding<'_> {
                 .routed_side_txn(&self.route, |txn, read, write| {
                     let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
                     replay_generation_matches(current.as_ref(), expected)?;
+                    prepare(txn, read, write)?;
                     REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
                     also(txn, write)
                 }),
