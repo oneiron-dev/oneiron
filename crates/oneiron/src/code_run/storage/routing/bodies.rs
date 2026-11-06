@@ -47,9 +47,25 @@ impl ExecutorStorage<'_> {
         spool: BodySink,
         owner: EntityId,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
+        self.publish_code_run_reply_produced(path, spool, owner, None)
+    }
+
+    pub(crate) fn publish_code_run_reply_produced(
+        &self,
+        path: String,
+        spool: BodySink,
+        owner: EntityId,
+        producing_effect: Option<String>,
+    ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         match self {
             Self::Canonical(vault) => {
-                let published = vault.publish_admitted_code_run_output(path, spool, true, owner)?;
+                let published = vault.publish_admitted_code_run_output_produced(
+                    path,
+                    spool,
+                    true,
+                    owner,
+                    producing_effect,
+                )?;
                 Ok(match published {
                     ReplyBody::Published(output) => Ok(output),
                     ReplyBody::Unplaceable {
@@ -59,7 +75,9 @@ impl ExecutorStorage<'_> {
                     } => Err(unplaced_answer(bytes, text, reason)),
                 })
             }
-            Self::Session(binding) => binding.publish_output(path, spool, true, owner).map(Ok),
+            Self::Session(binding) => binding
+                .publish_output_produced(path, spool, true, owner, None, None, producing_effect)
+                .map(Ok),
         }
     }
 }
@@ -124,7 +142,7 @@ impl SessionBinding<'_> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        self.publish_output_produced(path, sink, complete, owner, input_rows, None)
+        self.publish_output_produced(path, sink, complete, owner, input_rows, None, None)
     }
 
     pub(super) fn publish_output_produced(
@@ -135,6 +153,7 @@ impl SessionBinding<'_> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
         producing_step_start: Option<u64>,
+        producing_effect: Option<String>,
     ) -> Result<CodeRunRawOutput> {
         let mut finished = finish_output_sourced(
             path,
@@ -145,6 +164,7 @@ impl SessionBinding<'_> {
             |digest| self.session.pin_result_body(digest),
         )?;
         finished.output.producing_step_start = producing_step_start;
+        finished.output.producing_effect = producing_effect;
         self.mark_secret(&finished.output, owner, finished.secret)?;
         self.put_output_row(&finished, &finished.output, owner)?;
         Ok(finished.output)
@@ -191,6 +211,7 @@ impl SessionBinding<'_> {
             |digest| self.session.pin_result_body(digest),
         )?;
         finished.output.producing_step_start = output.producing_step_start;
+        finished.output.producing_effect = output.producing_effect.clone();
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",

@@ -34,7 +34,6 @@ mod replay;
 mod type_feedback;
 
 pub(crate) use self::type_feedback::{FeedbackRoute, SessionInstanceBind};
-
 #[cfg(test)]
 use super::records::{CodeRunModelHealCount, MODEL_HEAL_COUNTS};
 #[cfg(test)]
@@ -910,6 +909,7 @@ impl<'a> ExecutorStorage<'a> {
                 owner,
                 input_rows,
                 producing_step_start,
+                None,
             ),
         }
     }

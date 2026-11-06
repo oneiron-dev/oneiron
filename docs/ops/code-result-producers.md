@@ -17,6 +17,21 @@ diagnostics and attachment projections that have no executor coordinate keep
 `None` and do not add the key to their cards. This slice covers the live host's
 stored-value path, not every executor output family.
 
-MIME, character encoding, effect, grant and fence metadata are not inferred from
-this coordinate. Those parts of FIX 4429 remain separate work. No new setting or
-worker configuration is required.
+## Large JSON reply effects
+
+A large JSON reply spilled by `dispatch_call` or its callable-skill path also
+carries `producing_effect`. This is the actual bridge `SelfCall.effect().as_str()`
+label, such as `self.verbs.call`, not the inner verb, action digest or grant. The
+canonical and room publishers set it before publishing the occurrence. Encoding
+requires a nullable field; result cards include only known values. A replayed
+reply keeps its earlier occurrence's exact value, including `None`.
+
+Generic stored values and direct arbitrary reply publishers do not guess a
+label. Typed spills and other executor output families remain outside this
+effect slice. Copying supplied effect metadata before byte validation preserves
+all existing byte comparisons; it does not prove the metadata's producer.
+
+MIME, character encoding, grant and fence metadata are not inferred from either
+producer field. Those parts of FIX 4429, and effect coverage outside large JSON
+bridge replies, remain separate work. No new setting or worker configuration is
+required.

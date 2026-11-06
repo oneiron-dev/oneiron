@@ -14,6 +14,7 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn store_large_answer(
         &mut self,
         seq: u64,
+        effect: SelfEffect,
         mut outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
         // Typed replies use the guest's sweeping sink and full result card.
@@ -34,7 +35,7 @@ impl RecordingJsHost<'_, '_> {
                 if json.len() <= RESULT_REPLY_INLINE_BYTES {
                     return Ok(outcome);
                 }
-                let card = self.store_answer(seq, |sink| sink.write(json.as_bytes()))?;
+                let card = self.store_answer(seq, effect, |sink| sink.write(json.as_bytes()))?;
                 *json = card.to_string();
                 return Ok(outcome);
             }
@@ -47,7 +48,7 @@ impl RecordingJsHost<'_, '_> {
         if size.0 <= RESULT_REPLY_INLINE_BYTES {
             return Ok(outcome);
         }
-        *answer = self.store_answer(seq, |sink| write_json(sink, &*answer))?;
+        *answer = self.store_answer(seq, effect, |sink| write_json(sink, &*answer))?;
         Ok(outcome)
     }
 
@@ -142,6 +143,7 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn store_answer(
         &mut self,
         seq: u64,
+        effect: SelfEffect,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
@@ -150,7 +152,20 @@ impl RecordingJsHost<'_, '_> {
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id)? {
+        let producing_effect = self
+            .results
+            .iter()
+            .find(|held| held.path == path)
+            .map_or_else(
+                || Some(effect.as_str().to_owned()),
+                |held| held.producing_effect.clone(),
+            );
+        let output = match storage.publish_code_run_reply_produced(
+            path,
+            sink,
+            self.run_id,
+            producing_effect,
+        )? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
@@ -168,6 +183,7 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
+        effect: SelfEffect,
         mut answer: crate::skill::CallableSkillAnswer,
     ) -> Result<serde_json::Value> {
         if answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
@@ -183,7 +199,7 @@ impl RecordingJsHost<'_, '_> {
             .result_share
             .zip(self.storage)
             .and_then(|(share, storage)| share.hold(answer.byte_len(), storage.limit_watch()));
-        self.store_answer(seq, |sink| {
+        self.store_answer(seq, effect, |sink| {
             let reader = answer.reader()?;
             let mut frame = vec![0; 64 * 1024];
             loop {
@@ -316,7 +332,7 @@ impl RecordingJsHost<'_, '_> {
         let outcome = match ran {
             Ok(answer) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                 skill: skill.skill,
-                output: self.skill_answer(seq, answer)?,
+                output: self.skill_answer(seq, call.effect(), answer)?,
             }),
             // A cancelled skill is a failed call under its stable code, read
             // from the typed error the runtime raised, never from guest text.
@@ -345,7 +361,7 @@ impl RecordingJsHost<'_, '_> {
         };
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
-        let outcome = self.store_large_answer(seq, outcome)?;
+        let outcome = self.store_large_answer(seq, call.effect(), outcome)?;
         let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
             Some(hooked) => Ok((
@@ -528,7 +544,7 @@ impl RecordingJsHost<'_, '_> {
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
         let (outcome, rewritten) = match dispatched.and_then(|(outcome, rewritten)| {
-            self.store_large_answer(seq, outcome)
+            self.store_large_answer(seq, call.effect(), outcome)
                 .map(|outcome| (outcome, rewritten))
         }) {
             Ok(answered) => answered,

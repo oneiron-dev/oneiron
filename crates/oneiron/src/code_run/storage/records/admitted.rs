@@ -65,6 +65,17 @@ impl Vault {
         complete: bool,
         owner: EntityId,
     ) -> Result<ReplyBody> {
+        self.publish_admitted_code_run_output_produced(path, spool, complete, owner, None)
+    }
+
+    pub(crate) fn publish_admitted_code_run_output_produced(
+        &self,
+        path: String,
+        spool: BodySink,
+        complete: bool,
+        owner: EntityId,
+        producing_effect: Option<String>,
+    ) -> Result<ReplyBody> {
         let spool = spool.into_spool()?;
         let occurrence = ResultOccurrence::owned(owner, &path)?.id();
         let at = (REPLY_PLACE, occurrence.as_bytes().as_slice());
@@ -88,9 +99,10 @@ impl Vault {
             }
             let mut sink = BodySink::new(self.store.body_dir()?, bound, Some(mint));
             admitted.feed(&mut sink)?;
-            let finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
+            let mut finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
                 self.pin_result_body(digest)
             })?;
+            finished.output.producing_effect = producing_effect;
             self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, Some(owner))?;
             wtxn.commit()?;
             return Ok(ReplyBody::Published(finished.output));

@@ -31,6 +31,9 @@ pub struct CodeRunRawOutput {
     /// is occurrence metadata, not authority; non-executor producers carry
     /// no coordinate.
     pub producing_step_start: Option<u64>,
+    /// The native bridge effect that produced this reply, when known. This
+    /// coarse label is not an inner verb, action digest or authority.
+    pub producing_effect: Option<String>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -75,6 +78,7 @@ impl CodeRunRawOutput {
             complete,
             input_rows: None,
             producing_step_start: None,
+            producing_effect: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -104,6 +108,7 @@ impl CodeRunRawOutput {
             complete: true,
             input_rows: None,
             producing_step_start: None,
+            producing_effect: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),
