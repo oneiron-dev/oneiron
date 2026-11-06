@@ -393,23 +393,29 @@ pub(crate) fn board_pins_projection<'a>(
     let mut section =
         oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
     memories_storage.retain(Some(&section));
-    section
+    let result = section
         .include_pinned_refs_with_disclosure(&read, pins.refs, disclosure.as_ref())
-        .map_err(|error| core_engine_error("memory pin read failed", error))?;
+        .map(|_| ())
+        .map_err(|error| core_engine_error("memory pin read failed", error));
     memories_storage.retain(Some(&section));
+    result?;
     if pins.manifest {
         let automatic = read
             .manifest_pinned_refs()
             .map_err(|error| core_engine_error("manifest pin read failed", error))?;
-        section
+        let result = section
             .include_pinned_refs_with_disclosure(&read, &automatic.value, disclosure.as_ref())
-            .map_err(|error| core_engine_error("manifest pin disclosure failed", error))?;
+            .map(|_| ())
+            .map_err(|error| core_engine_error("manifest pin disclosure failed", error));
         memories_storage.retain(Some(&section));
+        result?;
     }
-    section
+    let result = section
         .include_hook_pins(&read, pins.hooks, disclosure.as_ref())
-        .map_err(|error| core_engine_error("hook pin read failed", error))?;
+        .map(|_| ())
+        .map_err(|error| core_engine_error("hook pin read failed", error));
     memories_storage.retain(Some(&section));
+    result?;
     if section.rows.is_empty() {
         drop(section);
         memories_storage.retain(None);
@@ -445,14 +451,18 @@ pub(crate) fn lane_pins_projection(
     let automatic = read
         .manifest_pinned_refs()
         .map_err(|error| core_engine_error("manifest pin read failed", error))?;
-    section
+    let result = section
         .include_pinned_refs_with_disclosure(read, &automatic.value, None)
-        .map_err(|error| core_engine_error("manifest pin disclosure failed", error))?;
+        .map(|_| ())
+        .map_err(|error| core_engine_error("manifest pin disclosure failed", error));
     memories_storage.retain(Some(&section));
-    section
+    result?;
+    let result = section
         .include_hook_pins(read, hooks, None)
-        .map_err(|error| core_engine_error("hook pin read failed", error))?;
+        .map(|_| ())
+        .map_err(|error| core_engine_error("hook pin read failed", error));
     memories_storage.retain(Some(&section));
+    result?;
     if section.rows.is_empty() {
         drop(section);
         memories_storage.retain(None);

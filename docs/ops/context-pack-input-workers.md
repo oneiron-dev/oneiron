@@ -310,9 +310,16 @@ from the same server memory account, declared before producing the raw section.
 It drops only after that section has been rendered and dropped. The separately
 allocated rendered sections do not inherit the raw section's charge.
 
-Projection and pin construction scratch, partially mutated failing pin
-operations, allocation and reallocation peaks, dynamic JSON copies, serializer
-buffers and other metadata backing remain separate work. No clone is claimed
+Each pin operation also refreshes that same holder before propagating its
+original mapped error. This records row backing left by an operation that
+mutated the section before failing. On success, the ignored read-receipt vector
+drops before this refresh, as it did before. The section still drops before the
+caller releases its holder on an error.
+
+Projection and pin construction scratch, allocation and reallocation peaks,
+dynamic JSON copies, serializer buffers and other metadata backing remain
+separate work. Section backing is recorded after a pin operation returns, not
+while the operation is still building or replacing it. No clone is claimed
 covered because it came from a charged source. No memory wait, size cap,
 deadline, refusal, policy or format version changes here.
 
