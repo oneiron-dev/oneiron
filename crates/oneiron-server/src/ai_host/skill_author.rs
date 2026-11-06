@@ -23,6 +23,7 @@ use oneiron::dreamer_runner::maintenance::coach_heal::{
     CoachEnvironmentDraft, CoachHealAuthor, EnvironmentGrantTarget,
 };
 use oneiron::dreamer_runner::maintenance::coach_learning::coach_improver_skill_id;
+use oneiron::failure_ladder::HealerCase;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::self_heal::HealEvidenceContext;
 use oneiron::skill_optimize::{
