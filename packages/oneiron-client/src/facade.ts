@@ -3536,7 +3536,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "connector.call": { description: "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "connector.schema": { description: "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.call_status": { description: "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.commit": { description: "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.", scope: "Write", proposes: true, hostDoor: false, section: false },
+  "vault.commit": { description: "Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.remember": { description: "Commits one claim through the gate, the same as vault.claims.upsert.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.claims.retract": { description: "Retracts one active claim: a deliberate withdrawal that preserves the record.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.forget": { description: "Retracts claims by exact claim or by subject and predicate; never a hard delete.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -6256,7 +6256,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           confirm_grant: (input: Facade.DecisionAskConfirmGrantRequest, options?: O): FacadeReturns<"vault.decisions.asks.confirm_grant">[K] => invoke("vault.decisions.asks.confirm_grant", input, options, newInvocation()),
         },
       },
-      /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
+      /** Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt. */
       commit: (input: Facade.ScopedCommitRequest, options?: O): FacadeReturns<"vault.commit">[K] => invoke("vault.commit", input, options, newInvocation()),
       /** Commits one claim through the gate, the same as vault.claims.upsert. */
       remember: (input: Facade.ClaimInput, options?: O): FacadeReturns<"vault.remember">[K] => invoke("vault.remember", input, options, newInvocation()),
