@@ -8006,6 +8006,8 @@ dependencies = [
  "rrule",
  "rten",
  "rustix",
+ "rustls",
+ "rustls-native-certs",
  "schemars 0.8.22",
  "serde",
  "serde_json",

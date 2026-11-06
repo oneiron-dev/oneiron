@@ -41,3 +41,21 @@ person's Google Drive speeds it up.
 The credential is stored through the owner secrets form under a custody name.
 Pass only that name to the connect call. Never ask for a password or a token
 in chat, and never repeat one back.
+
+## An IMAP mailbox
+
+For a mailbox that is not Google or Microsoft 365 (Fastmail, iCloud, a
+company server), connect it with provider `imap`:
+
+- The person stores, through the owner secrets form, a JSON credential for
+  effector `connector:imap`: `host` (the IMAP server, for example
+  `imap.fastmail.com`), `port` (993 when absent; the server must speak TLS
+  from the first byte), `username`, and either `password` (an app password
+  where the provider offers one) or `access_token` (OAuth, `XOAUTH2`).
+- The provider account is `<username>@<host>`, exactly as stored: a credential
+  for another account never fills the source.
+- Every folder is read but drafts; trash and junk are only looked in.
+  Folders become labels. A message moved to trash, or expunged, is deleted at
+  the provider and follows the delete setting.
+- An mbox export of the same mailbox, imported before or after, lands each
+  message once.
