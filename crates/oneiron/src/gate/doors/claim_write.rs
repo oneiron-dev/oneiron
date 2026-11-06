@@ -86,6 +86,7 @@ pub(crate) fn check_claim_policy_for_write(
         operation_effect_body,
         false,
         None,
+        false,
     )
 }
 
@@ -116,6 +117,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         false,
         false,
         None,
+        false,
     )
 }
 
@@ -141,6 +143,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         false,
         false,
         None,
+        false,
     )
 }
 
@@ -179,7 +182,57 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
         false,
         false,
         Some(reader),
+        false,
     )
+}
+
+/// [`check_claim_policy_for_write`] for a claim an off-record room stages
+/// (FIX 9967): the same judgment under base policy, which keeps the decision
+/// it judged for the room to stage beside the claim, in the claim's own
+/// overlay segment. It appends nothing, records no metric and touches no key
+/// custody, whatever `mode` says of recording. The decision, with the
+/// retention scope its claim names, is the caller's only once the check
+/// passes; `None` when no policy verdict was reached.
+pub(crate) fn capture_claim_policy_for_write(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+) -> Result<Option<crate::store::RoomGateDecision>> {
+    // The scope a base write stamps beside its decision, as it does.
+    let context = crate::gate::GateRetentionContext {
+        world: Some(write.body.world.unwrap_or_else(crate::claim::base_world_id)),
+        project: Some(write.body.scope_project),
+        sub_project: None,
+        thread: None,
+    };
+    let mut captured = None;
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        GateWriteMode {
+            record_decision: false,
+            ..mode
+        },
+        &mut captured,
+        None,
+        // A room stages a persisted candidate.
+        false,
+        false,
+        None,
+        true,
+    )?;
+    Ok(captured.map(
+        |recorded: RecordedClaimGateDecision| crate::store::RoomGateDecision {
+            record: recorded.into_record(),
+            context,
+        },
+    ))
 }
 
 /// The isolation class of a Dreamer candidate's predicate: a prefix a trusted
@@ -219,6 +272,7 @@ fn check_claim_policy_for_write_with_record_inner(
     operation_effect_body: bool,
     skip_precommit: bool,
     reader: Option<&crate::claim::ScopedRead<'_>>,
+    capture_decision: bool,
 ) -> Result<()> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let ClaimGateWrite {
@@ -642,6 +696,14 @@ fn check_claim_policy_for_write_with_record_inner(
                 recorded.record_metrics(&store.diagnostics.gate);
             }
             *recorded_decision = Some(recorded);
+        } else if capture_decision {
+            // An off-record room's claim (FIX 9967): the decision as judged,
+            // for the room to stage beside its claim. Nothing is appended,
+            // no metric is recorded and no key custody is touched here.
+            *recorded_decision = Some(RecordedClaimGateDecision {
+                record: decision_record.clone(),
+                decision: decision.clone(),
+            });
         }
 
         if mode.persist_pending_consent
