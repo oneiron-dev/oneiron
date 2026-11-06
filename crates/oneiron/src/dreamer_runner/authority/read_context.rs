@@ -65,6 +65,13 @@ pub(crate) fn attempt_read_context(
         dreamer_consolidation::DREAMER_PERSON_ABOUT_ATTEMPT_TYPE => {
             vec![dreamer_consolidation::person_of_about_input(input).ok()?]
         }
+        dreamer_consolidation::DREAMER_PSYCH_MIRROR_ATTEMPT_TYPE => {
+            let key = dreamer_consolidation::psych_mirror_key_of_input(input).ok()?;
+            std::iter::once(key.person)
+                .chain(key.facet)
+                .chain(key.world)
+                .collect::<Vec<_>>()
+        }
         dreamer_runner::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND => {
             let pin = dreamer_runner::WeaveRecipePin::decode(input).ok()?;
             vec![pin.skill, pin.subject, pin.evidence]

@@ -60,6 +60,7 @@ mod partition;
 mod persistence;
 mod person_about;
 mod provenance;
+mod psych_mirror;
 mod recipe_failure;
 pub(crate) mod redirty;
 mod request_sources;
@@ -119,6 +120,8 @@ pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
+pub use psych_mirror::{PSYCH_MIRROR_INSTRUCTION, PsychMirrorExecutor};
+pub(crate) use psych_mirror::{enqueue_psych_mirror_on_wake, psych_mirror_key_of_input};
 pub use request_sources::SourcedBackend;
 pub(crate) use residency::waits_on_residency;
 pub use resident_dream::{

@@ -306,6 +306,9 @@ impl<'a> DreamerWakeDriver<'a> {
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
         // PEOPLE `about`: a person whose facts moved queues its lines anew.
         crate::dreamer_consolidation::enqueue_person_about_on_wake(self.vault, now)?;
+        // Psych Mirror: a profile whose claims moved queues its tiers anew,
+        // at most daily once one is stored (FIX 18867).
+        crate::dreamer_consolidation::enqueue_psych_mirror_on_wake(self.vault, now)?;
         // Each free-time cycle whose owner-set boundary has come opens on
         // the elected home (FIX 4453), before any attempt is admitted. A
         // cycle that cannot open is logged and never stops the pass.
