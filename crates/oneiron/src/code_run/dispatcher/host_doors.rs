@@ -44,6 +44,7 @@ impl<'a> HostSelfDispatcher<'a> {
             stamp,
             &super::repo_sources::RepoChange { path, content_hash },
             witness,
+            crate::code_run::types::SelfEffect::RepoProposalSubmit,
         )
         .map_err(crate::memory::MemoryError::from)?
     }

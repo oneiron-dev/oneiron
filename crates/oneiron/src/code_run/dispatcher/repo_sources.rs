@@ -20,9 +20,6 @@ use crate::repo_mutation::REPO_PROVENANCE_PREDICATE;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{ClaimSubject, EntityId, Vault};
 
-/// The derivation a run's provenance names: the proposal door's own.
-const REPO_PROVENANCE_DERIVATION_VERSION: &str = "self.code.proposal_submit.v1";
-
 /// The one file change a run's proposal makes, as its provenance names it.
 pub(super) struct RepoChange {
     pub(super) path: String,
@@ -76,6 +73,7 @@ impl HostSelfDispatcher<'_> {
         vault: &Vault,
         stamp: &RepoRunStamp,
         change: &RepoChange,
+        effect: SelfEffect,
     ) -> Result<MemoryResult<RepoRunSources>> {
         let Some(witness) = self.request_witness() else {
             return Ok(Err(MemoryError::new(
@@ -84,7 +82,7 @@ impl HostSelfDispatcher<'_> {
                 &["A run's proposal needs the request its executor bound; the work is kept."],
             )));
         };
-        self.repo_run_sources_with_witness(vault, stamp, change, &witness)
+        self.repo_run_sources_with_witness(vault, stamp, change, &witness, effect)
     }
 
     pub(super) fn repo_run_sources_with_witness(
@@ -93,12 +91,13 @@ impl HostSelfDispatcher<'_> {
         stamp: &RepoRunStamp,
         change: &RepoChange,
         witness: &RepoRequestWitness,
+        effect: SelfEffect,
     ) -> Result<MemoryResult<RepoRunSources>> {
         let actor = self.actor.entity_ref();
         let key = vault.local_session_key(actor)?;
         let open = vault.prepare_session_open(key, vault.now_recorded_at())?;
         let (provenance_claim, candidate, envelope, at) = self
-            .prepare_repo_provenance_claim(vault, stamp, change, open.session(), witness)
+            .prepare_repo_provenance_claim(vault, stamp, change, open.session(), witness, effect)
             .inspect_err(|error| open.reopen_on_storage_error(vault, error))?;
         Ok(Ok(RepoRunSources {
             open,
@@ -131,6 +130,7 @@ impl HostSelfDispatcher<'_> {
         change: &RepoChange,
         session: EntityId,
         witness: &RepoRequestWitness,
+        effect: SelfEffect,
     ) -> Result<(EntityId, ClaimCandidate, WriteEnvelope, u64)> {
         let text = |value: String| Value::from(value);
         let value = Value::Map(vec![
@@ -150,7 +150,7 @@ impl HostSelfDispatcher<'_> {
                     (Value::from("model_id"), text(witness.model.clone())),
                     (
                         Value::from("version"),
-                        Value::from(REPO_PROVENANCE_DERIVATION_VERSION),
+                        Value::from(format!("{}.v1", effect.as_str())),
                     ),
                     (
                         Value::from("params_hash"),
@@ -191,7 +191,7 @@ impl HostSelfDispatcher<'_> {
             Some(evidence) => candidate.with_evidence(evidence),
             None => candidate,
         };
-        let envelope = self.write_envelope(SelfEffect::RepoProposalSubmit, admission.as_ref())?;
+        let envelope = self.write_envelope(effect, admission.as_ref())?;
         let gate_body = candidate.clone().into_claim_body(
             &envelope,
             crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
