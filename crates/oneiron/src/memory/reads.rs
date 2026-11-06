@@ -24,6 +24,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 mod receipt_page;
 
 pub use receipt_page::VaultReceiptsPage;
+pub(crate) use receipt_page::{ReceiptReader, receipts_page_for};
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
