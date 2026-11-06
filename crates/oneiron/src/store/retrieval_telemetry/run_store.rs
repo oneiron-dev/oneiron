@@ -486,7 +486,15 @@ impl Store {
             empty_reason,
             pack_config,
         } = finalize;
+        let mut memory = memory.map(crate::host_memory::MachineMemory::empty_lease);
         let surfaced_result_ids = surfaced_result_ids.to_vec();
+        if let Some(memory) = memory.as_mut() {
+            memory.materialized(
+                0,
+                (surfaced_result_ids.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+            );
+        }
         let finalize = DetachedRetrievalRunFinalize {
             run_id,
             elapsed_us,
@@ -495,7 +503,7 @@ impl Store {
             surfaced_result_ids,
             empty_reason,
             pack_config,
-            memory: memory.map(crate::host_memory::MachineMemory::empty_lease),
+            memory,
         };
         self.group_write_detached(DetachedWrite::of_core(
             "context-pack retrieval run, finalize",
@@ -819,6 +827,13 @@ fn stage_context_pack_retrieval_run_finalize(
     record.total_in_scope = total_in_scope;
     record.claims_suppressed = claims_suppressed;
     record.result_ids = surfaced_result_ids.to_vec();
+    if let Some(memory) = memory.as_deref_mut() {
+        memory.materialized(
+            0,
+            (record.result_ids.capacity() as u64)
+                .saturating_mul(std::mem::size_of::<[u8; 16]>() as u64),
+        );
+    }
     let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
     for (index, result_id) in surfaced_result_ids.iter().enumerate() {
         if let Some(entry) = record
