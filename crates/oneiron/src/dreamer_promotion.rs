@@ -49,6 +49,7 @@ pub(crate) use admission::{
 };
 mod corrections;
 mod imported_keep;
+mod observed;
 mod resolved_outputs;
 mod scoped;
 mod settlement;
