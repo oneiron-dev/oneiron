@@ -13,16 +13,20 @@
 //! commit ([`settle_owner_pair_in_txn`]). That writer reads both kept
 //! answers and the capsule again, unblinds the choice, scores both forks
 //! with the owner's judgment and records the pair through the contribution
-//! check's own door. A temporary subject fence keeps the accepted word for
-//! the Coach's next pass. "Cannot judge", a fallback, a stale ask and an
-//! answer that no longer reads score nothing and close the pair. The pair
-//! keeps the original credit's anchor. The owner's word is each fork
-//! score's judge, never a world outcome.
+//! check's own door. A temporary subject fence, or a source admission that
+//! lapsed (FIX 20607), keeps the accepted word for the Coach's next pass.
+//! "Cannot judge", a fallback, a stale ask and an answer that no longer
+//! reads score nothing and close the pair. The pair keeps the original
+//! credit's anchor. The owner's word is each fork score's judge, never a
+//! world outcome.
 //!
 //! The owner the pair asks is selected first, and each text it is shown is
 //! read under that owner's own admission to the pair's source (FIX 20607).
 //! The owner is asked again before the pair is shown. A selected owner row
-//! is no credential: the owner reads as a question's own reader reads.
+//! is no credential: the owner reads as a question's own reader reads. The
+//! pending pair keeps the Coach's admission to its steps as proof data. The
+//! writer that records the owner's word asks it, and the owner's own
+//! admission, again before it reads each held answer.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +34,7 @@ use super::super::storage::{
     accept_owner_pair_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn, owner_pair_in_txn,
     put_owner_pair,
 };
+use super::source_admission::PairSourceIdentity;
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, ExecutedForkView,
     ExecutedStepStatus, ForkEvidenceMode, ForkJudge, ForkScore, ForkScoring, ForkScoringIdentity,
@@ -171,8 +176,9 @@ pub(crate) enum OwnerPairRoute {
         revision: u64,
         question_digest: [u8; 32],
     },
-    /// The owner's word was admitted, but a temporary subject fence kept
-    /// it from scoring the forks. Its judgment carries the ask and time.
+    /// The owner's word was admitted, but a temporary subject fence, or a
+    /// source admission that lapsed (FIX 20607), kept it from scoring the
+    /// forks. Its judgment carries the ask and time.
     Accepted {
         with_passed: bool,
         without_passed: bool,
@@ -204,6 +210,11 @@ pub(crate) struct OwnerPair {
     pub(crate) step: u64,
     pub(crate) capsule_request: [u8; 32],
     pub(crate) exposure_revision: String,
+    /// The Coach's admission to every step both forks were made from, as
+    /// proof data (FIX 20607). The writer that records the owner's word
+    /// asks it again, with the owner's own admission, before it reads each
+    /// held answer.
+    pub(crate) source: PairSourceIdentity,
     /// The candidate: its run, scoring skill, target and outcome.
     pub(crate) attempt_receipt: String,
     pub(crate) skill: EntityId,
@@ -290,9 +301,10 @@ pub(crate) struct OwnerPairAnswer {
 /// digest it was admitted with, under the proof of the owner it asked,
 /// scores it: both forks get the unblinded passes and the owner's judgment,
 /// and the pair is recorded as a contribution check in this same writer.
-/// A temporary subject fence keeps that accepted judgment for a later
-/// Coach pass. Every other settlement closes it unscored. A pair already
-/// accepted, judged or closed, or no longer kept, is left as it is.
+/// A temporary subject fence, or a source admission that lapsed (FIX
+/// 20607), keeps that accepted judgment for a later Coach pass. Every other
+/// settlement closes it unscored. A pair already accepted, judged or
+/// closed, or no longer kept, is left as it is.
 ///
 /// # Errors
 ///
@@ -328,8 +340,9 @@ pub(crate) fn settle_owner_pair_in_txn(
     let Some(((with_passed, without_passed), judgment)) = verdict else {
         return close_owner_pair_in_txn(vault, txn, &key, ask, now);
     };
-    // An accepted word survives only a temporary subject fence. The ask
-    // is already settled, so the Coach retries from the pair itself.
+    // An accepted word survives only a temporary subject fence or a lapsed
+    // source admission. The ask is already settled, so the Coach retries
+    // from the pair itself.
     let judged =
         match judge_owner_pair_in_txn(vault, txn, &key, with_passed, without_passed, judgment)? {
             Ok(judged) => judged,
@@ -487,6 +500,7 @@ impl Runner<'_> {
 
     /// Retries an already admitted owner's word, once, under the same
     /// capsule, provenance and held-answer checks as immediate settlement.
+    /// The pair's kept source admission is asked again too (FIX 20607).
     fn retry_owner_pair(&self, handle: EntityId) -> Outcome<ContributionForks> {
         let now = self.vault.store.clock.now_recorded_at();
         self.vault.with_write_txn_grouped(|txn| {
@@ -535,11 +549,12 @@ impl Runner<'_> {
     }
 
     /// Keeps this pair's pending pair, once: a fresh blinded mapping, the
-    /// owner it asks, its presentation's ids and texts' digests, and the
-    /// frozen criterion. A pair another pass kept first is returned as kept.
-    /// A pair its writer does not keep is unavailable for that writer's own
-    /// reason (FIX 6256). The owner is selected before any text is read, and
-    /// the texts are read under that owner's admission (FIX 20607).
+    /// owner it asks, its presentation's ids and texts' digests, the frozen
+    /// criterion and the Coach's admission to every step (FIX 20607). A
+    /// pair another pass kept first is returned as kept. A pair its writer
+    /// does not keep is unavailable for that writer's own reason (FIX
+    /// 6256). The owner is selected before any text is read, and the texts
+    /// are read under that owner's admission (FIX 20607).
     fn reserve_owner_pair(
         &self,
         prepared: &Prepared,
@@ -613,6 +628,7 @@ impl Runner<'_> {
             step: capsule.step,
             capsule_request: capsule.request_hash,
             exposure_revision: prepared.exposure_revision.clone(),
+            source: prepared.source.identity(),
             attempt_receipt: self.candidate.attempt_receipt.clone(),
             skill: self.candidate.skill,
             target: self.candidate.target,

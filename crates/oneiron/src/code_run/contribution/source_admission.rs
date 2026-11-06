@@ -26,8 +26,16 @@
 //! paid for by the Coach, so it reads under the Coach's admission. A pair
 //! whose reader is not admitted now stops as `Unfinished`. That is never
 //! lasting: a Grant given later runs the pair.
+//!
+//! A kept owner pair keeps the Coach's admission to every step as proof
+//! data ([`PairSourceIdentity`]). The writer that records the owner's word
+//! rebuilds it and asks the owner's own admission again before it reads
+//! each held answer. A lapse keeps the owner's word for the Coach's next
+//! pass, which asks again.
 
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::{CapsuleHost, StepReplayCapsule};
 use super::super::shadow_runner::{ShadowSourceAdmission, ShadowSourceWitness, ShadowStepIdentity};
@@ -151,8 +159,10 @@ impl ContributionSourceReader {
 /// Grant that alone admits it, where the step was found, and whether the
 /// step's served Scopes bind it too (an engine step's do, FIX 7027). A
 /// workflow step's fork sends its kept request alone, as a code fix's
-/// replay of a kept request does, so its rows' positions decide.
-#[derive(Debug)]
+/// replay of a kept request does, so its rows' positions decide. A kept
+/// owner pair keeps it as proof data. It admits nothing until it is asked
+/// again ([`PairSourceIdentity`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ContributionSourceAdmission {
     coach: EntityId,
     grant: EntityId,
@@ -322,6 +332,57 @@ impl PairSourceAdmission {
     pub(crate) fn admits_now(&self, vault: &Vault, reader: PairReader) -> Result<bool> {
         let txn = vault.store.env.read_txn()?;
         self.admits_in(vault, &txn, reader)
+    }
+
+    /// What a kept owner pair keeps of it (FIX 20607): the Coach's admission
+    /// to every step, the caller's step of a callable's or a delivery's pair
+    /// included. No reader and no admission result is kept.
+    pub(crate) fn identity(&self) -> PairSourceIdentity {
+        PairSourceIdentity {
+            steps: self.steps.iter().map(Arc::as_ref).cloned().collect(),
+        }
+    }
+}
+
+/// The source of a kept owner pair (FIX 20607): the Coach's admission to
+/// every step its forks were made from, as proof data only. Each keeps the
+/// Coach, the exact Grant, the step, its request hash, the rows it was read
+/// from and whether its served Scopes bind it. It admits no read until it
+/// is asked again in the reading writer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PairSourceIdentity {
+    steps: Vec<ContributionSourceAdmission>,
+}
+
+impl PairSourceIdentity {
+    /// Whether `owner` reads the pair's source now, in `txn` (FIX 20607).
+    /// The kept admissions are rebuilt and asked as before the owner was
+    /// shown the pair: each step's own Grant is read again, never another,
+    /// and `owner` reads every row under its own question lane. A pair
+    /// with no kept step is read by no one.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn owner_reads_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+    ) -> Result<bool> {
+        let Some(first) = self.steps.first() else {
+            return Ok(false);
+        };
+        let reader = ContributionSourceReader {
+            coach: first.coach,
+            request: ContributionSourceReadRequest {
+                consumer: ContributionSourceConsumer::OwnerReview,
+                purpose: ContributionSourcePurpose::OwnerVerdict,
+            },
+        };
+        let steps = self.steps.iter().cloned().map(Arc::new).collect();
+        let source = PairSourceAdmission::new(reader, steps);
+        source.admits_in(vault, txn, PairReader::Consumer { owner: Some(owner) })
     }
 }
 
