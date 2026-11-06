@@ -13,8 +13,8 @@ use crate::claim::{ClaimBody, encode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::actor_erase::{
-    OriginClaimKind, canonical_origin_claim_in_txn, erases_more, held_claim_in_txn,
-    origin_claim_row, settle_in_txn,
+    OriginClaimKind, canonical_origin_claim_in_txn, held_claim_in_txn, origin_claim_row,
+    settle_in_txn,
 };
 
 /// The origin CLAIM revisions of one pinned window: the ones that never ship, live or in history,
@@ -40,10 +40,12 @@ impl ErasedOrigin {
     /// revision its history or shallow root holds, each by entities-map key. A revision never
     /// ships when the scrub's settlement would rewrite it (it names an actor this vault erased, or
     /// the row this vault holds is its erased form), or when another revision under the same key,
-    /// live or retained, is its erased form: the same claim with more of whom it names erased and
-    /// nothing else changed (`erases_more`, as the reverse replacement pin reads it). An ordinary
-    /// edit after the erased form leaves the original refused, since the erased form stays in the
-    /// history beside it. A refused live carrier takes the form [`erased_live_form`] settles.
+    /// live or retained, holds erased someone it names: the same claim, differing only in who it
+    /// names, that settling it against ([`settle_in_txn`], the meeting the scrub applies) erases
+    /// more of it. Two revisions that each erased a different role refuse each other, so their
+    /// union is the one form that ships. An ordinary edit after the erased form leaves the
+    /// original refused, since the erased form stays in the history beside it. A refused live
+    /// carrier takes the form [`erased_live_form`] settles.
     ///
     /// # Errors
     ///
@@ -81,14 +83,26 @@ impl ErasedOrigin {
                 })
                 .collect();
             for revision in &revisions {
-                let erased_beside = revisions.iter().any(|other| {
-                    other.digest != revision.digest
+                let mut refused =
+                    canonical_origin_claim_in_txn(vault, txn, &id, revision.blob)?.is_some();
+                for other in &revisions {
+                    if refused {
+                        break;
+                    }
+                    refused = other.digest != revision.digest
                         && other.kind == revision.kind
-                        && erases_more(revision.kind, &id, &revision.body, &other.body)
-                });
-                if erased_beside
-                    || canonical_origin_claim_in_txn(vault, txn, &id, revision.blob)?.is_some()
-                {
+                        && settle_in_txn(
+                            vault,
+                            txn,
+                            revision.kind,
+                            &id,
+                            Some(&other.body),
+                            &revision.body,
+                        )?
+                        .carried
+                        .is_some();
+                }
+                if refused {
                     erased
                         .refused
                         .entry(key.to_owned())
