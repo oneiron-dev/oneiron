@@ -21,7 +21,10 @@ use crate::entity_id::EntityId;
 
 mod doors;
 mod finish;
+mod source;
 mod statistics;
+
+pub use source::{EvalMeasurementRef, EvalMeasurementSource};
 
 pub use self::doors::eval_seat_canary;
 pub(super) use self::doors::{

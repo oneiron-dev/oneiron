@@ -11,13 +11,31 @@ use crate::Vault;
 use crate::dreamer_runner::maintenance::coach::enqueue_coach_eval_measurement_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::stored_read::StoredReadContext;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::eval_set::cohort::cohort_in_txn;
 use crate::skill_optimize::eval_set::{EvalCohort, EvalExposureKind, EvalSeat};
 
 /// One measurement, keyed by its request digest.
-const MEASUREMENTS: SideTable<[u8; 32], EvalMeasurement, Named> =
+const MEASUREMENTS: SideTable<[u8; 32], StoredMeasurement, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_EVAL_MEASUREMENT);
+
+/// Source authority stays beside the question, never in its digest or a
+/// second index. Only the Memory-bound request binds it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredMeasurement {
+    measurement: EvalMeasurement,
+    source: MeasurementSource,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum MeasurementSource {
+    Unbound,
+    Bound(StoredReadContext),
+}
+
 /// The request digest's domain.
 const DIGEST_DOMAIN: &[u8] = b"skill_optimize:eval_measurement:v1\0";
 /// Longest pin, scorer, axis or slice a request names.
@@ -69,7 +87,9 @@ pub(in crate::skill_optimize::eval_set) fn measurement_in_txn(
     txn: &heed::RoTxn<'_>,
     digest: &[u8; 32],
 ) -> Result<Option<EvalMeasurement>> {
-    MEASUREMENTS.get(&vault.store, txn, digest)
+    Ok(MEASUREMENTS
+        .get(&vault.store, txn, digest)?
+        .map(|stored| stored.measurement))
 }
 
 /// Every measurement with its request digest, on the caller's snapshot.
@@ -77,7 +97,11 @@ pub(in crate::skill_optimize::eval_set) fn measurements_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<([u8; 32], EvalMeasurement)>> {
-    MEASUREMENTS.scan(&vault.store, txn)
+    Ok(MEASUREMENTS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(digest, stored)| (digest, stored.measurement))
+        .collect())
 }
 
 pub(in crate::skill_optimize::eval_set) fn put_in_txn(
@@ -86,7 +110,50 @@ pub(in crate::skill_optimize::eval_set) fn put_in_txn(
     digest: &[u8; 32],
     row: &EvalMeasurement,
 ) -> Result<()> {
-    MEASUREMENTS.put(&vault.store, txn, digest, row)
+    let source = MEASUREMENTS
+        .get(&vault.store, &*txn, digest)?
+        .map_or(MeasurementSource::Unbound, |stored| stored.source);
+    MEASUREMENTS.put(
+        &vault.store,
+        txn,
+        digest,
+        &StoredMeasurement {
+            measurement: row.clone(),
+            source,
+        },
+    )
+}
+
+pub(super) fn source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<Option<StoredReadContext>> {
+    let stored = MEASUREMENTS
+        .get(&vault.store, txn, digest)?
+        .ok_or(Error::EntityNotFound)?;
+    Ok(match stored.source {
+        MeasurementSource::Unbound => None,
+        MeasurementSource::Bound(source) => Some(source),
+    })
+}
+
+pub(super) fn bind_source_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    digest: &[u8; 32],
+    source: StoredReadContext,
+) -> Result<()> {
+    let mut stored = MEASUREMENTS
+        .get(&vault.store, &*txn, digest)?
+        .ok_or(Error::EntityNotFound)?;
+    if stored.measurement.state == MeasurementState::Pending
+        && matches!(stored.source, MeasurementSource::Unbound)
+    {
+        stored.source = MeasurementSource::Bound(source);
+        MEASUREMENTS.put(&vault.store, txn, digest, &stored)?;
+    }
+    Ok(())
 }
 
 /// Whether the cohort moved from what the request froze.
@@ -191,7 +258,7 @@ impl Vault {
     ) -> Result<[u8; 32]> {
         validate(request)?;
         let digest = request_digest(request)?;
-        if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
+        if let Some(row) = measurement_in_txn(self, &*txn, &digest)? {
             // An open measurement's job is queued again; the queue's dedupe
             // keeps one.
             if matches!(
@@ -208,7 +275,7 @@ impl Vault {
             let mut predecessor = request.clone();
             predecessor.retry -= 1;
             let digest = request_digest(&predecessor)?;
-            let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? else {
+            let Some(row) = measurement_in_txn(self, &*txn, &digest)? else {
                 return Err(invalid("a retry names its predecessor's Partial row"));
             };
             let MeasurementState::Partial { reasons } = &row.state else {
@@ -233,7 +300,7 @@ impl Vault {
                 "an eval measurement names its seat's live cohort as it stands",
             ));
         }
-        MEASUREMENTS.put(&self.store, txn, &digest, &pending(&digest, request, now))?;
+        put_in_txn(self, txn, &digest, &pending(&digest, request, now))?;
         enqueue_coach_eval_measurement_in_txn(self, txn, &digest, now)?;
         Ok(digest)
     }
@@ -270,9 +337,7 @@ impl Vault {
     /// A missing measurement or cohort, or storage errors.
     pub fn claim_eval_measurement(&self, digest: &[u8; 32], now: u64) -> Result<EvalMeasurement> {
         self.with_write_txn_grouped(|txn| {
-            let mut row = MEASUREMENTS
-                .get(&self.store, &*txn, digest)?
-                .ok_or(Error::EntityNotFound)?;
+            let mut row = measurement_in_txn(self, &*txn, digest)?.ok_or(Error::EntityNotFound)?;
             if row.state != MeasurementState::Pending {
                 return Ok(row);
             }
@@ -303,7 +368,7 @@ impl Vault {
                 row.state = MeasurementState::Claimed;
                 row.claimed_at = Some(now);
             }
-            MEASUREMENTS.put(&self.store, txn, digest, &row)?;
+            put_in_txn(self, txn, digest, &row)?;
             Ok(row)
         })
     }
@@ -320,9 +385,7 @@ impl Vault {
         case: EvalCaseMeasurement,
     ) -> Result<EvalMeasurement> {
         self.with_write_txn_grouped(|txn| {
-            let mut row = MEASUREMENTS
-                .get(&self.store, &*txn, digest)?
-                .ok_or(Error::EntityNotFound)?;
+            let mut row = measurement_in_txn(self, &*txn, digest)?.ok_or(Error::EntityNotFound)?;
             if row.state != MeasurementState::Claimed || !row.members.contains(&case.case) {
                 return Err(invalid(
                     "a case is recorded on a claimed measurement of its cohort",
@@ -333,7 +396,7 @@ impl Vault {
                 Some(index) => row.cases[index] = case,
                 None => row.cases.push(case),
             }
-            MEASUREMENTS.put(&self.store, txn, digest, &row)?;
+            put_in_txn(self, txn, digest, &row)?;
             Ok(row)
         })
     }
@@ -349,9 +412,7 @@ impl Vault {
         now: u64,
     ) -> Result<EvalMeasurement> {
         self.with_write_txn_grouped(|txn| {
-            let mut row = MEASUREMENTS
-                .get(&self.store, &*txn, digest)?
-                .ok_or(Error::EntityNotFound)?;
+            let mut row = measurement_in_txn(self, &*txn, digest)?.ok_or(Error::EntityNotFound)?;
             if matches!(
                 row.state,
                 MeasurementState::Pending | MeasurementState::Claimed
@@ -365,7 +426,7 @@ impl Vault {
                     reasons: reasons.into_iter().collect(),
                 };
                 row.settled_at = Some(now);
-                MEASUREMENTS.put(&self.store, txn, digest, &row)?;
+                put_in_txn(self, txn, digest, &row)?;
             }
             Ok(row)
         })
@@ -427,14 +488,12 @@ impl Vault {
         now: u64,
     ) -> Result<EvalMeasurement> {
         self.with_write_txn_grouped(|txn| {
-            let mut row = MEASUREMENTS
-                .get(&self.store, &*txn, digest)?
-                .ok_or(Error::EntityNotFound)?;
+            let mut row = measurement_in_txn(self, &*txn, digest)?.ok_or(Error::EntityNotFound)?;
             if !matches!(row.state, MeasurementState::Partial { .. }) {
                 return Ok(row);
             }
             let mut again = remeasure_digest(digest, &row);
-            if let Some(mut remeasured) = MEASUREMENTS.get(&self.store, &*txn, &again)? {
+            if let Some(mut remeasured) = measurement_in_txn(self, &*txn, &again)? {
                 if matches!(
                     remeasured.state,
                     MeasurementState::Pending | MeasurementState::Claimed
@@ -444,7 +503,7 @@ impl Vault {
                 }
                 MEASUREMENTS.delete(&self.store, txn, &again)?;
                 remeasured.digest = digest_hex(digest);
-                MEASUREMENTS.put(&self.store, txn, digest, &remeasured)?;
+                put_in_txn(self, txn, digest, &remeasured)?;
                 if !matches!(remeasured.state, MeasurementState::Partial { .. }) {
                     return Ok(remeasured);
                 }
@@ -455,12 +514,10 @@ impl Vault {
             if cohort.seat != row.request.seat || cohort_moved(&cohort, &row.request) {
                 return Ok(row);
             }
-            MEASUREMENTS.put(
-                &self.store,
-                txn,
-                &again,
-                &pending(&again, &row.request, now),
-            )?;
+            put_in_txn(self, txn, &again, &pending(&again, &row.request, now))?;
+            if let Some(source) = source_in_txn(self, &*txn, digest)? {
+                bind_source_in_txn(self, txn, &again, source)?;
+            }
             enqueue_coach_eval_measurement_in_txn(self, txn, &again, now)?;
             Ok(row)
         })

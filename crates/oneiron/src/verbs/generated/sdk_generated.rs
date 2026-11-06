@@ -2412,6 +2412,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.evals.measurements.request",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::EvalMeasurementRequest,
+                >(),
+            ),
+            (
                 "vault.evals.cohorts.setup",
                 crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalCohortSetup>(
                 ),
@@ -7581,6 +7587,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.archive.repropose",
     "vault.research.archive.coverage",
     "vault.evals.inventory",
+    "vault.evals.measurements.request",
     "vault.evals.cohorts.setup",
     "vault.evals.author_now",
     "vault.evals.authoring.result",
@@ -9122,6 +9129,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.evals.inventory" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringInventory,
+        >(),
+        "vault.evals.measurements.request" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalMeasurementRef,
         >(),
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,
@@ -14032,6 +14042,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.evals.inventory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.measurements.request" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21170,6 +21187,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.evals.inventory" => {
             let _input: crate::task_verb::sdk::EvalInventoryWire = decode(value.clone())?;
         }
+        "vault.evals.measurements.request" => {
+            let _input: crate::skill_optimize::EvalMeasurementRequest = decode(value.clone())?;
+        }
         "vault.evals.cohorts.setup" => {
             let _input: crate::skill_optimize::EvalCohortSetup = decode(value.clone())?;
         }
@@ -24984,6 +25004,9 @@ pub fn invoke(
             encode(vault_research_archive_coverage(memory, decode(value)?)?)
         }
         "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
+        "vault.evals.measurements.request" => {
+            encode(vault_evals_measurements_request(memory, decode(value)?)?)
+        }
         "vault.evals.cohorts.setup" => encode(vault_evals_cohorts_setup(memory, decode(value)?)?),
         "vault.evals.author_now" => encode(vault_evals_author_now(memory, decode(value)?)?),
         "vault.evals.authoring.result" => {
@@ -30475,6 +30498,12 @@ pub fn vault_evals_inventory(
         &memory.embedded_owner("vault.evals.inventory")?,
         input,
     )
+}
+pub fn vault_evals_measurements_request(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalMeasurementRequest,
+) -> MemoryResult<crate::skill_optimize::EvalMeasurementRef> {
+    crate::task_verb::sdk::host_only(memory, "vault.evals.measurements.request", &input)
 }
 pub fn vault_evals_cohorts_setup(
     memory: &Memory<'_>,

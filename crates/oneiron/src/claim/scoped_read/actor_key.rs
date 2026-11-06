@@ -105,7 +105,8 @@ pub(crate) struct RoomTurnCeiling {
 }
 
 /// What `room_scope` gives for a roster, as two terms.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RoomTerms {
     /// The room's world ceiling: every row it reads lies in it, public or
     /// not.

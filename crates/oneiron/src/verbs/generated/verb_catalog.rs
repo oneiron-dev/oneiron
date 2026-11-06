@@ -456,6 +456,7 @@ pub enum AgentVerb {
     VaultResearchArchiveRepropose,
     VaultResearchArchiveCoverage,
     VaultEvalsInventory,
+    VaultEvalsMeasurementsRequest,
     VaultEvalsCohortsSetup,
     VaultEvalsAuthorNow,
     VaultEvalsAuthoringResult,
@@ -1743,6 +1744,7 @@ impl AgentVerb {
         Self::VaultResearchArchiveRepropose,
         Self::VaultResearchArchiveCoverage,
         Self::VaultEvalsInventory,
+        Self::VaultEvalsMeasurementsRequest,
         Self::VaultEvalsCohortsSetup,
         Self::VaultEvalsAuthorNow,
         Self::VaultEvalsAuthoringResult,
@@ -3043,6 +3045,7 @@ impl AgentVerb {
             Self::VaultResearchArchiveRepropose => "vault.research.archive.repropose",
             Self::VaultResearchArchiveCoverage => "vault.research.archive.coverage",
             Self::VaultEvalsInventory => "vault.evals.inventory",
+            Self::VaultEvalsMeasurementsRequest => "vault.evals.measurements.request",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
             Self::VaultEvalsAuthorNow => "vault.evals.author_now",
             Self::VaultEvalsAuthoringResult => "vault.evals.authoring.result",
@@ -4356,6 +4359,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
+                | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
                 | Self::VaultEvalsAuthoringResult
@@ -5672,6 +5676,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
+                | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
                 | Self::VaultEvalsAuthoringResult
@@ -7137,6 +7142,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
+                | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
                 | Self::VaultEvalsAuthoringResult
@@ -8169,6 +8175,7 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRecord
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
+                | Self::VaultEvalsMeasurementsRequest
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultEvalsAuthorNow
                 | Self::VaultEvalsFamiliesAssign
@@ -9155,6 +9162,7 @@ impl AgentVerb {
             Self::VaultResearchArchiveRepropose => &["spec"],
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
+            Self::VaultEvalsMeasurementsRequest => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultEvalsAuthorNow => &["spec"],
             Self::VaultEvalsAuthoringResult => &["spec"],
@@ -10443,6 +10451,7 @@ impl AgentVerb {
             Self::VaultResearchArchiveRepropose => &["spec"],
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
+            Self::VaultEvalsMeasurementsRequest => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultEvalsAuthorNow => &["spec"],
             Self::VaultEvalsAuthoringResult => &["spec"],
@@ -12619,6 +12628,9 @@ impl AgentVerb {
             }
             Self::VaultEvalsInventory => {
                 "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."
+            }
+            Self::VaultEvalsMeasurementsRequest => {
+                "The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response."
             }
             Self::VaultEvalsCohortsSetup => {
                 "The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."

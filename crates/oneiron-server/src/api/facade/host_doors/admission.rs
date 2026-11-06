@@ -521,6 +521,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultResearchCreateChild
         | Row::VaultEvalsInventory
         | Row::VaultEvalsCohortsSetup
+        | Row::VaultEvalsMeasurementsRequest
         | Row::VaultEvalsAuthorNow
         | Row::VaultEvalsAuthoringResult
         | Row::VaultEvalsFamilies

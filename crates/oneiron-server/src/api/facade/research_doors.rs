@@ -84,3 +84,25 @@ pub(crate) async fn vault_evals_cohorts_setup(
         Err(error) => (Err(error), rows),
     }
 }
+
+/// Queue a paired measurement under the authenticated caller's original
+/// source reader. Asking reads metadata only, never the sealed source.
+pub(crate) async fn vault_evals_measurements_request(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_optimize::EvalMeasurementRequest,
+) -> Listed<oneiron::skill_optimize::EvalMeasurementRef> {
+    const VERB: &str = "vault.evals.measurements.request";
+    let clock_server = Arc::clone(server);
+    owner_listing::as_owner(server, auth, VERB, move |memory, owner| {
+        let digest = memory.request_eval_measurement(
+            owner,
+            &input,
+            clock_server.vault().now_recorded_at(),
+        )?;
+        Ok(oneiron::skill_optimize::EvalMeasurementRef {
+            digest: blake3::Hash::from(digest).to_hex().as_str().to_owned(),
+        })
+    })
+    .await
+}

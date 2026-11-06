@@ -3161,6 +3161,9 @@ class Oneiron:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
             return json.loads(_translate(lambda: self._client.vault_evals_inventory(json.dumps(spec))))
         @property
+        def measurements(self) -> "Oneiron._VaultEvalsMeasurementsVerbs":
+            return Oneiron._VaultEvalsMeasurementsVerbs(self._client)
+        @property
         def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs":
             return Oneiron._VaultEvalsCohortsVerbs(self._client)
         def author_now(self, spec):
@@ -3184,6 +3187,12 @@ class Oneiron:
         @property
         def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs":
             return Oneiron._VaultEvalsLabelsVerbs(self._client)
+    class _VaultEvalsMeasurementsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def request(self, spec):
+            """The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response."""
+            return json.loads(_translate(lambda: self._client.vault_evals_measurements_request(json.dumps(spec))))
     class _VaultEvalsCohortsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

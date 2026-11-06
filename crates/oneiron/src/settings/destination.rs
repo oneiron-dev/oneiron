@@ -16,6 +16,9 @@
 
 use std::collections::BTreeSet;
 
+mod stored;
+pub(crate) use stored::StoredReadDestination;
+
 use heed::RoTxn;
 
 use crate::Vault;

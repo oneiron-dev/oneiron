@@ -1419,6 +1419,9 @@ impl OneironClient {
                 "vault.evals.inventory" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalAuthoringInventory,
                 >(client, verb, &input),
+                "vault.evals.measurements.request" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalMeasurementRef,
+                >(client, verb, &input),
                 "vault.evals.cohorts.setup" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalAuthoringReport,
                 >(client, verb, &input),
@@ -9520,6 +9523,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.evals.inventory", value)
+    }
+    pub fn vault_evals_measurements_request(
+        &self,
+        input: &oneiron::skill_optimize::EvalMeasurementRequest,
+    ) -> Result<oneiron::skill_optimize::EvalMeasurementRef, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.measurements.request", value)
     }
     pub fn vault_evals_cohorts_setup(
         &self,

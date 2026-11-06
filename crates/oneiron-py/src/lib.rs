@@ -4452,6 +4452,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_evals_measurements_request(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.evals.measurements.request")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.evals.measurements.request", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_evals_cohorts_setup(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.evals.cohorts.setup")?;
         let output = py

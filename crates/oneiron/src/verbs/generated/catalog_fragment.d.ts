@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1313 code-mode rows (1273 host rows, 40 run rows), 4631 declarations.
-// Replies: 1124 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1314 code-mode rows (1274 host rows, 40 run rows), 4638 declarations.
+// Replies: 1125 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1771,6 +1771,13 @@ declare namespace Sdk {
   type UncutFamily = { family: EntityId; cases: number; first_at: number; last_at: number };
   type SeatInventory = { seat: EvalSeat; families: PurposeCounts; cases: number; cohorts: CohortSummary[]; uncut: UncutFamily[] };
   type EvalAuthoringInventory = { inventory_digest: string; built_at: number; from: number; groups: EvalSourceGroup[]; candidates: EvalCandidate[]; seats: SeatInventory[] };
+  type EvalArmPin = { model: string; revision: string; skill_digest?: string | null };
+  type ScoreDirection = "higher_is_better" | "lower_is_better";
+  type EvalAxisPin = { axis: string; direction: ScoreDirection; units: string };
+  type FloorSlicePolicy = { required: string[]; min_families_per_slice: number; min_families: number };
+  type MeasurementMethodPin = { revision: number; within_family: string; across_families: string; resamples: number; ci_level: number; quantile: string; sampler: string; seed_domain: string; detectable_z_alpha: number; detectable_z_power: number; min_interval_families: number };
+  type EvalMeasurementRequest = { decision: string; seat: EvalSeat; incumbent: EvalArmPin; candidate: EvalArmPin; cohort: EntityId; membership_digest: string; rubric_revision: string; scorer: string; axis: EvalAxisPin; floor_slices: FloorSlicePolicy; canary?: string | null; method: MeasurementMethodPin; retry: number };
+  type EvalMeasurementRef = { digest: string };
   type FamilyDecision = { group: string; purpose: FamilyPurpose };
   type CaseDecision = { candidate: string; stratum?: string | null };
   type CutDecision = { seat: EvalSeat; from: number; until: number; rubric_revision: string; reference: boolean };
@@ -6287,6 +6294,10 @@ declare const vault: Sdk.VaultHost & {
       blocked(input: Sdk.EvalBlockedLabelsRequest): Promise<Sdk.EvalLabelAsk[] | StoredResult>;
       /** Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses. */
       pick(input: Sdk.EvalLabelPickRequest): Promise<Sdk.EvalCase | StoredResult>;
+    };
+    measurements: {
+      /** The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response. */
+      request(input: Sdk.EvalMeasurementRequest): Promise<Sdk.EvalMeasurementRef | StoredResult>;
     };
     /** Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys. */
     sufficiency(input: Sdk.SufficiencyInput): Promise<Sdk.SufficiencyCard | StoredResult>;

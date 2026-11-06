@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1262 facade rows, 4574 declarations.
-Inputs: 1192 of 1262 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1094 of 1262 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1263 facade rows, 4581 declarations.
+Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -8886,6 +8886,47 @@ class SeatInventory(TypedDict):
     cohorts: list[CohortSummary]
     uncut: list[UncutFamily]
 EvalAuthoringInventory = TypedDict("EvalAuthoringInventory", {"inventory_digest": str, "built_at": int, "from": int, "groups": list[EvalSourceGroup], "candidates": list[EvalCandidate], "seats": list[SeatInventory]})
+class EvalArmPin(TypedDict):
+    model: str
+    revision: str
+    skill_digest: NotRequired[str | None]
+ScoreDirection = Literal["higher_is_better", "lower_is_better"]
+class EvalAxisPin(TypedDict):
+    axis: str
+    direction: ScoreDirection
+    units: str
+class FloorSlicePolicy(TypedDict):
+    required: list[str]
+    min_families_per_slice: int
+    min_families: int
+class MeasurementMethodPin(TypedDict):
+    revision: int
+    within_family: str
+    across_families: str
+    resamples: int
+    ci_level: float
+    quantile: str
+    sampler: str
+    seed_domain: str
+    detectable_z_alpha: float
+    detectable_z_power: float
+    min_interval_families: int
+class EvalMeasurementRequest(TypedDict):
+    decision: str
+    seat: EvalSeat
+    incumbent: EvalArmPin
+    candidate: EvalArmPin
+    cohort: EntityId
+    membership_digest: str
+    rubric_revision: str
+    scorer: str
+    axis: EvalAxisPin
+    floor_slices: FloorSlicePolicy
+    canary: NotRequired[str | None]
+    method: MeasurementMethodPin
+    retry: int
+class EvalMeasurementRef(TypedDict):
+    digest: str
 class FamilyDecision(TypedDict):
     group: str
     purpose: FamilyPurpose
