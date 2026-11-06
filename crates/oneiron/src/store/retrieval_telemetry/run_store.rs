@@ -859,6 +859,12 @@ fn stage_context_pack_retrieval_run_finalize(
         bytes
     });
     let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
+    let mut surfaced_breakdown_bytes = memory.as_deref_mut().map_or(0, |memory| {
+        let bytes = (surfaced_breakdown.capacity() as u64)
+            .saturating_mul(std::mem::size_of::<super::types::RetrievalScoreBreakdown>() as u64);
+        memory.materialized(0, bytes);
+        bytes
+    });
     for (index, result_id) in surfaced_result_ids.iter().enumerate() {
         if let Some(entry) = record
             .score_breakdown
@@ -866,6 +872,12 @@ fn stage_context_pack_retrieval_run_finalize(
             .find(|entry| entry.result_id == *result_id)
         {
             let mut entry = entry.clone();
+            if let Some(memory) = memory.as_deref_mut() {
+                let bytes = (entry.components.capacity() as u64)
+                    .saturating_mul(std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64);
+                memory.materialized(0, bytes);
+                surfaced_breakdown_bytes = surfaced_breakdown_bytes.saturating_add(bytes);
+            }
             entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
             surfaced_breakdown.push(entry);
         }
@@ -912,6 +924,7 @@ fn stage_context_pack_retrieval_run_finalize(
             }
         }
         memory.materialized(0, bytes);
+        memory.shrink(surfaced_breakdown_bytes);
     }
     record.empty_reason = empty_reason;
     if let Some(pack_config) = pack_config

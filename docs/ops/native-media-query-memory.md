@@ -232,12 +232,30 @@ size. The result-ID charge is released after its original assignment drops the
 old vector, before the existing new-ID postcount. The old score charge starts
 before the surfaced-score collection and is released after that collection
 replaces and drops the old score vector. The existing current score and trace
-postcount stays separate. No live buffer's charge is released early or counted
-twice. An unbound finalizer adds no accounting walk.
+postcount stays separate. Neither old buffer's charge is released early or
+counted twice. An unbound finalizer adds no accounting walk.
 
 These old-buffer charges do not cover the simultaneous new allocation during
 replacement or the new score collection's construction peak. The original
 copies, replacement order, failures and row writes stay unchanged.
+
+The original surfaced-score collection also records its actual outer vector
+capacity immediately after allocation. Each original entry clone records its
+new component vector's actual capacity before the entry enters the collection.
+Those known backings stay on the same lease through construction and the move
+into the final record. The original collection reserves for the surfaced-ID
+count and pushes at most once per ID, so its outer backing does not grow during
+this loop.
+
+The later current score/trace measurement still records all of its original
+buffers. Only after that measurement does the lease release the remembered
+construction charge for the same top-level score backing. This add-before-release
+transfer keeps the live backing covered and leaves no duplicate final charge.
+It briefly counts the transferred backing twice, rather than releasing it
+while live. The separate final-stage clone remains in the current trace charge.
+Unbound finalizers add no capacity work. Allocation internals before the new
+post-allocation measurements, pre-growth admission and a full construction peak
+remain outside these charges.
 
 These finalization charges do not cover remaining backing, the finalizer's
 input storage before these moves, other mutation copies, hash sets, config-map
