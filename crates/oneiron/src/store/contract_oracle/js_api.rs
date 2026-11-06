@@ -21,8 +21,18 @@ pub struct JsPublicNames {
 #[derive(Clone)]
 enum Binding {
     Local(String),
+    CommonJsValue,
     From { request: String, name: String },
     Namespace(String),
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Origin {
+    Local(String, String),
+    Namespace(String),
+    External(String, String, String),
+    ExternalNamespace(String, String),
+    CommonJsValue(String),
 }
 
 #[derive(Default)]
@@ -51,7 +61,7 @@ pub fn js_public_names(root: &Path, entry_name: &str, entry: &str) -> Result<JsP
             .bindings
             .values()
             .filter_map(|binding| match binding {
-                Binding::Local(_) => None,
+                Binding::Local(_) | Binding::CommonJsValue => None,
                 Binding::From { request, .. } | Binding::Namespace(request) => {
                     Some(request.clone())
                 }
@@ -114,7 +124,7 @@ pub fn js_public_names(root: &Path, entry_name: &str, entry: &str) -> Result<JsP
     }
     for name in &surfaces[entry] {
         let origins = resolve_binding(&modules, entry, name);
-        if origins.len() == 1 {
+        if origins.is_some_and(|origins| origins.len() == 1) {
             result.names.insert(format!("js:{entry_name}::{name}"));
         } else {
             result
@@ -243,10 +253,11 @@ fn resolve_binding(
     modules: &BTreeMap<String, Module>,
     entry: &str,
     name: &str,
-) -> BTreeSet<(String, String)> {
+) -> Option<BTreeSet<Origin>> {
     let mut pending = vec![(entry.to_owned(), name.to_owned())];
     let mut seen = BTreeSet::new();
     let mut origins = BTreeSet::new();
+    let mut unknown = false;
     while let Some((file, name)) = pending.pop() {
         if !seen.insert((file.clone(), name.clone())) {
             continue;
@@ -254,14 +265,18 @@ fn resolve_binding(
         let module = &modules[&file];
         match module.bindings.get(&name) {
             Some(Binding::Local(local)) => {
-                origins.insert((file, local.clone()));
+                origins.insert(Origin::Local(file, local.clone()));
+            }
+            Some(Binding::CommonJsValue) => {
+                origins.insert(Origin::CommonJsValue(file));
             }
             Some(Binding::Namespace(request)) => {
-                let target = module.targets[request]
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| format!("{file}#from:{request}"));
-                origins.insert((target, "*namespace*".to_owned()));
+                let origin = if let Some(target) = &module.targets[request] {
+                    Origin::Namespace(target.clone())
+                } else {
+                    Origin::ExternalNamespace(file, request.clone())
+                };
+                origins.insert(origin);
             }
             Some(Binding::From {
                 request,
@@ -272,20 +287,24 @@ fn resolve_binding(
                 } else {
                     // The public alias is explicit even when its dependency is
                     // external. The separate unresolved site records that gap.
-                    origins.insert((format!("{file}#from:{request}"), imported.clone()));
+                    origins.insert(Origin::External(file, request.clone(), imported.clone()));
                 }
             }
             None if name != "default" => {
                 for request in &module.stars {
                     if let Some(target) = &module.targets[request] {
                         pending.push((target.clone(), name.clone()));
+                    } else {
+                        // An unknown star may collide with any inherited name.
+                        // Never certify that a known sibling star is unambiguous.
+                        unknown = true;
                     }
                 }
             }
             None => {}
         }
     }
-    origins
+    (!unknown).then_some(origins)
 }
 
 fn relative_target(root: &Path, file: &str, request: &str) -> Result<Option<String>> {

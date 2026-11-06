@@ -62,8 +62,9 @@ merely because the file has no exports.
 
 This is a syntactic declared surface, not runtime object evaluation. Computed
 keys, object spreads, opaque whole values and other wrapper references record
-unresolved sites. Conditional/nested mutations, reflective calls, alias flows,
-package resolution and runtime deletion are not a complete surface proof.
+unresolved sites. Direct top-level deletes remove their declared keys.
+Conditional/nested mutations, reflective calls, alias flows and package resolution
+are not a complete surface proof.
 The lexical CommonJS symbol graph is independent: its private bindings and
 calls/refs/imports are not used as public exports.
 
