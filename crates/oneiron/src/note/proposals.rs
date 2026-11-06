@@ -124,6 +124,12 @@ pub(crate) fn erase_fork_actor_in_txn(
                 wtxn,
                 &HexPair(HexId(fork.note), HexId(fork.fork)),
             )?;
+            // A replica's queued upload of the fork goes with it (FIX 12789).
+            super::sync_rows::SYNC_QN_E.delete(
+                &vault.store,
+                wtxn,
+                &HexPair(HexId(fork.note), HexId(fork.fork)),
+            )?;
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
         }
@@ -713,6 +719,13 @@ pub(super) fn land(
     };
     fork.decided = true;
     fork.recovery_merge = None;
+    // A decided fork is no longer uploaded: a replica's queued upload of it
+    // goes (FIX 12789).
+    super::sync_rows::SYNC_QN_E.delete(
+        &vault.store,
+        txn,
+        &HexPair(HexId(fork.note), HexId(fork.fork)),
+    )?;
     NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
     let receipt = NoteLandingReceipt {
         id: vault.store.clock.entity_id()?,

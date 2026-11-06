@@ -24,4 +24,11 @@ pub mod document_sub_tags {
     pub const ARTIFACT_RECEIPT: u8 = 7;
     /// Direct, nonterminal answer: one REQUEST or UPDATE waited out its open.
     pub const WAITED_OUT: u8 = 8;
+    /// An own device's replica-local NOTE fork for the NOTE's authority: its
+    /// identity and its own operations since its parent frontier (FIX
+    /// 12789). Owner lane only; the actor is bound out of band.
+    pub const NOTE_FORK_UPLOAD: u8 = 9;
+    /// The authority's answer to one fork upload, sent only to the requesting
+    /// connection.
+    pub const NOTE_FORK_RECEIPT: u8 = 10;
 }

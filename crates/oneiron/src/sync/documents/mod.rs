@@ -10,6 +10,7 @@
 mod destination;
 mod entity;
 mod held_copy;
+mod note_fork_upload;
 mod note_requests;
 pub(crate) mod note_state;
 pub use super::selector::secret_projection::RepoCopyEditReview;
