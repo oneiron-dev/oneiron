@@ -32,11 +32,11 @@ use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
+use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
-use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::withdrawn_cutoffs::{
@@ -179,6 +179,11 @@ pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwn
         return match crate::ports::checkpoint::entity_row_placement(value) {
             EntityRowPlacement::Owner => Placement::owned(owner, Vec::new()),
             EntityRowPlacement::Other(client) => Placement::Dispatched(client),
+            // Only an identity-topology carrier is one, and no such kind
+            // takes this branch.
+            EntityRowPlacement::Actor(_) => {
+                Placement::unclassified(Some(owner), SyncUnclassified::UnknownKind)
+            }
             EntityRowPlacement::Unclassified(reason) => {
                 Placement::unclassified(Some(owner), unclassified(reason))
             }
