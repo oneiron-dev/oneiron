@@ -445,25 +445,27 @@ fn load_layers(
         for worker in 0..workers {
             let slots = &slots;
             let failures = &failures;
-            scope.spawn(move || {
-                for index in (worker..count).step_by(workers) {
-                    let layer =
-                        DecoderLayer::load(cfg, &model.pp("layers").pp(index.to_string()), ctx);
-                    match layer {
-                        Ok(layer) => {
-                            if let Ok(mut slot) = slots[index].lock() {
-                                *slot = Some(layer);
+            crate::engine_thread("embedder-layer-load".into())
+                .spawn_scoped(scope, move || {
+                    for index in (worker..count).step_by(workers) {
+                        let layer =
+                            DecoderLayer::load(cfg, &model.pp("layers").pp(index.to_string()), ctx);
+                        match layer {
+                            Ok(layer) => {
+                                if let Ok(mut slot) = slots[index].lock() {
+                                    *slot = Some(layer);
+                                }
                             }
-                        }
-                        Err(error) => {
-                            if let Ok(mut failures) = failures.lock() {
-                                failures.push(error);
+                            Err(error) => {
+                                if let Ok(mut failures) = failures.lock() {
+                                    failures.push(error);
+                                }
+                                return;
                             }
-                            return;
                         }
                     }
-                }
-            });
+                })
+                .expect("failed to spawn thread");
         }
     });
     if let Some(error) = failures.lock().ok().and_then(|mut f| f.pop()) {

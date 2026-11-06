@@ -128,6 +128,13 @@ pub use crate::projection::View;
 /// while FIX 19837 outlines those generated dispatchers.
 pub const ENGINE_THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
 
+/// Builds an engine-owned thread with enough native stack for engine futures.
+pub(crate) fn engine_thread(name: String) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name)
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+}
+
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
 ///
 /// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. A door that
