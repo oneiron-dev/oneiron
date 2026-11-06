@@ -727,4 +727,4 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(reason))
 }
 
-pub mod live_pin;
+pub use oneiron_store::typed_body::live_pin;

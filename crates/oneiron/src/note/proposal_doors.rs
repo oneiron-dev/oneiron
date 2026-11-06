@@ -216,7 +216,7 @@ impl Memory<'_> {
                 note_ref: input.note_ref.clone(),
                 reason: input.reason.clone(),
             },
-            |txn, doc| {
+            |txn, doc, _| {
                 NOTE_FORK
                     .get(&self.vault().store, txn, &fork)?
                     .filter(|fork| fork.note == doc.note)
@@ -334,7 +334,7 @@ impl Memory<'_> {
         &self,
         input: &NoteAccessRequest,
     ) -> MemoryResult<ScopedReadResult<Option<NoteVersionTree>>> {
-        self.project_note_read(input, |txn, doc: NoteDocument| {
+        self.project_note_read(input, |txn, doc: NoteDocument, _| {
             let (header, core) = super::verbs::note_core(self.vault(), txn, doc.note)?;
             let forks = NOTE_FORK
                 .scan(&self.vault().store, txn)?

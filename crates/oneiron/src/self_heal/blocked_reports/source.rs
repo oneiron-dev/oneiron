@@ -30,6 +30,7 @@
 //! 6734), so the row is still taken when it no longer decodes.
 
 mod ownership;
+mod receipts;
 mod response;
 
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,14 @@ const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
 /// Step rows, in the same table. Key: [`StepSourceKey`].
 const STEPS: SideTable<StepSourceKey, StepReplaySource, Named> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE);
+
+/// Whether a masked copy of a `COACH_BLOCKED_SOURCE` row still decodes as
+/// either of its two current stored values, for the historical lift sweep
+/// (FIX 2680): a receipt row's replay source, or a step row's kept request.
+pub(crate) fn coach_blocked_source_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<BlockedReplaySource, Named>(bytes)
+        || crate::side_table::decodes::<StepReplaySource, Named>(bytes)
+}
 
 /// The byte a step row's key leads with. A receipt row's key is the
 /// receipt's 16 bytes alone, so the two never share a key's length.
@@ -310,7 +319,7 @@ pub(super) fn put_in_txn(
         sent.kept = None;
     }
     if source.kept_mut().is_none() {
-        return SOURCE.put(vault, txn, receipt, &source);
+        return receipts::put_in_txn(vault, txn, receipt, &source);
     }
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
     match put_kept_in_txn(vault, &mut savepoint, receipt, source.clone()) {
@@ -331,7 +340,7 @@ pub(super) fn put_in_txn(
             {
                 sent.kept = None;
             }
-            SOURCE.put(vault, txn, receipt, &source)
+            receipts::put_in_txn(vault, txn, receipt, &source)
         }
     }
 }
@@ -349,7 +358,7 @@ fn put_kept_in_txn(
     if let Some(kept) = source.kept_mut() {
         kept.stored = canonical_hash(&kept.request)?;
     }
-    SOURCE.put(vault, txn, receipt, &source)
+    receipts::put_in_txn(vault, txn, receipt, &source)
 }
 
 /// The replay source the report `receipt` was filed with, if any. A row
@@ -604,9 +613,9 @@ pub(crate) fn remove_step_sources_in_txn(
 /// step row that stamps it as an owner (FIX 6659): a call it made, a step
 /// about it, or one its terminal claim logged, with the request each keeps,
 /// and revokes each custody record the side-row wall minted from a row it
-/// takes (FIX 6710). A step row that does not decode is still taken when a
-/// witness names its exact key (FIX 6734); a deleted capture's witnesses go
-/// with it, every role. A row no owner names stays as it is.
+/// takes (FIX 6710). A row that does not decode is still taken when a
+/// witness names its exact receipt or step key (FIX 6734); a deleted capture's
+/// witnesses go with it, every role. A row no owner names stays as it is.
 pub(crate) fn erase_blocked_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -648,9 +657,17 @@ pub(crate) fn erase_blocked_source_actor_as_in_txn(
             steps.push(step);
         }
     }
+    for receipt in ownership::receipts_of_owner_in(&vault.store, &*wtxn, actor)? {
+        if !receipts.contains(&receipt) {
+            receipts.push(receipt);
+        }
+    }
     for receipt in &receipts {
-        revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt), act)?;
-        SOURCE.delete(&vault.store, wtxn, receipt)?;
+        if SOURCE.contains(&vault.store, &*wtxn, receipt)? {
+            revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt), act)?;
+            SOURCE.delete(&vault.store, wtxn, receipt)?;
+        }
+        ownership::remove_receipt_owners_in_txn(&vault.store, wtxn, receipt)?;
     }
     for step in &steps {
         // A capture already gone leaves its witnesses behind; they go without minting a

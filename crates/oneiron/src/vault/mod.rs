@@ -9,14 +9,14 @@ mod edges;
 mod entities;
 pub(crate) mod entity_refs;
 pub(crate) mod entity_revision;
-pub(crate) mod entity_view;
-pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+pub(crate) use oneiron_store::vault::entity_view;
+pub(crate) use oneiron_store::vault::speculative_passes;
 mod identity;
 mod open;
 mod places;
@@ -169,9 +169,10 @@ pub struct Vault {
     /// Volatile revoke work from committed local cloud-registration erases.
     pub(crate) cloud_registration_erase_revokes: crate::secret_custody::EraseRevokes,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
-    /// state mutex and nothing else: the fixed-order drop transaction and the
-    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
-    /// outbound callback, no timer handle and no second connection owner.
+    /// state mutex, the live-wait list with its id counter, the outbound-wait
+    /// host callback and the owner shed line: the fixed-order drop transaction
+    /// and the lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It
+    /// adds no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
     /// One in-process idle policy timer per open vault, released on wrapper drop.
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,

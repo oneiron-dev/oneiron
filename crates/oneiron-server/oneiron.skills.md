@@ -296,7 +296,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 - trigger phrases:
   - "change inference default tier"
   - "edit ASR or TTS route"
-- safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
+- safety: Mutating; requires an owner-grade bearer. The seven purpose rows, four speech lanes and `self_compaction` row must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
 
 #### decision-read-probe - `POST /v1/llm/decision_read`
 
@@ -656,9 +656,9 @@ Methods: `GET` and `PUT` on the two Tier-1 inference-defaults routes.
 
 Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core token is not enough.
 
-`GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`).
+`GET` returns `{ "purposes": { ... }, "voice": { ... }, "voice_precedence": "...", "extraction_max_locality": "...", "self_compaction": { "source": "...", "cheap_model": "...", "locality": "..." } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each purpose or voice row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`). The required `self_compaction` row contains `source` (`auto`, `retained_turns`, or `live_fork`), `cheap_model` (a model id) and `locality` (the same locality values). The shipped `source` is `auto`: each compaction uses the live fork while its prefix is warm in the provider prompt cache, otherwise the cheap writer on retained turns. Preserve this row when replacing the whole table.
 
-`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
+`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows. A live policy-power holder receives `200` with the stored table; another admitted caller receives `202` with `{ "proposed": <kept proposal> }`, and the active defaults stay unchanged. Credential grade alone does not grant policy power. Invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
 
 ### Decision Read Probe
 
@@ -1647,6 +1647,7 @@ Codes the server's HTTP error type defines:
 - `INVALID_STATE`
 - `SNAPSHOT_MISMATCH`
 - `DAILY_BUDGET_EXHAUSTED`
+- `TOO_MANY_ATTEMPTS`
 - `MIRROR_NOT_READY`
 - `UNSUPPORTED_FORMAT`
 - `NOT_ACCEPTABLE`
