@@ -74,7 +74,11 @@ pub(super) fn run(
     let vault = server.vault();
     let host = server.decision_host();
     let coach = coach_ladder(server);
+    let wording = server.ai.dreamer_wording();
     let decisions = CodeFixDecisions {
+        reproduced_wording: wording.code_fix_reproduced().to_owned(),
+        fixed_wording: wording.code_fix_fixed().to_owned(),
+        export_safe_wording: wording.code_fix_export_safe().to_owned(),
         ladder: coach
             .as_ref()
             .map_or_else(|| host.ladder().ladder(), HeldLadder::ladder),
@@ -319,20 +323,20 @@ impl<'a> HostModels<'a> {
             .ok()?;
         let sent = match &exact.rung {
             Some(rung) => {
-                if call.ladder.exact_prompt_digest() != Some(rung.prompt_digest) {
-                    return None;
-                }
+                let replay = call
+                    .ladder
+                    .for_replay_binding(&rung.binding.model, rung.binding.locality)
+                    .filter(|replay| replay.exact_prompt_digest() == rung.prompt_digest)?;
                 let prompt = rung.binding.prompt.as_deref();
                 let wait = call.ladder.exact_replay_wait();
-                self.handle
-                    .block_on(call.ladder.generate_exact_masked_within(
-                        &self.run,
-                        call.request,
-                        None,
-                        prompt,
-                        &|| true,
-                        wait,
-                    ))
+                self.handle.block_on(replay.generate_exact_within(
+                    &self.run,
+                    call.request,
+                    None,
+                    prompt,
+                    &|| true,
+                    wait,
+                ))
             }
             None => self
                 .handle
