@@ -1504,7 +1504,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/role_route.rs` | src | m | 2 struct · 1 enum · 3 fn · 5 crate-vis | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
 | `src/models/router.rs` | src | s | 1 struct · 7 fn · 11 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
-| `src/models/runtime.rs` | src | m | 19 fn · 5 crate-vis | — | Model runtime construction and accessors |
+| `src/models/runtime.rs` | src | m | 19 fn · 6 crate-vis | — | Model runtime construction and accessors |
 | `src/models/seat_model.rs` | src | m | 7 crate-vis | — | The model door's broker leg (FIX 15702; ARCH-0069 `#door-sign-loopback`): one model request from an official… |
 | `src/models/seat_model_admission.rs` | src | m | 13 crate-vis | — | A seat's paid model calls on the model door (FIX 15702 slice 3; Engine call 14:12, A, mirroring the AI… |
 | `src/models/served.rs` | src | s | 3 crate-vis | — | Which model actually answered: the receipt field a ladder fills in |
@@ -1522,11 +1522,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/voice.rs` | src | s | 2 fn | — | The voice cascade's routes on the media seats (OF-410) |
 | `src/models/voxcpm2_speech.rs` | src | m | 1 crate-vis | — | The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on… |
 | `src/models/walk.rs` | src | m | 19 crate-vis | — | What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the… |
-| `src/models/worker_host.rs` | src | L | 41 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
+| `src/models/worker_host.rs` | src | L | 42 crate-vis | — | This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker… |
 | `src/models/worker_host/bundle.rs` | src | s | 9 crate-vis | — | The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the… |
 | `src/models/worker_host/drafter_binding.rs` | src | m | 8 crate-vis | — | The drafter serving binding's half inside the worker host (FIX 14976): which managed worker serves a drafter… |
 | `src/models/worker_host/evaluator_incarnation.rs` | src | s | 14 crate-vis | — | The drafter evaluator's incarnations (FIX 14975): managed EXL3 workers launched from the vault's own serving… |
-| `src/models/worker_host/install.rs` | src | m | 12 crate-vis | — | A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written… |
+| `src/models/worker_host/install.rs` | src | m | 13 crate-vis | — | A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written… |
 | `src/models/worker_host/launch_manifest.rs` | src | s | 14 crate-vis | — | The supervisor's private per-launch manifest (DESIGN-V2 R2): one file per launch binding the bytes the… |
 | `src/models/worker_host/launcher.rs` | src | L | 6 crate-vis | — | The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]… |
 | `src/models/worker_host/llama_metrics.rs` | src | s | 3 crate-vis | — | Bearer binding for a managed llama.cpp worker's `/metrics` route |
@@ -1544,6 +1544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/worker_host/session/registry.rs` | src | m | 39 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
 | `src/models/worker_host/session/restore.rs` | src | m | 2 crate-vis | — | Restore (DESIGN-V2 §7 residency, V2-R3): a kept snapshot imported into a fresh session for an admitted turn… |
 | `src/models/worker_host/session/turn.rs` | src | m | 1 crate-vis | — | A turn on a session: the session for its key reused or created, a working branch forked at the frontier the… |
+| `src/models/worker_host/stock.rs` | src | s | 3 crate-vis | — | The Coach's read-only view of the weight files for a captured managed worker |
 | `src/oauth_relay.rs` | src | L | 8 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `src/oneironer/bundle/archive.rs` | src | m | 6 crate-vis | — | The strict reader of a platform row's archive (FIX 6755, contract rev 3 A1), written here with no tar… |
 | `src/oneironer/bundle/archive/ustar.rs` | src | s | 6 crate-vis | — | The ustar stream itself: each header checked as it is read, every byte hashed on its way through, the entry… |
