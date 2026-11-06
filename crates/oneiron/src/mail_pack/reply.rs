@@ -29,7 +29,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::inbox::sources_by_audience_in;
-use super::reply_mime::{ReplyDraft, ReplyMessage};
+use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
 use super::reply_send::{ReplySink, ReplyTransport};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{MailOccurrence, MailPresence, MailReplyHeaders, OCCURRENCES};
@@ -478,17 +478,97 @@ fn forget_kept_plan(vault: &Vault, row: &MailReplyDraftRow) {
     }
 }
 
+/// The mailbox's owner as the human actor its account reply is sent by:
+/// the person who approves it sends it.
+fn human_actor(person: EntityId) -> OutboundDispatchActor {
+    OutboundDispatchActor {
+        actor_class: "human".to_owned(),
+        actor_ref: Some(person.to_hex()),
+        actor_entity_ref: Some(person),
+    }
+}
+
+/// Whether `effect` is the send of one drafted reply its mailbox's owner
+/// approved, sent as the mailbox's own account (fix list rows 17872,
+/// 17643): `email`/`send` by a human actor naming no sender identity, its
+/// content the frozen message of a draft that stands Approved at exactly
+/// that revision and send, from an active IMAP or Microsoft 365 personal
+/// mailbox whose owner is that actor. The gate takes the owner's one press
+/// for exactly that send's digest as its authority, as it takes a
+/// member-mail press.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn approved_source_reply_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &crate::gate::ExternalEffectGateInput,
+) -> Result<bool> {
+    if effect.channel != "email"
+        || effect.verb != "send"
+        || effect.channel_identity_ref.is_some()
+        || effect.actor.actor_class != "human"
+    {
+        return Ok(false);
+    }
+    let Some(actor) = effect.provenance.actor_entity_ref else {
+        return Ok(false);
+    };
+    let Some(content_ref) = effect
+        .provenance
+        .mail_content_ref
+        .as_deref()
+        .filter(|content_ref| content_ref.starts_with(REPLY_MESSAGE_REF_PREFIX))
+    else {
+        return Ok(false);
+    };
+    let Some(send_ref) = effect.send_ref.as_deref() else {
+        return Ok(false);
+    };
+    let Some(draft) = send_ref
+        .strip_prefix("outbound:mail-reply:")
+        .and_then(|rest| rest.split_once(':'))
+        .and_then(|(draft, _)| EntityId::from_hex(draft).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(row) = DRAFTS.get(store, txn, &draft)? else {
+        return Ok(false);
+    };
+    if row.plan_ref != content_ref
+        || row.identity.is_some()
+        || row.message.is_none()
+        || row.state != MailReplyDraftState::Approved
+        || row.approved_at.is_none()
+        || send_ref != format!("outbound:{}", row.send_ref)
+    {
+        return Ok(false);
+    }
+    let Some(source) = SOURCES.get(store, txn, &row.source)? else {
+        return Ok(false);
+    };
+    Ok(source.owner == Some(actor)
+        && source.status == MailSourceStatus::Active
+        && source.kind == MailSourceKind::PersonalMailbox
+        && matches!(
+            source.provider,
+            MailProvider::Imap | MailProvider::Microsoft365
+        ))
+}
+
 /// The one dispatch request a draft's revision is, sent as `actor`: a
 /// Gmail reply's identity's bound sender, or the mailbox's owner for one
 /// sent as the mailbox's own account, which names no sender identity.
 fn request_for(
     id: EntityId,
     row: &MailReplyDraftRow,
-    actor: EntityId,
+    actor: OutboundDispatchActor,
     now: u64,
 ) -> OutboundDispatchRequest {
+    let author = actor.actor_ref.clone().unwrap_or_default();
     let intent = OutboundIntent::from_trigger(
-        OutboundIntentDraft::new(actor.to_hex(), "send", "email", row.to.clone())
+        OutboundIntentDraft::new(author, "send", "email", row.to.clone())
             .content_ref(row.plan_ref.clone()),
         OutboundIntentTrigger::agent_immediate(format!("mail-reply:{}", id.to_hex())),
     );
@@ -496,7 +576,7 @@ fn request_for(
         format!("outbound:{}", row.send_ref),
         row.send_ref.clone(),
         intent,
-        OutboundDispatchActor::agent(actor),
+        actor,
         OutboundDispatchGate::allow_when_policy_grants(),
         now,
         OutboundDeliveryWindowDecision::DeliverNow,
@@ -772,7 +852,7 @@ impl Vault {
                 // (an agent of the owner's, or the owner); the owner's proof
                 // is the approval.
                 let sender = bound_sender(self, identity)?;
-                let request = request_for(id, &row, sender, now);
+                let request = request_for(id, &row, OutboundDispatchActor::agent(sender), now);
                 let digest =
                     crate::channel_identity_provider::native_mail::canonical_mail_send_digest(
                         &request, identity, sender,
@@ -786,7 +866,7 @@ impl Vault {
             (ReplyRoute::Account(transport), None, Some(message)) => {
                 // Sent as the mailbox's own account, by its owner; the one
                 // press is minted for exactly this send's digest (FIX 6606).
-                let request = request_for(id, &row, actor, now);
+                let request = request_for(id, &row, human_actor(actor), now);
                 let digest = crate::outbound::outbound_approve_once_digest(self, &request)
                     .map_err(|error| {
                         MemoryError::bad_request(format!("the reply cannot be approved: {error}"))
