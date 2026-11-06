@@ -190,8 +190,8 @@ fn project(row: &CalendarEventRow) -> Result<CalendarEventView> {
         end_utc: row.occurred.map(|at| at.end),
         calendar_systems: row.facts.systems().to_vec(),
         blocks_time: row.facts.blocks_time(),
-        civil: row.facts.civil_extent().and_then(|(start, length)| {
-            super::civil::civil_span(row.facts.civil_all_day(), start, length)
+        civil: row.facts.civil_extent().and_then(|(start, _)| {
+            super::civil::civil_span(row.facts.civil_all_day(), start, row.facts.civil_duration())
         }),
     })
 }

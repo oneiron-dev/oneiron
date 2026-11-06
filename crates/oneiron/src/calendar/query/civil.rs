@@ -15,23 +15,19 @@ pub struct CalendarCivilSpan {
     /// (`2026-11-06T09:00:00`).
     pub start: String,
     /// The day, or the wall time, it ends before; the start itself for a
-    /// floating occurrence with no length.
+    /// floating occurrence that names no end.
     pub end: String,
 }
 
 /// The civil span of an occurrence starting at `start`, a key on the UTC
-/// carrier (civil fields read as UTC), whose civil time runs `length`
-/// seconds past it, inclusive, as the calendar facts read it.
+/// carrier (civil fields read as UTC), `duration` seconds of civil time to
+/// its exclusive end; with no duration it ends where it starts.
 pub(in crate::calendar) fn civil_span(
     all_day: bool,
     start: u64,
-    length: u64,
+    duration: Option<u64>,
 ) -> Option<CalendarCivilSpan> {
-    let end = if length == 0 && !all_day {
-        start
-    } else {
-        start.checked_add(length)?.checked_add(1)?
-    };
+    let end = start.checked_add(duration.unwrap_or(0))?;
     let format = if all_day {
         "%Y-%m-%d"
     } else {

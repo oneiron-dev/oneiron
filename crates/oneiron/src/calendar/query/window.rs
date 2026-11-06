@@ -97,8 +97,12 @@ fn occurrences_in(
             && let Some(key) = row.facts.exception()
             && key.master_ref == master_id
         {
-            let named = row.facts.civil_extent().and_then(|(start, length)| {
-                super::civil::civil_span(row.facts.civil_all_day(), start, length)
+            let named = row.facts.civil_extent().and_then(|(start, _)| {
+                super::civil::civil_span(
+                    row.facts.civil_all_day(),
+                    start,
+                    row.facts.civil_duration(),
+                )
             });
             exceptions.push((row.id, row.occurred.or(row.wall_span), named, key.clone()));
         }
@@ -131,8 +135,15 @@ fn occurrences_in(
             }
             (None, Some((_, length))) => {
                 let all_day = master.facts.civil_all_day();
-                let starts =
-                    super::occurrences::civil_starts(&master, series, window, &keys, length)?;
+                let duration = master.facts.civil_duration();
+                let starts = super::occurrences::civil_starts(
+                    &master,
+                    series,
+                    window,
+                    &keys,
+                    std::slice::from_ref(uid),
+                    length,
+                )?;
                 for (key, start) in starts {
                     let span = super::facts::civil_envelope(start, length);
                     result.push(CalendarOccurrenceView {
@@ -142,7 +153,7 @@ fn occurrences_in(
                         original_start_utc: key,
                         start_utc: span.start,
                         end_utc: span.end,
-                        civil: super::civil::civil_span(all_day, start, length),
+                        civil: super::civil::civil_span(all_day, start, duration),
                     });
                 }
             }
