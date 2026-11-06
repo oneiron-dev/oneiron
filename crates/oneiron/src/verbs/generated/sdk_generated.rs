@@ -1921,6 +1921,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                     crate::sync::federation_burst::FederationBurstPolicySetRequest,
                 >(),
             ),
+            (
+                "vault.sync.outbox",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceMachineRequest,
+                >(),
+            ),
             #[cfg(feature = "sync")]
             (
                 "vault.sync.quarantine.held_edits",
@@ -13483,6 +13489,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.sync.outbox" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         #[cfg(feature = "sync")]
         "vault.sync.quarantine.held_edits" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -20927,6 +20940,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::sync::federation_burst::FederationBurstPolicySetRequest =
                 decode(value.clone())?;
         }
+        "vault.sync.outbox" => {
+            let _input: crate::task_verb::sdk::ResidenceMachineRequest = decode(value.clone())?;
+        }
         #[cfg(feature = "sync")]
         "vault.sync.quarantine.held_edits" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
@@ -24810,6 +24826,7 @@ pub fn invoke(
         "vault.federation.burst.policy.set" => {
             encode(vault_federation_burst_policy_set(memory, decode(value)?)?)
         }
+        "vault.sync.outbox" => encode(vault_sync_outbox(memory, decode(value)?)?),
         #[cfg(feature = "sync")]
         "vault.sync.quarantine.held_edits" => {
             encode(vault_sync_quarantine_held_edits(memory, decode(value)?)?)
@@ -29898,6 +29915,12 @@ pub fn vault_federation_burst_policy_set(
         &memory.embedded_owner("vault.federation.burst.policy.set")?,
         input,
     )
+}
+pub fn vault_sync_outbox(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceMachineRequest,
+) -> MemoryResult<crate::task_verb::sdk::SyncOutboxAnswer> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.sync.outbox", &input)
 }
 #[cfg(feature = "sync")]
 pub fn vault_sync_quarantine_held_edits(

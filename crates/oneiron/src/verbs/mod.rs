@@ -85,6 +85,7 @@ mod skill_fork;
 mod skills;
 mod standing;
 mod support_grant;
+mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
 mod trusted_contact;
@@ -512,6 +513,7 @@ pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
 pub use self::support_grant::*;
+pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;

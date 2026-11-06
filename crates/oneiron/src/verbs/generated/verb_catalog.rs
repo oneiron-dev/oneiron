@@ -374,6 +374,7 @@ pub enum AgentVerb {
     VaultFederationBurstBaseline,
     VaultFederationBurstPolicy,
     VaultFederationBurstPolicySet,
+    VaultSyncOutbox,
     VaultSyncQuarantineHeldEdits,
     VaultSyncRetainedWorkWaitSet,
     VaultFederationBurstIngress,
@@ -1663,6 +1664,7 @@ impl AgentVerb {
         Self::VaultFederationBurstBaseline,
         Self::VaultFederationBurstPolicy,
         Self::VaultFederationBurstPolicySet,
+        Self::VaultSyncOutbox,
         Self::VaultSyncQuarantineHeldEdits,
         Self::VaultSyncRetainedWorkWaitSet,
         Self::VaultFederationBurstIngress,
@@ -2959,6 +2961,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => "vault.federation.burst.baseline",
             Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
             Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
+            Self::VaultSyncOutbox => "vault.sync.outbox",
             Self::VaultSyncQuarantineHeldEdits => "vault.sync.quarantine.held_edits",
             Self::VaultSyncRetainedWorkWaitSet => "vault.sync.retained_work.wait.set",
             Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
@@ -4280,6 +4283,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncOutbox
                 | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
@@ -5598,6 +5602,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncOutbox
                 | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
@@ -7067,6 +7072,7 @@ impl AgentVerb {
                 | Self::VaultFederationBurstBaseline
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncOutbox
                 | Self::VaultSyncQuarantineHeldEdits
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
@@ -9086,6 +9092,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => &["spec"],
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultSyncOutbox => &["spec"],
             Self::VaultSyncQuarantineHeldEdits => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
@@ -10376,6 +10383,7 @@ impl AgentVerb {
             Self::VaultFederationBurstBaseline => &["spec"],
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultSyncOutbox => &["spec"],
             Self::VaultSyncQuarantineHeldEdits => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
@@ -12392,6 +12400,9 @@ impl AgentVerb {
             }
             Self::VaultFederationBurstPolicySet => {
                 "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
+            }
+            Self::VaultSyncOutbox => {
+                "The updates one of the owner's machines still owes its home, per window: each row's digest, size and the home's Durable or Held answer, never a body; state unreached when this host runs no connection for it."
             }
             Self::VaultSyncQuarantineHeldEdits => {
                 "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."

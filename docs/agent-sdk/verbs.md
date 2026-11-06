@@ -376,6 +376,7 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.baseline`
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
+- `vault.sync.outbox`
 - `vault.sync.quarantine.held_edits`
 - `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`

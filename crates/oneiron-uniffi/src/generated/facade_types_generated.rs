@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1264 facade rows, 4595 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
+// UniFFI census: 1265 facade rows, 4601 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -23153,6 +23153,73 @@ pub struct FederationBurstPolicySetRequest {
     pub policy: FederationBurstPolicy,
 }
 
+/// `oneiron::verbs::residence::ResidenceMachineRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceMachineRequest {
+    #[serde(rename = "machine")]
+    pub machine: String,
+}
+
+/// `oneiron::verbs::sync_outbox::SyncOutboxReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SyncOutboxReceipt {
+    #[serde(rename = "durable")]
+    Durable,
+    #[serde(rename = "held")]
+    Held,
+}
+
+/// `oneiron::verbs::sync_outbox::SyncOutboxRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SyncOutboxRow {
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<SyncOutboxReceipt>,
+}
+
+/// `oneiron::verbs::sync_outbox::SyncOutboxWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SyncOutboxWindow {
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "rows")]
+    pub rows: Vec<SyncOutboxRow>,
+}
+
+/// `oneiron::verbs::sync_outbox::SyncOutbox`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SyncOutbox {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "owed")]
+    pub owed: u64,
+    #[serde(rename = "windows")]
+    pub windows: Vec<SyncOutboxWindow>,
+}
+
+/// `oneiron::verbs::sync_outbox::SyncOutboxUnreached`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SyncOutboxUnreached {
+    #[serde(rename = "machine")]
+    pub machine: String,
+}
+
+/// `oneiron::verbs::sync_outbox::SyncOutboxAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum SyncOutboxAnswer {
+    #[serde(rename = "read")]
+    Read(SyncOutbox),
+    #[serde(rename = "unreached")]
+    Unreached(SyncOutboxUnreached),
+}
+
 /// `oneiron::sync::quarantine::keys_classifier::QuarantineContainer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum QuarantineContainer {
@@ -25078,14 +25145,6 @@ pub enum ResidenceOpenAnswer {
     Applied(ResidenceOpened),
     #[serde(rename = "queued")]
     Queued(ResidenceQueued),
-}
-
-/// `oneiron::verbs::residence::ResidenceMachineRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ResidenceMachineRequest {
-    #[serde(rename = "machine")]
-    pub machine: String,
 }
 
 /// `oneiron::verbs::residence::ResidenceIndexEntry`.
