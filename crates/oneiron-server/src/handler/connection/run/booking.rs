@@ -47,7 +47,7 @@ use super::super::{MAX_VERB_CALLS_IN_FLIGHT, vault_deleted};
 use crate::auth::{CoreAuth, RevokedTokenJtis};
 use crate::livequery::connection::{Connection, Hub};
 use crate::livequery::{RpcRequest, SocketCallContext};
-use crate::managed::{CarrierAdmission, ManagedCarrierContext};
+use crate::managed::ManagedCarrierContext;
 use crate::protocol::{APP_TIER_PROTOCOL_VERSION_VERSION, ProtocolError, TAG_RPC, close_codes};
 use crate::server::SyncServer;
 
@@ -91,9 +91,10 @@ enum Event {
 
 /// One call's answer, as the loop takes it back.
 enum Answer {
-    /// Its reply frames, queued for the send door, and the reap admission
-    /// it ran under, kept while that door judges them.
-    Reply(Vec<Vec<u8>>, CarrierAdmission),
+    /// Its reply frames, already judged by the send door under the call's
+    /// own reap admission, which ended before the call returned: a reply
+    /// waiting on a peer that does not read holds no admission.
+    Reply(Vec<Vec<u8>>),
     /// The served pause: the vault was frozen for reap, and nothing ran.
     Paused(Vec<Vec<u8>>),
 }
@@ -146,9 +147,9 @@ pub(super) async fn serve(
         None => return,
     }
     let holder = caller.holder.to_hex();
-    // The send door of this socket's replies: RPC release alone, since no
-    // subscription opens here.
-    let mut replies = Connection::new(Hub::for_server(&server), conn_id);
+    // The connection a call's context names: no subscription opens here, so
+    // each call judges its own reply's rows through a send door of its own.
+    let replies = Connection::new(Hub::for_server(&server), conn_id);
     // Calls answer off this loop, which reads no further frame while
     // `MAX_VERB_CALLS_IN_FLIGHT` of them are in flight. A call still running
     // when the loop ends runs to its end below.
@@ -164,11 +165,7 @@ pub(super) async fn serve(
             }
         };
         let data = match event {
-            Event::Answered(Ok(Ok(Answer::Reply(frames, held)))) => {
-                let frames = released(&server, &mut replies, locality, machine, frames);
-                // The call's admission ends once its rows were judged, before
-                // the sends, which wait on the peer.
-                drop(held);
+            Event::Answered(Ok(Ok(Answer::Reply(frames)))) => {
                 for frame in frames {
                     if !transport.send_binary(frame).await {
                         break 'serving;
@@ -323,7 +320,7 @@ pub(super) async fn serve(
                 auth,
                 request,
                 context,
-                conn_id,
+                (conn_id, locality, machine),
             ),
         ));
     }
@@ -361,18 +358,26 @@ fn ping(
 
 /// One booking call, off the loop, under its own reap admission: the vault
 /// woken from slim as a served request wakes it, then the verb through the
-/// WS door ([`crate::livequery::rpc_reply`]), its reply queued for this
-/// socket's send door. While the vault is frozen for reap nothing runs, and
-/// the call is answered with the served pause.
+/// WS door ([`crate::livequery::rpc_reply`]), then its reply judged by a send
+/// door of its own for where the socket at `locality` sits and the `machine`
+/// it proved ([`released`]). The admission ends there, before the reply goes
+/// back to the loop, so no completed call holds one while the loop waits on
+/// a peer that does not read. While the vault is frozen for reap nothing
+/// runs, and the call is answered with the served pause.
 async fn answer(
     server: Arc<SyncServer>,
     managed: ManagedCarrierContext,
     auth: CoreAuth,
     request: RpcRequest,
     context: SocketCallContext,
-    conn_id: u32,
+    (conn_id, locality, machine): (
+        u32,
+        oneiron::claim::CallerLocality,
+        oneiron::authority::PeerMachine,
+    ),
 ) -> Result<Answer, ProtocolError> {
     let id = request.request_id;
+    let door_server = Arc::clone(&server);
     let call = async move {
         if let Err(error) = server.vault().resume_from_slim_on_inbound() {
             return Err(ProtocolError::Persistence(error.to_string()));
@@ -382,7 +387,16 @@ async fn answer(
             .map(|reply| reply.queued(conn_id))
     };
     match managed.admit_call(call).await {
-        Ok(Some((frames, held))) => frames.map(|frames| Answer::Reply(frames, held)),
+        Ok(Some((frames, held))) => {
+            let frames = frames?;
+            // An RPC reply's chunks all ride `frames`, so a send door of the
+            // call's own judges them as the socket's would; its refusal
+            // receipt is written under the admission, which ends here.
+            let mut door = Connection::new(Hub::for_server(&door_server), conn_id);
+            let frames = released(&door_server, &mut door, locality, machine, frames);
+            drop(held);
+            Ok(Answer::Reply(frames))
+        }
         Ok(None) => Err(ProtocolError::InvalidPayload(
             "the booking call ended without an answer",
         )),
@@ -390,7 +404,7 @@ async fn answer(
     }
 }
 
-/// `frames`, one call's reply, as this socket's send door releases them:
+/// `frames`, one call's reply, as a send door of this socket releases them:
 /// each result chunk judged again by the rows it carries, for where the
 /// socket sits and the machine it proved, judged now (DEC-0005, OF-534 G6).
 /// A chunk that would carry a row kept from it is replaced by the refusal,
