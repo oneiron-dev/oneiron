@@ -1,5 +1,6 @@
 //! Persisted text-index rows, codecs, analysis and integrity diagnostics.
 
+pub mod codec;
 pub mod diagnostics;
 pub use crate::config::bm25::Bm25Config;
 pub use crate::config::bm25::FieldLengthPolicy;

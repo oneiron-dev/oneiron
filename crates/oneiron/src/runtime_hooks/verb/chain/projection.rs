@@ -300,13 +300,21 @@ impl Chain<'_> {
         Some(rows)
     }
 
-    /// The receipts the caller's tail holds, as the hook sees them: a
-    /// receipt about a claim only while that claim is shown, read under the
-    /// caller's own key; one about no claim as it is.
+    /// The receipts the caller's tail holds, as the hook sees them: a room
+    /// Hook receipt only while every one of its source rows is shown (FIX
+    /// 5429); a receipt about a claim only while that claim is shown, read
+    /// under the caller's own key; one about no claim as it is.
     fn project_tail(&self, seen: &HookView<'_>, dependencies: &mut Vec<EntityId>) -> Result<Value> {
         let mut tail = self.tail.clone();
         if let Some(receipts) = tail.as_array_mut() {
             for receipt in receipts {
+                if let Some(sources) = self.room_receipt_sources(receipt) {
+                    if !seen.shows_all(Some(sources))? {
+                        *receipt = withheld();
+                        continue;
+                    }
+                    dependencies.extend_from_slice(sources);
+                }
                 let Some(claim) = receipt.get("claim_ref").and_then(Value::as_str) else {
                     continue;
                 };
@@ -317,6 +325,16 @@ impl Chain<'_> {
             }
         }
         Ok(tail)
+    }
+
+    /// The source rows of `receipt` when it is one of the room's own Hook
+    /// receipts; `None` for a receipt of base's family.
+    fn room_receipt_sources(&self, receipt: &Value) -> Option<&[EntityId]> {
+        let reference = receipt.get("receipt_ref").and_then(Value::as_str)?;
+        self.room_sources
+            .iter()
+            .find(|(room_ref, _)| room_ref == reference)
+            .map(|(_, sources)| sources.as_slice())
     }
 
     /// This host verb's free text in `value`: withheld in place from a hook

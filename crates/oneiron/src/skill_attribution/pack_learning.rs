@@ -168,6 +168,16 @@ fn project(
         // A matched-fork check recorded for this outcome counts as the
         // skill's contribution or the edge's hop check, and a use that landed
         // late joins the used chain, though both came after the run froze.
+        let fields = super::judge_binding::with_workflow_judge_in_txn(
+            vault,
+            txn,
+            attempt_receipt,
+            fields.clone(),
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "a workflow's Done judge was not joined; its credit keeps the frozen judge");
+            fields.clone()
+        });
         let fields = joined_fields_in_txn(
             vault,
             txn,
@@ -175,7 +185,7 @@ fn project(
             &outcome.receipt,
             &outcome.axis,
             outcome.goal_revision.as_deref(),
-            fields.clone(),
+            fields,
         )?;
         if let Some(previous) = CREDIT_RECEIPT.get(&vault.store, txn, &key)? {
             if previous.anchor != anchor
