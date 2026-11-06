@@ -24,74 +24,121 @@ pub(crate) fn ensure_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
-        if header.entity_type != ENTITY_TYPE_FACET
-            || !is_substrate(&raw[ENTITY_METADATA_HEADER_LEN..], person)
-        {
-            return Err(Error::CorruptedIndex("substrate identity collision"));
-        }
-    } else {
-        // A caller can choose the id a PERSON's substrate lands at; an id that
-        // has been an agent stays one (H215).
-        crate::agent_def::refuse_agent_id_retype_in_txn(store, txn, &facet, ENTITY_TYPE_FACET)?;
-        let body = Value::Map(vec![
-            ("kind".into(), "substrate".into()),
-            (
-                "person_ref".into(),
-                Value::Binary(person.as_bytes().to_vec()),
-            ),
-            ("sensitivity".into(), "sensitive".into()),
-        ]);
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &body)
-            .map_err(|_| Error::InvariantViolation("substrate encoding"))?;
-        super::put_apply::stage_entity_body_row(
-            store,
-            txn,
-            &facet,
-            ENTITY_TYPE_FACET,
-            occurred,
-            learned_at,
-            0,
-            &bytes,
-        )?;
-        super::put_apply::stage_entity_index_rows(
-            store,
-            txn,
-            &facet,
-            ENTITY_TYPE_FACET,
-            occurred,
-            learned_at,
-        )?;
-        let prefix = store.short_id_prefix(ENTITY_TYPE_FACET)?;
-        let plan =
-            super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, &bytes)?;
-        super::apply_short_id_plan(store, txn, &facet, plan)?;
-        store.scope_stamps.stamp_put(
-            store,
-            txn,
-            facet,
-            ENTITY_TYPE_FACET,
-            &bytes,
-            crate::batch::row_put::RowPut::Birth,
-        )?;
-    }
-    super::edge_apply::apply_edge_with_created_at(
-        store,
-        txn,
-        person,
-        EdgeKind::HasFacet,
-        facet,
-        1.0,
-        learned_at,
-        oneiron_contracts::affect::Vad::NEUTRAL,
-        None,
-    )?;
-    Ok(())
+    prepare_person_substrate(store, txn, person, occurred, learned_at)?.apply(store, txn)
 }
+
+pub(crate) struct PreparedPersonSubstrate {
+    person: EntityId,
+    facet: EntityId,
+    bytes: Option<Vec<u8>>,
+    occurred: TimeRange,
+    learned_at: u64,
+}
+
+pub(crate) fn prepare_person_substrate(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<PreparedPersonSubstrate> {
+    let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
+    let bytes =
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("substrate header"))?;
+            if header.entity_type != ENTITY_TYPE_FACET
+                || !is_substrate(&raw[ENTITY_METADATA_HEADER_LEN..], person)
+            {
+                return Err(Error::CorruptedIndex("substrate identity collision"));
+            }
+            None
+        } else {
+            // A caller can choose the id a PERSON's substrate lands at; an id that
+            // has been an agent stays one (H215).
+            crate::agent_def::refuse_agent_id_retype_in_txn(store, txn, &facet, ENTITY_TYPE_FACET)?;
+            let body = Value::Map(vec![
+                ("kind".into(), "substrate".into()),
+                (
+                    "person_ref".into(),
+                    Value::Binary(person.as_bytes().to_vec()),
+                ),
+                ("sensitivity".into(), "sensitive".into()),
+            ]);
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, &body)
+                .map_err(|_| Error::InvariantViolation("substrate encoding"))?;
+            Some(bytes)
+        };
+    Ok(PreparedPersonSubstrate {
+        person,
+        facet,
+        bytes,
+        occurred,
+        learned_at,
+    })
+}
+
+impl PreparedPersonSubstrate {
+    pub(crate) fn facet_put(&self) -> Option<(EntityId, &[u8])> {
+        self.bytes.as_deref().map(|bytes| (self.facet, bytes))
+    }
+
+    pub(crate) fn apply(self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        let Self {
+            person,
+            facet,
+            bytes,
+            occurred,
+            learned_at,
+        } = self;
+        if let Some(bytes) = bytes.as_deref() {
+            super::put_apply::stage_entity_body_row(
+                store,
+                txn,
+                &facet,
+                ENTITY_TYPE_FACET,
+                occurred,
+                learned_at,
+                0,
+                bytes,
+            )?;
+            super::put_apply::stage_entity_index_rows(
+                store,
+                txn,
+                &facet,
+                ENTITY_TYPE_FACET,
+                occurred,
+                learned_at,
+            )?;
+            let prefix = store.short_id_prefix(ENTITY_TYPE_FACET)?;
+            let plan =
+                super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, bytes)?;
+            super::apply_short_id_plan(store, txn, &facet, plan)?;
+            store.scope_stamps.stamp_put(
+                store,
+                txn,
+                facet,
+                ENTITY_TYPE_FACET,
+                bytes,
+                crate::batch::row_put::RowPut::Birth,
+            )?;
+        }
+        super::edge_apply::apply_edge_with_created_at(
+            store,
+            txn,
+            person,
+            EdgeKind::HasFacet,
+            facet,
+            1.0,
+            learned_at,
+            oneiron_contracts::affect::Vad::NEUTRAL,
+            None,
+        )?;
+        Ok(())
+    }
+}
+
 fn is_substrate(data: &[u8], person: EntityId) -> bool {
     let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..]) else {
         return false;
