@@ -56,6 +56,8 @@ use crate::temporal::TimeRange;
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
 mod expiry;
+mod import;
+pub(crate) use import::{SessionImportHint, SessionImportPre};
 mod open_hint;
 pub use open_hint::SessionOpenHint;
 mod speakers;

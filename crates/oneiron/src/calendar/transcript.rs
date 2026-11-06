@@ -141,6 +141,15 @@ pub enum TranscriptIngestOutcome {
     RetryOpenSession {
         open_session_ref: crate::EntityId,
     },
+    /// The original session-open hook has asked; no SESSION was minted.
+    HookPending {
+        session_ref: crate::EntityId,
+        ask: crate::EntityId,
+    },
+    /// The same upload is already retained under its native lease or due instant.
+    Queued {
+        attempt_ref: String,
+    },
     /// A nonempty file with no usable turns remains explicit caller-owned NOTE input.
     NoteFallback {
         note_ref: crate::EntityId,

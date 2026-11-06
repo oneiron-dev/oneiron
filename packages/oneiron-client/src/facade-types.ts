@@ -7333,7 +7333,7 @@ export type CalendarOutcomePolicy = { grace_secs: number }
 /** `oneiron::calendar::transcript::door::TranscriptFileDropInput` */
 export type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number; event_ref?: string | null }
 /** `oneiron::calendar::transcript::TranscriptIngestOutcome` */
-export type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "note_fallback"; note_ref: EntityId }
+export type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "hook_pending"; session_ref: EntityId; ask: EntityId } | { outcome: "queued"; attempt_ref: string } | { outcome: "note_fallback"; note_ref: EntityId }
 /** `oneiron::memory::reads::ClaimListFilter` */
 export type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number }
 /** `oneiron::memory::claim_stale::ClaimDemoteActionInput` */
