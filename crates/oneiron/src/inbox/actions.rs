@@ -10,12 +10,15 @@ use super::notification::NotificationKind;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
 use crate::memory::Memory;
+use crate::skill_optimize::STOCK_SWITCH_NOTIFICATION_PRODUCER;
 use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
 
 /// The owner's answer to a proposed digest settings change.
 const WEAVE_SETTING_ANSWER_VERB: &str = "vault.weave.setting_changes.answer";
 /// The owner's undo of an applied or accepted digest settings change.
 const WEAVE_SETTING_UNDO_VERB: &str = "vault.weave.setting_changes.undo";
+/// The owner's undo of an applied stock-model switch.
+const STOCK_SWITCH_UNDO_VERB: &str = "vault.coach.training_offers.undo";
 /// A member's approval of a request to join a private thread.
 const THREAD_JOIN_APPROVE_VERB: &str = "vault.rooms.thread_join.approve";
 /// A member's denial of a request to join a private thread.
@@ -51,8 +54,9 @@ impl Memory<'_> {
     /// The taps `row` offers this caller now: a pending digest settings ask
     /// is accepted or declined and an applied change undone (FIX 5629), and
     /// a pending request to join a private thread is approved or denied
-    /// (FIX 6505). Any other row, and a target that no longer reads or has
-    /// settled, offers none.
+    /// (FIX 6505). An applied stock switch offers the owner's undo while its
+    /// binding still holds (FIX 4663). Any other row, and a target that no
+    /// longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
         match row.kind {
@@ -60,6 +64,9 @@ impl Memory<'_> {
                 if producer == WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER =>
             {
                 self.weave_setting_actions(row)
+            }
+            NotificationKind::Finding if producer == STOCK_SWITCH_NOTIFICATION_PRODUCER => {
+                self.stock_switch_actions(row)
             }
             NotificationKind::ThreadJoinRequested if producer == THREAD_NOTICE_PRODUCER => {
                 self.thread_join_actions(row)
@@ -110,6 +117,42 @@ impl Memory<'_> {
                 serde_json::json!({ "change_ref": change_ref }),
             )],
             _ => Vec::new(),
+        }
+    }
+
+    fn stock_switch_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(offer) = row
+            .source
+            .result
+            .as_deref()
+            .and_then(|offer| EntityId::from_hex(offer).ok())
+        else {
+            return Vec::new();
+        };
+        let available = (|| {
+            let owner = self.embedded_owner(STOCK_SWITCH_UNDO_VERB)?;
+            let txn = self
+                .vault()
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)
+                .map_err(crate::memory::MemoryError::from)?;
+            crate::skill_optimize::training_offer_switch_undo_available_in_txn(
+                self.vault(),
+                &txn,
+                &owner,
+                &offer,
+            )
+            .map_err(crate::memory::MemoryError::from)
+        })();
+        if matches!(available, Ok(true)) {
+            vec![NotificationAction::new(
+                STOCK_SWITCH_UNDO_VERB,
+                serde_json::json!({ "offer": offer.to_hex() }),
+            )]
+        } else {
+            Vec::new()
         }
     }
 

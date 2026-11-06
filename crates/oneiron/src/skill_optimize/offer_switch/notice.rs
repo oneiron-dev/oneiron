@@ -1,10 +1,8 @@
 //! Owner inbox notices for stock switches that actually applied.
 
-use super::{OfferSwitchReceipt, SwitchApplication};
+use super::{OfferSwitchReceipt, STOCK_SWITCH_NOTIFICATION_PRODUCER, SwitchApplication};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::{Result, Vault};
-
-const PRODUCER: &str = "coach.training_offer.switch";
 
 /// Shares the binding's write, including a staged embedder move's later swap.
 /// Replays preserve the inbox row's seen, acknowledged and deleted state.
@@ -25,7 +23,7 @@ pub(super) fn record_applied_switch_in_txn(
             &NotificationEvent {
                 kind: NotificationKind::Finding,
                 source: NotificationSource {
-                    producer: PRODUCER.to_owned(),
+                    producer: STOCK_SWITCH_NOTIFICATION_PRODUCER.to_owned(),
                     event: format!("{offer}:{}", owner.to_hex()),
                     result: Some(offer.clone()),
                     ..NotificationSource::default()
