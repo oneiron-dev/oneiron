@@ -4,6 +4,8 @@
 
 mod citations;
 mod document_mutation;
+#[cfg(feature = "sync")]
+pub(crate) use document_mutation::copy_lineage_revision;
 pub(crate) use document_mutation::{
     advance_document_mutation_head_in_txn, document_mutation_head_in_txn,
 };

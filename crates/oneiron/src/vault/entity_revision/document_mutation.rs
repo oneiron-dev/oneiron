@@ -9,6 +9,10 @@
 //! document's live revision as it was (a compaction, a counter, a birth that
 //! restates its record's own text) keeps the head. A vault where no document
 //! edit was ever committed holds no row.
+//!
+//! A secret-projection copy lineage is no entity, so the ledger holds no
+//! revision for it. Its writer advances the head when the lineage's frontier
+//! moves, with `copy_lineage_revision` in place of a live revision.
 
 use heed::{RoTxn, RwTxn};
 
@@ -38,7 +42,8 @@ pub(crate) fn document_mutation_head_in_txn(
 }
 
 /// Advances the head in `txn`, the writer that commits `entity`'s document
-/// at its new live `revision`.
+/// at its new live `revision`. For a copy lineage, `entity` is its copy id
+/// and `revision` is `copy_lineage_revision` of its new frontier.
 ///
 /// # Errors
 ///
@@ -59,4 +64,13 @@ pub(crate) fn advance_document_mutation_head_in_txn(
     let mut next = [0; 16];
     next.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     HEAD.put(store, txn, &(), &next)
+}
+
+/// The revision a secret-projection copy lineage at `frontier` advances the
+/// head with (FIX 2860): the ledger's entity-bound revision reference of
+/// `copy`, the lineage's copy id and document slot, at that frontier. No
+/// ledger row is written for it.
+#[cfg(feature = "sync")]
+pub(crate) fn copy_lineage_revision(copy: &EntityId, frontier: &loro::Frontiers) -> RevisionRef {
+    super::storage::reference(copy, &frontier.encode())
 }
