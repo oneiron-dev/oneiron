@@ -85,15 +85,17 @@ pub(super) async fn send_ready_window_requests(
     true
 }
 
-/// The window of `frame` when it is a window `UPDATE` or `REPLACEMENT` whose
-/// bytes the last door could not read in full for `peer` now: a passing
-/// failure, so the ready exchange that made it is asked again on the next
-/// tick instead of standing done. A frame withheld on purpose names none.
-pub(super) fn uninspectable_window(
+/// The last door's verdict on `frame` for the machine `peer` when it is a
+/// window `UPDATE` or `REPLACEMENT`, with its window: read once, so the
+/// socket withholds the frame and re-arms the window's ready request from
+/// the same reading (FIX 19634). Anything but `Portable` is withheld; an
+/// `Uninspectable` one is a passing failure, so its ready exchange is owed
+/// again. `None` for any other frame.
+pub(super) fn window_update_verdict(
     server: &SyncServer,
     peer: PeerMachine,
     frame: &[u8],
-) -> Option<WindowKey> {
+) -> Option<(Option<WindowKey>, oneiron::sync::window::UpdateVerdict)> {
     if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
         return None;
     }
@@ -106,9 +108,7 @@ pub(super) fn uninspectable_window(
     }
     let verdict =
         oneiron::sync::window::raw_update_verdict_for(&server.reassert_manager, key, update, peer);
-    (verdict == oneiron::sync::window::UpdateVerdict::Uninspectable)
-        .then(|| WindowKey::try_new(key))
-        .flatten()
+    Some((WindowKey::try_new(key), verdict))
 }
 
 /// Whether window `key`'s ready notice may go to this socket at all: an
