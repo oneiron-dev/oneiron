@@ -4,8 +4,10 @@ A decision clock and a generation allowance are separate controls. `Deadline` me
 call ran out of work time, its answer arrived too late, or the caller took the answer
 early. `GenerationAllowance` means the caller allowed no further logical generation to
 start. It does not mean a timeout, a provider failure, or a measured token total.
+`CaptureUnsupported` means no remaining provider can complete the requested captured
+read. It does not turn the ordinary provider interface into a fallback.
 
-The ladder keeps the same prior-answer rule for either cut. A reversible read may keep
+The ladder keeps the same prior-answer rule for each cut. A reversible read may keep
 its last eligible answer. A read with no answer, an abstained or in-band prior, or an
 outbound effect cannot use that prior at the cut. Its receipt and any person ask name
 the actual stop cause. A cut rung never becomes the source of an earlier answer.
@@ -24,6 +26,22 @@ not because absence proves no work. Attribution still filters its prepared facts
 question's options. Placement still uses its already-prepared tree reading; capture does not
 read a new tree or turn that reading into authority.
 
+The native captured-request adapter keeps the ordinary singleton, packed, and
+person-appended request shapes. It transfers settlements before it checks the provider
+result, arity, or answers. A fully answered request uses the original person join and
+answer-clock handling. A mixed request keeps unstarted question ordinals unpinned; an
+answered target whose person question did not start stays an incomplete logical read,
+not an answer with a made-up person probability. A late answered target keeps only its
+attempted provider pin.
+
+The optional captured ladder uses that adapter at each native request boundary. A
+whole unstarted chunk may skip an unsupported provider without splitting the native
+pack into probes. Each question keeps the rung that served its chunk. A tournament
+that already answered a chunk keeps its attempted pins and settlements if a later
+chunk cannot start; its incomplete outer winner is not an answer. Unsupported
+step-ups try the remaining configured takers, then use the same eligible-prior cut
+rule. They never enter the unavailable-provider branch that discards that prior.
+
 The allowance is a granted start slot, not proof of provider bytes or token use. A
 native admission after that slot may still fail. Memo recovery starts no generation;
 a schema correction uses a new logical generation, while a transport retry reuses the
@@ -34,5 +52,6 @@ stays unknown; billed reservations and currency charges are not actual token cou
 Reading a settlement never authorizes settling the model permit a second time.
 
 The Arc stronger-read path remains excluded by `generated_only`. The typed captured
-outcomes and truthful stop vocabulary alone do not enable it: native paced consumers,
-incomplete person/tournament reads, and the accounting join must be complete first.
+outcomes, native common path, and truthful stop vocabulary do not enable it by
+themselves. Provider coverage, memo-aware correction pacing, and the accounting join
+must be complete first.
