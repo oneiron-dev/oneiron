@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1263 facade rows, 4584 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1215.
+// UniFFI census: 1265 facade rows, 4587 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -27533,6 +27533,62 @@ pub struct EvalAuthoringInventory {
     pub seats: Vec<SeatInventory>,
 }
 
+/// `oneiron::skill_optimize::eval_set::repair_task::EvalRepairTaskSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairTaskSource {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "source_hash")]
+    pub source_hash: String,
+    #[serde(rename = "outcome_ordinal")]
+    pub outcome_ordinal: u64,
+    #[serde(rename = "task_pointer")]
+    pub task_pointer: String,
+    #[serde(rename = "seat")]
+    pub seat: EvalSeat,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_case::EvalRepairCaseRecipe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCaseRecipe {
+    #[serde(rename = "source")]
+    pub source: EvalRepairTaskSource,
+    #[serde(rename = "task_hash")]
+    pub task_hash: Vec<u8>,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_case::EvalRepairCasePreparation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCasePreparation {
+    #[serde(rename = "recipe", default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<EvalRepairCaseRecipe>,
+    #[serde(rename = "receipt")]
+    pub receipt: ScopedReadReceipt,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_case::EvalRepairCaseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCaseRequest {
+    #[serde(rename = "recipe")]
+    pub recipe: EvalRepairCaseRecipe,
+    #[serde(rename = "purpose")]
+    pub purpose: FamilyPurpose,
+}
+
+/// `oneiron::skill_optimize::eval_set::repair_case::EvalRepairCaseReference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EvalRepairCaseReference {
+    #[serde(rename = "case_ref", default, skip_serializing_if = "Option::is_none")]
+    pub case_ref: Option<String>,
+    #[serde(rename = "receipt")]
+    pub receipt: ScopedReadReceipt,
+}
+
 /// `oneiron::skill_optimize::eval_set::measurement::EvalArmPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27889,32 +27945,6 @@ pub struct EvalLabel {
         skip_serializing_if = "Option::is_none"
     )]
     pub source_rows: Option<Vec<String>>,
-}
-
-/// `oneiron::skill_optimize::eval_set::repair_task::EvalRepairTaskSource`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalRepairTaskSource {
-    #[serde(rename = "claim_ref")]
-    pub claim_ref: String,
-    #[serde(rename = "source_hash")]
-    pub source_hash: String,
-    #[serde(rename = "outcome_ordinal")]
-    pub outcome_ordinal: u64,
-    #[serde(rename = "task_pointer")]
-    pub task_pointer: String,
-    #[serde(rename = "seat")]
-    pub seat: EvalSeat,
-}
-
-/// `oneiron::skill_optimize::eval_set::repair_case::EvalRepairCaseRecipe`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct EvalRepairCaseRecipe {
-    #[serde(rename = "source")]
-    pub source: EvalRepairTaskSource,
-    #[serde(rename = "task_hash")]
-    pub task_hash: Vec<u8>,
 }
 
 /// `oneiron::skill_optimize::eval_set::EvalCase`.

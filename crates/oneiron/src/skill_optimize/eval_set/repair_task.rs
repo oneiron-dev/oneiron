@@ -165,8 +165,11 @@ impl Memory<'_> {
                 receipt: read.receipt,
             });
         };
+        let task = compile_repair_task(&view, source).map_err(|error| {
+            crate::memory::MemoryError::from(error).with_read_receipt(read.receipt.clone())
+        })?;
         Ok(EvalRepairTaskRead {
-            task: Some(compile_repair_task(&view, source)?),
+            task: Some(task),
             receipt: read.receipt,
         })
     }

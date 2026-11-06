@@ -2088,6 +2088,8 @@ class Oneiron:
         def inventory(self, spec: Facade.EvalInventoryWire) -> Facade.EvalAuthoringInventory:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
         @property
+        def repair(self) -> "Oneiron._VaultEvalsRepairVerbs": ...
+        @property
         def measurements(self) -> "Oneiron._VaultEvalsMeasurementsVerbs": ...
         @property
         def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs": ...
@@ -2105,6 +2107,11 @@ class Oneiron:
             """Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys."""
         @property
         def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs": ...
+    class _VaultEvalsRepairVerbs:
+        def prepare(self, spec: Facade.EvalRepairTaskSource) -> Facade.EvalRepairCasePreparation:
+            """Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case."""
+        def record(self, spec: Facade.EvalRepairCaseRequest) -> Facade.EvalRepairCaseReference:
+            """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""
     class _VaultEvalsMeasurementsVerbs:
         def request(self, spec: Facade.EvalMeasurementRequest) -> Facade.EvalMeasurementRef:
             """The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response."""

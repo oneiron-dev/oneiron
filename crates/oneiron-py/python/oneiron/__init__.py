@@ -3161,6 +3161,9 @@ class Oneiron:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
             return json.loads(_translate(lambda: self._client.vault_evals_inventory(json.dumps(spec))))
         @property
+        def repair(self) -> "Oneiron._VaultEvalsRepairVerbs":
+            return Oneiron._VaultEvalsRepairVerbs(self._client)
+        @property
         def measurements(self) -> "Oneiron._VaultEvalsMeasurementsVerbs":
             return Oneiron._VaultEvalsMeasurementsVerbs(self._client)
         @property
@@ -3187,6 +3190,15 @@ class Oneiron:
         @property
         def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs":
             return Oneiron._VaultEvalsLabelsVerbs(self._client)
+    class _VaultEvalsRepairVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def prepare(self, spec):
+            """Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case."""
+            return json.loads(_translate(lambda: self._client.vault_evals_repair_prepare(json.dumps(spec))))
+        def record(self, spec):
+            """The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger."""
+            return json.loads(_translate(lambda: self._client.vault_evals_repair_record(json.dumps(spec))))
     class _VaultEvalsMeasurementsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

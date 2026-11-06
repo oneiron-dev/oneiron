@@ -487,6 +487,8 @@ vaultResearchArchiveBest(input: unknown): unknown
 vaultResearchArchiveRepropose(input: unknown): unknown
 vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
+vaultEvalsRepairPrepare(input: unknown): unknown
+vaultEvalsRepairRecord(input: unknown): unknown
 vaultEvalsMeasurementsRequest(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
 vaultEvalsAuthorNow(input: unknown): unknown

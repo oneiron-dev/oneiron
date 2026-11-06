@@ -2261,6 +2261,16 @@ export_facade! {
     let output = client.vault_evals_inventory(&input)?;
     crate::codec::lift_record("vault.evals.inventory", &output)
 };
+"vault.evals.repair.prepare" => fn vault_evals_repair_prepare(&self, input: EvalRepairTaskSource) -> EvalRepairCasePreparation = |client| {
+    let input: oneiron::skill_optimize::EvalRepairTaskSource = crate::codec::lower_record("vault.evals.repair.prepare", input)?;
+    let output = client.vault_evals_repair_prepare(&input)?;
+    crate::codec::lift_record("vault.evals.repair.prepare", &output)
+};
+"vault.evals.repair.record" => fn vault_evals_repair_record(&self, input: EvalRepairCaseRequest) -> EvalRepairCaseReference = |client| {
+    let input: oneiron::skill_optimize::EvalRepairCaseRequest = crate::codec::lower_record("vault.evals.repair.record", input)?;
+    let output = client.vault_evals_repair_record(&input)?;
+    crate::codec::lift_record("vault.evals.repair.record", &output)
+};
 "vault.evals.measurements.request" => fn vault_evals_measurements_request(&self, input: EvalMeasurementRequest) -> EvalMeasurementRef = |client| {
     let input: oneiron::skill_optimize::EvalMeasurementRequest = crate::codec::lower_record("vault.evals.measurements.request", input)?;
     let output = client.vault_evals_measurements_request(&input)?;

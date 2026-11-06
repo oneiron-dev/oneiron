@@ -7091,6 +7091,35 @@
       "openapi": true
     },
     {
+      "name": "vault.evals.repair.prepare",
+      "description": "Prepare a pinned Repair recipe and actual read receipt from an explicitly mapped linked capture, using ordinary scoped rights. Serves no task input or expected response and records no case.",
+      "input": "crate::skill_optimize::EvalRepairTaskSource",
+      "output": "crate::skill_optimize::EvalRepairCasePreparation",
+      "call": "memory.read_eval_repair_task(&input).map(crate::skill_optimize::EvalRepairCasePreparation::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.evals.repair.record",
+      "description": "The owner records or reuses an exact Repair recipe using the credential's original scoped reader. Returns only the case ref and actual read receipt, never expected responses or the sealed ledger.",
+      "input": "crate::skill_optimize::EvalRepairCaseRequest",
+      "output": "crate::skill_optimize::EvalRepairCaseReference",
+      "call": "memory.record_eval_repair_case(&memory.embedded_owner(\"vault.evals.repair.record\")?, &input).map(crate::skill_optimize::EvalRepairCaseReference::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.evals.measurements.request",
       "description": "The owner queues a paired measurement and keeps the authenticated caller's source reader beside its question. Returns only its canonical digest, never sealed membership, source text or an expected response.",
       "input": "crate::skill_optimize::EvalMeasurementRequest",
