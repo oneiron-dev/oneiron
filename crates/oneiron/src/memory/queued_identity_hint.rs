@@ -15,7 +15,13 @@ use crate::{EntityId, Vault};
 pub(crate) struct OnDeviceIdentityHintReader {
     actor: EntityId,
     actor_class: u8,
-    proof: StoredReadProof,
+    authority: QueuedIdentityHintAuthority,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum QueuedIdentityHintAuthority {
+    Credential(StoredReadProof),
+    Uncredentialed,
 }
 
 impl Memory<'_> {
@@ -27,11 +33,14 @@ impl Memory<'_> {
         {
             return None;
         }
-        let proof = self.read_proof.as_ref()?;
+        let authority = match &self.read_proof {
+            Some(proof) => QueuedIdentityHintAuthority::Credential(StoredReadProof::of(proof)),
+            None => QueuedIdentityHintAuthority::Uncredentialed,
+        };
         Some(OnDeviceIdentityHintReader {
             actor: self.actor,
             actor_class: self.actor_class as u8,
-            proof: StoredReadProof::of(proof),
+            authority,
         })
     }
 }
@@ -45,10 +54,22 @@ impl OnDeviceIdentityHintReader {
         let class = EdgeActorClass::try_from_u8(self.actor_class).ok_or_else(|| {
             MemoryError::from(crate::Error::CorruptedIndex("tagging hint actor class"))
         })?;
-        let memory = vault
-            .memory(self.actor, class)
-            .with_read_proof(&self.proof.restore());
+        let memory = match &self.authority {
+            QueuedIdentityHintAuthority::Credential(proof) => vault
+                .memory(self.actor, class)
+                .with_read_proof(&proof.restore()),
+            QueuedIdentityHintAuthority::Uncredentialed => vault.memory(self.actor, class),
+        };
         let read = memory.read_lane_if_granted(ClaimReadStatus::Recorded)?;
+        // An uncredentialed caller's later promotion must not replace its
+        // original grant-bound position with the Owner's whole-vault key.
+        if matches!(&self.authority, QueuedIdentityHintAuthority::Uncredentialed)
+            && read
+                .as_ref()
+                .is_some_and(|read| read.actor_key().reads_as_vault_owner())
+        {
+            return Ok(None);
+        }
         // This fresh plain lane has no audience, peer, session or owner
         // composition. Keep its actual native key, including its live guard.
         Ok(read.map(|read| {
