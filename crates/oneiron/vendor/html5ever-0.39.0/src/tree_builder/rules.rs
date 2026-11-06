@@ -1132,11 +1132,16 @@ where
                     if self.coalesce_table_text {
                         if let Some((previous_split, previous_text)) = pending.last_mut() {
                             if *previous_split == split {
-                                previous_text.push_tendril(&text);
+                                if !self.append_pending_table_text(previous_text, &text) {
+                                    return ProcessResult::Stopped;
+                                }
                                 return ProcessResult::Done;
                             }
                         }
                     }
+                    let Some(text) = self.prepare_pending_table_text(text) else {
+                        return ProcessResult::Stopped;
+                    };
                     pending.push((split, text));
                     ProcessResult::Done
                 },

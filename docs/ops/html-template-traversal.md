@@ -207,6 +207,20 @@ later budget checkpoints to the checked driver's existing error channel; the
 driver drops the partial parser and DOM instead of returning success.
 Ordinary parser calls keep their original wrapping and coalescing behavior.
 This covers parser text insertion, not later DOM setters, ordinary allocating
-clones or mutations, incoming token and pending-table text buffers, callback
+clones or mutations, incoming token and pending-table vector backing, callback
 metadata, other private payloads or allocator-private overhead. Those gaps and
 opaque native work keep full FIX 9615 PART; no default cap or timer is added.
+
+Pending table-text payloads also reserve their actual native tendrils before
+storage or coalescing. A first entry is built in a fresh final destination,
+then moved into the existing pending vector; already allocated input is not
+retrospectively admitted. A coalesced append reserves the actual stored payload
+before copying the additional UTF-8 bytes. Refusal stops that insertion-mode
+step through the checked parser's same first typed error channel.
+The native allocation header retains its reservation through pending-vector
+moves, whitespace inspection, foster-parent or ordinary flush, and early-error
+drop. Split status, scalar-stream coalescing, bytes, order and the ordinary
+no-reservation paths remain unchanged. The pending vector's own backing and
+its take-to-iterator lifetime, incoming token storage, callback metadata and
+other private allocations remain unadmitted. This payload-only slice does not
+complete FIX 9615 or make opaque native work preemptible.

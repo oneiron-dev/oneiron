@@ -1,6 +1,7 @@
 //! Admission before native tree-sink operations that may grow a node arena.
 
 use super::TreeBuilder;
+use crate::tendril::StrTendril;
 use crate::{tree_builder::NodeOrText, QualName};
 
 /// A pending sink operation. No handle has been created by this operation yet.
@@ -25,12 +26,46 @@ pub enum TreeSinkOperation<'a, Handle> {
 pub(super) type SinkCheckpoint<Handle, Sink> =
     Box<dyn Fn(&Sink, TreeSinkOperation<'_, Handle>) -> bool + Send>;
 
+pub(super) type PendingTableTextReservation = Box<dyn Fn(&mut StrTendril, usize) -> bool + Send>;
+
 pub(super) type OpenElementsReservation<Handle> =
     Box<dyn Fn(&mut Vec<Handle>, usize) -> bool + Send>;
 
 impl<Handle, Sink> TreeBuilder<Handle, Sink> {
     pub(crate) fn coalesce_table_text(&mut self) {
         self.coalesce_table_text = true;
+    }
+
+    pub(crate) fn set_pending_table_text_reservation(
+        &mut self,
+        reservation: PendingTableTextReservation,
+    ) {
+        self.pending_table_text_reservation = Some(reservation);
+    }
+
+    pub(super) fn append_pending_table_text(
+        &self,
+        destination: &mut StrTendril,
+        text: &StrTendril,
+    ) -> bool {
+        if let Some(reservation) = &self.pending_table_text_reservation {
+            if !reservation(destination, text.len()) {
+                return false;
+            }
+            destination.push_slice(text);
+        } else {
+            destination.push_tendril(text);
+        }
+        true
+    }
+
+    pub(super) fn prepare_pending_table_text(&self, text: StrTendril) -> Option<StrTendril> {
+        if self.pending_table_text_reservation.is_none() {
+            return Some(text);
+        }
+        let mut destination = StrTendril::new();
+        self.append_pending_table_text(&mut destination, &text)
+            .then_some(destination)
     }
 
     pub(crate) fn set_open_elements_reservation(

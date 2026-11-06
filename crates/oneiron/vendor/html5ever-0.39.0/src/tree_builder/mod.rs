@@ -155,6 +155,7 @@ pub struct TreeBuilder<Handle, Sink> {
     // FIXME: Auto-generate the trace hooks like Servo does.
 
     coalesce_table_text: bool,
+    pending_table_text_reservation: Option<control::PendingTableTextReservation>,
 
     // Keep last: stack storage must be freed before the captured reservation.
     open_elements_reservation: Option<control::OpenElementsReservation<Handle>>,
@@ -190,6 +191,7 @@ where
             context_elem: Default::default(),
             current_line: Cell::new(1),
             coalesce_table_text: false,
+            pending_table_text_reservation: None,
             open_elements_reservation: None,
         }
     }
@@ -233,6 +235,7 @@ where
             context_elem: RefCell::new(Some(context_elem)),
             current_line: Cell::new(1),
             coalesce_table_text: false,
+            pending_table_text_reservation: None,
             open_elements_reservation: None,
         };
 
