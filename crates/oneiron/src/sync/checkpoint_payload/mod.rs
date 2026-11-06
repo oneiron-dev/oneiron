@@ -29,15 +29,22 @@
 //! [`restore_checkpoint_windows`] joins each carrier from the copies that
 //! opened, erases the values none did and proves the join before any row is
 //! put back. A window the vendored capture or the families' codecs cannot
-//! split stays under the vault-wide seal, named. Nothing calls either before
-//! KS7-5, and nothing reaches them while CHECKPOINT_PAYLOADS_ENABLED is false.
+//! split stays under the vault-wide seal, named. KS7-5's port drives both on
+//! a capture and a restore (FIX 10277); each copy names the home its capture
+//! placed it in, and a restore takes a value only from that home (FIX 10283).
+//! A room turn row in parts is carried joined ([`JoinedTurn`], FIX 12153):
+//! one copy of the turn naming no one, its actor split out, and every slot
+//! of its manifest and parts derived from it at the join.
 #![allow(
     dead_code,
-    reason = "KS7-5 drives these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
+    reason = "a build without the KS7-5 port leaves some of these unread"
 )]
 
+mod author_carrier;
+mod classify;
 mod documents;
 mod frame;
+mod joined_turns;
 mod operations;
 mod owners;
 mod parts;
@@ -50,6 +57,7 @@ use heed::RoTxn;
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 
+pub(crate) use self::owners::WINDOW_ROOTS;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::owners::root_entry;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
@@ -316,18 +324,60 @@ pub(crate) struct LoroRow {
     pub(crate) slice: LoroSlice,
 }
 
-/// One copy of a value: where it rests and the ordinal `emit` gave it.
+/// One copy of a value: where it rests, the ordinal `emit` gave it, and the
+/// home its capture placed it in with the owners it holds only while they
+/// do (FIX 10283): a restore takes the copy only from that home.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SlotCopy {
     pub(crate) at: RowLocator,
     pub(crate) atom: AtomRef,
+    pub(crate) home: AtomHome,
+    pub(crate) dependencies: Vec<OwnerRef>,
 }
 
 /// One skeleton slot, by its vendored atom id: a copy per rightful holder,
 /// never merged by owner (FIX 9128), and the fields of the actors its value
-/// names (FIX 9127).
+/// names (FIX 9127). A derived slot holds neither: the join makes its value
+/// from its joined turn (FIX 12153).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoroSlot {
+    pub(crate) copies: Vec<SlotCopy>,
+    pub(crate) holes: Vec<String>,
+    pub(crate) derived: Option<DerivedSlot>,
+}
+
+/// A slot whose value the join derives from one of its carrier's joined
+/// turns (FIX 12153): the turn, by its place in [`LoroCarrier::joined`], and
+/// what the slot holds of that turn's row re-parted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DerivedSlot {
+    pub(crate) source: u32,
+    pub(crate) role: DerivedRole,
+}
+
+/// What a derived slot holds of its joined turn's row, re-parted as the
+/// window writes a row past its bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DerivedRole {
+    /// The row's manifest, under the turn's own key.
+    Manifest,
+    /// The key of the part at this place.
+    PartKey(u32),
+    /// The bytes of the part at this place.
+    PartValue(u32),
+}
+
+/// A room turn row the window held in parts, carried joined (FIX 12153):
+/// one copy per rightful holder of the turn naming no one, its actor split
+/// out beside it, as a whole row's is. Every slot of its manifest, part keys
+/// and parts is derived from it ([`DerivedSlot`]): the join re-parts the turn
+/// as it opened, and a turn none of whose copies opened erases them all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct JoinedTurn {
+    /// The turn's id: its row's key in the room turn map.
+    pub(crate) key: String,
+    /// How many parts the captured row had: no re-part holds more.
+    pub(crate) parts: u32,
     pub(crate) copies: Vec<SlotCopy>,
     pub(crate) holes: Vec<String>,
 }
@@ -335,13 +385,26 @@ pub(crate) struct LoroSlot {
 /// One window's split Loro rows (KS7-3b): the payload-free outer skeleton
 /// KS7-5 keeps under the image's outer seal. `skeleton` is the vendored
 /// one: root names, plaintext keys, versions and the operation history, its
-/// values atom ids. `slots` follows its slots in order.
+/// values atom ids. `slots` follows its slots in order, and `joined` holds
+/// the turns its derived slots are made from (FIX 12153).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoroCarrier {
     pub(crate) window: String,
     pub(crate) skeleton: Skeleton,
     pub(crate) rows: Vec<LoroRow>,
     pub(crate) slots: Vec<LoroSlot>,
+    pub(crate) joined: Vec<JoinedTurn>,
+}
+
+impl LoroCarrier {
+    /// Every copy the carrier names: each slot's, then each joined turn's.
+    /// A capture seals these, and a restore answers these, alone.
+    pub(crate) fn copies(&self) -> impl Iterator<Item = &SlotCopy> {
+        self.slots
+            .iter()
+            .flat_map(|slot| &slot.copies)
+            .chain(self.joined.iter().flat_map(|turn| &turn.copies))
+    }
 }
 
 /// What a window projection left of the capture's Loro rows: the carriers
@@ -423,6 +486,14 @@ pub(crate) trait OpenedSyncAtoms {
     /// form, and no actor is taken from anywhere else.
     fn actor_parts(&self, _atom: AtomRef) -> Vec<&ActorPart> {
         Vec::new()
+    }
+
+    /// The home whose opened compartment, or the image's own seal, gave
+    /// `atom`'s bytes, as the restore authenticated it (FIX 10283): a window
+    /// value is taken only from the home its capture placed the copy in.
+    /// None by default, so a window copy opens from nowhere.
+    fn opened_home(&self, _atom: AtomRef) -> Option<AtomHome> {
+        None
     }
 }
 
@@ -566,6 +637,13 @@ pub(crate) fn project_checkpoint_windows(
     emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
 ) -> Result<WindowProjection> {
     self::operations::project(&rows.rows, owners, emit)
+}
+
+/// The window a captured Loro row belongs to: its snapshot's, its pending
+/// update's or its queued update's. `None` for any other row, and for one
+/// that does not read.
+pub(crate) fn captured_row_window(row: &CapturedSyncRow<'_>) -> Option<String> {
+    self::operations::window_of(row)
 }
 
 /// Puts each of `carriers`' rows back (KS7-3b), each carrier joined from

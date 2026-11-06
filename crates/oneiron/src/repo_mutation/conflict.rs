@@ -582,6 +582,7 @@ fn supersede_repo_conflict_claim(
             end: now,
         },
         learned_at: old_header.learned_at,
+        row_version: None,
         data,
         allow_maintenance: true,
         allow_reserved_predicate: true,

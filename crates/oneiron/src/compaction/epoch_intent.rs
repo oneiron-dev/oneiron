@@ -187,6 +187,7 @@ pub(super) fn intent_ops(
             entity_type: ENTITY_TYPE_NOTE,
             occurred: TimeRange { start: at, end: at },
             learned_at: at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,
