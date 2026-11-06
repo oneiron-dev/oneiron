@@ -10,9 +10,11 @@
 //! rows) answers the stored copy as it did before projection existed
 //! (`ISOLATION_NEW_CHECK_ERROR_MODE`); bounds that were judged still bound.
 //! A one-shot transfer is served once (FIX-LIST 10773): the row keeps each
-//! slip an archive door spent so, on every archive of its removed Owner. A
-//! pact-bound transfer is served only while its pact holds, and the row logs
-//! each serve under that pact (FIX 11860).
+//! slip an archive door spent so, on every archive of its removed Owner, and
+//! the door signs the spend into the authority log, so a replica that does
+//! not share these rows refuses the slip once it folds that entry (FIX
+//! 11862). A pact-bound transfer is served only while its pact holds, and
+//! the row logs each serve under that pact (FIX 11860).
 //! An erase reaches these copies in its own commit (FIX-LIST 2241): an
 //! archive that froze an erased record is rewritten without it. A person's
 //! erase drops the archives kept for them (FIX 11723).
@@ -264,9 +266,11 @@ impl Vault {
         Ok(copies)
     }
 
-    /// Whether an archive door already served the one-shot transferred slip
-    /// `slip_id`: any of `member`'s archives keeps its spend (FIX-LIST
-    /// 10773).
+    /// Whether an archive door of this store already served the one-shot
+    /// transferred slip `slip_id`: any of `member`'s archives keeps its spend
+    /// (FIX-LIST 10773). The authority fold's consumed set carries a signed
+    /// spend to the replicas that do not share these rows (FIX 11862); the
+    /// door reads both.
     pub(crate) fn removal_archive_slip_spent_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -281,7 +285,9 @@ impl Vault {
     }
 
     /// Spends the one-shot transferred slip `slip_id` on every archive of
-    /// `member`, in the writer whose answer served it (FIX-LIST 10773).
+    /// `member`, in the writer whose answer served it (FIX-LIST 10773). The
+    /// door signs the same spend into the authority log in that writer when
+    /// it holds a signer (FIX 11862).
     pub(crate) fn spend_removal_archive_slip_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

@@ -25,12 +25,8 @@ use oneiron::agent_dispatch::{
     WorkflowToolProgress, WorkflowToolTranscript, agent_dispatch_run_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
-use oneiron::code_run::ReadWorldUnknown;
-use oneiron::code_run::model_call::{
-    MODEL_CALL_SCHEMA, ModelCallInputPart, ModelCallKind, ModelCallReasoningPart, ModelCallRecord,
-    model_call_digests, record_model_call_in_txn,
-};
 use oneiron::compaction::output::{OUTPUT_WINDOW_BYTES, restore_output_window};
+use oneiron::context_board::{TURN_WAKE_GRAMMAR, TurnWake, turn_wake_line};
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::llm::{
@@ -51,8 +47,10 @@ use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
+mod response_capture;
 mod secret_use;
 
+use response_capture::{record_workflow_response, response_text};
 use secret_use::{StepConversation, StepConversationFault, StepSecretUse};
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -258,6 +256,7 @@ impl StepRunner {
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
         continuation: Option<WorkflowToolContinuation>,
+        woken: Option<TurnWake>,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
         // The step and the claim load door that reads its requester craft are
@@ -347,6 +346,18 @@ impl StepRunner {
         if let Some(left_out) = selected.omission_notice() {
             messages.push(message(LlmMessageRole::System, left_out));
         }
+        // FIX 15648: a leaf of a workflow a TASK started (`woken`, read from
+        // the workflow's own binding) was started by that event (ARCH-0067:
+        // "a session born from an event opens with the wake variant"), so
+        // the protocol is stated beside its instructions and the wake opener
+        // closes its request below. Planner calls on the shared generator
+        // stay untagged.
+        if woken.is_some() {
+            messages.push(message(
+                LlmMessageRole::System,
+                TURN_WAKE_GRAMMAR.to_owned(),
+            ));
+        }
         let briefing = context.briefing.filter(|text| !text.trim().is_empty());
         let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
         for output in &context.workflow_output_refs {
@@ -381,6 +392,14 @@ impl StepRunner {
             messages.push(message(
                 LlmMessageRole::User,
                 confession_ask(&objectives, &self.confession),
+            ));
+        }
+        // The wake opener at the leaf's final request boundary, on the
+        // vault's clock read here; it is no row the step read.
+        if let Some(wake) = woken {
+            messages.push(message(
+                LlmMessageRole::User,
+                turn_wake_line(vault.now_recorded_ms(), wake),
             ));
         }
         // The step's inputs as the caller's part of one read set (FIX
@@ -710,12 +729,15 @@ impl StepRunner {
         // The estimate counts metered reservations only: on a free ladder the
         // earlier tries spent nothing, so no replay is owed. A restart across
         // a paid-to-keyless route move replays 0 for tries that paid, the
-        // same estimate class as above.
-        let charged = if continuation.is_some() || request.envelope.host_keyless {
-            0
-        } else {
-            charged
-        };
+        // same estimate class as above. A free on-device ladder is free too;
+        // a paid one, a paid provider's managed worker over its native
+        // channel, is replayed as a paid own-server one is (FIX 14889).
+        let charged =
+            if continuation.is_some() || request.envelope.host_keyless || ladder.all_free_work() {
+                0
+            } else {
+                charged
+            };
         // A step launched under a spend lease (OF-532) is bounded by it too:
         // beside its policy rows, this try may spend no more than the lease
         // has left, read live as each call is admitted (FIX 1819). Replayed
@@ -787,8 +809,14 @@ impl StepRunner {
                 actor,
             )?
         };
+        // Only a ladder with a paid rung replays, so each replay reserves on
+        // the paid line whatever the call's locality: an on-device label
+        // alone would admit it unmetered (FIX 14889).
         for _ in 0..charged {
-            let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
+            let spent = guard
+                .admit_paid_for_request(&request)
+                .map_err(budget)?
+                .lease;
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
@@ -855,19 +883,22 @@ impl StepRunner {
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.
-        if !continuation
+        let capture_completed = continuation
             .as_ref()
-            .is_some_and(|saved| saved.progress.cursor.capture_completed)
-        {
+            .is_some_and(|saved| saved.progress.cursor.capture_completed);
+        let capture = |request: &LlmRequest| {
+            if capture_completed {
+                return None;
+            }
             oneiron::code_run::capture_workflow_step(
                 vault,
                 attempt.id,
                 attempt.attempt_count,
                 actor,
-                &request,
+                request,
                 sources,
-            );
-        }
+            )
+        };
         let may_send = || {
             live.book_and_revise();
             true
@@ -935,25 +966,29 @@ impl StepRunner {
                 &run,
                 &live,
                 request,
+                capture,
                 continuation
                     .as_ref()
                     .map(|saved| (saved.progress.cursor.clone(), saved.progress.wait.clone())),
                 &mut save,
             ),
             None => {
+                let staged = capture(&request);
                 let final_request = request.clone();
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
-                    .map(|(response, binding)| StepConversation::Answered {
-                        response,
-                        binding,
-                        tool_rounds: false,
-                        request: final_request,
+                    .map(|(response, binding)| {
+                        secret_use::finalize_capture(staged, vault, &binding);
+                        StepConversation::Answered {
+                            response,
+                            binding,
+                            tool_rounds: false,
+                            request: final_request,
+                        }
                     })
                     .map_err(StepConversationFault::Model)
             }
         };
-        oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         if !matches!(&generated, Ok(StepConversation::HookPending(_))) {
@@ -1021,8 +1056,21 @@ impl StepRunner {
             tool_rounds,
             no_record,
         );
+        let bytes = response_text(&response);
+        // FIX 3611: a saved-workflow step that answered in its one call binds
+        // that answer to its capsule. A tool round, a resumed step or an
+        // off-record stretch binds none.
+        if workflow.is_some() && continuation.is_none() && !tool_rounds && !no_record {
+            oneiron::code_run::bind_workflow_step_answer(
+                vault,
+                attempt.id,
+                attempt.attempt_count,
+                &final_request,
+                &bytes,
+            );
+        }
         Ok(GeneratedStep {
-            bytes: response_text(&response),
+            bytes,
             tool_rounds,
             planner_craft_rows,
         })
@@ -1043,125 +1091,5 @@ fn stamp_executor(
         )
     {
         tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
-    }
-}
-
-fn response_text(response: &LlmResponse) -> Vec<u8> {
-    response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<String>()
-        .into_bytes()
-}
-
-/// Best-effort final-answer capture for FIX 12516. Intermediate self.use
-/// rounds are explicitly marked truncated and get their own later slice.
-#[allow(clippy::too_many_arguments)]
-fn record_workflow_response(
-    vault: &Vault,
-    source_rows: Option<Vec<EntityId>>,
-    request: &LlmRequest,
-    response: &LlmResponse,
-    binding: &ModelCallBinding,
-    attempt: &AttemptRecord,
-    actor: WriteActor,
-    tool_rounds: bool,
-    no_record: bool,
-) {
-    if no_record {
-        tracing::debug!("workflow model-call record skipped: off-record room");
-        return;
-    }
-    let digests = match model_call_digests(request) {
-        Ok(digests) => digests,
-        Err(error) => {
-            tracing::warn!(%error, "workflow model-call digests failed");
-            return;
-        }
-    };
-    let Ok(attempt_entity) = oneiron::EntityId::from_bytes(*attempt.id.as_bytes()) else {
-        tracing::warn!("workflow model-call record skipped: attempt id is not an entity");
-        return;
-    };
-    // The record stamps the exact rung that answered, threaded with the
-    // final answer (FIX 12743), not the one requested.
-    let rung = binding.rung.clone();
-    let route = binding.route.clone();
-    // The parent try's own fence, read from its row and never guessed: a
-    // retry's attempt_count does not count logical retries.
-    let replay_of = attempt.retry_of.and_then(|parent| {
-        let parent_row = AttemptQueue::new(vault).get(parent).ok()??;
-        let parent_entity = oneiron::EntityId::from_bytes(*parent.as_bytes()).ok()?;
-        Some((parent_entity, u64::from(parent_row.attempt_count)))
-    });
-    let input_parts = if source_rows.is_none() {
-        vec![ModelCallInputPart::Unknown {
-            reason: "workflow-step sources are unknown".to_owned(),
-        }]
-    } else {
-        Vec::new()
-    };
-    let call_metadata = response.usage.call_metadata.as_ref();
-    let record = ModelCallRecord {
-        schema: MODEL_CALL_SCHEMA,
-        attempt: attempt_entity,
-        lease_generation: u64::from(attempt.attempt_count),
-        // Index 1 is the try's first call; a tool-rounds step's final answer
-        // follows its truncated rounds and takes index 2.
-        call_index: u64::from(tool_rounds) + 1,
-        kind: ModelCallKind::Generate {
-            digests,
-            usage: response.usage.clone(),
-            finish_reason: response.finish_reason.clone(),
-        },
-        route,
-        rung,
-        issuing_login: None,
-        organization: None,
-        project: None,
-        credential_id: None,
-        response_id: call_metadata.and_then(|metadata| metadata.response_id.clone()),
-        thread_id: None,
-        previous_response_id: call_metadata
-            .and_then(|metadata| metadata.previous_response_id.clone()),
-        store: call_metadata.and_then(|metadata| metadata.store),
-        endpoint: call_metadata.map(|metadata| metadata.endpoint),
-        captured_at: vault.now_recorded_at(),
-        receipt_ref: None,
-        actor: Some(actor.entity_ref()),
-        produced_pending: response.reply_assertions.created.is_empty(),
-        tool_rounds,
-        rounds_truncated: tool_rounds,
-        replay_of,
-        source_rows: source_rows.unwrap_or_default(),
-        produced_rows: response
-            .reply_assertions
-            .created
-            .iter()
-            .map(|record| record.id)
-            .collect(),
-        input_parts,
-        reasoning: response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| ModelCallReasoningPart::from_terminal(part, None, None))
-            .collect(),
-        read_world_epoch: None,
-        read_worlds: None,
-        read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
-        tools_present: !request.tools.is_empty(),
-        summary_requested: false,
-        erased: false,
-    };
-    if let Err(error) =
-        vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))
-    {
-        tracing::warn!(%error, "workflow model-call record failed");
     }
 }
