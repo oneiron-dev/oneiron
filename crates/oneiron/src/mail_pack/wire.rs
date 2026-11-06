@@ -121,6 +121,12 @@ pub struct MailFull {
     /// message has no text part.
     pub body_text: Option<String>,
     pub attachments: Vec<MailAttachmentRef>,
+    /// The BLAKE3 of the whole message, each line ended by CRLF, when it was
+    /// read whole: what proves a copy of it found later to be the same
+    /// message (fix list row 19145). `None` where the wire does not read the
+    /// message's bytes.
+    #[serde(default)]
+    pub content_digest: Option<[u8; 32]>,
 }
 
 /// One change a history page reports since the source's anchor.

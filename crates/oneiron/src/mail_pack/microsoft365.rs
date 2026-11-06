@@ -593,6 +593,7 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             headers,
             body_text: Some(body_text).filter(|text| !text.is_empty()),
             attachments,
+            content_digest: None,
         }))
     }
 

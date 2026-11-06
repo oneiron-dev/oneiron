@@ -417,6 +417,7 @@ impl<'v> Landing<'v> {
                 attachments: Vec::new(),
                 reply: None,
                 listed_in: None,
+                content_digest: None,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
@@ -440,6 +441,9 @@ impl<'v> Landing<'v> {
             occurrence.searched |= searched;
             if let Some(full) = full {
                 occurrence.attachments.clone_from(&full.attachments);
+                // The first whole read names what the id holds (fix list
+                // row 19145).
+                occurrence.content_digest = occurrence.content_digest.or(full.content_digest);
             }
             occurrence.reply = Some(MailReplyHeaders::of(headers));
             occurrence.updated_at = self.imported_at;
@@ -500,7 +504,8 @@ impl<'v> Landing<'v> {
 impl Landing<'_> {
     /// Records that the occurrence `key` was read whole when its words are
     /// those it landed with already: its stage is the body, it keeps the
-    /// message's attachments, and it leaves the body queue.
+    /// message's attachments and the digest of its first whole read, and it
+    /// leaves the body queue.
     fn settle_full_in_place(
         &self,
         key: &(EntityId, [u8; 32]),
@@ -516,12 +521,17 @@ impl Landing<'_> {
             if matches!(occurrence.presence, MailPresence::Forgotten { .. }) {
                 return Ok(());
             }
-            if occurrence.stage == MailStage::Body && occurrence.attachments == full.attachments {
+            let digest = occurrence.content_digest.or(full.content_digest);
+            if occurrence.stage == MailStage::Body
+                && occurrence.attachments == full.attachments
+                && occurrence.content_digest == digest
+            {
                 return Ok(());
             }
             let first_body = occurrence.stage == MailStage::Headers;
             occurrence.stage = MailStage::Body;
             occurrence.attachments.clone_from(&full.attachments);
+            occurrence.content_digest = digest;
             occurrence.updated_at = self.imported_at;
             BODY_QUEUE.delete(
                 &vault.store,
