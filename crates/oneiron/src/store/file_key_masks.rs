@@ -28,6 +28,10 @@
 //! reader cannot be served is [`SecretError::MaskedCopyWithheld`] with the
 //! scan's reason (FIX 2475).
 
+mod paced_row;
+
+pub(crate) use paced_row::masked_file_in_txn_with_reader;
+
 use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
