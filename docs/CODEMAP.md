@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6414 | 895 | 161 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6421 | 895 | 162 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 61 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 33 | 2 | 0 |
@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 4 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1604 | 182 | 50 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1607 | 182 | 51 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 631 | 4 | 0 |
@@ -124,7 +124,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `consent` | dir | 43 | m | yes | DEC-0006 unified consent-mode — bounded standing grants |
 | `consent_graduation` | dir | 9 | m | yes | DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that… |
 | `consult_ladder` | dir | 5 | m | — | Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer… |
-| `context_board` | dir | 75 | m | yes | Typed Context Board render projections |
+| `context_board` | dir | 80 | L | yes | Typed Context Board render projections |
 | `context_pack` | dir | 28 | m | yes | Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out |
 | `context_projection` | dir | 5 | m | — | Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead… |
 | `contract_oracle` | dir | 1 | s | — | Persisted, deterministic Rust API, schema and command-output contracts |
@@ -247,7 +247,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `self_heal` | dir | 51 | m | yes | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
 | `serialize` | dir | 25 | m | — | Context-pack serialization |
 | `session_lifecycle` | file+dir | 4 | L | yes | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… |
-| `settings` | file+dir | 8 | m | yes | Persisted customization settings and client-visible change events |
+| `settings` | file+dir | 9 | m | yes | Persisted customization settings and client-visible change events |
 | `share` | file+dir | 7 | L | yes | Revocable brief read grants |
 | `share_travel` | file+dir | 6 | L | yes | What travels with a body when it leaves the vault (OF-491) |
 | `side_table` | dir | 16 | L | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
@@ -286,7 +286,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `vault_live_rows` | file | 1 | s | yes | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
 | `vault_shape` | dir | 26 | L | yes | Vault shape as code (ARCH-0070): the setup plane held in one hand |
 | `verb_catalog` | file | 1 | s | — | Verb catalog vocabulary used by core admission and action surfaces |
-| `verbs` | dir | 113 | XL | — | Shared typed agent-verb inputs and generated transport dispatch |
+| `verbs` | dir | 114 | XL | — | Shared typed agent-verb inputs and generated transport dispatch |
 | `voice_cascade` | file+dir | 40 | L | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `voice_identity` | dir | 24 | L | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `voice_segment` | file | 1 | s | — | Voice-segment claim vocabulary is defined in the core write envelope |
@@ -808,7 +808,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | s | Admission for work a remote caller can start |
 | `ai_host` | dir | 113 | XL | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
-| `api` | dir | 677 | XL | HTTP query routes for web dashboard access |
+| `api` | dir | 680 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 15 | L | HTTP authentication for log-backed version-two capability slips |
 | `big_rung` | file+dir | 4 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
