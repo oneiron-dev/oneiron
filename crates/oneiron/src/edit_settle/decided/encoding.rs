@@ -61,6 +61,10 @@ impl ExpectedAnswers {
         check_deadline(self.deadline)?;
         DECIDED.decode_value(&self.encoded.bytes)
     }
+
+    pub(super) fn matches_encoded(&self, bytes: &[u8]) -> bool {
+        self.encoded.bytes == bytes
+    }
 }
 
 fn encode_buffer(row: &DecidedSheetAnswers, deadline: Instant) -> Result<EncodedBuffer> {
