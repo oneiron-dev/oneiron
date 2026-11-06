@@ -40,9 +40,11 @@ use crate::server::SyncServer;
 const MCP_BOOKING_HOLDER_STREAM_CONTEXT: &str =
     "oneiron-server 2026-10 mcp stale-owner booking stream";
 
-/// The caller of one `tools/call`: for a booking tool called with no
-/// credential by an attested holder the vault no longer records as its live
-/// owner, that holder as a booking caller ([`booking_context`]); for a
+/// The caller of one `tools/call`: for an OAuth access token, the client's
+/// agent it resolves to, and nothing else (FIX 4902, `oauth_call`); for a
+/// booking tool called with no credential by an attested holder the vault
+/// no longer records as its live owner, that holder as a booking caller
+/// ([`booking_context`]); for a
 /// member door called with no credential by a member his supervisor signed
 /// it for, that member (FIX 1302, `person_call`); for every other call, the
 /// caller `owner_call::resolve_mcp_caller` resolves.
@@ -55,6 +57,13 @@ pub(super) async fn resolve_tool_caller(
     server: &Arc<SyncServer>,
     params: Option<&Value>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    // A stock client's OAuth access token is resolved first, and only as
+    // that (FIX 4902 slice C).
+    if let Some(oauth) =
+        super::oauth_call::caller(mode, request_id, headers, connection, locality, server)
+    {
+        return oauth;
+    }
     if let Some(person) =
         super::person_call::tool_caller(mode, request_id, headers, connection, server, params)
     {
@@ -69,8 +78,10 @@ pub(super) async fn resolve_tool_caller(
 
 /// The caller of an MCP handshake (FIX 5934, Engine ruling 10-20 08:4x):
 /// `initialize`, `notifications/initialized`, `tools/list` and
-/// `oneiron/wakes`. An attested holder with no credential the vault no
-/// longer records as its live owner is his booking caller, as for a booking
+/// `oneiron/wakes`. An OAuth access token's request is the client's agent it
+/// resolves to, and nothing else (FIX 4902, `oauth_call`). An attested
+/// holder with no credential the vault no longer records as its live owner
+/// is his booking caller, as for a booking
 /// tool call ([`booking_context`]), so a client that initializes first
 /// reaches the booking tools; a member his supervisor signed it for, that
 /// member (FIX 1302, `person_call`); every other caller as
@@ -83,6 +94,13 @@ pub(super) async fn resolve_handshake_caller(
     locality: oneiron::claim::CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    // A stock client's OAuth access token is resolved first, and only as
+    // that (FIX 4902 slice C).
+    if let Some(oauth) =
+        super::oauth_call::caller(mode, request_id, headers, connection, locality, server)
+    {
+        return oauth;
+    }
     if let Some(person) =
         super::person_call::handshake_caller(mode, request_id, headers, connection, server)
     {

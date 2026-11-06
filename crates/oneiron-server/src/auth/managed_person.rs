@@ -169,6 +169,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: None,
             managed_person: Some(holder),
+            oauth_access: None,
         }
     }
 

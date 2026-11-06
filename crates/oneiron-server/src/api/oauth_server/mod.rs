@@ -11,7 +11,7 @@
 //! every route here answers 404, as the client metadata documents do. Codes, tokens and the
 //! page's poll secret ride only in a body, a header or the client's own redirect, never in this
 //! vault's paths, logs or stored rows. The `/mcp` door that accepts the tokens, and its 401
-//! with `WWW-Authenticate`, are slice C's.
+//! with `WWW-Authenticate`, are `mcp_gateway::oauth_call`'s (slice C).
 
 mod authorize;
 mod client_document;
@@ -95,6 +95,19 @@ impl OAuthIdentity {
     fn endpoint(&self, path: &str) -> String {
         format!("{}{path}", self.origin)
     }
+}
+
+/// The protected resource this vault's `/mcp` is, `{origin}/mcp`, which every access token is
+/// minted for and resolved on (FIX 4902 slice C). `None` with no OAuth identity configured.
+pub(in crate::api) fn mcp_resource(server: &SyncServer) -> Option<String> {
+    OAuthIdentity::of(server).map(|identity| identity.resource())
+}
+
+/// The `/mcp` resource's own metadata document (RFC 9728 §3.1), as a 401 from `/mcp` names it
+/// in `WWW-Authenticate` (RFC 9728 §5.1, FIX 4902 slice C). `None` with no OAuth identity.
+pub(in crate::api) fn mcp_resource_metadata_url(server: &SyncServer) -> Option<String> {
+    OAuthIdentity::of(server)
+        .map(|identity| identity.endpoint(PROTECTED_RESOURCE_MCP_METADATA_PATH))
 }
 
 /// The OAuth origin `configured` names (CALLS, FIX 4902: an engine call): an https URL with a
