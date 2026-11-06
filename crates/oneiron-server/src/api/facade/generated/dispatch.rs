@@ -24376,6 +24376,42 @@ async fn vault_agents_grants_revoke(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_oauth_authorization_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.oauth.authorization.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.oauth.authorization.answer", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.oauth.authorization.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_oauth_authorization_answer(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_repo_git_push_mint(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41542,6 +41578,9 @@ async fn call_verb_row(
         "vault.agents.grants.mint" => Box::pin(vault_agents_grants_mint(server, call, input)).await,
         "vault.agents.grants.revoke" => {
             Box::pin(vault_agents_grants_revoke(server, call, input)).await
+        }
+        "vault.oauth.authorization.answer" => {
+            Box::pin(vault_oauth_authorization_answer(server, call, input)).await
         }
         "vault.repo.git_push.mint" => Box::pin(vault_repo_git_push_mint(server, call, input)).await,
         "vault.repo.git_push.revoke" => {

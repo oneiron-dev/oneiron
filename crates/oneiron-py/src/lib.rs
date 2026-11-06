@@ -7215,6 +7215,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_oauth_authorization_answer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.oauth.authorization.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.oauth.authorization.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_repo_git_push_mint(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.repo.git_push.mint")?;
         let output = py
