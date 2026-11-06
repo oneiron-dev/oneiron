@@ -48,7 +48,24 @@ fn private_json<T>(value: T) -> ([(HeaderName, &'static str); 1], Json<T>) {
     ([(header::CACHE_CONTROL, "no-store")], Json(value))
 }
 
-async fn start(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-lines/{identity_ref}/arrivals/{arrival_ref}/voice",
+    security(("CoreBearer" = [])),
+    params(
+        ("identity_ref" = String, Path, description = "Actual receiving ChannelIdentity id"),
+        ("arrival_ref" = String, Path, description = "Opaque payload_ref from metadata intake; never caller text or a provider call id")
+    ),
+    request_body(content = serde_json::Value, description = "LiveVoiceStartRequest JSON: sample_rate, channels, optional room_ref and roster_ref. The anonymous phone factory does not admit room or roster."),
+    responses(
+        (status = 200, description = "Opaque LiveVoiceSession and audio format; no caller metadata.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn start(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path((identity_ref, arrival_ref)): Path<(String, String)>,
@@ -63,7 +80,20 @@ async fn start(
     Ok(private_json(session))
 }
 
-async fn audio(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/audio",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceAudioRequest JSON: session_ref, utterance_id, pcm_base64, speaking, optional end_utterance."),
+    responses(
+        (status = 200, description = "LiveVoiceProcessed cursor and ended state; no transcript or audio.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn audio(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<LiveVoiceAudioRequest>,
@@ -74,7 +104,20 @@ async fn audio(
     Ok(private_json(session.audio(input).await?))
 }
 
-async fn events(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/events",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceEventsRequest JSON: session_ref, optional after and limit."),
+    responses(
+        (status = 200, description = "LiveVoiceEvents page checked against the original phone preparation and current consent.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn events(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<LiveVoiceEventsRequest>,
@@ -86,7 +129,20 @@ async fn events(
     Ok(private_json(page))
 }
 
-async fn ack(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/ack",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceAckRequest JSON: session_ref, generation, event_sequence, kind (drained or stopped)."),
+    responses(
+        (status = 200, description = "LiveVoiceProcessed after the correlated playout acknowledgement.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn ack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<LiveVoiceAckRequest>,
@@ -97,7 +153,20 @@ async fn ack(
     Ok(private_json(session.ack(input).await?))
 }
 
-async fn usage(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/usage",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceUsageRequest JSON: session_ref and generation."),
+    responses(
+        (status = 200, description = "LiveVoiceUsage from the existing run ledger; observing does not settle or charge.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn usage(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<LiveVoiceUsageRequest>,
@@ -108,7 +177,20 @@ async fn usage(
     Ok(private_json(session.usage(input.generation).await?))
 }
 
-async fn end(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/end",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceSessionRequest JSON: session_ref."),
+    responses(
+        (status = 200, description = "LiveVoiceProcessed after ending; final events remain available.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn end(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<LiveVoiceSessionRequest>,
@@ -119,7 +201,20 @@ async fn end(
     Ok(private_json(session.end().await?))
 }
 
-async fn close(
+#[utoipa::path(
+    post,
+    path = "/v1/core/phone-voice/close",
+    security(("CoreBearer" = [])),
+    request_body(content = serde_json::Value, description = "LiveVoiceSessionRequest JSON: session_ref."),
+    responses(
+        (status = 200, description = "LiveVoiceProcessed after ending and releasing the retained session.", body = serde_json::Value),
+        (status = 400, description = "Invalid typed voice request or phone admission"),
+        (status = 401, description = "Missing or invalid holder-bound credential"),
+        (status = 403, description = "Credential lacks its required read/write scope"),
+        (status = 404, description = "No phone session belongs to this exact credential, or the line is no longer admitted")
+    )
+)]
+pub(crate) async fn close(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<LiveVoiceSessionRequest>,
