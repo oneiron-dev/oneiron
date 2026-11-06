@@ -338,6 +338,59 @@ pub(crate) fn stage_derived_floors(
     })
 }
 
+/// The policies every derived carrier of `doc`'s map names, by row: the map
+/// as it stands, every value its history past `from` inserted, and, when
+/// `from` is its shallow root, the root's own values (fix list row 17207).
+/// A sealed mirror that took a merge stages them ([`stage_derived_floors`])
+/// as window admission does, so a set written over with a smaller one still
+/// binds its row.
+///
+/// # Errors
+///
+/// A shallow root that does not read: no floor it holds is lost unseen.
+pub(crate) fn history_derived_floors(
+    doc: &LoroDoc,
+    from: &VersionVector,
+) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
+    let mut floors: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
+    let mut note = |map_key: &str, bytes: &[u8]| {
+        if let Ok(Carrier::Derived { row, policies, .. }) = carrier(map_key, bytes) {
+            floors.entry(row).or_default().extend(policies);
+        }
+    };
+    for (map_key, bytes) in entries(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
+        if let Some(bytes) = bytes {
+            note(&map_key, &bytes);
+        }
+    }
+    let container = loro::ContainerID::new_root(SOURCE_AUDIENCES_MAP, loro::ContainerType::Map);
+    let history = doc.export_json_updates(from, &doc.oplog_vv());
+    for op in history.changes.iter().flat_map(|change| &change.ops) {
+        if op.container == container
+            && let loro::json::JsonOpContent::Map(loro::json::MapOp::Insert {
+                key,
+                value: LoroValue::Binary(bytes),
+            }) = &op.content
+        {
+            note(key, bytes);
+        }
+    }
+    // A shallow doc's root holds values no retained operation carries.
+    let root = doc.shallow_since_vv().to_vv();
+    if doc.is_shallow() && from.includes_vv(&root) && root.includes_vv(from) {
+        let at_root = doc.fork();
+        at_root
+            .checkout(&doc.shallow_since_frontiers())
+            .map_err(|_| refused("a sealed mirror's shallow root does not read"))?;
+        for (map_key, bytes) in entries(&at_root.get_map(SOURCE_AUDIENCES_MAP)) {
+            if let Some(bytes) = bytes {
+                note(&map_key, &bytes);
+            }
+        }
+    }
+    Ok(floors)
+}
+
 /// Whether this vault hard-erased the row `row`: no carried floor binds it
 /// again (fix list row 17207).
 fn hard_erased_in(vault: &Vault, txn: &heed::RoTxn<'_>, row: &EntityId) -> Result<bool> {
