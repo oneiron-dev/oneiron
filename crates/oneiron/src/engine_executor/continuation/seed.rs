@@ -99,6 +99,8 @@ impl FrozenSeed {
             limits: EngineExecutorLimits {
                 soft_steps: self.soft_steps,
             },
+            // A continued run is no new event: no wake line (FIX 15011).
+            wake: None,
         }
     }
 }
@@ -310,6 +312,7 @@ pub(super) fn create(
         &mut txn,
         &child,
         row.source_run,
+        state.cut.bridge_start,
         state.actor,
         &inherited,
     )?;

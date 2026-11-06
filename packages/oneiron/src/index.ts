@@ -1052,6 +1052,10 @@ export class Oneiron {
         resolve: (input: Facade.InboxGroupResolveRequest): Facade.InboxGroupResolution => this.#call(() => this.#client.vaultInboxGroupsResolve(input) as Facade.InboxGroupResolution),
       }),
     },
+    proactivity: {
+      /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
+      digest: (input: Facade.ProactivityDigestRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigest(input) as Facade.ProactivityDigestView | null),
+    },
     skills: {
       /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
       bootstrap: (input: Facade.EmptyRequest = {}): Facade.BootstrapSkillView[] => this.#call(() => this.#client.vaultSkillsBootstrap(input) as Facade.BootstrapSkillView[]),
@@ -2021,6 +2025,8 @@ export class Oneiron {
     secrets: {
       /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
       code_run_lifts: (input: Facade.CodeRunSecretLiftRequest): Facade.CodeRunSecretLiftStatus => this.#call(() => this.#client.vaultSecretsCodeRunLifts(input) as Facade.CodeRunSecretLiftStatus),
+      /** The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned. */
+      code_run_room_lifts: (input: Facade.CodeRunRoomSecretLiftRequest): Facade.CodeRunSecretLiftProposalView[] => this.#call(() => this.#client.vaultSecretsCodeRunRoomLifts(input) as Facade.CodeRunSecretLiftProposalView[]),
       /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
       /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */
@@ -2861,7 +2867,7 @@ export class Oneiron {
         confirm_grant: (input: Facade.DecisionAskConfirmGrantRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksConfirmGrant(input) as Facade.DecisionAsk),
       },
     },
-    /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
+    /** Commits claims through the gate as one atomic batch: each element is gated on its own, and all land or none do. Each answers its landed receipt, or in a refused batch its typed refusal and the batch's refusal receipt. */
     commit: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
@@ -3545,7 +3551,7 @@ export class Oneiron {
       /** Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds. */
       switch_engine: (input: Facade.LiveRunRequest<Facade.SwitchEngineInput>): Facade.BrowserSwitchEngineOutput => this.#call(() => this.#client.selfBrowserSwitchEngine(input) as Facade.BrowserSwitchEngineOutput),
     },
-    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles. */
+    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. With `kind`, it folds only that kind of content in each step: `repl_output` folds the console and keeps the program and its result handles; `program` folds the program text and keeps its speech calls and console. */
     fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
     /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
     compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
