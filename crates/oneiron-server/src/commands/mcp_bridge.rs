@@ -286,11 +286,15 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
         }
         let bridge = Arc::clone(&bridge);
         let stdout = Arc::clone(&stdout);
-        in_flight.push(std::thread::spawn(move || {
-            if let Some(answer) = bridge.answer(line) {
-                emit_answer(&stdout, answer);
-            }
-        }));
+        in_flight.push(
+            crate::engine_thread("mcp-bridge-call".into())
+                .spawn(move || {
+                    if let Some(answer) = bridge.answer(line) {
+                        emit_answer(&stdout, answer);
+                    }
+                })
+                .expect("failed to spawn thread"),
+        );
     }
     for call in in_flight {
         let _ = call.join();
