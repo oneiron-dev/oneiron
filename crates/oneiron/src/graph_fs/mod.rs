@@ -8,6 +8,7 @@
 mod claim_grep;
 mod claim_ids;
 mod coreutils;
+mod coreutils_search;
 mod coreutils_text;
 mod device_scan;
 mod model;
