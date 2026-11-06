@@ -7,6 +7,33 @@ use super::actor_copy::RetainedHomeClaimActors;
 use super::retained::RetainedHomeClaimResponse;
 use crate::{EntityId, Error, Result};
 
+/// The original receive and its native prepared custody stay in one holder.
+/// Neither serialization nor a copied instance id can reconstruct this value.
+pub(crate) enum PreparedHomeClaimCopy {
+    Response(super::retained::PreparedHomeClaimResponse),
+    OriginActors(super::actor_copy::PreparedHomeClaimActors),
+}
+
+impl PreparedHomeClaimCopy {
+    pub(crate) fn entity_id(&self) -> EntityId {
+        match self {
+            Self::Response(copy) => copy.entity_id(),
+            Self::OriginActors(copy) => copy.entity_id(),
+        }
+    }
+
+    pub(crate) fn retain_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<super::retained::RetainedHomeClaimState> {
+        match self {
+            Self::Response(copy) => copy.retain_in_txn(vault, txn),
+            Self::OriginActors(copy) => copy.retain_in_txn(vault, txn),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(crate) enum RetainedHomeClaimCopy {
