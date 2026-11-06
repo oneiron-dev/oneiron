@@ -864,6 +864,40 @@ fn stage_context_pack_retrieval_run_finalize(
         }
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
+    if let Some(memory) = memory.as_deref_mut() {
+        let score_breakdown_bytes = |entries: &Vec<super::types::RetrievalScoreBreakdown>| {
+            entries.iter().fold(
+                (entries.capacity() as u64).saturating_mul(std::mem::size_of::<
+                    super::types::RetrievalScoreBreakdown,
+                >() as u64),
+                |bytes, entry| {
+                    bytes.saturating_add((entry.components.capacity() as u64).saturating_mul(
+                        std::mem::size_of::<super::types::RetrievalScoreComponent>() as u64,
+                    ))
+                },
+            )
+        };
+        let mut bytes = score_breakdown_bytes(&record.score_breakdown);
+        if let Some(trace) = &record.trace {
+            bytes = bytes.saturating_add(
+                (trace.per_channel.capacity() as u64).saturating_mul(
+                    std::mem::size_of::<super::types::RetrievalTraceChannelRecord>() as u64,
+                ),
+            );
+            for channel in &trace.per_channel {
+                bytes = bytes.saturating_add(score_breakdown_bytes(&channel.candidates));
+            }
+            for stage in [
+                &trace.fused,
+                &trace.blended,
+                &trace.reranked,
+                &trace.final_stage,
+            ] {
+                bytes = bytes.saturating_add(score_breakdown_bytes(&stage.candidates));
+            }
+        }
+        memory.materialized(0, bytes);
+    }
     record.empty_reason = empty_reason;
     if let Some(pack_config) = pack_config
         && let Some(inputs) = record.replay_inputs.as_mut()

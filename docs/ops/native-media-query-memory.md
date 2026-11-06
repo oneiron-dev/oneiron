@@ -203,8 +203,19 @@ unchanged until the decoded record drops before the caller's lease. It is
 separate from the canonical detached input copy and from borrowed caller IDs.
 The existing copy, remaining mutations and row writes are unchanged.
 
+After the existing score and trace mutations finish, the same optional lease
+records their current backing capacities. This includes the new surfaced-score
+vector, its entries' component vectors, the retained per-channel vector and
+candidate/component vectors, and each fused, blended, reranked and final-stage
+candidate/component vector. Outer slots use their native element sizes; inner
+component buffers are counted separately, once. The final-stage clone and the
+surfaced-score vector own distinct backing even when their entries match.
+Discarded decoded score vectors and components removed by the existing retains
+are not charged. The current buffers remain unchanged until the decoded record
+drops before the caller's lease. An unbound finalizer adds no accounting walk.
+
 These finalization charges do not cover the decoded record's other backing,
-mutation copies, other finalizer input storage, hash sets, config-map and
+other mutation copies, other finalizer input storage, hash sets, config-map and
 number internals, serialization scratch, marker/index/retention keys and values,
 construction peaks or pre-growth admission. They do not establish a full
 working-set bound or a compiler/runtime result.
