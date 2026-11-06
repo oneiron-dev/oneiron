@@ -833,10 +833,15 @@ def mcp_input_dispatch(row):
         # describe(self) renders the connection's own brief (FIX 17594): the
         # registered actor and the connection its registration resolved, its
         # stream, connector scope, bound verbs and verified auth, never Core's
-        # session observations or a session the body names. REST keeps the
-        # Core-auth door.
+        # session observations or a session the body names. A code-mode
+        # call's dispatch carries its trusted durable run (`McpCodeRun`), and
+        # its describe(self) renders that run's own brief through the run's
+        # installed custody (FIX 17594 D5); neither reads a run from a body
+        # `session_id`. REST keeps the Core-auth door.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
-                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(server, actor, &input)).await.map_err(|_| invalid())?;\n'
+                 '    // A code-mode call names its trusted durable run; a direct call names none.\n'
+                 '    let run = surface.run.as_ref().map(|run| run.run_id);\n'
+                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(server, actor, run, &input)).await.map_err(|_| invalid())?;\n'
                  '    // Derived from the rows its card lists, the roster it read among them.\n'
                  '    served.extend(listed);\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'

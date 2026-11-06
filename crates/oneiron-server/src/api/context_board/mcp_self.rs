@@ -25,14 +25,25 @@
 //! then, and with no installation, the brief is resolved now and rendered
 //! whole. The one resolution here, [`connection_brief_reads`] and
 //! [`connection_brief_state`], serves the describe and the setup alike.
+//!
+//! A code-mode durable run on the connection (FIX 17594 D5) has its own
+//! brief, resolved by the same preparation with the run's own facts beside
+//! the connection's: its replay run is its trusted durable run id
+//! (`mcp_code_run_id`), its budget the code-mode line of that run where the
+//! host holds one, and it is bound to no dispatch attempt, so it holds no run
+//! ceiling. The run's host installs that brief under the agent and the run
+//! ([`code_mode_brief_key`]) and keeps it with the durable run. A
+//! describe(self) the run's own code makes answers that brief, never the
+//! connection's, and never a run a body `session_id` names.
 
 use oneiron::context_board::{BriefConnectorCeiling, People, SelfBriefState, SessionReadSet};
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::task_verb::sdk::DescribeRequest;
 
 use super::run_self::{BriefHostFacts, read_people, resolved_state, scratchpad_family};
 use crate::api::mcp_gateway::{
-    McpCallContext, McpGatewayError, mcp_api_error, mcp_brief_pins, mcp_engine_error,
-    mcp_facade_error, mcp_scoped_read, mcp_session_reads,
+    McpCallContext, McpGatewayError, code_mode_line, mcp_api_error, mcp_brief_pins,
+    mcp_engine_error, mcp_facade_error, mcp_scoped_read, mcp_session_reads,
 };
 use crate::error::ApiError;
 use crate::mcp::McpResolvedActor;
@@ -59,6 +70,14 @@ pub(crate) fn connection_brief_key(actor: &McpResolvedActor) -> BriefKey {
     (actor.actor_ref, actor.stream_connection.0.clone())
 }
 
+/// The key a code-mode durable run's self brief is installed under: the
+/// agent the run's credential stands for and the run, by the trusted id
+/// `mcp_code_run_id` derived (FIX 17594 D5), never the stream id or a
+/// session label.
+pub(crate) fn code_mode_brief_key(actor: &McpResolvedActor, run_id: oneiron::EntityId) -> BriefKey {
+    (actor.actor_ref, format!("code-mode:{}", run_id.to_hex()))
+}
+
 /// The connection's own session reads, under its tagged MCP key, and the
 /// PEOPLE its credential reads.
 ///
@@ -77,7 +96,10 @@ pub(crate) async fn connection_brief_reads(
 
 /// The connection's brief state as it resolves now, over its session
 /// `reads`: the agent's grants, class ceilings and principal, and the facts
-/// the connection holds (the module doc names them).
+/// the connection holds (the module doc names them). For a code-mode durable
+/// run on the connection, `replay_run` is the run's trusted id and `line` the
+/// run's code-mode line where the host holds one (FIX 17594 D5); the
+/// connection's own brief passes neither.
 ///
 /// # Errors
 ///
@@ -87,6 +109,8 @@ pub(crate) fn connection_brief_state(
     server: &SyncServer,
     actor: &McpCallContext,
     reads: &SessionReadSet,
+    replay_run: Option<oneiron::EntityId>,
+    line: Option<&RunAdmission>,
 ) -> Result<SelfBriefState, McpGatewayError> {
     let auth = actor
         .auth
@@ -104,6 +128,7 @@ pub(crate) fn connection_brief_state(
     };
     let host = BriefHostFacts {
         run_ceiling: None,
+        replay_run,
         credential_ceiling: auth.verified_slip().map(|proof| {
             oneiron::context_board::brief_credential_ceiling(
                 proof,
@@ -129,7 +154,7 @@ pub(crate) fn connection_brief_state(
         }),
         pins: mcp_brief_pins(server, actor),
     };
-    resolved_state(server, actor.write_actor(), None, reads, &host).map_err(mcp_facade_error)
+    resolved_state(server, actor.write_actor(), line, reads, &host).map_err(mcp_facade_error)
 }
 
 /// Answers a registered connector's `describe(self)` for the agent it
@@ -138,13 +163,17 @@ pub(crate) fn connection_brief_state(
 /// registration admitted. The brief is rendered whole, so a record-narrowed
 /// credential is refused, as on the credentialed path. Once the
 /// connection's setup delivered its brief, the answer is that brief's tail
-/// (FIX 17594 D4). Beside the card come the rows it is derived from
+/// (FIX 17594 D4). A call the code of a code-mode durable run makes names
+/// that run (`run`, the trusted id its dispatch carries): its answer is the
+/// run's own brief, through the run's installed custody once delivered (FIX
+/// 17594 D5). Beside the card come the rows it is derived from
 /// ([`oneiron::context_board::SelfBrief::sources`]), the PEOPLE roster it
 /// read among them (DEC-0005). The wire value is the credentialed path's
 /// `TaskDescription::SelfCard`.
 pub(crate) async fn describe_self_for_mcp(
     server: &SyncServer,
     actor: &McpCallContext,
+    run: Option<oneiron::EntityId>,
     body: &serde_json::Value,
 ) -> Result<(serde_json::Value, Vec<oneiron::EntityId>), McpGatewayError> {
     let auth = actor
@@ -170,9 +199,18 @@ pub(crate) async fn describe_self_for_mcp(
         )));
     }
     let ConnectionBriefReads { reads, people } = connection_brief_reads(server, actor).await?;
-    let state = connection_brief_state(server, actor, &reads)?;
-    let (tail, sources) =
-        installed_tail(server, &connection_brief_key(actor), state, &reads, &people).await?;
+    let (key, state) = match run {
+        Some(run_id) => {
+            let line = code_mode_line(server, run_id);
+            let state = connection_brief_state(server, actor, &reads, Some(run_id), line.as_ref())?;
+            (code_mode_brief_key(actor, run_id), state)
+        }
+        None => (
+            connection_brief_key(actor),
+            connection_brief_state(server, actor, &reads, None, None)?,
+        ),
+    };
+    let (tail, sources) = installed_tail(server, &key, state, &reads, &people).await?;
     let value = serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
         .map_err(|_| {
             mcp_api_error(ApiError::internal_server_error(

@@ -128,6 +128,30 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The door each code-mode verb call takes: the SDK verb table under this
     /// call's connector, with its admission and gate.
     pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    /// The durable run's self brief, when the door lends one (FIX 17594
+    /// D5): keyed by [`Self::run_id`], never the stream or a session label.
+    pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
+}
+
+/// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
+/// with one `execute_code` call by the door it arrived at: the port the
+/// run's executor carries the brief through, and what the host does with
+/// the brief around one entry.
+///
+/// The brief lives with the durable run, keyed by its trusted run id, never
+/// with the call or its waiter: an entry installs it, or installs it again
+/// at the epoch it holds, under the run's single flight; a resumable outcome
+/// keeps it; the run's completion closes it (Engine call RESUME C). Both
+/// calls block: the host makes them on the run's own worker thread.
+pub trait McpCodeRunSelfBrief: SelfBriefPort {
+    /// Installs the run's brief for the entry about to run, as the run
+    /// resolves now: afresh with none installed, else again at the epoch it
+    /// holds, its delivered prefix kept. `false`, logged, when it does not
+    /// install: the entry runs without it, as before.
+    fn install(&self) -> bool;
+
+    /// Closes the run's brief: the run completed.
+    fn close(&self);
 }
 
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
@@ -628,6 +652,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
+        let brief = request.brief.clone();
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
@@ -711,6 +736,15 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             let worker = std::thread::Builder::new()
                 .name("mcp-execute-code".to_owned())
                 .spawn(move || {
+                    // FIX 17594 D5: under the run's single flight, past its
+                    // identity, admission and config checks, the run's brief
+                    // is installed for this entry before it runs; one that
+                    // does not install leaves the entry without it.
+                    let installed = brief.as_ref().is_some_and(|brief| brief.install());
+                    let port = brief
+                        .as_deref()
+                        .filter(|_| installed)
+                        .map(|brief| brief as &dyn SelfBriefPort);
                     let outcome = run_engine_native_code_mode(
                         &vault,
                         provider.as_ref(),
@@ -724,13 +758,19 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         reader_seat,
                         seat.as_mut(),
                         git_door_base,
-                        // FIX 17594 D2: no host lends a self-brief port yet.
-                        None,
+                        port,
                     );
+                    let ended = outcome.as_ref().is_ok_and(|outcome| {
+                        matches!(outcome.status, EngineExecutorStatus::Complete)
+                    });
+                    // The run's brief closes as the run completes, here and
+                    // not with its waiter, so a caller who hung up cannot
+                    // keep it; a resumable outcome or a failure the same
+                    // `run_ref` re-enters keeps it.
+                    if ended && let Some(brief) = &brief {
+                        brief.close();
+                    }
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
-                        let ended = outcome.as_ref().is_ok_and(|outcome| {
-                            matches!(outcome.status, EngineExecutorStatus::Complete)
-                        });
                         seats.put(run_id, seat, ended);
                     }
                     // Completion must release single-flight and the run's

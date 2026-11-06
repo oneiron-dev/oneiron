@@ -38,7 +38,7 @@ pub(super) async fn stage_connection_brief(
     let connection = &actor.stream_connection;
     let resolved = async {
         let reads = crate::api::connection_brief_reads(server, actor).await?;
-        let state = crate::api::connection_brief_state(server, actor, &reads.reads)?;
+        let state = crate::api::connection_brief_state(server, actor, &reads.reads, None, None)?;
         Ok::<_, McpGatewayError>((reads, state))
     }
     .await;

@@ -37,6 +37,14 @@ pub(crate) async fn execute_mcp_execute_code(
     let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
         server, actor, run_id,
     ));
+    // FIX 17594 D5: the durable run's self brief, keyed by its trusted run
+    // id, for a connection that has one; the host installs it under the
+    // run's single flight and closes it when the run completes.
+    let brief = crate::api::connection_has_brief(actor).then(|| {
+        Arc::new(super::code_mode_self_brief::CodeModeSelfBrief::new(
+            server, actor, run_id,
+        )) as Arc<dyn crate::mcp::McpCodeRunSelfBrief>
+    });
     let outcome = host
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
@@ -46,6 +54,7 @@ pub(crate) async fn execute_mcp_execute_code(
             task: &args.task,
             run_id,
             verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
+            brief,
         })
         .await;
     // Revocation takes effect at once: a credential that died while its run

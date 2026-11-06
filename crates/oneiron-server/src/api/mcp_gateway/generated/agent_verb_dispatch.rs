@@ -6687,8 +6687,10 @@ async fn execute_agent_verb_row_on(
             oneiron::task_verb::sdk::validate_input("describe", &input)
                 .map_err(mcp_facade_error)?;
             if input.get("self").and_then(Value::as_bool) == Some(true) {
+                // A code-mode call names its trusted durable run; a direct call names none.
+                let run = surface.run.as_ref().map(|run| run.run_id);
                 let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(
-                    server, actor, &input,
+                    server, actor, run, &input,
                 ))
                 .await
                 .map_err(|_| invalid())?;

@@ -63,6 +63,9 @@ impl RunHostDoor {
             None => crate::api::run_brief_pins(&self.server, self.actor, None),
         };
         BriefHostFacts {
+            // The run's replay record is the run its run ceiling names; a
+            // door bound to no attempt binds none.
+            replay_run: run_ceiling.as_ref().map(|run| run.run_id),
             run_ceiling,
             credential_ceiling,
             communication_credential_ceiling: self.proof.as_ref().map(VerifiedSlip::comm),

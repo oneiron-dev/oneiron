@@ -11,8 +11,9 @@
 //! advances the epoch at each fold batch. An MCP connection's setup (FIX
 //! 17594 D4) installs afresh at each page one, keeps its keyframe to the
 //! staged candidate's roster and acknowledges it once that page was
-//! released; the code-mode host of a later slice uses the same operations.
-//! Nothing here renders on its own.
+//! released. A code-mode durable run (FIX 17594 D5) installs once and again
+//! at the held epoch for each later entry, its custody kept with the
+//! durable run until that run completes. Nothing here renders on its own.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -241,6 +242,30 @@ impl InstalledBriefs {
         Ok(owner)
     }
 
+    /// Installs `state` under `key` for a host whose run's custody lives
+    /// with the key itself, as a code-mode durable run's does: again at the
+    /// epoch the installation holds, its owner and delivered prefix kept
+    /// ([`Self::restate`]), or, with nothing installed, afresh
+    /// ([`Self::install_fresh`]). Answers the installation's owner.
+    ///
+    /// # Errors
+    ///
+    /// The state is not the key's agent's, or the session id is empty.
+    pub(crate) fn install_or_restate(
+        &mut self,
+        key: BriefKey,
+        state: SelfBriefState,
+    ) -> oneiron::Result<BriefOwner> {
+        admits(key.0, &key.1, &state)?;
+        match self.runs.get_mut(&key) {
+            Some(run) => {
+                run.state = state;
+                Ok(run.owner)
+            }
+            None => self.install_fresh(key, state),
+        }
+    }
+
     /// Whether `owner`'s installation still holds `key`.
     pub(crate) fn holds(&self, key: &BriefKey, owner: BriefOwner) -> bool {
         self.runs.get(key).is_some_and(|run| run.owner == owner)
@@ -454,6 +479,27 @@ fn admits(actor: EntityId, session_id: &str, state: &SelfBriefState) -> oneiron:
         ));
     }
     Ok(())
+}
+
+/// Runs `work` on one of `runtime`'s blocking threads, where it may block on
+/// that runtime, and waits for its answer on this thread: how a run's
+/// self-brief port, called on the run's own thread, reaches the custody and
+/// the reads it is resolved from.
+///
+/// # Errors
+///
+/// The runtime dropped `work` before it answered.
+pub(crate) fn on_server<T: Send + 'static>(
+    runtime: &tokio::runtime::Handle,
+    work: impl FnOnce(&tokio::runtime::Handle) -> T + Send + 'static,
+) -> oneiron::Result<T> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    runtime.spawn_blocking(move || {
+        let _ = sender.send(work(&tokio::runtime::Handle::current()));
+    });
+    receiver
+        .recv()
+        .map_err(|_| oneiron::Error::InvariantViolation("a run's self brief host did not answer"))
 }
 
 /// The installed briefs behind one lock. A host holds the lock from prepare

@@ -33,15 +33,22 @@ use crate::server::SyncServer;
 
 /// What the host that resolves a brief holds for it (FIX 17594, Engine
 /// ruling 21:47), each `None` where it holds none: the run ceiling of the
-/// dispatch attempt its run's entry in flight serves, the credential
-/// ceiling and signed comm reach of the verified slip it admitted, the
-/// scratchpad of the session it binds, and the pins its board admits for
-/// the reader now. A credential's call is bound to no attempt, so it holds
-/// no run ceiling; an ordinary pumped run holds no verified slip, so it
-/// holds neither credential value, and binds no scratchpad session.
+/// dispatch attempt its run's entry in flight serves, the run whose replay
+/// record it bound, the credential ceiling and signed comm reach of the
+/// verified slip it admitted, the scratchpad of the session it binds, and
+/// the pins its board admits for the reader now. A credential's call is
+/// bound to no attempt and no run, so it holds no run ceiling and no replay
+/// run; a code-mode durable run is no leased dispatch attempt, so it holds
+/// a replay run and no run ceiling (FIX 17594 D5); an ordinary pumped run
+/// holds no verified slip, so it holds neither credential value, and binds
+/// no scratchpad session.
 #[derive(Debug, Default)]
 pub(crate) struct BriefHostFacts {
     pub(crate) run_ceiling: Option<BriefRunCeiling>,
+    /// The trusted run whose replay record the host bound: the result names
+    /// the brief's working set reads. A pumped run's is the run its run
+    /// ceiling names; a code-mode run's is its durable run id.
+    pub(crate) replay_run: Option<oneiron::EntityId>,
     pub(crate) credential_ceiling: Option<BriefCredentialCeiling>,
     /// The verified slip's comm reach, every caveat met
     /// ([`oneiron::authority::VerifiedSlip::comm`]).
@@ -199,9 +206,9 @@ pub(crate) async fn describe_self_for_run(
 /// `None`; so is the principal when no subject anchor names the person
 /// behind the agent, so are the grants, the parent ceiling, the comm reach
 /// and the class ceilings when their read fails, so are the run and parent
-/// ceilings, the comm reach and the replay bindings when the host bound no
-/// dispatch attempt, so are the replay bindings when the run holds no
-/// replay record or its read fails, so are the credential ceiling and the
+/// ceilings and the comm reach when the host bound no dispatch attempt, so
+/// are the replay bindings when the host bound no replay run, the run holds
+/// no replay record or its read fails, so are the credential ceiling and the
 /// credential's comm reach when it verified no slip, so is the scratchpad
 /// when it binds no session, so are the pins when its board's pin read
 /// fails, and so are the budget lease and budget when no line binds the
@@ -298,13 +305,12 @@ pub(super) fn resolved_state(
     // WORKING SET (FIX 17594): the result names the run the host bound has
     // bound, read from that run's replay record. Only a host-bound run is a
     // trusted run identity: a session label proves no replay ownership. The
-    // executor writes the record before the run's first step, and only a
-    // step of the run calls its door's describe(self), so a run with no
-    // record is unavailable, never known empty.
-    let replay = host.run_ceiling.as_ref().and_then(|run| {
+    // executor writes the record before the run's first step, so a run with
+    // no record is unavailable, never known empty.
+    let replay = host.replay_run.and_then(|run_id| {
         let bindings = server
             .vault
-            .code_run_result_bindings(&run.run_id)
+            .code_run_result_bindings(&run_id)
             .inspect_err(|error| {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -317,7 +323,7 @@ pub(super) fn resolved_state(
             bindings
                 .into_iter()
                 .map(|binding| BriefWorkingHandle::ReplayResult {
-                    run_id: run.run_id,
+                    run_id,
                     name: binding.name,
                     handle: binding.handle,
                     path: binding.path,

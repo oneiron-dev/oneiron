@@ -57,9 +57,9 @@ pub use self::endpoint_schema::{
 };
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute,
-    ReaderMeter, RunCompactionSeat, bind_mcp_code_execution_host, mcp_code_execution_host,
-    mcp_code_run_id, mcp_scoped_identity_id,
+    McpCodeModeProvider, McpCodeRunSelfBrief, McpEngineNativeCodeHost, PlannedMeter, PlannedModel,
+    PlannedRoute, ReaderMeter, RunCompactionSeat, bind_mcp_code_execution_host,
+    mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
     EngineRunError, ModelCallBackend, ModelListBackend, OffRecordRunSession, ScopeMeter,

@@ -23,8 +23,8 @@ pub(crate) use run_self::{
 mod layout;
 mod mcp_self;
 pub(crate) use mcp_self::{
-    ConnectionBriefReads, connection_brief_key, connection_brief_reads, connection_brief_state,
-    connection_has_brief, describe_self_for_mcp,
+    ConnectionBriefReads, code_mode_brief_key, connection_brief_key, connection_brief_reads,
+    connection_brief_state, connection_has_brief, describe_self_for_mcp,
 };
 mod scratchpad;
 mod session;
@@ -1001,6 +1001,7 @@ pub(crate) async fn describe_self_for_auth(
             let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
             let host = BriefHostFacts {
                 run_ceiling: None,
+                replay_run: None,
                 // A Core call arrives on no registered MCP connector.
                 credential_ceiling: auth.verified_slip().map(|proof| {
                     oneiron::context_board::brief_credential_ceiling(proof, read.actor_key(), None)

@@ -33,7 +33,7 @@ use super::{
     StreamConnectionId, SyncServer, WriteActor,
 };
 use crate::server::self_brief_custody::{
-    BriefAcknowledgment, BriefCandidate, BriefKey, BriefOwner, BriefPreparation,
+    BriefAcknowledgment, BriefCandidate, BriefKey, BriefOwner, BriefPreparation, on_server,
 };
 
 /// The port one entry of a pumped run lends its executor: the run's door,
@@ -326,20 +326,4 @@ fn brief_key(actor: WriteActor, board: &StreamConnectionId) -> BriefKey {
 fn unresolved(error: MemoryError) -> oneiron::Error {
     tracing::warn!(code = %error.code, "a pumped run's self brief did not resolve");
     oneiron::Error::InvariantViolation("a pumped run's self brief did not resolve")
-}
-
-/// Runs `work` on one of the server runtime's blocking threads, where it may
-/// block on that runtime, and waits for its answer on this thread, as the
-/// door's rows run.
-fn on_server<T: Send + 'static>(
-    runtime: &tokio::runtime::Handle,
-    work: impl FnOnce(&tokio::runtime::Handle) -> T + Send + 'static,
-) -> oneiron::Result<T> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    runtime.spawn_blocking(move || {
-        let _ = sender.send(work(&tokio::runtime::Handle::current()));
-    });
-    receiver.recv().map_err(|_| {
-        oneiron::Error::InvariantViolation("a pumped run's self brief host did not answer")
-    })
 }
