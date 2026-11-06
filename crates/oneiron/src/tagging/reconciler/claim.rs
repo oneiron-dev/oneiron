@@ -10,8 +10,11 @@ use super::settle::unreadable_trace;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use crate::error::Result;
 use crate::memory::extraction::{EncoderInput, ExtractionWork};
+use crate::tagging::hint_read::QueuedHintRead;
 use crate::tagging::input::{TurnInput, turn_input_in_txn};
-use crate::tagging::marker::{MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn};
+use crate::tagging::marker::{
+    MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_with_hint_read_in_txn,
+};
 use crate::tagging::register::bulk_register_in_txn;
 use crate::tagging::tags::tagged_messages_absent_in_txn;
 use crate::tagging::trace::{HandBackReason, SkipReason, TaggingOutcome, TaggingTrace};
@@ -273,11 +276,19 @@ impl TaggingReconciler {
         id: AttemptId,
         payload: &MarkerPayload,
     ) -> Result<ExtractionWork> {
-        let persisted = AttemptQueue::from_store(&self.vault.store)
-            .get_in_write_txn(txn, id)?
-            .and_then(|row| MarkerPayload::decode(&row.payload));
+        let persisted = self.persisted_payload_in_txn(txn, id)?;
         let payload = persisted.as_ref().unwrap_or(payload);
         Ok(payload.effective_work(&self.vault))
+    }
+
+    pub(super) fn persisted_payload_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<MarkerPayload>> {
+        Ok(AttemptQueue::from_store(&self.vault.store)
+            .get_in_write_txn(txn, id)?
+            .and_then(|row| MarkerPayload::decode(&row.payload)))
     }
 
     /// Claims a marker ([`Self::claim`]) and reads what its call needs. A
@@ -312,7 +323,19 @@ impl TaggingReconciler {
             self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
                 let now = self.stamp_in_txn(txn)?;
                 let work = self.persisted_work_in_txn(txn, record.id, &payload)?;
-                enqueue_marker_in_txn(&self.vault, txn, turn, &self.config, now, work)?;
+                let hint_read = self
+                    .persisted_payload_in_txn(txn, record.id)?
+                    .map(|payload| payload.hint_read)
+                    .unwrap_or(QueuedHintRead::caller(None));
+                enqueue_marker_with_hint_read_in_txn(
+                    &self.vault,
+                    txn,
+                    turn,
+                    &self.config,
+                    now,
+                    work,
+                    hint_read,
+                )?;
                 self.settle_in_txn(txn, &record, &trace)
             })?;
             return Ok(settled(hold, trace));

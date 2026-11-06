@@ -8,6 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::hint_read::QueuedHintRead;
+use crate::memory::OnDeviceIdentityHintReader;
+
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome, RetryAttempt,
 };
@@ -58,6 +61,7 @@ pub(super) struct MarkerPayload {
     /// The open nonce of the environment a live marker was written under (the
     /// store's `open_nonce`); `None` for a bulk one.
     pub(super) open: Option<[u8; 16]>,
+    pub(super) hint_read: QueuedHintRead,
 }
 
 impl MarkerPayload {
@@ -70,7 +74,9 @@ impl MarkerPayload {
     /// retried, because no pass can ever read it.
     pub(super) fn decode(bytes: &[u8]) -> Option<Self> {
         rmp_serde::from_slice::<Self>(bytes).ok().filter(|payload| {
-            is_checkpoint(&payload.checkpoint) && payload.stack.as_deref().is_none_or(is_checkpoint)
+            is_checkpoint(&payload.checkpoint)
+                && payload.stack.as_deref().is_none_or(is_checkpoint)
+                && payload.hint_read.valid()
         })
     }
 
@@ -175,19 +181,47 @@ pub(super) fn enqueue_marker_in_txn(
     recorded_at: u64,
     work: ExtractionWork,
 ) -> Result<EnqueueOutcome> {
+    enqueue_marker_with_hint_read_in_txn(
+        vault,
+        wtxn,
+        turn,
+        config,
+        recorded_at,
+        work,
+        QueuedHintRead::Internal,
+    )
+}
+
+pub(super) fn enqueue_marker_with_hint_read_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    turn: EntityId,
+    config: &TaggingMarkerConfig,
+    recorded_at: u64,
+    work: ExtractionWork,
+    hint_read: QueuedHintRead,
+) -> Result<EnqueueOutcome> {
     let queue = AttemptQueue::new(vault);
     let key = dedupe_key(&turn, config);
     // A pending marker absorbs the call before any id is drawn for it.
     if let Some(pending) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
-        if work == ExtractionWork::Live
-            && let Some(mut payload) = MarkerPayload::decode(&pending.payload)
-            && payload.effective_work(vault) == ExtractionWork::Bulk
-        {
-            payload.work = ExtractionWork::Live;
-            payload.open = Some(vault.store.open_nonce);
-            let promoted =
-                queue.replace_owner_retained_payload_in_txn(wtxn, &pending, payload.encode()?)?;
-            return Ok(EnqueueOutcome::Existing(promoted));
+        if let Some(mut payload) = MarkerPayload::decode(&pending.payload) {
+            let merged = payload.hint_read.meet(&hint_read);
+            let promote = work == ExtractionWork::Live
+                && payload.effective_work(vault) == ExtractionWork::Bulk;
+            if promote || merged != payload.hint_read {
+                payload.hint_read = merged;
+                if promote {
+                    payload.work = ExtractionWork::Live;
+                    payload.open = Some(vault.store.open_nonce);
+                }
+                let updated = queue.replace_owner_retained_payload_in_txn(
+                    wtxn,
+                    &pending,
+                    payload.encode()?,
+                )?;
+                return Ok(EnqueueOutcome::Existing(updated));
+            }
         }
         return Ok(EnqueueOutcome::Existing(pending));
     }
@@ -220,6 +254,7 @@ pub(super) fn enqueue_marker_in_txn(
         stack: config.stack.clone(),
         work,
         open: (work == ExtractionWork::Live).then_some(vault.store.open_nonce),
+        hint_read,
     };
     queue.enqueue_with_id_in_txn(
         wtxn,
@@ -306,6 +341,31 @@ pub(crate) fn mark_turn_in_txn(
     // keeps its clock policy whether the vault is armed or not.
     let recorded_at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
     enqueue_marker_in_txn(vault, wtxn, turn, tagging, recorded_at, work).map(|_| ())
+}
+
+/// The original Memory caller's optional hint reader travels with its marker.
+pub(crate) fn mark_turn_scoped_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    turn: EntityId,
+    work: ExtractionWork,
+    read: Option<OnDeviceIdentityHintReader>,
+) -> Result<()> {
+    let marker = vault.tagging_marker_config();
+    let Some(tagging) = marker.as_ref() else {
+        return Ok(());
+    };
+    let recorded_at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
+    enqueue_marker_with_hint_read_in_txn(
+        vault,
+        wtxn,
+        turn,
+        tagging,
+        recorded_at,
+        work,
+        QueuedHintRead::caller(read),
+    )
+    .map(|_| ())
 }
 
 /// The type of an entity whose document text a turn's tag pass, vector or
