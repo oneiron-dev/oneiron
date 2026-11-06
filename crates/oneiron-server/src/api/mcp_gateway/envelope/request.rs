@@ -204,8 +204,21 @@ pub(crate) async fn handle_mcp_request(
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                     ensure_mcp_actor_matches(&args, &actor)?;
                     mcp_admit_scoped_call(server, &args, &actor)?;
+                    // A named verb call keeps its admission intent, as the
+                    // facade's does, unless it sits off the record (FIX 4735).
+                    let intent = super::super::admission_intent::McpIntent::of(
+                        server, &args, &actor, anonymous,
+                    );
                     // The tool fan-out, on the heap (FIX 12072).
-                    Box::pin(execute_mcp_tool(server, args, &actor, headers, connection)).await
+                    let run = execute_mcp_tool(server, args, &actor, headers, connection);
+                    Box::pin(super::super::admission_intent::observed(
+                        server,
+                        &actor,
+                        intent,
+                        run,
+                        |result| result,
+                    ))
+                    .await
                 })
                 .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened

@@ -315,8 +315,12 @@ async fn rerun_saved_call(
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
     let mut board_hooks = None;
+    // The held call's admission intent reopens for this run and settles on
+    // its answer, as the facade drain's does (FIX 4735).
+    let intent =
+        super::admission_intent::McpIntent::resumed(server, context, &call.verb, &call.args);
     // The verb table's fan-out, on the heap (FIX 12072).
-    let ran = Box::pin(super::tasks_response::execute_agent_verb_input(
+    let run = super::tasks_response::execute_agent_verb_input(
         server,
         &call.verb,
         call.args,
@@ -324,6 +328,13 @@ async fn rerun_saved_call(
         None,
         &mut served,
         &mut board_hooks,
+    );
+    let ran = Box::pin(super::admission_intent::observed(
+        server,
+        context,
+        intent,
+        run,
+        |(output, ..)| output,
     ))
     .await;
     match ran {
