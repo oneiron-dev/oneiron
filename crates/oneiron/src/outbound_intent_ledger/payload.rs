@@ -372,6 +372,14 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         record.authorizing_owner = None;
         stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive);
         put_ledger_record(vault, wtxn, &record).map_err(erase_error)?;
+        // An older checkpoint of the call still names him: its compartment
+        // rolls, and the next capture reseals the row without him.
+        super::store::payload_erase::roll_call_compartment_in_txn(
+            vault,
+            wtxn,
+            &record.attempt_id,
+            record.call_seq,
+        )?;
         if stops {
             super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;
             if let Some(stopped) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
