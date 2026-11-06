@@ -1,4 +1,5 @@
-//! Stated-preference matching: the prior-claim lookup, preference conflicts and answer agreement.
+//! Stated-preference matching: the prior-claim lookup and preference conflicts. Answer
+//! agreement is [`crate::claim::preference_answers_agree`], which the Dreamer's promotion shares.
 //! `Memory::find_prior_claim` and the two preference-conflict reads are its call surface.
 //! `memory::claims::commit` defines `MemoryKey`, the key these match on.
 
@@ -92,7 +93,7 @@ impl Memory<'_> {
             };
             if body.source == Some(ClaimSource::UserStated)
                 && key.stands(&body)
-                && !answers_agree(value, &body.value)
+                && !crate::claim::preference_answers_agree(value, &body.value)
             {
                 conflicts.push(peer);
             }
@@ -165,39 +166,4 @@ impl Memory<'_> {
         }
         Ok(())
     }
-}
-
-/// OF-023: whether an observed preference gives the stated one's answer.
-/// Canon names a normalized answer key without pinning it, so this is the
-/// one place that decides: text compares blind to case and spacing (the
-/// Dreamer's `normalize_text` rule), maps compare whatever their key order,
-/// and every other value, structured qualifiers included, must match.
-fn answers_agree(observed: &Value, stated: &Value) -> bool {
-    match (observed, stated) {
-        (Value::String(a), Value::String(b)) => match (a.as_str(), b.as_str()) {
-            (Some(a), Some(b)) => fold_answer_text(a) == fold_answer_text(b),
-            _ => a == b,
-        },
-        (Value::Array(a), Value::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| answers_agree(a, b))
-        }
-        (Value::Map(a), Value::Map(b)) => {
-            a.len() == b.len() && a.iter().all(|(k, v)| entry_agrees(b, k, v))
-        }
-        _ => observed == stated,
-    }
-}
-
-/// Whether `map` holds `key` with an answer that agrees with `value`.
-fn entry_agrees(map: &[(Value, Value)], key: &Value, value: &Value) -> bool {
-    map.iter()
-        .find(|(k, _)| k == key)
-        .is_some_and(|(_, v)| answers_agree(v, value))
-}
-
-fn fold_answer_text(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
 }

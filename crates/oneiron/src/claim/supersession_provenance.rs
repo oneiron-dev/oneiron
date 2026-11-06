@@ -216,7 +216,10 @@ pub(crate) fn conflict_marker(
         envelope,
     })
 }
-pub(super) fn write_coaching(
+/// Writes the `conflict.open` marker naming `new` against `old` in `txn`,
+/// signed with this host's retained machine key; a replay finds it landed and
+/// writes nothing.
+pub(crate) fn write_coaching(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     new: &EntityId,

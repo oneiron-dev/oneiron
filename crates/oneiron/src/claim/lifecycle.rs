@@ -39,7 +39,61 @@ const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
 /// OF-023: an `observed` `preference.*` claim is held beside the
 /// `user_stated` one on its key and never outranks or closes it.
 pub(crate) fn is_observed_preference(source: Option<ClaimSource>, predicate: &str) -> bool {
-    source == Some(ClaimSource::Observed) && predicate.starts_with(PREFERENCE_PREDICATE_PREFIX)
+    source == Some(ClaimSource::Observed) && is_preference_predicate(predicate)
+}
+
+/// Whether `predicate` is in the `preference.*` family: a want, consent to
+/// respect, as against `pattern.*` behaviour to adapt to (ARCH-0003).
+pub(crate) fn is_preference_predicate(predicate: &str) -> bool {
+    predicate.starts_with(PREFERENCE_PREDICATE_PREFIX)
+}
+
+/// Distinct observations an Observed preference needs: ARCH-0003's minting
+/// rule, "three observations across two or more sessions".
+pub(crate) const OBSERVED_PREFERENCE_MIN_OBSERVATIONS: usize = 3;
+
+/// Distinct sessions those observations must span: the same rule's "two or
+/// more sessions".
+pub(crate) const OBSERVED_PREFERENCE_MIN_SESSIONS: usize = 2;
+
+/// OF-023: whether an observed preference gives the stated one's answer.
+/// Canon names a normalized answer key without pinning it, so this is the
+/// one place that decides: text compares blind to case and spacing (the
+/// Dreamer's `normalize_text` rule), maps compare whatever their key order,
+/// and every other value, structured qualifiers included, must match.
+pub(crate) fn preference_answers_agree(observed: &rmpv::Value, stated: &rmpv::Value) -> bool {
+    use rmpv::Value;
+    match (observed, stated) {
+        (Value::String(a), Value::String(b)) => match (a.as_str(), b.as_str()) {
+            (Some(a), Some(b)) => fold_answer_text(a) == fold_answer_text(b),
+            _ => a == b,
+        },
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| preference_answers_agree(a, b))
+        }
+        (Value::Map(a), Value::Map(b)) => {
+            a.len() == b.len() && a.iter().all(|(k, v)| entry_agrees(b, k, v))
+        }
+        _ => observed == stated,
+    }
+}
+
+/// Whether `map` holds `key` with an answer that agrees with `value`.
+fn entry_agrees(
+    map: &[(rmpv::Value, rmpv::Value)],
+    key: &rmpv::Value,
+    value: &rmpv::Value,
+) -> bool {
+    map.iter()
+        .find(|(k, _)| k == key)
+        .is_some_and(|(_, v)| preference_answers_agree(v, value))
+}
+
+fn fold_answer_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// How a supersession closes its old head: directly, attributed to a typed

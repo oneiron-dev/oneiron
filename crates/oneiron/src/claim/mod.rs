@@ -118,7 +118,10 @@ pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use history_handoff::*;
 pub use lexical_query_hint::*;
-pub(crate) use lifecycle::is_observed_preference;
+pub(crate) use lifecycle::{
+    OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS, is_observed_preference,
+    is_preference_predicate, preference_answers_agree,
+};
 pub(crate) use machine_birth::SignedClaimBirth;
 pub use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
@@ -140,7 +143,7 @@ pub(crate) use scoped_read::{
     scrub_saved_weave_loop_reasons_in_txn,
 };
 pub use source_trust::*;
-pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker};
+pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker, write_coaching};
 pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
