@@ -22,6 +22,7 @@ mod rebuild;
 mod row_births;
 mod snapshot_ops;
 mod source_audiences;
+mod validation_work;
 mod vocabulary;
 mod withdrawn_cutoffs;
 pub use asset_body_refs::CanonicalAssetBodyRef;
@@ -39,6 +40,7 @@ pub use rebuild::rebuild_vault_window_from_canonical;
 pub(crate) use rebuild::{RebuildAt, rebuild_page, rebuild_start};
 pub use row_births::CanonicalRowBirth;
 pub use source_audiences::CanonicalSourceAudience;
+pub(crate) use validation_work::CanonicalValidation;
 pub use vocabulary::{
     CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition,
     CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
@@ -116,6 +118,11 @@ impl CanonicalSnapshot {
     /// an artifact too large is never held whole before it is refused.
     pub(crate) fn encode_within(&self, limit: usize) -> Result<Vec<u8>> {
         self.validate()?;
+        self.encode_validated_within(limit)
+    }
+
+    /// Encode the same immutable source whose validation groups just completed.
+    pub(super) fn encode_validated_within(&self, limit: usize) -> Result<Vec<u8>> {
         let mut out = BoundedWriter {
             bytes: Vec::new(),
             budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
