@@ -135,6 +135,15 @@ keeps that value unchanged. A prefix `exports` read still requires the original
 alias and must occur before the first fresh replacement. Reading that old wrapper
 after a replacement keeps the ordinary fallback; its old keys are not restored.
 
+A direct assignment to the wrapper `exports` binding can use that same flat
+prefix when the final element reads the native `module.exports` slot. For example,
+`exports = (module.exports = {a: 1}, module.exports)` contributes `a` and reconnects
+that wrapper to the current module value. Fresh prefix values still apply in
+source order, including their unresolved interior references. An all-current
+prefix preserves the declared keys and reconnects the wrapper. A fresh final or
+an `exports` final does not qualify for this binding form: assigning a fresh value
+to `exports` alone would not replace the module value.
+
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and other sequence-valued terminals keep
 the ordinary outer-only handling and unresolved sites. Terminal values are not executed;
