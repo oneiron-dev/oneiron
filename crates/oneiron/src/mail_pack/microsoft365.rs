@@ -272,6 +272,43 @@ impl<'v> HttpGraphMailWire<'v> {
             .found_or_gone("graph_mail")
     }
 
+    /// One page of messages `url` lists (a listing or a search, or the
+    /// next page Graph linked to), drafts and the mail of folders not copied
+    /// left out.
+    fn listed_messages(
+        &self,
+        source: &MailSyncSource,
+        url: &str,
+        params: &[(&str, String)],
+    ) -> Result<MailIdPage> {
+        let listed = self
+            .found(source, url, params, PREFER_IMMUTABLE_IDS)?
+            .ok_or_else(|| refused("graph_mail_listing_not_found"))?;
+        let mut messages = Vec::new();
+        let mut tree = self.tree(source)?;
+        for message in array(&listed, "value") {
+            let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
+            let draft = message
+                .get("isDraft")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !tree.knows(&folder) {
+                tree = self.tree_knowing(source, &folder)?;
+            }
+            if draft || tree.skipped(&folder)? {
+                continue;
+            }
+            messages.push(MailMessageRef {
+                provider_id: graph_id(message.get("id"))?,
+                thread_id: text_of(message.get("conversationId")),
+            });
+        }
+        Ok(MailIdPage {
+            messages,
+            next_page: text_of(listed.get("@odata.nextLink")),
+        })
+    }
+
     /// The source's folders, read once.
     fn tree(&self, source: &MailSyncSource) -> Result<FolderTree> {
         if let Some(tree) = self.folders.borrow().get(&source.source_ref) {
@@ -443,32 +480,36 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 (format!("{GRAPH_ME_URL}/messages"), params)
             }
         };
-        let listed = self
-            .found(source, &url, &params, PREFER_IMMUTABLE_IDS)?
-            .ok_or_else(|| refused("graph_mail_listing_not_found"))?;
-        let mut messages = Vec::new();
-        let mut tree = self.tree(source)?;
-        for message in array(&listed, "value") {
-            let folder = text_of(message.get("parentFolderId")).unwrap_or_default();
-            let draft = message
-                .get("isDraft")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if !tree.knows(&folder) {
-                tree = self.tree_knowing(source, &folder)?;
-            }
-            if draft || tree.skipped(&folder)? {
-                continue;
-            }
-            messages.push(MailMessageRef {
-                provider_id: graph_id(message.get("id"))?,
-                thread_id: text_of(message.get("conversationId")),
-            });
-        }
-        Ok(MailIdPage {
-            messages,
-            next_page: text_of(listed.get("@odata.nextLink")),
-        })
+        self.listed_messages(source, &url, &params)
+    }
+
+    fn search_page(
+        &self,
+        source: &MailSyncSource,
+        query: &str,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        // Graph's `$search` takes the query quoted, and orders the hits by
+        // relevance itself (it takes no `$orderby`).
+        let (url, params) = match page {
+            Some(next) => (next.to_owned(), Vec::new()),
+            None => (
+                format!("{GRAPH_ME_URL}/messages"),
+                vec![
+                    (
+                        "$select",
+                        "id,conversationId,parentFolderId,isDraft".to_owned(),
+                    ),
+                    (
+                        "$search",
+                        format!("\"{}\"", query.replace('\\', "\\\\").replace('"', "\\\"")),
+                    ),
+                    ("$top", limit.to_string()),
+                ],
+            ),
+        };
+        self.listed_messages(source, &url, &params)
     }
 
     fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {

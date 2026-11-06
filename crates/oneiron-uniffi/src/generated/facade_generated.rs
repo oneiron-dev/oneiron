@@ -6136,6 +6136,11 @@ export_facade! {
     let output = client.vault_mail_sources_sync(&input)?;
     crate::codec::lift_record("vault.mail.sources.sync", &output)
 };
+"vault.mail.sources.search" => fn vault_mail_sources_search(&self, input: MailSourceSearchRequest) -> MailSearchReport = |client| {
+    let input: oneiron::mail_pack::MailSourceSearchRequest = crate::codec::lower_record("vault.mail.sources.search", input)?;
+    let output = client.vault_mail_sources_search(&input)?;
+    crate::codec::lift_record("vault.mail.sources.search", &output)
+};
 "vault.mail.inbox" => fn vault_mail_inbox(&self, input: MailInboxRequest) -> MailInboxPage = |client| {
     let input: oneiron::mail_pack::MailInboxRequest = crate::codec::lower_record("vault.mail.inbox", input)?;
     let output = client.vault_mail_inbox(&input)?;
