@@ -199,6 +199,7 @@ impl RunInner {
         let terminal = AllocationTerminal {
             occurred_at: receipt.occurred_at,
             receipt_digest: *blake3::hash(&bytes).as_bytes(),
+            receipt_json: bytes,
             dispatched,
             units,
         };
