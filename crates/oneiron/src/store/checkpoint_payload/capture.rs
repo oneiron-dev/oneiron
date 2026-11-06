@@ -49,6 +49,36 @@ impl Store {
         })
     }
 
+    /// Freezes the actual custody binding in the same metadata write that
+    /// selected and minted the leaves. A later read cannot associate these
+    /// keys with a binding adopted after that write.
+    pub(crate) fn checkpoint_payload_compartments_bound(
+        &self,
+        owners: &BTreeSet<OwnerRef>,
+    ) -> Result<
+        Option<(
+            crate::store::key_custody::CustodyBinding,
+            Vec<CaptureCompartment>,
+        )>,
+    > {
+        if self.core.gate_custody_archived() {
+            return Ok(None);
+        }
+        self.group_write_classed(Callback::Opaque, BackupWriteClass::BackupMetadata, |txn| {
+            let prepared = self
+                .compartments_in_txn(txn, owners)
+                .and_then(|compartments| {
+                    let binding = crate::store::key_custody::binding_in_txn(self, txn)?
+                        .ok_or_else(super::corrupt)?;
+                    Ok((binding, compartments))
+                });
+            match prepared {
+                Ok(prepared) => Rows::Commit(Some(prepared)),
+                Err(error) => Rows::Discard(Err(error)),
+            }
+        })
+    }
+
     fn compartments_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
