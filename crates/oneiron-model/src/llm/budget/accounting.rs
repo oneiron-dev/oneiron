@@ -39,7 +39,49 @@ pub struct BudgetAccountingSnapshot {
     pub meter_ranges: Vec<Option<BudgetMeterRange>>,
 }
 
+/// The issuing meter's original reservation coordinates for one open lease.
+/// Row indices address that meter's resolved table, not a later policy table.
+/// This is accounting source data only: it cannot restore a guard, recreate
+/// a lease, authorize a call, or prove that a terminal was booked or paid.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BudgetReservationSource {
+    pub guard_id: BudgetGuardId,
+    pub lease: String,
+    pub reserved_units: u64,
+    pub metered: bool,
+    pub matched_rows: Vec<usize>,
+    /// Original `(row index, reserved floor units)` pairs, in row order.
+    pub floor_allocations: Vec<(usize, u64)>,
+    pub shared_reserved_units: u64,
+}
+
 impl BudgetGuard {
+    /// Reads an open lease from its actual issuing guard. A foreign, unknown
+    /// or closed lease has no reservation source here. The lock is released
+    /// before the caller opens a storage writer; no storage or callback runs.
+    #[must_use]
+    pub fn reservation_source(&self, lease: &BudgetLease) -> Option<BudgetReservationSource> {
+        let state = self.lock_state();
+        state.check_lease_provenance(lease).ok()?;
+        let record = state.leases.get(lease.id())?;
+        if record.state != LeaseState::Open {
+            return None;
+        }
+        Some(BudgetReservationSource {
+            guard_id: state.guard_id,
+            lease: lease.id().to_owned(),
+            reserved_units: record.reserve_units,
+            metered: record.metered,
+            matched_rows: record.matched_rows.clone(),
+            floor_allocations: record
+                .floor_allocations
+                .iter()
+                .map(|floor| (floor.row_index, floor.units))
+                .collect(),
+            shared_reserved_units: record.shared_reserved_units,
+        })
+    }
+
     /// Captures the meter and the selected native leases under one lock.
     /// No caller code or storage writer runs while that lock is held.
     #[must_use]

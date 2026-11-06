@@ -576,6 +576,12 @@ pub fn offer_is_free_work(binding: &OfferBinding) -> bool {
     free_work(binding.payer, binding.locality, binding.custody)
 }
 
+/// Whether a paid connector is free work, by the same rule as an offer.
+#[must_use]
+pub fn connector_is_free_work(binding: &PaidConnector) -> bool {
+    free_work(binding.payer, binding.locality, binding.custody)
+}
+
 /// A reservation in a meter's unit. A price no meter can hold never fits.
 fn priced(
     units: u128,
