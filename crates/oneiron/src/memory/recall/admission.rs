@@ -1,14 +1,16 @@
 use super::super::structural::*;
 use super::super::*;
-use super::*;
 use super::conversation;
 use super::home;
-use super::presentation::{hedge_bucket_for, hedge_bucket_for_band, parse_pack_format, truncate_text, value_text_of};
+use super::presentation::{
+    hedge_bucket_for, hedge_bucket_for_band, parse_pack_format, truncate_text, value_text_of,
+};
 use super::render_budget;
 use super::render_budget::execution_render_budget;
 use super::selection::RecallPin;
-use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, claim_surfaceable};
+use super::*;
 use crate::claim::retrieval_scope::FacetMode;
+use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, claim_surfaceable};
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -36,10 +38,8 @@ impl Memory<'_> {
         predicate: Option<&str>,
         limit: usize,
     ) -> MemoryResult<MemoryPack> {
-        if limit == 0 || limit > 1000 {
-            return Err(MemoryError::bad_request(
-                "view limit must be between 1 and 1000",
-            ));
+        if limit == 0 {
+            return Err(MemoryError::bad_request("view limit must be at least 1"));
         }
         let world = scope
             .world_ref
@@ -212,5 +212,4 @@ impl Memory<'_> {
             None,
         )
     }
-
 }

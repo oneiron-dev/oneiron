@@ -39,6 +39,8 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.drafters.list_as`
+//! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
@@ -454,6 +456,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultOffRecordDiscard,
     VaultOffRecordRecall,
     VaultOffRecordNotesCreate,
+    VaultOffRecordArtifactsSave,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
     SelfOffRecordResultsList,
@@ -500,6 +503,10 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultDraftersList,
+    VaultDraftersStatus,
+    VaultDraftersPolicySet,
+    VaultDraftersRevert,
     VaultResearchEvaluateSplit,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -825,6 +832,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultWritesCriticalConfirmDecline,
     VaultWritesCriticalConfirmReceipt,
     VaultVectorsPut,
+    VaultIngestAgUiImport,
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultRunsProgramHoldRelease,
@@ -1183,6 +1191,7 @@ impl HostDoorRow {
             "vault.off_record.discard" => Self::VaultOffRecordDiscard,
             "vault.off_record.recall" => Self::VaultOffRecordRecall,
             "vault.off_record.notes.create" => Self::VaultOffRecordNotesCreate,
+            "vault.off_record.artifacts.save" => Self::VaultOffRecordArtifactsSave,
             "vault.off_record.claims.upsert" => Self::VaultOffRecordClaimsUpsert,
             "self.off_record.execute" => Self::SelfOffRecordExecute,
             "self.off_record.results.list" => Self::SelfOffRecordResultsList,
@@ -1235,6 +1244,10 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.drafters.list" => Self::VaultDraftersList,
+            "vault.drafters.status" => Self::VaultDraftersStatus,
+            "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
+            "vault.drafters.revert" => Self::VaultDraftersRevert,
             "vault.research.evaluate_split" => Self::VaultResearchEvaluateSplit,
             "vault.authority.handoff_alarms" => Self::VaultAuthorityHandoffAlarms,
             "vault.authority.handoff_alarms.acknowledge" => {
@@ -1570,6 +1583,7 @@ impl HostDoorRow {
             "vault.writes.critical_confirm.decline" => Self::VaultWritesCriticalConfirmDecline,
             "vault.writes.critical_confirm.receipt" => Self::VaultWritesCriticalConfirmReceipt,
             "vault.vectors.put" => Self::VaultVectorsPut,
+            "vault.ingest.ag_ui.import" => Self::VaultIngestAgUiImport,
             "vault.runs.step" => Self::VaultRunsStep,
             "vault.runs.checkpoint" => Self::VaultRunsCheckpoint,
             "vault.runs.program_hold.release" => Self::VaultRunsProgramHoldRelease,

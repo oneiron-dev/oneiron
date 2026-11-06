@@ -11,12 +11,12 @@ use super::boundary::{
 };
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
-    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEntityRefReceipt,
-    NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance,
-    NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
-    NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome,
-    NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEmbeddingMatchEvidence,
+    NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
+    NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope,
+    NapiRecallResidence, NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
+    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiTurnProgramWakeOutcome, NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -430,6 +430,27 @@ fn record_ref_from_engine(record: oneiron::lens::RecordRef) -> NapiRecordRef {
 /// Projects one engine memory item onto the boundary DTO.
 pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> NapiMemoryItem {
     NapiMemoryItem {
+        asset_ref: item.asset_ref,
+        embedding_matches: item
+            .embedding_matches
+            .into_iter()
+            .map(|evidence| {
+                let kind = |kind| match kind {
+                    oneiron::store::embedding::InputKind::Text => "text".to_owned(),
+                    oneiron::store::embedding::InputKind::Image => "image".to_owned(),
+                    oneiron::store::embedding::InputKind::Audio => "audio".to_owned(),
+                };
+                NapiEmbeddingMatchEvidence {
+                    space: evidence.space,
+                    embedding_kind: kind(evidence.embedding_kind),
+                    query_kind: kind(evidence.query_kind),
+                    score: f64::from(evidence.score),
+                    floor: f64::from(evidence.floor),
+                    strong: f64::from(evidence.strong),
+                    matched: evidence.matched,
+                }
+            })
+            .collect(),
         short_id: item.short_id,
         source_revision_ref: item.source_revision_ref,
         kind: item.kind,
@@ -451,6 +472,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         }),
         world: item.world,
         facet: item.facet,
+        project_ref: item.project_ref,
         salience: item.salience.map(f64::from),
         reactions: item.reactions,
         cited_messages: item
@@ -629,9 +651,69 @@ pub(super) fn query_affect_to_engine(
     }
 }
 
+/// The convenience JS boundary uses camelCase; the engine's wire is snake_case.
+#[derive(serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum RecallWorldsInput {
+    All,
+    Base,
+    World {
+        world_ref: String,
+        include_base: bool,
+    },
+    Worlds {
+        world_refs: Vec<String>,
+        include_base: bool,
+    },
+}
+
+impl From<RecallWorldsInput> for oneiron::memory::RecallWorlds {
+    fn from(worlds: RecallWorldsInput) -> Self {
+        match worlds {
+            RecallWorldsInput::All => Self::All,
+            RecallWorldsInput::Base => Self::Base,
+            RecallWorldsInput::World {
+                world_ref,
+                include_base,
+            } => Self::World {
+                world_ref,
+                include_base,
+            },
+            RecallWorldsInput::Worlds {
+                world_refs,
+                include_base,
+            } => Self::Worlds {
+                world_refs,
+                include_base,
+            },
+        }
+    }
+}
+
 /// Lowers the boundary recall scope onto the engine's.
-pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallScope {
-    scope.map_or_else(RecallScope::default, |scope| RecallScope {
+pub(super) fn recall_scope_to_engine(
+    scope: Option<NapiRecallScope>,
+) -> Result<RecallScope, MemoryError> {
+    let Some(scope) = scope else {
+        return Ok(RecallScope::default());
+    };
+    let worlds = scope
+        .worlds
+        .map(|value| {
+            serde_json::from_value::<RecallWorldsInput>(value)
+                .map(oneiron::memory::RecallWorlds::from)
+                .map_err(|error| {
+                    MemoryError::bad_request(&format!("scope.worlds is invalid: {error}"))
+                })
+        })
+        .transpose()?;
+    Ok(RecallScope {
+        worlds,
         world_ref: scope.world_ref,
         facet: scope.facet,
         kinds: scope.kinds,

@@ -11,6 +11,19 @@ use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
 use crate::side_table::RoutedDbs;
 
 impl ExecutorStorage<'_> {
+    /// Live PERSON and custody prints for this execution's typed output text.
+    pub(crate) fn code_run_known_source(
+        &self,
+        exec_run: EntityId,
+    ) -> Result<crate::store::known_value_index::RunKnownSource> {
+        match self {
+            Self::Canonical(vault) => vault.run_known_source(exec_run),
+            Self::Session(binding) => {
+                binding.answered(|| binding.session.run_known_source(exec_run))
+            }
+        }
+    }
+
     /// A spool for one reply body of the run (FIX 5718 part 3): on the
     /// vault, a raw spool the wall admits whole when it is published
     /// ([`Self::publish_code_run_reply`]); in a session, its own sink, as
@@ -59,6 +72,12 @@ impl SessionBinding<'_> {
     pub(super) fn output_sink(&self) -> Result<BodySink> {
         let known = self.answered(|| self.session.known_source())?;
         Ok(self.script_sink()?.sweeping(known))
+    }
+
+    /// This execution's output, with the same run-local sweep as the vault.
+    pub(super) fn output_sink_for(&self, exec_run: EntityId) -> Result<BodySink> {
+        let known = self.answered(|| self.session.run_known_source(exec_run))?;
+        Ok(self.script_sink()?.sweeping_run(known))
     }
 
     /// [`Self::output_sink`] with no sweep, for a step's program, which a
