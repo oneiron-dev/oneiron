@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1262 facade rows, 4579 generated types.
+// UniFFI census: 1262 facade rows, 4580 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1214.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -20656,6 +20656,29 @@ pub struct ColdAuthorityAuditRow {
     pub issue_codes: Option<Vec<String>>,
 }
 
+/// `oneiron::receipt::authority_audit::PendingMembershipExecutionRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PendingMembershipExecutionRow {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "act", default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<String>,
+    #[serde(rename = "cause")]
+    pub cause: String,
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "executed_at")]
+    pub executed_at: u64,
+    #[serde(rename = "withdrawn_grants")]
+    pub withdrawn_grants: Vec<String>,
+    #[serde(rename = "handover")]
+    pub handover: bool,
+}
+
 /// `oneiron::receipt::authority_audit::AuthorityAuditPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AuthorityAuditPage {
@@ -20677,6 +20700,12 @@ pub struct AuthorityAuditPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub cold_attested: Option<Vec<ColdAuthorityAuditRow>>,
+    #[serde(
+        rename = "pending_membership_executions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pending_membership_executions: Option<Vec<PendingMembershipExecutionRow>>,
 }
 
 /// `oneiron::verbs::authority_history::SignedAuthorityHistory`.
@@ -21710,6 +21739,12 @@ pub struct SharedActExecutionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub authority_entry: Option<String>,
+    #[serde(
+        rename = "authority_record_pending",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authority_record_pending: Option<bool>,
     #[serde(
         rename = "authorizer",
         default,
