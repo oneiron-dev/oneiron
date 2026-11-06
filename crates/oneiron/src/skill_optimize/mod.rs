@@ -215,9 +215,9 @@ pub(crate) use self::judge_swap::{
     judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask, swap_case_retest_picked,
 };
 pub use self::labels::{
-    JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheck,
-    JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade, JudgeRegrade,
-    JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
+    JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelReadPosition,
+    JudgeLabelRecheck, JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade,
+    JudgeRegrade, JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
     judge_label_anchor, judge_rubric, record_judge_label_regrade, record_judge_pick,
     set_judge_digest_minutes,
 };

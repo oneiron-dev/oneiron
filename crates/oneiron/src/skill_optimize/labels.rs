@@ -23,6 +23,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, LegacyJson, Named, Raw, RawValue, SideTable};
+use crate::store::GateReadAnchors;
+use oneiron_authority::federation::Scope;
 
 mod anchor;
 mod rubric;
@@ -140,6 +142,18 @@ pub struct JudgeRegrade {
     pub rubric: [u8; 32],
 }
 
+/// A new native label's read position, supplied on its original pick request.
+/// Placement metadata is not a reader grant or a custody proof.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JudgeLabelReadPosition {
+    pub scope: Scope,
+    pub kind_band: u8,
+    pub body_worlds: Vec<EntityId>,
+    pub body_facets: Vec<EntityId>,
+    pub anchors: GateReadAnchors,
+}
+
 /// One human pick is one immutable calibration label. No score, model output,
 /// or digest delivery can mint this row. A rubric edit marks it for a
 /// re-check; it never changes the pick.
@@ -159,6 +173,9 @@ pub struct JudgeLabel {
     /// edit since it was picked or last found fitting is pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recheck: Option<JudgeLabelRecheck>,
+    /// The original pick's requested position; unknown once the row changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_position: Option<JudgeLabelReadPosition>,
 }
 
 /// A label's re-check after an edit of the judge's rubric. Each `rubric` is
@@ -505,15 +522,26 @@ pub fn record_judge_pick(
     ask_id: [u8; 32],
     choose_b: bool,
     at: u64,
+    read_position: Option<JudgeLabelReadPosition>,
 ) -> Result<JudgeLabel> {
     vault.with_write_txn_grouped(|txn| {
         let actor =
             crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &*txn, owner)?;
-        pick_in_txn(vault, txn, owner, actor, ask_id, choose_b, at)
+        pick_in_txn(
+            vault,
+            txn,
+            owner,
+            actor,
+            ask_id,
+            choose_b,
+            at,
+            read_position,
+        )
     })
 }
 
 /// [`record_judge_pick`] for an `actor` the caller already validated.
+#[expect(clippy::too_many_arguments, reason = "one pick with its placement")]
 fn pick_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -522,6 +550,7 @@ fn pick_in_txn(
     ask_id: [u8; 32],
     choose_b: bool,
     at: u64,
+    read_position: Option<JudgeLabelReadPosition>,
 ) -> Result<JudgeLabel> {
     let ask = ASKS
         .get(&vault.store, &*txn, &ask_id)?
@@ -555,6 +584,7 @@ fn pick_in_txn(
         picked_at: at,
         principal_ref: owner.person_principal_ref_in_txn(vault, &*txn)?.into(),
         recheck: None,
+        read_position,
     };
     LABELS.put(&vault.store, txn, &ask_id, &label)?;
     Ok(label)
@@ -597,7 +627,7 @@ pub(crate) fn record_judge_swap_label(
             ask.delivered_at = Some(delivered_at);
             ASKS.put(&vault.store, txn, &ask.id, &ask)?;
         }
-        pick_in_txn(vault, txn, owner, actor, ask.id, choose_b, at)
+        pick_in_txn(vault, txn, owner, actor, ask.id, choose_b, at, None)
     })
 }
 
