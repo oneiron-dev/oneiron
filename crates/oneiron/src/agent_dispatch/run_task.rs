@@ -32,7 +32,10 @@
 //! its parent's identity. From then on it takes, renews and settles its own
 //! lease, its own children follow it, and the reaper hands it over as a
 //! root; the machine that takes it holds no row of its settled parent and
-//! runs it without one (`super::agent_run`).
+//! runs it without one (`super::agent_run`). Its context there resolves
+//! under the bound that parent handed it, frozen into its run TASK at its
+//! promotion ([`FrozenContextBound`]), so it never widens past what it saw
+//! here.
 //!
 //! On one machine the lease is always its own, so nothing new refuses: a
 //! run with no run TASK (dispatched before this change) runs as before. A
@@ -51,9 +54,10 @@ use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
 
-use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput};
+use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::context_projection::ResolvedContextProjection;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::derived_domains::AGENT_RUN_TASK;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -279,7 +283,61 @@ pub(super) struct AgentRunTaskBody {
     /// payload names the parent that settled. A machine that takes it holds
     /// no row of that parent, and runs it as a root of its own.
     outlived_root: bool,
+    /// The context bound the settled parent of a run that outlived its root
+    /// handed it, frozen at its promotion ([`FrozenContextBound`]); `None`
+    /// when that parent resolved no projection, and for every other run.
+    parent_context: Option<FrozenContextBound>,
     pub(super) created_at: u64,
+}
+
+/// The context bound a spawned child that outlived its root (REVIEW-6638)
+/// had from its settled parent, frozen into its run TASK at its promotion,
+/// where the whole ancestor chain is present: that parent's projection as a
+/// child of it resolves under it, its layers and its memory and chat
+/// section refs (`"<domain>:cl_<hex>"`, `"tn_<hex>"`), never a row's body.
+///
+/// Engine call (CALLS, FIX 4747): a machine that took the child over holds
+/// no row of that parent, so its context walk ends at the child
+/// (`super::context`); it resolves the child under this bound, so a
+/// `Default` there inherits what it inherited here and never widens to a
+/// fresh scan. The sections are those the parent's projection kept, after
+/// the cut of any member lane or binder above it, not the bound before that
+/// cut: that machine's walk crosses no wrapper above the child, so the cut
+/// rides in the sections.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct FrozenContextBound {
+    layers: Vec<String>,
+    memory_sections: Vec<String>,
+    chat_sections: Vec<String>,
+}
+
+impl FrozenContextBound {
+    /// The bound `projection` hands a child that resolves under it.
+    fn of(projection: ResolvedContextProjection) -> Self {
+        Self {
+            layers: projection.layers,
+            memory_sections: projection.memory_sections,
+            chat_sections: projection.chat_sections,
+        }
+    }
+}
+
+impl AgentRunTaskBody {
+    /// The parent projection this run resolves its context under where the
+    /// row of its settled parent is absent (REVIEW-6638): the bound frozen at
+    /// its promotion, rebuilt by
+    /// [`ResolvedContextProjection::from_frozen_bound`]. `None` when its
+    /// parent resolved no projection, as the run then resolved under none on
+    /// the machine it left too, and for a run that did not outlive its root.
+    pub(super) fn into_frozen_parent_projection(self) -> Option<ResolvedContextProjection> {
+        self.parent_context.map(|bound| {
+            ResolvedContextProjection::from_frozen_bound(
+                bound.layers,
+                bound.memory_sections,
+                bound.chat_sections,
+            )
+        })
+    }
 }
 
 /// The frozen queue payload as one MessagePack bin, not an array of
@@ -496,6 +554,14 @@ fn put_agent_run_task_in_txn(
     {
         return Ok(false);
     }
+    // A child that outlived its root takes the bound its settled parent
+    // hands it, frozen here, where that parent's row and its whole ancestor
+    // chain are present (REVIEW-6638; engine call, CALLS, FIX 4747).
+    let parent_context = if outlived_root {
+        frozen_parent_context_in(vault, &*wtxn, record)?
+    } else {
+        None
+    };
     let node_id = crate::identity::load_or_mint_client_id_in_txn(vault, wtxn)?;
     let facet = input.scope.as_ref().and_then(|scope| scope.facet);
     let held_until = if closing(vault) {
@@ -529,6 +595,7 @@ fn put_agent_run_task_in_txn(
         },
         outcome: None,
         outlived_root,
+        parent_context,
         created_at: record.created_at,
     };
     let encoded = rmp_serde::to_vec_named(&body)
@@ -555,6 +622,36 @@ fn put_agent_run_task_in_txn(
         stamp_task_birth(&vault.store, wtxn, task_ref, position)?;
     }
     Ok(true)
+}
+
+/// The context bound the settled parent of the spawned child `record`
+/// hands it, read in `txn` at the child's promotion (REVIEW-6638): that
+/// parent's projection as a child of it resolves under it, the one its own
+/// dispatch resolved under
+/// ([`AgentDispatcher::resolve_ancestor_projection_in_txn`]), frozen as
+/// [`FrozenContextBound`]. `None` when that parent resolves no projection,
+/// as the child then resolves under none here either.
+///
+/// Engine call (CALLS, FIX 4747): a parent this queue does not hold fails
+/// the mint, as the child's own context walk here fails on it: no bound is
+/// frozen that this machine did not resolve, and the child stays under the
+/// settled run's TASK, on this machine, as before.
+fn frozen_parent_context_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<FrozenContextBound>> {
+    let Some(parent) = spawning_parent(&record.payload) else {
+        return Ok(None);
+    };
+    if AttemptQueue::new(vault).get_in_txn(txn, parent)?.is_none() {
+        return Err(super::widen_record::invalid(
+            "an outliving child's parent is missing",
+        ));
+    }
+    Ok(AgentDispatcher::new(vault)
+        .resolve_ancestor_projection_in_txn(txn, parent)?
+        .map(FrozenContextBound::of))
 }
 
 /// Takes the executor lease of `row`'s run at its claim, in the claim's
@@ -794,6 +891,19 @@ pub(super) fn outlived_root_in(
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
 ) -> Result<bool> {
+    Ok(outlived_root_task_in(vault, txn, row)?.is_some())
+}
+
+/// The run TASK body that says `row` is a try of a spawned child that
+/// outlived its root ([`outlived_root_in`]), read in `txn`: the one of its
+/// own retry lineage, which carries the context bound its settled parent
+/// handed it ([`AgentRunTaskBody::into_frozen_parent_projection`]). `None` for
+/// any other try.
+fn outlived_root_task_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &AttemptRecord,
+) -> Result<Option<AgentRunTaskBody>> {
     let Some((link, false)) = agent_run_task_slot_in(
         &vault.store,
         txn,
@@ -803,11 +913,11 @@ pub(super) fn outlived_root_in(
         AgentRunTaskWalk::Retries,
     )?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     match agent_run_task_body_in(vault, txn, link.task_ref) {
-        Ok(body) => Ok(body.is_some_and(|body| body.outlived_root)),
-        Err(Error::Record(_)) => Ok(false),
+        Ok(body) => Ok(body.filter(|body| body.outlived_root)),
+        Err(Error::Record(_)) => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -819,9 +929,21 @@ pub(super) fn attempt_outlived_root_in(
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
 ) -> Result<bool> {
+    Ok(attempt_outlived_root_task_in(vault, txn, attempt)?.is_some())
+}
+
+/// [`outlived_root_task_in`] of the try `attempt`, read in `txn`; `None`
+/// for a try this queue does not hold. A context walk that ends at such a
+/// try, its settled parent's row absent, resolves it under the bound that
+/// body froze (REVIEW-6638; engine call, CALLS, FIX 4747).
+pub(super) fn attempt_outlived_root_task_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<AgentRunTaskBody>> {
     match AttemptQueue::new(vault).get_in_txn(txn, attempt)? {
-        Some(row) => outlived_root_in(vault, txn, &row),
-        None => Ok(false),
+        Some(row) => outlived_root_task_in(vault, txn, &row),
+        None => Ok(None),
     }
 }
 
@@ -1300,7 +1422,10 @@ pub(crate) fn settle_agent_run_task_in_txn(
     // A settled run needs its frozen payload no more: the TASK drops it, so
     // its text lives on no machine past the run (the TASK's sync history
     // keeps the old bytes until its window is cut). Each child it leaves
-    // pending carries its own.
+    // pending carries its own. A run that outlived its root keeps its frozen
+    // parent bound, refs only: on a machine that holds no row of its parent,
+    // each context walk of a child below it still ends at it, the
+    // promotions this settlement mints included (REVIEW-6638).
     update_agent_run_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
         body.queue_payload.clear();
@@ -1321,7 +1446,9 @@ pub(crate) fn settle_agent_run_task_in_txn(
 /// (`put_agent_run_task_in_txn`): under the child's own id, with this
 /// machine's lease at the first generation, the child's frozen payload
 /// (which names its parent) and its world and project, through the same
-/// gates, and flagged `outlived_root`. A mint the gates pass over or that
+/// gates, and flagged `outlived_root`, with the context bound its settled
+/// parent hands it frozen in (`frozen_parent_context_in`), as a machine that
+/// takes it holds no row of that parent. A mint the gates pass over or that
 /// fails, in its own savepoint, leaves that child under the settled run's
 /// TASK, on this machine, as before. A child claimed here when its run
 /// settled follows its new run TASK at its fence

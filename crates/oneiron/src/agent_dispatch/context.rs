@@ -19,11 +19,14 @@ use super::dispatch::AgentDispatcher;
 use crate::error::ArtifactError;
 
 /// One ancestor walk's dispatch levels (spec and scope, nearest first), the
-/// first wrapper's member and every wrapper's binder.
+/// first wrapper's member, every wrapper's binder, and the parent projection
+/// its top level resolves under: the bound frozen for a run that outlived its
+/// root when the walk ends at it (REVIEW-6638), else none.
 type AncestorChain = (
     Vec<(ContextSpec, crate::pipeline::WorldScope)>,
     Option<EntityId>,
     Vec<crate::write_envelope::WriteActor>,
+    Option<ResolvedContextProjection>,
 );
 
 impl AgentDispatcher<'_> {
@@ -187,14 +190,22 @@ impl AgentDispatcher<'_> {
         let walked = self.ancestor_chain_in_txn(txn, attempt, &mut seen);
         walk.rows(seen.len());
         walk.defer(&self.vault.store);
-        let Some((chain, member, binders)) = walked? else {
+        let Some((chain, member, binders, frozen_parent)) = walked? else {
             return Ok(None);
         };
         if chain.is_empty() {
             return Ok(None);
         }
 
-        let mut projection = None;
+        // A walk that ends at a run that outlived its root (REVIEW-6638),
+        // its settled parent's row absent here, starts the fold from the
+        // bound that parent handed it, frozen at its promotion: its `Default`
+        // inherits what it inherited on the machine it left, and a `Scoped`
+        // or `Recent` request intersects with it, where resolving it
+        // standalone would WIDEN to a fresh scan. Engine call (CALLS, FIX
+        // 4747). With none frozen, its parent resolved no projection, and it
+        // resolves standalone, as it did there.
+        let mut projection = frozen_parent;
         // Root-down: each level narrows the one above it.
         for (index, (spec, ancestor_scope)) in chain.iter().rev().enumerate() {
             if index > 0 {
@@ -224,8 +235,9 @@ impl AgentDispatcher<'_> {
 
     /// The walk [`Self::resolve_ancestor_projection_in_txn`] counts, each
     /// attempt it reads in `seen`: every dispatch level's spec and scope, the
-    /// first wrapper's member and every wrapper's binder. `None` when
-    /// `attempt` itself is no dispatch lineage.
+    /// first wrapper's member, every wrapper's binder, and, when it ends at a
+    /// run that outlived its root, the parent bound frozen for that run.
+    /// `None` when `attempt` itself is no dispatch lineage.
     fn ancestor_chain_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -239,6 +251,7 @@ impl AgentDispatcher<'_> {
         let mut cursor = Some(attempt);
         // The dispatch level whose parent the walk goes to next.
         let mut below = None;
+        let mut frozen_parent = None;
         while let Some(id) = cursor {
             if !seen.insert(id) {
                 return Err(super::widen_record::invalid("context ancestor cycle"));
@@ -249,10 +262,15 @@ impl AgentDispatcher<'_> {
                 }
                 // A run that outlived its root (REVIEW-6638) is a root of its
                 // own on a machine that took it over, which holds no row of
-                // its settled parent: its own level ends the walk there.
+                // its settled parent: its own level ends the walk there, under
+                // the bound that parent handed it, frozen in its run TASK at
+                // its promotion (engine call, CALLS, FIX 4747). Where that
+                // parent's row is present, the walk goes on through it.
                 if let Some(below) = below
-                    && super::run_task::attempt_outlived_root_in(self.vault, txn, below)?
+                    && let Some(promoted) =
+                        super::run_task::attempt_outlived_root_task_in(self.vault, txn, below)?
                 {
+                    frozen_parent = promoted.into_frozen_parent_projection();
                     break;
                 }
                 return Err(super::widen_record::invalid("context ancestor is missing"));
@@ -282,6 +300,6 @@ impl AgentDispatcher<'_> {
             below = Some(id);
             cursor = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
         }
-        Ok(Some((chain, member, binders)))
+        Ok(Some((chain, member, binders, frozen_parent)))
     }
 }
