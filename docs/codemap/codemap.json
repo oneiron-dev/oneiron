@@ -4122,7 +4122,7 @@
      "path": "src/authority/frontier_join.rs",
      "purpose": "Joining a wide causal frontier (FIX 7908 and its duplicates, Phase2 B; CALLS \"Phase2 frontier join\")",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -4253,7 +4253,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -4261,8 +4261,8 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 6,
-      "fn": 6,
+      "crate-vis": 7,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -27461,7 +27461,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 4,
       "struct": 8
@@ -31078,7 +31078,7 @@
      "path": "src/dreamer_wake/driver/attribution.rs",
      "purpose": "One structured line per admitted attempt the pass did not complete (FIX 7271): who it was, where it ended…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -33454,12 +33454,12 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganWait",
@@ -33469,7 +33469,8 @@
      "purpose": "An organ call that waits for a node (OF-575, owner ruling MESH): a host that cannot start an organ, with…",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "crate-vis": 1,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -33481,7 +33482,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 9,
       "re-export": 3
      }
@@ -33589,7 +33590,7 @@
      "path": "src/edit_settle/stranded.rs",
      "purpose": "Stale retained outputs stay durable proposals against the observed new head",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -50275,8 +50276,18 @@
      "purpose": "Owned caller/session authority for native work that outlives a borrowed Memory",
      "surface": {
       "crate-vis": 5,
-      "fn": 3,
+      "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/program/caller/claims.rs",
+     "purpose": "Caller-bound invocation outcomes use the actual session's RAM keep",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -62951,10 +62962,20 @@
      "path": "src/runtime_hooks/verb/state.rs",
      "purpose": "What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/state/session_claims.rs",
+     "purpose": "The actual session keep owns successful invocation outcomes until close",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -62965,6 +62986,16 @@
      "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
      "surface": {
       "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage/invocation_claims.rs",
+     "purpose": "Invocation replies live under the actual session and captured mode route",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -66881,7 +66912,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 21
      }
     },
@@ -66919,6 +66950,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/queue_revision.rs",
+     "purpose": "A tested queue revision's derivation belongs to each admitted run that authored one of its applied…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -77977,7 +78018,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection/frames/shallow_tail.rs",
-     "purpose": "Rebuild held retained operations without changing a shallow snapshot's root",
+     "purpose": "Rebuild held retained operations with an unchanged root or exact frontier retarget",
      "surface": {
       "crate-vis": 1
      }
@@ -88126,7 +88167,7 @@
      "purpose": "This machine's own kit pieces on the vault handle (FIX 1957, 2063)",
      "surface": {
       "crate-vis": 4,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -90404,7 +90445,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 364,
+     "files": 365,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90684,7 +90725,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 50,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -90810,7 +90851,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91111,9 +91152,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 160,
+   "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6401,
+   "source_files": 6405,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110441,6 +110482,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/ai/chat/session_invocation.rs",
+     "purpose": "The positively bound Anonymous caller selects a session-owned claim first",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/ai/chat/sitting.rs",
      "purpose": "Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record…",
      "surface": {
@@ -112912,7 +112963,7 @@
      "path": "src/api/facade/invocations.rs",
      "purpose": "The facade's invocation claims: one call per client-named invocation id (OF-580)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -115766,6 +115817,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_target_routes/authority_enrollment.rs",
+     "purpose": "The owner's explicit pre-loss recovery-key enrollment on the kit's target install",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -117582,6 +117643,7 @@
      "notable": [
       "KitPieceArgs",
       "RecoveryKitAnchorArgs",
+      "RecoveryKitAuthorityArgs",
       "RecoveryKitCommand",
       "RecoveryKitConfirmArgs",
       "RecoveryKitIssueArgs",
@@ -117596,7 +117658,7 @@
      "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key…",
      "surface": {
       "enum": 1,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -118276,6 +118338,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/owner/recovery_kit/authority_recovery.rs",
+     "purpose": "Explicit recovery-key enrollment before loss; kit issuance is separate",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/owner/recovery_kit/custody.rs",
      "purpose": "The kit's side of a custody head (KS-4A1, FIX 5685)",
      "surface": {
@@ -118389,7 +118461,7 @@
      "path": "src/commands/owner/vault_key/unlocked_open.rs",
      "purpose": "The one opener every owner command that opens the vault data key shares (FIX 1489, 1945, 2201, 2559): this…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -119013,7 +119085,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -125463,7 +125535,7 @@
      "path": "src/owner/recovery_kit.rs",
      "purpose": "The world kit's public side, shared by `oneiron recovery-kit` and `GET /v1/owner/recovery-kit` (OF-173): the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -127860,7 +127932,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 675,
+     "files": 677,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -127937,7 +128009,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 65,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -128373,7 +128445,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1601,
+   "source_files": 1604,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
