@@ -7,7 +7,7 @@ pub(crate) mod retained;
 mod sealed;
 pub(crate) mod source;
 
-pub(crate) use sealed::{HomeClaimDelivery, SealedHomeClaimVector};
+pub(crate) use sealed::{HomeClaimDelivery, PreparedHomeClaimDelivery, SealedHomeClaimVector};
 
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
