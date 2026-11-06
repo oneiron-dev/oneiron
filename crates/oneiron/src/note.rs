@@ -237,6 +237,12 @@ pub(crate) use pin_index::citation_delete_scope_exists;
 #[cfg(feature = "sync")]
 pub(crate) use pin_index::{remove_citation_request, track_citation_request};
 #[cfg(feature = "sync")]
+mod citation_residence;
+#[cfg(feature = "sync")]
+pub(crate) use citation_residence::{
+    erase_residence_copies_of_in_txn, refuse_erased_residence_copy_in_txn,
+};
+#[cfg(feature = "sync")]
 mod citation_scrub;
 mod free_text;
 #[cfg(feature = "sync")]

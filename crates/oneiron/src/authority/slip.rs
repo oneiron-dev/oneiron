@@ -219,6 +219,16 @@ impl SeatChildCredential {
     pub fn records(&self) -> &BTreeSet<String> {
         &self.inner.claims.records
     }
+    /// Whether the slip carries the model door's channel (FIX 15702): the
+    /// run's model calls through its host's loopback door. A slip minted for
+    /// the credential helper alone does not.
+    #[must_use]
+    pub fn admits_model_door(&self) -> bool {
+        self.inner
+            .claims
+            .channels
+            .contains(oneiron_authority::authority::SEAT_MODEL_CHANNEL)
+    }
     /// When the slip ends, on the vault's clock.
     #[must_use]
     pub fn expires_at(&self) -> u64 {
