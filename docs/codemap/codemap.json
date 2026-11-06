@@ -76978,7 +76978,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/bundle.rs",
@@ -77057,14 +77057,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "SealedBundleRelayObservation"
+      "SealedBundleRelayObservation",
+      "UnmergedUpload"
      ],
      "path": "src/sync/client/residence/bundle/relay_observation.rs",
      "purpose": "The last sealed bundle upkeep this process saw, per machine (FIX 4953; CALLS \"4953 relay report\"): what the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -79057,7 +79058,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SealedBundleTake",
@@ -80225,8 +80226,18 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/erased_origin.rs",
+     "purpose": "The origin CLAIM revisions a pinned window's history check refuses (FIX 21141), and the erased form each…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -89851,14 +89862,17 @@
      "kind": "src",
      "notable": [
       "SealedVaultUpload",
+      "UnmergedSection",
+      "UnmergedStage",
       "WorldCapsuleImport"
      ],
      "path": "src/world_keys/bundle/carrier.rs",
      "purpose": "Bundle carrier entry points for sealing and opening one generation",
      "surface": {
       "crate-vis": 6,
-      "fn": 13,
-      "struct": 2
+      "enum": 1,
+      "fn": 14,
+      "struct": 3
      }
     },
     {
@@ -90147,7 +90161,8 @@
       "ReassertKey",
       "ReassertKeyState",
       "ReassertUnread",
-      "RelayObservation"
+      "RelayObservation",
+      "UnmergedUploadView"
      ],
      "path": "src/world_keys/owner_work/diagnostics.rs",
      "purpose": "What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)…",
@@ -90155,7 +90170,7 @@
       "crate-vis": 5,
       "enum": 8,
       "fn": 3,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -92874,7 +92889,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 371,
+     "files": 372,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93084,9 +93099,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 170,
+   "over_bar": 172,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6564,
+   "source_files": 6565,
    "test_files": 895
   },
   "oneiron-android": {
