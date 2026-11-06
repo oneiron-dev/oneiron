@@ -341,12 +341,17 @@ The vector stays charged while the session lock is awaited and while the read se
 observes those ids. It drops after the original observation block, before its
 holder. Errors and cancellation also drop the ids before the holder. The read
 set's own point-read vector has a distinct local holder on the same memory line.
-Its capacity callback runs after the original id-only collection and before the
-first row read, so a read failure drops the vector before releasing its holder.
-The ordinary read-set method and its other callers keep their behavior. Decoded
-rows, successor-read vectors, retained maps and later replay vectors remain
-separate allocations. Allocation and reallocation peaks are not covered by these
-post-allocation holders.
+Its capacity callback first records the original id-only collection before the
+row read, so a read failure drops that vector before releasing its holder. After
+a successful read, a second callback records the returned vector's actual slots
+and each owned body byte-vector's capacity before the original row loop consumes
+them. These are distinct allocations; the second callback adds their storage to
+the same local holder without rebasing the earlier point-read charge. The original
+row buffers drop inside the read-set method before the caller releases that
+holder. The ordinary method and its other callers keep their behavior. Decoded
+records, deletion metadata's possible heap storage, successor-read vectors,
+retained maps and later replay vectors remain separate allocations. Allocation
+and reallocation peaks are not covered by these post-allocation holders.
 
 
 ## Chat capture buffer custody
